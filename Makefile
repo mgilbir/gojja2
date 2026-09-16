@@ -5,9 +5,10 @@
 # turns them into conformance corpora under ./testdata/generated/, also
 # gitignored.
 #
-# Six upstreams: Jinja's own pytest suite, MiniJinja's fixtures, minja,
-# llama.cpp's Jinja tests, two collections of real LLM chat templates, and a
-# documentation theme. Only their *inputs* are used. Every
+# Ten upstreams: Jinja's own pytest suite, MiniJinja's fixtures, minja,
+# llama.cpp's Jinja tests, two collections of real LLM chat templates, a
+# documentation theme, and four cookiecutter project templates. Only their
+# *inputs* are used. Every
 # expected output is regenerated from the pinned CPython jinja2, because that
 # is the specification; where an upstream disagrees with it, it is wrong here.
 
@@ -44,6 +45,15 @@ LLAMACPP_PATHS   := models/templates tests
 MKDOCS_REPO      := https://github.com/squidfunk/mkdocs-material.git
 MKDOCS_REV       := 1c73dca3ff4909e4cddd0d3b6e272298e902dec7
 MKDOCS_PATHS     := material/templates
+
+# Cookiecutter project templates. These are the only imported corpus that
+# arrives with its own context -- cookiecutter.json is one, in JSON, written by
+# the template's author. Name, repository and pinned revision, one per line.
+COOKIECUTTERS := \
+  cookiecutter_django:cookiecutter/cookiecutter-django:b17f6c03da7d125e414c737cc31233c388bcebb6 \
+  cookiecutter_pypackage:audreyfeldroy/cookiecutter-pypackage:ced42cf27e20987ad5e1a315a26e89a94002ba74 \
+  cookiecutter_datascience:drivendata/cookiecutter-data-science:0f6b163cdbe3918a2c65ab57ad9fefda93976d9e \
+  cookiecutter_hypermodern:cjolowicz/cookiecutter-hypermodern-python:af0fd99e72e3afac2dc2b20406b1bee689260be1
 
 THIRD_PARTY := third_party
 VENV        := .venv
@@ -117,8 +127,32 @@ $(THIRD_PARTY)/mkdocs_material/.stamp:
 	git -C $(THIRD_PARTY)/mkdocs_material checkout --quiet FETCH_HEAD
 	@touch $@
 
+# One clone rule per cookiecutter template. They are all the same shape, so
+# the rule is written once and instantiated rather than copied four times.
+define cookiecutter_rule
+$(THIRD_PARTY)/$(1)/.stamp:
+	@mkdir -p $(THIRD_PARTY)
+	rm -rf $(THIRD_PARTY)/$(1)
+	git init --quiet $(THIRD_PARTY)/$(1)
+	git -C $(THIRD_PARTY)/$(1) remote add origin https://github.com/$(2).git
+	git -C $(THIRD_PARTY)/$(1) fetch --quiet --depth 1 origin $(3)
+	git -C $(THIRD_PARTY)/$(1) checkout --quiet FETCH_HEAD
+	@touch $$@
+endef
+
+# Split on the colons, then instantiate. The call is kept on one line: a
+# continuation inside it would carry the indentation into the arguments, and a
+# target named " third_party/..." has no rule anyone can match.
+cc_name = $(word 1,$(subst :, ,$(1)))
+cc_repo = $(word 2,$(subst :, ,$(1)))
+cc_rev  = $(word 3,$(subst :, ,$(1)))
+
+$(foreach c,$(COOKIECUTTERS),$(eval $(call cookiecutter_rule,$(call cc_name,$(c)),$(call cc_repo,$(c)),$(call cc_rev,$(c)))))
+
+COOKIECUTTER_STAMPS := $(foreach c,$(COOKIECUTTERS),$(THIRD_PARTY)/$(call cc_name,$(c))/.stamp)
+
 .PHONY: suites
-suites: $(THIRD_PARTY)/jinja/.stamp $(THIRD_PARTY)/minijinja/.stamp \
+suites: $(COOKIECUTTER_STAMPS) $(THIRD_PARTY)/jinja/.stamp $(THIRD_PARTY)/minijinja/.stamp \
         $(THIRD_PARTY)/minja/.stamp $(THIRD_PARTY)/chat_templates/.stamp \
         $(THIRD_PARTY)/llamacpp/.stamp $(THIRD_PARTY)/mkdocs_material/.stamp \
         ## Download reference test suites (gitignored)
@@ -166,6 +200,10 @@ import: suites venv ## Build every imported corpus and record jinja2's answers
 	$(PY) tools/oracle/oracle.py \
 		--corpus testdata/generated/wild \
 		--golden testdata/generated/wild-golden
+	$(PY) tools/oracle/import_cookiecutter.py
+	$(PY) tools/oracle/oracle.py \
+		--corpus testdata/generated/cookiecutter \
+		--golden testdata/generated/cookiecutter-golden
 	$(PY) tools/oracle/report_minijinja.py
 
 .PHONY: divergence-report

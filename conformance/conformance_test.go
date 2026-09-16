@@ -52,6 +52,12 @@ var corpora = []corpus{
 		optional: true,
 	},
 	{
+		name:     "cookiecutter",
+		cases:    "testdata/generated/cookiecutter",
+		golden:   "testdata/generated/cookiecutter-golden",
+		optional: true,
+	},
+	{
 		name:     "wild",
 		cases:    "testdata/generated/wild",
 		golden:   "testdata/generated/wild-golden",

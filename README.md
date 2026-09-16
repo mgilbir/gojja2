@@ -72,13 +72,14 @@ at all -- silently.
 | llama.cpp's Jinja tests | 281 | 281 |
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
-| **total** | **2423** | **2419 (99.8%)** |
+| Cookiecutter project templates | 166 | 166 |
+| **total** | **2589** | **2585 (99.8%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
-templates real models ship, and a theme written to be used rather than tested.
-Only their *inputs* are used: every expected output is regenerated from the
-pinned CPython jinja2, because that is the specification. On top of that, roughly a million generated templates have been
+templates real models ship, a theme written to be used rather than tested, and
+four project generators. Only their *inputs* are used: every expected output is
+regenerated from the pinned CPython jinja2, because that is the specification. On top of that, roughly a million generated templates have been
 rendered by both implementations and compared (see below).
 
 The 4 that differ are listed, with reasons, in `testdata/known_failures.txt`;
@@ -110,7 +111,13 @@ those projects is vendored or committed, and each generated corpus carries a
 `SOURCES.md` recording where it came from, under what license, and which inputs
 were dropped and why.
 
-The last corpus arrives without any context at all -- a theme gets one from
+Cookiecutter templates are the one corpus that arrives with a context already
+written: `cookiecutter.json` is one, in JSON, chosen by the template's author.
+They contribute the shape of a template that generates a *file* -- 19 of the
+166 wrap another templating language in `{% raw %}`, and 60 use whitespace
+control -- which the chat templates and the theme between them do not reach.
+
+The theme's templates arrive without any context at all -- a theme gets one from
 MkDocs, not from a file next to it. Each context is synthesised by rendering
 the template twice: once against proxies that record every access, and once
 against the plain JSON that recording reads back as, requiring the two to agree
