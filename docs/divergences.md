@@ -39,12 +39,42 @@ own `malformed \N character escape` for a malformed one. Every other escape --
 exact, including CPython's quirk that `"\é"` decodes to the four characters
 `\xe9`.
 
-## Limits on allocation
+## Lazy sequence filters
 
 ```jinja
-{{ 2 ** 100000000 }}
-{{ "x" * 2147483648 }}
+{% if items|selectattr("active") %}...{% endif %}
 ```
+
+jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr` and `unique`
+return generators. gojja2's return lists. Anything that *consumes* the result
+-- iterating it, `|list`, `|join`, `|first`, `|sort` -- behaves identically.
+Three things do not:
+
+| template | jinja2 | gojja2 |
+|---|---|---|
+| `{{ [1,2]\|map("string") }}` | `<generator object ... at 0x7f9c...>` | `['1', '2']` |
+| `{% if items\|selectattr("active") %}` | always taken | taken when non-empty |
+| `{{ items\|selectattr("active")\|length }}` | `TypeError: object of type 'generator' has no len()` | the count |
+
+The first cannot be matched by anyone: the address differs between two runs of
+CPython itself, which is why the corpus case that prints one is marked
+*ungradable* rather than failing.
+
+The second and third could be matched, and are not. A generator is always
+truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
+when nothing was selected -- a long-standing footgun that the documentation
+tells you to spell `|selectattr("active")|list` around. Reproducing it would
+mean building the trap on purpose, and a template that guards a section on an
+empty filter result would render the section. gojja2 answers the question the
+template asked. This is the one divergence here that can change what a working
+template renders, and it changes it toward what the author meant; if you are
+porting templates, `|list` before `|length` or a truth test is exact in both.
+
+A knock-on: a filter that raises does so at the point gojja2 applies it, where
+jinja2 defers until the generator is consumed. The exception is the same; where
+it surfaces can differ by a tag or two.
+
+## Limits on allocation
 
 ### A width limit on `**`
 
@@ -60,9 +90,34 @@ word size, so `{{ 2 ** 100 }}` still renders all 31 digits.
 
 ### A length limit on repetition
 
+```jinja
+{{ "x" * 2147483648 }}
+```
+
 Repeating a string or a sequence is refused once the result would exceed
 2**31 elements, for the same reason: the count is often attacker-influenced.
 CPython would attempt the allocation.
+
+## A bound on nesting depth
+
+```jinja
+{{ [[[[[ ... 100000 levels ... ]]]]] }}
+```
+
+CPython raises `RecursionError` at around a thousand frames. Go grows a
+goroutine's stack on demand, so gojja2 would parse a million levels happily and
+then die on an allocation it cannot recover from.
+
+gojja2 refuses past 1,000 levels of expression or statement nesting with a
+`TemplateSyntaxError`. Templates are frequently attacker-supplied and nothing
+written on purpose nests ten deep, let alone a thousand, so the limit is
+generous and the failure is clean. It is a safety control rather than a
+behavioural choice, which is why the exception class differs from CPython's.
+
+Runtime recursion -- a template that includes, extends or calls itself without
+a base case -- is bounded separately at 100 levels, controlled by
+`WithMaxRecursion`, and *does* raise `RecursionError` with CPython's wording.
+The configured limit is on the error's `Limit` field rather than in the message.
 
 ## Identifier characters
 
@@ -72,32 +127,6 @@ or `Nl`, and continues with those plus `Nd`, `Mn`, `Mc` and `Pc`. The two agree
 on every identifier anyone writes; they could differ on exotic code points, in
 which case gojja2 reports `unexpected char` where jinja2 reports
 `Invalid character in identifier`.
-
-## Lazy sequence filters
-
-```jinja
-{{ [1,2]|map("string") }}
-```
-
-jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr` and `unique`
-return generators. Printing one without `|list` renders
-`<generator object sync_do_map at 0x7f9c...>` -- a memory address, which differs
-between two runs of CPython itself, so no implementation can reproduce it.
-
-gojja2's sequence filters are eager and render the list. Every use that does
-anything with the result -- iterating it, `|list`, `|join`, `|first` -- behaves
-identically.
-
-## RecursionError wording
-
-A template that includes, extends or calls itself without a base case raises
-`RecursionError` in both. CPython's message names the interpreter operation
-that happened to hit the limit ("maximum recursion depth exceeded while calling
-a Python object", "... in comparison"), which varies with the call shape and
-describes nothing that exists in a Go program.
-
-gojja2 raises `RecursionError` with a message naming the limit and its
-configured value, which `WithMaxRecursion` controls.
 
 ## lipsum() and random
 
@@ -131,90 +160,8 @@ machinery to reach. Matching them would mean building a decoy of the escape
 route the tests exist to document, which would be worse than not having one:
 the next reader would have to work out that the ladder leads nowhere.
 
-## Limits on allocation
-
-```jinja
-{{ 2 ** 100000000 }}
-{{ "x" * 2147483648 }}
-```
-
-### A width limit on `**`
-
-```jinja
-{{ 2 ** 100000000 }}
-```
-
-CPython will try to materialise the integer. gojja2 refuses with `OverflowError`
-once the result would exceed 2**20 bits (128 KiB), because an exponent in a
-template is frequently attacker-influenced and the honest answer is a
-denial-of-service. Integers below that limit are exact and unbounded by machine
-word size, so `{{ 2 ** 100 }}` still renders all 31 digits.
-
-### A length limit on repetition
-
-Repeating a string or a sequence is refused once the result would exceed
-2**31 elements, for the same reason: the count is often attacker-influenced.
-CPython would attempt the allocation.
-
-## Identifier characters
-
-jinja2 matches names against a table generated from Python's `str.isidentifier`.
-gojja2 approximates it with Unicode categories: a name starts with `_`, a letter
-or `Nl`, and continues with those plus `Nd`, `Mn`, `Mc` and `Pc`. The two agree
-on every identifier anyone writes; they could differ on exotic code points, in
-which case gojja2 reports `unexpected char` where jinja2 reports
-`Invalid character in identifier`.
-
-## Lazy sequence filters
-
-```jinja
-{{ [1,2]|map("string") }}
-```
-
-jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr` and `unique`
-return generators. Printing one without `|list` renders
-`<generator object sync_do_map at 0x7f9c...>` -- a memory address, which differs
-between two runs of CPython itself, so no implementation can reproduce it.
-
-gojja2's sequence filters are eager and render the list. Every use that does
-anything with the result -- iterating it, `|list`, `|join`, `|first` -- behaves
-identically.
-
-## RecursionError wording
-
-A template that includes, extends or calls itself without a base case raises
-`RecursionError` in both. CPython's message names the interpreter operation
-that happened to hit the limit ("maximum recursion depth exceeded while calling
-a Python object", "... in comparison"), which varies with the call shape and
-describes nothing that exists in a Go program.
-
-gojja2 raises `RecursionError` with a message naming the limit and its
-configured value, which `WithMaxRecursion` controls.
-
-## lipsum() and random
-
-`lipsum()` and the `random` filter draw from a random source. Their output
-cannot match CPython's and is excluded from conformance comparison.
-
-## Python object introspection
-
-```jinja
-{{ true.__class__ }}
-{{ cls|attr("__subclasses__")() }}
-{{ "a{0.__class__}b".format(42) }}
-```
-
-jinja2 templates run against real Python objects, so they can reach
-`__class__`, `__subclasses__`, `__builtins__` and `__import__`, and a format
-spec like `{0.foo}` takes a Python attribute. Jinja's own test suite covers
-these precisely because they are the shape of a sandbox escape.
-
-gojja2 has no Python object graph behind its values. These attributes do not
-exist rather than being blocked, so the templates cannot be reproduced at all;
-they raise instead. Every such case is listed in
-`testdata/known_failures.txt`.
-
-This is the one place where not matching CPython is the point.
+These are the only two entries in `testdata/known_failures.txt`, and this is
+the one place where not matching CPython is the point.
 
 Note what is *not* in this category. `str.format`'s replacement fields take
 attribute and index accessors -- `"{0.foo}"`, `"{user[id]}"` -- and that is an
@@ -248,20 +195,3 @@ as a single run.
 Above that, CPython splits the list into runs and merges them, and gojja2 uses
 a stable sort of its own. The result is identical; only which pair a failing
 comparison names can differ.
-
-## A bound on nesting depth
-
-```jinja
-{{ [[[[[ ... 100000 levels ... ]]]]] }}
-```
-
-CPython raises `RecursionError` at around a thousand frames. Go grows a
-goroutine's stack on demand, so gojja2 would parse a million levels happily and
-then die on an allocation it cannot recover from.
-
-gojja2 refuses past 1,000 levels of expression or statement nesting with a
-`TemplateSyntaxError`. Templates are frequently attacker-supplied and nothing
-written on purpose nests ten deep, let alone a thousand, so the limit is
-generous and the failure is clean. It is a safety control rather than a
-behavioural choice, and the exception class differs from CPython's for the same
-reason the `RecursionError` wording does.
