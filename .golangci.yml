@@ -1,0 +1,23 @@
+# go vet alone does not report an unexported function nobody calls, and three
+# had accumulated -- along with a parameter that was never read and a doc
+# comment claiming one of them was used. Those are cheap to find and were not
+# being found.
+version: "2"
+
+linters:
+  enable:
+    - unused
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - govet
+
+  exclusions:
+    rules:
+      # The generated corpora and the vendored suites are not ours to lint.
+      - path: third_party/
+        linters: [unused, errcheck, staticcheck, ineffassign, govet]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

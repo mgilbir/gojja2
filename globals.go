@@ -343,12 +343,15 @@ func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 	}
 	// randrange(lo, hi) may legitimately be negative -- lipsum(1, true, -5, -1)
 	// is a real call, and jinja2 then loops over range(negative), which runs
-	// no times and yields an empty paragraph. The span is computed in int64
-	// because hi-lo overflows for a wide enough range, and a wrapped negative
-	// reaches rand.IntN, which panics on one.
-	span := int64(hi) - int64(lo)
-	if span > math.MaxInt32 {
-		span = math.MaxInt32
+	// no times and yields an empty paragraph.
+	//
+	// The width of the range is computed unsigned. hi-lo overflows int64 for
+	// a wide enough range -- lipsum(1, true, -2**63, 0) is the smallest case
+	// -- and the wrapped negative reaches rand.IntN, which panics on one.
+	// Since hi > lo is established above, the unsigned difference is exact.
+	span := int64(math.MaxInt32)
+	if width := uint64(hi) - uint64(lo); width < uint64(math.MaxInt32) {
+		span = int64(width)
 	}
 
 	// n paragraphs of at most hi words each, charged before any of them is

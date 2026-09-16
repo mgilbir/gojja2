@@ -76,11 +76,11 @@ func (ex *exec) evalCall(n *ast.Call) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
-	return ex.invoke(callee, args, n)
+	return ex.invoke(callee, args)
 }
 
-// invoke calls a value. The node is only used to name the callee in an error.
-func (ex *exec) invoke(callee value.Value, args *value.CallArgs, at ast.Expr) (value.Value, error) {
+// invoke calls a value.
+func (ex *exec) invoke(callee value.Value, args *value.CallArgs) (value.Value, error) {
 	if callee.IsUndefined() {
 		return value.Undefined, callee.UndefinedError()
 	}
@@ -235,15 +235,6 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 	return markup(text, autoescape), nil
 }
 
-func isDeclared(params []*ast.Name, name string) bool {
-	for _, p := range params {
-		if p.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 // execCallBlock runs `{% call %}`: the block body becomes a `caller` macro the
 // invoked macro can render.
 func (ex *exec) execCallBlock(n *ast.CallBlock) error {
@@ -275,7 +266,7 @@ func (ex *exec) execCallBlock(n *ast.CallBlock) error {
 	args.Kwargs = append(args.Kwargs,
 		value.Kwarg{Name: "caller", Value: value.FromObject(callerMacro)})
 
-	v, err := ex.invoke(callee, args, n.Call)
+	v, err := ex.invoke(callee, args)
 	if err != nil {
 		return err
 	}

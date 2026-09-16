@@ -5,6 +5,7 @@ package conformance_test
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -96,7 +97,7 @@ func loadKnownFailures(t *testing.T, root string) map[string]string {
 		}
 		t.Fatalf("open %s: %v", knownFailuresPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	known := map[string]string{}
 	sc := bufio.NewScanner(f)
@@ -210,6 +211,87 @@ func TestConformance(t *testing.T) {
 			"%d known divergence(s), %d ungradable",
 			passed, gradable, 100*float64(passed)/float64(gradable),
 			len(known)-ungradable, ungradable)
+	}
+
+	checkReadmeTable(t, all, known, present)
+}
+
+// readmeRows maps each corpus to the row that describes it in the README, in
+// the order the table lists them.
+var readmeRows = []struct{ corpus, label string }{
+	{"own", "gojja2's own (committed, with goldens)"},
+	{"minijinja", "MiniJinja fixtures"},
+	{"jinja-harvest", "Jinja's own test suite (harvested templates)"},
+	{"minja", "minja's syntax tests"},
+	{"llamacpp", "llama.cpp's Jinja tests"},
+	{"chat-templates", "LLM chat templates x 10 conversation shapes"},
+	{"wild", "A documentation theme's templates"},
+	{"cookiecutter", "Cookiecutter project templates"},
+}
+
+// checkReadmeTable requires the README's conformance table to match what was
+// just measured.
+//
+// The table was stale: it claimed 2589 gradable and 2585 matching where the
+// suite reported 2591 and 2587, because two cases had been added to the
+// committed corpus without anyone updating the prose. A number in a README that
+// nothing checks is a number that drifts, and this one is the project's
+// headline claim.
+//
+// It can only be checked when every corpus is present, since `make import` is
+// what builds most of them.
+func checkReadmeTable(t *testing.T, all []result, known map[string]string, present map[string]bool) {
+	t.Helper()
+	for _, row := range readmeRows {
+		if !present[row.corpus] {
+			t.Logf("README table not checked: corpus %q absent; run `make suites && make import`",
+				row.corpus)
+			return
+		}
+	}
+
+	type tally struct{ gradable, passed int }
+	byCorpus := map[string]*tally{}
+	var totalGradable, totalPassed int
+	for _, r := range all {
+		if strings.HasPrefix(known[r.id], "ungradable:") {
+			continue
+		}
+		name, _, _ := strings.Cut(r.id, "/")
+		c := byCorpus[name]
+		if c == nil {
+			c = &tally{}
+			byCorpus[name] = c
+		}
+		c.gradable++
+		totalGradable++
+		if r.ok {
+			c.passed++
+			totalPassed++
+		}
+	}
+
+	readme, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatalf("reading README.md: %v", err)
+	}
+	text := string(readme)
+
+	for _, row := range readmeRows {
+		c := byCorpus[row.corpus]
+		if c == nil {
+			t.Errorf("corpus %q produced no gradable cases", row.corpus)
+			continue
+		}
+		want := fmt.Sprintf("| %s | %d | %d |", row.label, c.gradable, c.passed)
+		if !strings.Contains(text, want) {
+			t.Errorf("README conformance table is out of date.\n  expected row: %s", want)
+		}
+	}
+	wantTotal := fmt.Sprintf("| **total** | **%d** | **%d (%.1f%%)** |",
+		totalGradable, totalPassed, 100*float64(totalPassed)/float64(totalGradable))
+	if !strings.Contains(text, wantTotal) {
+		t.Errorf("README conformance total is out of date.\n  expected row: %s", wantTotal)
 	}
 }
 

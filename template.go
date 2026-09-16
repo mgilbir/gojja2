@@ -39,6 +39,11 @@ func (t *Template) Name() string { return t.name }
 // must not emit a partial document should render into a buffer, or use
 // [Template.RenderString].
 //
+// `{% include %}` is the exception: an included template is rendered in full
+// before its text is written on, because a context-free include has to reach
+// the enclosing function's stream rather than the current buffer. Peak memory
+// therefore tracks the largest include, not the size of the write buffer.
+//
 // ctx bounds the render. Cancel it, or give it a deadline, and the render stops
 // at the next loop iteration, output write, or filter yield point, and returns
 // an error wrapping ctx.Err().

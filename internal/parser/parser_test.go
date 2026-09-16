@@ -212,7 +212,7 @@ func loadParseCorpus(t *testing.T) []parseCase {
 	if err != nil {
 		t.Fatalf("open corpus: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var cases []parseCase
 	sc := bufio.NewScanner(f)

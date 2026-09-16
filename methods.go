@@ -719,6 +719,13 @@ func pad(st *State, s string, width int, fill string, align padAlign) (value.Val
 	if missing <= 0 {
 		return value.String(s), nil
 	}
+	// Charge the whole padding before building any of it. center splits it
+	// into two halves, and charging those separately let each pass the
+	// ceiling while their sum went straight past it -- the same way two
+	// individually-legal operands defeated the check in replace.
+	if err := st.ChargeBytes(saturatingMulInt(int64(missing), int64(len(fill)))); err != nil {
+		return value.Undefined, err
+	}
 	switch align {
 	case padLeftAligned:
 		tail, err := st.repeatString(fill, missing)

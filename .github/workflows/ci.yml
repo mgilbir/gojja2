@@ -1,0 +1,66 @@
+name: CI
+
+# `make check` has always described itself as "everything CI should run".
+# Nothing ran it: there was no workflow, so the conformance guarantee the README
+# relies on -- that a known failure which starts passing fails the build -- held
+# only when someone remembered. It did drift.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # The toolchain is pinned in go.mod, down to the patch level.
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^third_party/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "unformatted:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      # The committed corpus is graded with no network and no Python, so this
+      # runs on a fresh checkout.
+      - name: Test
+        run: go test ./...
+
+      # The resource tests assert that a hostile template returns an error
+      # rather than taking the process down. Without a memory cap a regression
+      # would look like a slow job rather than a failure, so the runner is
+      # given one it can actually hit.
+      - name: Test under a memory cap
+        run: go test ./...
+        env:
+          GOMEMLIMIT: 1GiB
+
+      - name: Race
+        run: go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # go vet does not report unused unexported functions, and three had
+      # accumulated unnoticed.
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest

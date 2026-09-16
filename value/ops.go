@@ -682,12 +682,12 @@ func Pos(v Value) (Value, error) {
 	if err := undefinedOperand(v); err != nil {
 		return Undefined, err
 	}
-	switch {
-	case v.kind == KindFloat:
+	switch v.kind {
+	case KindFloat:
 		return v, nil
-	case v.kind == KindBool:
+	case KindBool:
 		return Int(int64(v.num)), nil
-	case v.kind == KindInt:
+	case KindInt:
 		return v, nil
 	}
 	return Undefined, errs.New(errs.TypeError, "bad operand type for unary +: '%s'", v.TypeName())

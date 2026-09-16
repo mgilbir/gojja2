@@ -167,8 +167,7 @@ func TestFoldedFilterResultIsSizeChecked(t *testing.T) {
 // constantBytes totals the literal text a compiled template carries.
 func constantBytes(t *Template) int {
 	total := 0
-	var walk func([]ast.Stmt)
-	walk = func(body []ast.Stmt) {
+	walk := func(body []ast.Stmt) {
 		for _, stmt := range body {
 			if out, ok := stmt.(*ast.Output); ok {
 				for _, node := range out.Nodes {
