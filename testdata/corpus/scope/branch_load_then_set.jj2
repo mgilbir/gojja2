@@ -1,0 +1,8 @@
+{
+  "__templates__": {
+    "mac.txt": "{% macro m(x) %}M{% endmacro %}"
+  },
+  "m": 10
+}
+---
+{% if false %}{% else %}[{{ m }}]{% endif %}{% from 'mac.txt' import m %}

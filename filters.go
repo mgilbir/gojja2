@@ -784,23 +784,14 @@ func filterWordcount(_ *State, v value.Value, _ *value.CallArgs) (value.Value, e
 	return value.Int(int64(len(wordRe.FindAllString(value.Str(v), -1)))), nil
 }
 
+// stripTagsRe matches what jinja2 removes: an HTML comment, or a complete
+// tag. An unpaired "<" is left alone, which a depth counter would swallow.
+var stripTagsRe = regexp.MustCompile(`(?s)<!--.*?-->|<[^>]*>`)
+
 // filterStriptags removes markup and normalises whitespace, the way jinja2
 // does before handing text to something that cannot render HTML.
 func filterStriptags(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	s := value.Str(v)
-	var b strings.Builder
-	depth := 0
-	for _, r := range s {
-		switch {
-		case r == '<':
-			depth++
-		case r == '>' && depth > 0:
-			depth--
-		case depth == 0:
-			b.WriteRune(r)
-		}
-	}
-	text := unescapeHTML(b.String())
+	text := unescapeHTML(stripTagsRe.ReplaceAllString(value.Str(v), ""))
 	return value.String(strings.Join(strings.Fields(text), " ")), nil
 }
 
@@ -830,7 +821,7 @@ func filterPprint(_ *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 	// pformat returns a str even for Markup input -- what it renders is the
 	// repr, which for Markup is `Markup('...')`.
 	var b strings.Builder
-	pformat(&b, sortDictKeys(v), 0, 0)
+	pformat(&b, sortDictKeys(v), 0, 0, 0)
 	return value.String(b.String()), nil
 }
 
@@ -842,8 +833,9 @@ const pprintWidth = 80
 // The rule is one line if it fits and one element per line if it does not,
 // with the continuation indented past the opening bracket. indent is the
 // column the value starts at; allowance is the space reserved on the last line
-// for whatever closes around it.
-func pformat(b *strings.Builder, v value.Value, indent, allowance int) {
+// for whatever closes around it; level counts how deep the dispatch has gone,
+// because a long string only gains its wrapping parentheses at the top.
+func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) {
 	rep := value.Repr(v)
 	if len(rep) <= pprintWidth-indent-allowance {
 		b.WriteString(rep)
@@ -851,6 +843,9 @@ func pformat(b *strings.Builder, v value.Value, indent, allowance int) {
 	}
 
 	switch v.Kind() {
+	case value.KindString:
+		pformatString(b, v.AsString(), rep, indent, allowance, level+1)
+
 	case value.KindList, value.KindTuple:
 		s, _ := v.Seq()
 		open, close := "[", "]"
@@ -859,7 +854,7 @@ func pformat(b *strings.Builder, v value.Value, indent, allowance int) {
 		}
 		b.WriteString(open)
 		pformatItems(b, s.Items(), indent, allowance+1, func(b *strings.Builder, item value.Value, at, room int) {
-			pformat(b, item, at, room)
+			pformat(b, item, at, room, level+1)
 		})
 		if v.Kind() == value.KindTuple && s.Len() == 1 {
 			b.WriteString(",")
@@ -874,13 +869,106 @@ func pformat(b *strings.Builder, v value.Value, indent, allowance int) {
 			b.WriteString(keyRep)
 			b.WriteString(": ")
 			val, _, _ := d.Get(key)
-			pformat(b, val, at+len(keyRep)+2, room)
+			pformat(b, val, at+len(keyRep)+2, room, level+1)
 		})
 		b.WriteString("}")
 
 	default:
 		b.WriteString(rep)
 	}
+}
+
+// wordChunkRe matches a run of non-space followed by the space after it, which
+// is where pprint may break a long string.
+var wordChunkRe = regexp.MustCompile(`\S*\s*`)
+
+// pformatString breaks a string that does not fit into one repr per line,
+// wrapping the whole in parentheses when it is the outermost value.
+func pformatString(b *strings.Builder, text, rep string, indent, allowance, level int) {
+	if text == "" {
+		b.WriteString(rep)
+		return
+	}
+	if level == 1 {
+		indent++
+		allowance++
+	}
+
+	maxWidth := pprintWidth - indent
+	var chunks []string
+	lines := splitLinesKeepingEnds(text)
+	for i, line := range lines {
+		lineRep := value.Repr(value.String(line))
+		limit := maxWidth
+		if i == len(lines)-1 {
+			limit -= allowance
+		}
+		if len(lineRep) <= limit {
+			chunks = append(chunks, lineRep)
+			continue
+		}
+		// Break the line between words, keeping each piece's repr
+		// inside the width.
+		parts := wordChunkRe.FindAllString(line, -1)
+		if n := len(parts); n > 0 && parts[n-1] == "" {
+			parts = parts[:n-1]
+		}
+		current := ""
+		for j, part := range parts {
+			candidate := current + part
+			limit := maxWidth
+			if j == len(parts)-1 && i == len(lines)-1 {
+				limit -= allowance
+			}
+			if len(value.Repr(value.String(candidate))) > limit {
+				if current != "" {
+					chunks = append(chunks, value.Repr(value.String(current)))
+				}
+				current = part
+				continue
+			}
+			current = candidate
+		}
+		if current != "" {
+			chunks = append(chunks, value.Repr(value.String(current)))
+		}
+	}
+
+	if len(chunks) == 1 {
+		b.WriteString(chunks[0])
+		return
+	}
+	if level == 1 {
+		b.WriteString("(")
+	}
+	for i, chunk := range chunks {
+		if i > 0 {
+			b.WriteString("\n" + strings.Repeat(" ", indent))
+		}
+		b.WriteString(chunk)
+	}
+	if level == 1 {
+		b.WriteString(")")
+	}
+}
+
+// splitLinesKeepingEnds is Python's str.splitlines(True).
+func splitLinesKeepingEnds(s string) []string {
+	var out []string
+	for len(s) > 0 {
+		i := strings.IndexAny(s, "\n\r")
+		if i < 0 {
+			out = append(out, s)
+			break
+		}
+		end := i + 1
+		if s[i] == '\r' && end < len(s) && s[end] == '\n' {
+			end++
+		}
+		out = append(out, s[:end])
+		s = s[end:]
+	}
+	return out
 }
 
 // pformatItems writes a sequence of entries one per line, indented one column

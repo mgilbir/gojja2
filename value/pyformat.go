@@ -22,6 +22,10 @@ import (
 // else -- a bare dict included -- is a single argument.
 func FormatPercent(format, args Value) (Value, error) {
 	spec := format.str
+	// markupsafe wraps each argument so that it escapes as it is
+	// substituted, and returns Markup. Escaping happens *before* padding,
+	// so a width applies to the escaped text.
+	escaping := format.safe
 
 	// CPython decides between "a mapping" and "one positional argument" by
 	// asking whether the right operand supports subscripting, excluding
@@ -116,7 +120,7 @@ func FormatPercent(format, args Value) (Value, error) {
 			}
 		}
 
-		text, err := conv.apply(arg)
+		text, err := conv.apply(arg, escaping)
 		if err != nil {
 			return Undefined, err
 		}
@@ -126,6 +130,9 @@ func FormatPercent(format, args Value) (Value, error) {
 	if !hasMapping && next != len(positional) {
 		return Undefined, errs.New(errs.TypeError,
 			"not all arguments converted during string formatting")
+	}
+	if escaping {
+		return Safe(out.String()), nil
 	}
 	return String(out.String()), nil
 }
@@ -292,14 +299,23 @@ func (c *conversion) goVerb(verb byte) string {
 	return b.String()
 }
 
-func (c *conversion) apply(v Value) (string, error) {
+func (c *conversion) apply(v Value, escaping bool) (string, error) {
+	// A Markup format escapes whatever it substitutes, unless that value is
+	// itself Markup.
+	text := func(s string) string {
+		if escaping && !v.safe {
+			return EscapeHTML(s)
+		}
+		return s
+	}
+
 	switch c.verb {
 	case 's':
-		return fmt.Sprintf(c.goVerb('s'), Str(v)), nil
+		return fmt.Sprintf(c.goVerb('s'), text(Str(v))), nil
 	case 'r':
-		return fmt.Sprintf(c.goVerb('s'), Repr(v)), nil
+		return fmt.Sprintf(c.goVerb('s'), text(Repr(v))), nil
 	case 'a':
-		return fmt.Sprintf(c.goVerb('s'), Ascii(v)), nil
+		return fmt.Sprintf(c.goVerb('s'), text(Ascii(v))), nil
 
 	case 'd', 'i', 'u', 'o', 'x', 'X':
 		n, err := c.integerArg(v)
@@ -330,7 +346,7 @@ func (c *conversion) apply(v Value) (string, error) {
 			if StrLen(v.str) != 1 {
 				return "", errs.New(errs.TypeError, "%%c requires int or char")
 			}
-			return v.str, nil
+			return text(v.str), nil
 		}
 		n, ok := v.Int64()
 		if !ok || n < 0 || n > 0x10FFFF {

@@ -1,0 +1,9 @@
+{
+  "case": "layout/pprint_nested_string.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "[\"[{'name': 'ana', 'age': 30, 'city': 'lisbon'}, {'name': 'bo', 'age': 25, \"\n \"'city': 'porto'}, {'name': 'cy', 'age': 30, 'city': 'lisbon'}]\"]"
+}

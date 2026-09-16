@@ -126,6 +126,12 @@ case("scope/setblock_before_set", "{% set v %}[{{ x }}]{% endset %}{{ v }}{% set
 case("scope/scoped_block_in_loop", "{% for i in [1] %}{% block b scoped %}[{{ x }}][{{ i }}]{% endblock %}{% endfor %}{% set x = 1 %}", **SCOPE)
 case("scope/import_after_use", "{% macro mm() %}[{{ m }}]{% endmacro %}{{ mm() }}{% from 'mac.txt' import m %}",
      __templates__={"mac.txt": "{% macro m(x) %}M{% endmacro %}"}, m=10)
+# A name merely mentioned inside an {% if %} branch settles at the enclosing
+# level, so a later assignment no longer claims it.
+case("scope/branch_load_then_set", "{% if false %}{% else %}[{{ m }}]{% endif %}{% from 'mac.txt' import m %}",
+     __templates__={"mac.txt": "{% macro m(x) %}M{% endmacro %}"}, m=10)
+case("scope/branch_test_then_set", "{% if m %}[{{ m }}]{% endif %}{% from 'mac.txt' import m %}",
+     __templates__={"mac.txt": "{% macro m(x) %}M{% endmacro %}"}, m=10)
 case("scope/loop_conditional_set", "{% for i in [1,2,3] %}{% if loop.first %}{% set c = 0 %}{% endif %}{{ c }}{% endfor %}")
 
 # --- constant folding ---------------------------------------------------------
@@ -281,6 +287,8 @@ case("filters/indent", "{{ 'a\\nb\\n\\nc'|indent(2) }}|{{ 'a\\nb'|indent(2, true
 case("filters/truncate", "{{ text|truncate(20) }}|{{ text|truncate(20, true) }}|{{ 'short'|truncate(20) }}", **TEXT)
 case("filters/wordwrap", "{{ text|wordwrap(10) }}", **TEXT)
 case("filters/striptags", "{{ '<p>a  <b>b</b></p>'|striptags }}|{{ '&lt;a&gt;'|striptags }}")
+# Only complete tags and comments go; an unpaired "<" stays.
+case("filters/striptags_partial", "{{ '<'|striptags }}|{{ '<b'|striptags }}|{{ 'a<!--c-->b'|striptags }}|{{ 'a < b'|striptags }}")
 case("filters/format", "{{ '%s-%d'|format('a', 5) }}|{{ '%(x)s'|format(x=1) }}")
 case("filters/filesizeformat", "{{ 1|filesizeformat }}|{{ 1000|filesizeformat }}|{{ 1000000|filesizeformat }}|{{ 1024|filesizeformat(true) }}")
 case("filters/urlencode", "{{ 'a b/c?d'|urlencode }}|{{ {'a':'1 2'}|urlencode }}")
@@ -304,12 +312,19 @@ case("markup/range_equality", "{{ range(3,0,-1) == range(3,0,-1) }}{{ range(0,3,
 case("markup/groupby_json", "{{ {'a': 1}|groupby('city')|list|tojson }}")
 case("markup/preserved", "{{ ('<b>'|safe)|upper|pprint }}|{{ ('a b'|safe)|trim|pprint }}|{{ ('ab'|safe)|title|pprint }}")
 case("markup/indexing", "{{ ('ab'|safe)[0]|pprint }}|{{ ('ab'|safe)|last|pprint }}|{{ ('ab'|safe)|first|pprint }}")
+case("markup/percent_format", "{{ ('%s'|safe) % '<i>' }}|{{ (('%s'|safe) % '<i>') is escaped }}|{{ '%s' % '<i>' }}")
+case("markup/percent_width", "[{{ ('%10s'|safe) % '<i>' }}]")
 case("markup/tojson_is_markup", "{{ ([1]|tojson)|pprint }}")
 
 # --- textwrap and pprint ------------------------------------------------------
 case("layout/wordwrap_escaped", "{{ {1: 'a', 2: 'b'}|urlize|wordwrap(10) }}")
 case("layout/wordwrap_hyphens", "{{ 'a-very-long-hyphenated-word here'|wordwrap(8) }}")
 case("layout/wordwrap_nobreak", "{{ 'abcdefghij kl'|wordwrap(5, false) }}|{{ 'abcdefghij kl'|wordwrap(4) }}")
+# A string too long for one line is split at word boundaries, one repr per
+# line, parenthesised when it is the outermost value.
+case("layout/pprint_long_string", "{{ users|lower|pprint }}", **USERS)
+case("layout/pprint_nested_string", "{{ [users|lower]|pprint }}", **USERS)
+case("layout/pprint_short_string", "{{ 'short'|pprint }}")
 case("layout/pprint_wrapping", "{{ users|pprint }}|{{ {'a': users}|pprint }}", **USERS)
 case("layout/indent_empty", "[{{ ''|indent(2, true) }}]")
 

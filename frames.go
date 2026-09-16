@@ -108,36 +108,46 @@ func (v *frameVisitor) stmt(stmt ast.Stmt) {
 	}
 }
 
-// ifStmt applies jinja2's branch rule: a name counts as bound here only when
-// every branch binds it, and jinja2 always counts three -- body, elifs and
-// else -- so an if/else pair alone is not enough.
+// ifStmt applies jinja2's branch rule.
+//
+// Two things happen. A name merely *mentioned* in a branch settles at this
+// level, so a later assignment no longer claims it -- which is why
+// `{% if m %}{{ m }}{% endif %}{% from "x" import m %}` still sees the
+// argument m. And a name *assigned* in a branch only counts as bound here when
+// every branch binds it; jinja2 always counts three -- body, elifs and else --
+// so an if/else pair alone is not enough.
 func (v *frameVisitor) ifStmt(n *ast.If) {
 	v.expr(n.Test)
 
-	branch := func(body []ast.Stmt) map[string]bool {
+	branch := func(body []ast.Stmt) (mentioned, stored map[string]bool) {
 		sub := &frameVisitor{seen: map[string]bool{}}
 		sub.stmts(body)
-		out := make(map[string]bool, len(sub.locals))
+		stored = make(map[string]bool, len(sub.locals))
 		for _, name := range sub.locals {
-			out[name] = true
+			stored[name] = true
 		}
-		return out
+		return sub.seen, stored
 	}
 
 	var elifBody []ast.Stmt
 	for _, elif := range n.Elif {
 		elifBody = append(elifBody, elif)
 	}
-	branches := []map[string]bool{branch(n.Body), branch(elifBody), branch(n.Else)}
+	bodies := [][]ast.Stmt{n.Body, elifBody, n.Else}
 
+	mentioned := map[string]bool{}
 	counts := map[string]int{}
-	for _, b := range branches {
-		for name := range b {
+	for _, body := range bodies {
+		seen, stored := branch(body)
+		for name := range seen {
+			mentioned[name] = true
+		}
+		for name := range stored {
 			counts[name]++
 		}
 	}
-	for name, count := range counts {
-		if count == len(branches) {
+	for name := range mentioned {
+		if counts[name] == len(bodies) {
 			v.store(name)
 			continue
 		}
