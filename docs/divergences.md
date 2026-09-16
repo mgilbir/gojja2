@@ -276,6 +276,17 @@ its own container.
 A cyclic value reaches `pprint` at all only when its `repr` is too wide to
 print on one line; a small one collapses to `{...}` first, which is exact.
 
+## No automatic template reload
+
+jinja2's `Environment` takes `auto_reload=True` and recompiles a template whose
+source has changed. gojja2 does not, because its `Loader` interface returns
+source and nothing else -- there is no freshness to consult, and inventing one
+would mean every loader implementing a second method.
+
+`Environment.ClearCache` and `Environment.ForgetTemplate` are the supported way
+to pick up an edit; the template cache is otherwise a bounded LRU, defaulting to
+the same 400 entries jinja2 uses.
+
 ## Identifier characters
 
 jinja2 matches names against a table generated from Python's `str.isidentifier`.
