@@ -1,0 +1,21 @@
+gojja2
+Copyright 2026 The gojja2 Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+gojja2 is an independent, clean-room-style reimplementation of the Jinja2
+template language in Go. No source code from the projects below is copied into
+this repository; they are consulted as behavioural references and used as test
+oracles/fixtures at development time only.
+
+  * Jinja (https://github.com/pallets/jinja) - BSD-3-Clause.
+    The CPython implementation is used as the ground-truth oracle: expected
+    output for the conformance corpus is produced by rendering templates with
+    the real `jinja2` package. Jinja's own pytest suite is consulted as a
+    source of behavioural cases.
+
+  * MiniJinja (https://github.com/mitsuhiko/minijinja) - Apache-2.0.
+    Its template fixture corpus is consulted as a source of behavioural cases.
+
+Neither project's sources are redistributed here. `make suites` downloads them
+into ./third_party/, which is excluded from version control.

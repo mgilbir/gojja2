@@ -1,0 +1,12 @@
+# Third-party test suites, fetched by `make suites`. Never vendored.
+/third_party/
+
+# Oracle virtualenv and generated conformance data.
+/.venv/
+/testdata/generated/
+
+# Build output
+/bin/
+*.test
+*.out
+coverage.txt
