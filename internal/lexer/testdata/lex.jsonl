@@ -1,0 +1,113 @@
+{"src": "hello", "syntax": {}, "tokens": [[1, "data", "hello"]]}
+{"src": "hello\n", "syntax": {}, "tokens": [[1, "data", "hello"]]}
+{"src": "hello\n", "syntax": {"keep_trailing_newline": true}, "tokens": [[1, "data", "hello\n"]]}
+{"src": "hello\n\n", "syntax": {}, "tokens": [[1, "data", "hello\n"]]}
+{"src": "hello\n\n", "syntax": {"keep_trailing_newline": true}, "tokens": [[1, "data", "hello\n\n"]]}
+{"src": "a\r\nb\rc\n", "syntax": {}, "tokens": [[1, "data", "a\nb\nc"]]}
+{"src": "a\r\nb\rc\n", "syntax": {"keep_trailing_newline": true}, "tokens": [[1, "data", "a\nb\nc\n"]]}
+{"src": "a\r\nb\rc\n", "syntax": {"newline_sequence": "\r\n", "keep_trailing_newline": true}, "tokens": [[1, "data", "a\r\nb\r\nc\r\n"]]}
+{"src": "", "syntax": {}, "tokens": []}
+{"src": "", "syntax": {"keep_trailing_newline": true}, "tokens": []}
+{"src": "\n", "syntax": {}, "tokens": []}
+{"src": "\n", "syntax": {"keep_trailing_newline": true}, "tokens": [[1, "data", "\n"]]}
+{"src": "{{ x }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "x"], [1, "variable_end", "}}"]]}
+{"src": "{{x}}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "x"], [1, "variable_end", "}}"]]}
+{"src": "{{ x }}{{ y }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "x"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "name", "y"], [1, "variable_end", "}}"]]}
+{"src": "a {{ x }} b", "syntax": {}, "tokens": [[1, "data", "a "], [1, "variable_begin", "{{"], [1, "name", "x"], [1, "variable_end", "}}"], [1, "data", " b"]]}
+{"src": "{{ }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "variable_end", "}}"]]}
+{"src": "  \n  {{- x -}}  \n  ", "syntax": {}, "tokens": [[2, "variable_begin", "{{-"], [2, "name", "x"], [2, "variable_end", "-}}  \n  "]]}
+{"src": "  \n  {{- x -}}  \n  ", "syntax": {"trim_blocks": true}, "tokens": [[2, "variable_begin", "{{-"], [2, "name", "x"], [2, "variable_end", "-}}  \n  "]]}
+{"src": "  \n  {{- x -}}  \n  ", "syntax": {"lstrip_blocks": true}, "tokens": [[2, "variable_begin", "{{-"], [2, "name", "x"], [2, "variable_end", "-}}  \n  "]]}
+{"src": "  \n  {{- x -}}  \n  ", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[2, "variable_begin", "{{-"], [2, "name", "x"], [2, "variable_end", "-}}  \n  "]]}
+{"src": "  \n  {%- if x -%}  \n  {%- endif -%}\n", "syntax": {}, "tokens": [[2, "block_begin", "{%-"], [2, "name", "if"], [2, "name", "x"], [2, "block_end", "-%}  \n  "], [3, "block_begin", "{%-"], [3, "name", "endif"], [3, "block_end", "-%}"]]}
+{"src": "  \n  {%- if x -%}  \n  {%- endif -%}\n", "syntax": {"trim_blocks": true}, "tokens": [[2, "block_begin", "{%-"], [2, "name", "if"], [2, "name", "x"], [2, "block_end", "-%}  \n  "], [3, "block_begin", "{%-"], [3, "name", "endif"], [3, "block_end", "-%}"]]}
+{"src": "  \n  {%- if x -%}  \n  {%- endif -%}\n", "syntax": {"lstrip_blocks": true}, "tokens": [[2, "block_begin", "{%-"], [2, "name", "if"], [2, "name", "x"], [2, "block_end", "-%}  \n  "], [3, "block_begin", "{%-"], [3, "name", "endif"], [3, "block_end", "-%}"]]}
+{"src": "  \n  {%- if x -%}  \n  {%- endif -%}\n", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[2, "block_begin", "{%-"], [2, "name", "if"], [2, "name", "x"], [2, "block_end", "-%}  \n  "], [3, "block_begin", "{%-"], [3, "name", "endif"], [3, "block_end", "-%}"]]}
+{"src": "a\n   {% if x %}\nb\n   {% endif %}\nc", "syntax": {}, "tokens": [[1, "data", "a\n   "], [2, "block_begin", "{%"], [2, "name", "if"], [2, "name", "x"], [2, "block_end", "%}"], [2, "data", "\nb\n   "], [4, "block_begin", "{%"], [4, "name", "endif"], [4, "block_end", "%}"], [4, "data", "\nc"]]}
+{"src": "a\n   {% if x %}\nb\n   {% endif %}\nc", "syntax": {"trim_blocks": true}, "tokens": [[1, "data", "a\n   "], [2, "block_begin", "{%"], [2, "name", "if"], [2, "name", "x"], [2, "block_end", "%}\n"], [3, "data", "b\n   "], [4, "block_begin", "{%"], [4, "name", "endif"], [4, "block_end", "%}\n"], [5, "data", "c"]]}
+{"src": "a\n   {% if x %}\nb\n   {% endif %}\nc", "syntax": {"lstrip_blocks": true}, "tokens": [[1, "data", "a\n"], [2, "block_begin", "{%"], [2, "name", "if"], [2, "name", "x"], [2, "block_end", "%}"], [2, "data", "\nb\n"], [4, "block_begin", "{%"], [4, "name", "endif"], [4, "block_end", "%}"], [4, "data", "\nc"]]}
+{"src": "a\n   {% if x %}\nb\n   {% endif %}\nc", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[1, "data", "a\n"], [2, "block_begin", "{%"], [2, "name", "if"], [2, "name", "x"], [2, "block_end", "%}\n"], [3, "data", "b\n"], [4, "block_begin", "{%"], [4, "name", "endif"], [4, "block_end", "%}\n"], [5, "data", "c"]]}
+{"src": "   {% if x %}", "syntax": {}, "tokens": [[1, "data", "   "], [1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "%}"]]}
+{"src": "   {% if x %}", "syntax": {"lstrip_blocks": true}, "tokens": [[1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "%}"]]}
+{"src": "   {% if x %}", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "%}"]]}
+{"src": "   {%+ if x %}", "syntax": {}, "tokens": [[1, "data", "   "], [1, "block_begin", "{%+"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "%}"]]}
+{"src": "   {%+ if x %}", "syntax": {"lstrip_blocks": true}, "tokens": [[1, "data", "   "], [1, "block_begin", "{%+"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "%}"]]}
+{"src": "   {%+ if x %}", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[1, "data", "   "], [1, "block_begin", "{%+"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "%}"]]}
+{"src": "x   {% if y %}", "syntax": {}, "tokens": [[1, "data", "x   "], [1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "y"], [1, "block_end", "%}"]]}
+{"src": "x   {% if y %}", "syntax": {"lstrip_blocks": true}, "tokens": [[1, "data", "x   "], [1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "y"], [1, "block_end", "%}"]]}
+{"src": "x   {% if y %}", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[1, "data", "x   "], [1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "y"], [1, "block_end", "%}"]]}
+{"src": "{% if x +%}\nbody", "syntax": {}, "tokens": [[1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "+%}"], [1, "data", "\nbody"]]}
+{"src": "{% if x +%}\nbody", "syntax": {"trim_blocks": true}, "tokens": [[1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "+%}"], [1, "data", "\nbody"]]}
+{"src": "{% if x +%}\nbody", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "+%}"], [1, "data", "\nbody"]]}
+{"src": "{% if x %}\nbody", "syntax": {}, "tokens": [[1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "%}"], [1, "data", "\nbody"]]}
+{"src": "{% if x %}\nbody", "syntax": {"trim_blocks": true}, "tokens": [[1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "%}\n"], [2, "data", "body"]]}
+{"src": "{% if x %}\nbody", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[1, "block_begin", "{%"], [1, "name", "if"], [1, "name", "x"], [1, "block_end", "%}\n"], [2, "data", "body"]]}
+{"src": "{{ x }}\nbody", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "x"], [1, "variable_end", "}}"], [1, "data", "\nbody"]]}
+{"src": "{{ x }}\nbody", "syntax": {"trim_blocks": true}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "x"], [1, "variable_end", "}}"], [1, "data", "\nbody"]]}
+{"src": "{{ x }}\nbody", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "x"], [1, "variable_end", "}}"], [1, "data", "\nbody"]]}
+{"src": "{# c #}\nbody", "syntax": {}, "tokens": [[1, "data", "\nbody"]]}
+{"src": "{# c #}\nbody", "syntax": {"trim_blocks": true}, "tokens": [[2, "data", "body"]]}
+{"src": "{# c #}\nbody", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[2, "data", "body"]]}
+{"src": "  {#- c -#}  ", "syntax": {}, "tokens": []}
+{"src": "  {#- c -#}  ", "syntax": {"trim_blocks": true}, "tokens": []}
+{"src": "  {#- c -#}  ", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": []}
+{"src": "a\n\n\n{%- if x %}", "syntax": {}, "tokens": [[1, "data", "a"], [4, "block_begin", "{%-"], [4, "name", "if"], [4, "name", "x"], [4, "block_end", "%}"]]}
+{"src": "a{# comment #}b", "syntax": {}, "tokens": [[1, "data", "a"], [1, "data", "b"]]}
+{"src": "a{# multi\nline #}b", "syntax": {}, "tokens": [[1, "data", "a"], [2, "data", "b"]]}
+{"src": "a{##}b", "syntax": {}, "tokens": [[1, "data", "a"], [1, "data", "b"]]}
+{"src": "{% raw %}{{ x }}{% endraw %}", "syntax": {}, "tokens": [[1, "data", "{{ x }}"]]}
+{"src": "{% raw %}{{ x }}{% endraw %}", "syntax": {"trim_blocks": true}, "tokens": [[1, "data", "{{ x }}"]]}
+{"src": "{% raw %}{{ x }}{% endraw %}", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[1, "data", "{{ x }}"]]}
+{"src": "{% raw %}\n{{ x }}\n{% endraw %}", "syntax": {}, "tokens": [[1, "data", "\n{{ x }}\n"]]}
+{"src": "{% raw %}\n{{ x }}\n{% endraw %}", "syntax": {"trim_blocks": true}, "tokens": [[1, "data", "\n{{ x }}\n"]]}
+{"src": "{% raw %}\n{{ x }}\n{% endraw %}", "syntax": {"trim_blocks": true, "lstrip_blocks": true}, "tokens": [[1, "data", "\n{{ x }}\n"]]}
+{"src": "  {%- raw -%}  a  {%- endraw -%}  ", "syntax": {}, "tokens": [[1, "data", "a"]]}
+{"src": "  {%- raw -%}  a  {%- endraw -%}  ", "syntax": {"trim_blocks": true}, "tokens": [[1, "data", "a"]]}
+{"src": "{% raw %}{% if %}{% endraw %}", "syntax": {}, "tokens": [[1, "data", "{% if %}"]]}
+{"src": "{%raw%}x{%endraw%}", "syntax": {}, "tokens": [[1, "data", "x"]]}
+{"src": "{{ 1 }}{{ 0 }}{{ 0_0 }}{{ 1_000 }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "integer", "1"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "integer", "0"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "integer", "0"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "integer", "1000"], [1, "variable_end", "}}"]]}
+{"src": "{{ 0b1010 }}{{ 0o17 }}{{ 0xFF }}{{ 0x_ff }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "integer", "10"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "integer", "15"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "integer", "255"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "integer", "255"], [1, "variable_end", "}}"]]}
+{"src": "{{ 1.5 }}{{ 1e3 }}{{ 1.5e-3 }}{{ 1_0.2_5 }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "float", "1.5"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "float", "1000.0"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "float", "0.0015"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "float", "10.25"], [1, "variable_end", "}}"]]}
+{"src": "{{ 1. }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "integer", "1"], [1, "dot", "."], [1, "variable_end", "}}"]]}
+{"src": "{{ x.5 }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "x"], [1, "dot", "."], [1, "integer", "5"], [1, "variable_end", "}}"]]}
+{"src": "{{ 2**100 }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "integer", "2"], [1, "pow", "**"], [1, "integer", "100"], [1, "variable_end", "}}"]]}
+{"src": "{{ \"a\" }}{{ 'b' }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "string", "a"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "string", "b"], [1, "variable_end", "}}"]]}
+{"src": "{{ \"a\\nb\\tc\\\\d\\\"e\" }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "string", "a\nb\tc\\d\"e"], [1, "variable_end", "}}"]]}
+{"src": "{{ \"\\x41é\\U0001F600\\101\" }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "string", "Aé😀A"], [1, "variable_end", "}}"]]}
+{"src": "{{ \"\\d\\8\" }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "string", "\\d\\8"], [1, "variable_end", "}}"]]}
+{"src": "{{ \"a\nb\" }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "string", "a\nb"], [2, "variable_end", "}}"]]}
+{"src": "{{ \"héllo\" }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "string", "héllo"], [1, "variable_end", "}}"]]}
+{"src": "{{ \"\\é\" }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "string", "\\xe9"], [1, "variable_end", "}}"]]}
+{"src": "{{ 'it\\'s' }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "string", "it's"], [1, "variable_end", "}}"]]}
+{"src": "{{ a + b - c * d / e // f % g ** h ~ i }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "a"], [1, "add", "+"], [1, "name", "b"], [1, "sub", "-"], [1, "name", "c"], [1, "mul", "*"], [1, "name", "d"], [1, "div", "/"], [1, "name", "e"], [1, "floordiv", "//"], [1, "name", "f"], [1, "mod", "%"], [1, "name", "g"], [1, "pow", "**"], [1, "name", "h"], [1, "tilde", "~"], [1, "name", "i"], [1, "variable_end", "}}"]]}
+{"src": "{{ a == b != c < d <= e > f >= g }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "a"], [1, "eq", "=="], [1, "name", "b"], [1, "ne", "!="], [1, "name", "c"], [1, "lt", "<"], [1, "name", "d"], [1, "lteq", "<="], [1, "name", "e"], [1, "gt", ">"], [1, "name", "f"], [1, "gteq", ">="], [1, "name", "g"], [1, "variable_end", "}}"]]}
+{"src": "{{ a[1:2:3] }}{{ a.b }}{{ a|b }}{{ a(b, c=1) }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "a"], [1, "lbracket", "["], [1, "integer", "1"], [1, "colon", ":"], [1, "integer", "2"], [1, "colon", ":"], [1, "integer", "3"], [1, "rbracket", "]"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "name", "a"], [1, "dot", "."], [1, "name", "b"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "name", "a"], [1, "pipe", "|"], [1, "name", "b"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "name", "a"], [1, "lparen", "("], [1, "name", "b"], [1, "comma", ","], [1, "name", "c"], [1, "assign", "="], [1, "integer", "1"], [1, "rparen", ")"], [1, "variable_end", "}}"]]}
+{"src": "{{ {\"a\": 1} }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "lbrace", "{"], [1, "string", "a"], [1, "colon", ":"], [1, "integer", "1"], [1, "rbrace", "}"], [1, "variable_end", "}}"]]}
+{"src": "{{ {\"a\": 1}}}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "lbrace", "{"], [1, "string", "a"], [1, "colon", ":"], [1, "integer", "1"], [1, "rbrace", "}"], [1, "variable_end", "}}"]]}
+{"src": "{{ [1, [2, 3]] }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "lbracket", "["], [1, "integer", "1"], [1, "comma", ","], [1, "lbracket", "["], [1, "integer", "2"], [1, "comma", ","], [1, "integer", "3"], [1, "rbracket", "]"], [1, "rbracket", "]"], [1, "variable_end", "}}"]]}
+{"src": "{{ (1,) }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "lparen", "("], [1, "integer", "1"], [1, "comma", ","], [1, "rparen", ")"], [1, "variable_end", "}}"]]}
+{"src": "{% set d = {1:\"a\",} %}{{ d[1] }}", "syntax": {}, "tokens": [[1, "block_begin", "{%"], [1, "name", "set"], [1, "name", "d"], [1, "assign", "="], [1, "lbrace", "{"], [1, "integer", "1"], [1, "colon", ":"], [1, "string", "a"], [1, "comma", ","], [1, "rbrace", "}"], [1, "block_end", "%}"], [1, "variable_begin", "{{"], [1, "name", "d"], [1, "lbracket", "["], [1, "integer", "1"], [1, "rbracket", "]"], [1, "variable_end", "}}"]]}
+{"src": "{{ a };{{ b }}", "syntax": {}, "err": "TemplateSyntaxError", "msg": "unexpected '}'", "line": 1}
+{"src": "{%\n  if\n  x\n%}y{%\nendif\n%}", "syntax": {}, "tokens": [[1, "block_begin", "{%"], [2, "name", "if"], [3, "name", "x"], [4, "block_end", "%}"], [4, "data", "y"], [4, "block_begin", "{%"], [5, "name", "endif"], [6, "block_end", "%}"]]}
+{"src": "{%\n  if\n  x\n%}y{%\nendif\n%}", "syntax": {"trim_blocks": true}, "tokens": [[1, "block_begin", "{%"], [2, "name", "if"], [3, "name", "x"], [4, "block_end", "%}"], [4, "data", "y"], [4, "block_begin", "{%"], [5, "name", "endif"], [6, "block_end", "%}"]]}
+{"src": "{{\n  x\n}}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [2, "name", "x"], [3, "variable_end", "}}"]]}
+{"src": "{{ _x }}{{ x_1 }}{{ ünïcode }}", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "_x"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "name", "x_1"], [1, "variable_end", "}}"], [1, "variable_begin", "{{"], [1, "name", "ünïcode"], [1, "variable_end", "}}"]]}
+{"src": "# for x in y\nbody\n# endfor\n", "syntax": {"line_statement_prefix": "#", "line_comment_prefix": "##"}, "tokens": [[1, "block_begin", "#"], [1, "name", "for"], [1, "name", "x"], [1, "name", "in"], [1, "name", "y"], [1, "block_end", "\n"], [2, "data", "body\n"], [3, "block_begin", "#"], [3, "name", "endfor"], [3, "block_end", ""]]}
+{"src": "  # for x in y\nbody", "syntax": {"line_statement_prefix": "#", "line_comment_prefix": "##"}, "tokens": [[1, "block_begin", "  #"], [1, "name", "for"], [1, "name", "x"], [1, "name", "in"], [1, "name", "y"], [1, "block_end", "\n"], [2, "data", "body"]]}
+{"src": "a # not a statement\n", "syntax": {"line_statement_prefix": "#", "line_comment_prefix": "##"}, "tokens": [[1, "data", "a # not a statement"]]}
+{"src": "hello ## trailing comment\nworld", "syntax": {"line_statement_prefix": "#", "line_comment_prefix": "##"}, "tokens": [[1, "data", "hello"], [1, "data", "\nworld"]]}
+{"src": "## whole line\nworld", "syntax": {"line_statement_prefix": "#", "line_comment_prefix": "##"}, "tokens": [[1, "data", "\nworld"]]}
+{"src": "# for x in y\n\nbody", "syntax": {"line_statement_prefix": "#", "line_comment_prefix": "##"}, "tokens": [[1, "block_begin", "#"], [1, "name", "for"], [1, "name", "x"], [1, "name", "in"], [1, "name", "y"], [1, "block_end", "\n\n"], [3, "data", "body"]]}
+{"src": "# set x = 1\n{{ x }}", "syntax": {"line_statement_prefix": "#", "line_comment_prefix": "##"}, "tokens": [[1, "block_begin", "#"], [1, "name", "set"], [1, "name", "x"], [1, "assign", "="], [1, "integer", "1"], [1, "block_end", "\n"], [2, "variable_begin", "{{"], [2, "name", "x"], [2, "variable_end", "}}"]]}
+{"src": "<< x >><% if y %>a<% endif %><# c #>", "syntax": {"block_start_string": "<%", "block_end_string": "%>", "variable_start_string": "<<", "variable_end_string": ">>", "comment_start_string": "<#", "comment_end_string": "#>"}, "tokens": [[1, "variable_begin", "<<"], [1, "name", "x"], [1, "variable_end", ">>"], [1, "block_begin", "<%"], [1, "name", "if"], [1, "name", "y"], [1, "block_end", "%>"], [1, "data", "a"], [1, "block_begin", "<%"], [1, "name", "endif"], [1, "block_end", "%>"]]}
+{"src": "{# unterminated", "syntax": {}, "err": "TemplateSyntaxError", "msg": "Missing end of comment tag", "line": 1}
+{"src": "{% raw %}unterminated", "syntax": {}, "err": "TemplateSyntaxError", "msg": "Missing end of raw directive", "line": 1}
+{"src": "{{ a) }}", "syntax": {}, "err": "TemplateSyntaxError", "msg": "unexpected ')'", "line": 1}
+{"src": "{{ (a] }}", "syntax": {}, "err": "TemplateSyntaxError", "msg": "unexpected ']', expected ')'", "line": 1}
+{"src": "{{ ? }}", "syntax": {}, "err": "TemplateSyntaxError", "msg": "unexpected char '?' at 3", "line": 1}
+{"src": "{{ a", "syntax": {}, "tokens": [[1, "variable_begin", "{{"], [1, "name", "a"]]}
+{"src": "{{ \"\\x\" }}", "syntax": {}, "err": "TemplateSyntaxError", "msg": "truncated \\xXX escape", "line": 1}
+{"src": "{{ \"\\u12\" }}", "syntax": {}, "err": "TemplateSyntaxError", "msg": "truncated \\uXXXX escape", "line": 1}
+{"src": "{{ \"\\U0011FFFF\" }}", "syntax": {}, "err": "TemplateSyntaxError", "msg": "illegal Unicode character", "line": 1}
+{"src": "{{ \"\\N{DASH}\" }}", "syntax": {}, "err": "TemplateSyntaxError", "msg": "unknown Unicode character name", "line": 1}
+{"src": "{{ \"unterminated }}", "syntax": {}, "err": "TemplateSyntaxError", "msg": "unexpected char '\"' at 3", "line": 1}

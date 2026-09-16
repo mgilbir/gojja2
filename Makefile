@@ -96,6 +96,13 @@ repr-corpus: venv ## Regenerate the CPython repr() corpus used by value tests
 ops-corpus: venv ## Regenerate the CPython operator corpus used by value tests
 	$(PY) tools/oracle/gen_ops.py
 
+.PHONY: lex-corpus
+lex-corpus: venv ## Regenerate the jinja2 token-stream corpus used by lexer tests
+	$(PY) tools/oracle/gen_lex.py
+
+.PHONY: corpora
+corpora: repr-corpus ops-corpus lex-corpus oracle ## Regenerate every oracle-derived corpus
+
 .PHONY: ask
 ask: venv ## Ask the oracle what CPython jinja2 renders: make ask T='{{ 1/2 }}'
 	@$(PY) tools/oracle/oracle.py --template '$(T)' --context '$(if $(C),$(C),{})'
