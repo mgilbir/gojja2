@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -17,11 +16,25 @@ import (
 // filterURLEncode percent-encodes a string, or builds a query string from a
 // mapping or a sequence of pairs.
 func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	pair := func(k, val value.Value) (string, error) {
+		key, err := quotePlus(s, value.Str(k))
+		if err != nil {
+			return "", err
+		}
+		text, err := quotePlus(s, value.Str(val))
+		if err != nil {
+			return "", err
+		}
+		return key + "=" + text, nil
+	}
 	if d, ok := v.Dict(); ok {
 		parts := make([]string, 0, d.Len())
 		for _, e := range d.Entries() {
-			parts = append(parts, quotePlus(value.Str(e.Key))+"="+
-				quotePlus(value.Str(e.Value)))
+			p, err := pair(e.Key, e.Value)
+			if err != nil {
+				return value.Undefined, err
+			}
+			parts = append(parts, p)
 		}
 		return value.String(strings.Join(parts, "&")), nil
 	}
@@ -41,42 +54,66 @@ func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 			if err != nil {
 				return value.Undefined, err
 			}
-			parts = append(parts, quotePlus(value.Str(k))+"="+quotePlus(value.Str(val)))
+			p, err := pair(k, val)
+			if err != nil {
+				return value.Undefined, err
+			}
+			parts = append(parts, p)
 		}
 		return value.String(strings.Join(parts, "&")), nil
 	}
 	// A bare string keeps "/" unescaped, matching urllib.parse.quote.
-	return value.String(quoteURL(value.Str(v), true)), nil
+	quoted, err := quoteURL(s, value.Str(v), true)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.String(quoted), nil
 }
 
 // quotePlus is urllib.parse.quote_plus, which query strings use: a space
 // becomes "+" rather than "%20", and "/" is not exempt.
-func quotePlus(s string) string {
-	return strings.ReplaceAll(quoteURL(strings.ReplaceAll(s, " ", "\x00"), false), "%00", "+")
+func quotePlus(st *State, s string) (string, error) {
+	quoted, err := quoteURL(st, strings.ReplaceAll(s, " ", "\x00"), false)
+	if err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(quoted, "%00", "+"), nil
 }
+
+// hexDigits is the alphabet percent-encoding writes, upper-case as
+// urllib.parse.quote produces.
+const hexDigits = "0123456789ABCDEF"
 
 // quoteURL percent-encodes everything outside the unreserved set. keepSlash
 // mirrors urllib.parse.quote's default safe="/".
-func quoteURL(s string, keepSlash bool) string {
+//
+// Both hex digits are written directly. Formatting the byte and then patching
+// in a leading zero meant copying the whole buffer twice for every byte below
+// 0x10 -- which includes \n and \t, so ordinary multi-line text hit it. That
+// made the filter quadratic: 40,000 newlines took 0.256s against 0.001s for the
+// same length of text one byte higher, and a megabyte would have taken minutes.
+func quoteURL(st *State, s string, keepSlash bool) (string, error) {
 	const unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-~"
 	var b strings.Builder
+	b.Grow(len(s))
 	for i := range len(s) {
+		// A long string is a long run of work that writes no output and
+		// walks no sequence, so it would otherwise never consult the
+		// context. Polling costs an increment per byte.
+		if err := st.Poll(); err != nil {
+			return "", err
+		}
 		c := s[i]
 		switch {
 		case strings.IndexByte(unreserved, c) >= 0, keepSlash && c == '/':
 			b.WriteByte(c)
 		default:
 			b.WriteByte('%')
-			b.WriteString(strings.ToUpper(strconv.FormatUint(uint64(c), 16)))
-			if c < 0x10 {
-				// Two digits always; the leading zero was lost.
-				text := b.String()
-				b.Reset()
-				b.WriteString(text[:len(text)-1] + "0" + text[len(text)-1:])
-			}
+			b.WriteByte(hexDigits[c>>4])
+			b.WriteByte(hexDigits[c&0x0f])
 		}
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // httpRe recognises the URL shapes jinja2 links: a scheme or www prefix with
@@ -173,6 +210,11 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	words := splitKeepingSpace(escaped)
 
 	for i, word := range words {
+		// Each word is matched against several regexps, so a long text
+		// is sustained work with no output written until the end.
+		if err := s.Poll(); err != nil {
+			return value.Undefined, err
+		}
 		head, middle, tail := peelPunctuation(word)
 
 		switch {

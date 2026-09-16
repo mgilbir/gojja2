@@ -1,0 +1,156 @@
+// Copyright 2026 The gojja2 Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package gojja2
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mgilbir/gojja2/value"
+)
+
+// TestURLEncodeIsLinear pins that percent-encoding does not blow up on the
+// bytes below 0x10, which include \n and \t and so occur in ordinary text.
+//
+// It used to rebuild the whole accumulated buffer twice per such byte, to patch
+// in a leading zero. That is quadratic: 40,000 newlines took 0.256s where the
+// same length of text one byte higher took 0.001s, and a megabyte would have
+// taken minutes.
+//
+// The assertion is a deadline rather than a ratio, because a ratio is flaky on
+// a loaded machine and the margin here is four orders of magnitude: linear
+// finishes in milliseconds, quadratic cannot finish in ten seconds.
+func TestURLEncodeIsLinear(t *testing.T) {
+	const n = 1_000_000
+	env := New(WithoutLimits())
+	tmpl, err := env.FromString(`{{ text|urlencode|length }}`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	out, err := tmpl.RenderString(ctx, map[string]any{"text": strings.Repeat("\n", n)})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("urlencode of %d newlines did not finish in 10s (%v): %v", n, elapsed, err)
+	}
+	if out != "3000000" {
+		t.Errorf("got %q, want %q", out, "3000000")
+	}
+	t.Logf("%d newlines encoded in %v", n, elapsed)
+}
+
+// TestURLEncodeMatchesCPythonOnLowBytes pins the output itself, since the fast
+// path rewrote how the hex digits are produced.
+func TestURLEncodeMatchesCPythonOnLowBytes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"\n", "%0A"},
+		{"\t", "%09"},
+		{"\x00", "%00"},
+		{"\x0f", "%0F"},
+		{"\x10", "%10"},
+		{"\u00ff", "%C3%BF"}, // a character, encoded as UTF-8, as Python does
+		{"\xff", "%FF"},      // a raw byte, which stays one byte
+		{"a b", "a%20b"},
+		{"a/b", "a/b"},
+		{"~_.-", "~_.-"},
+		{"\n\t\n", "%0A%09%0A"},
+	}
+	env := New()
+	tmpl, err := env.FromString(`{{ text|urlencode }}`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	for _, tc := range cases {
+		got, err := tmpl.RenderString(context.Background(), map[string]any{"text": tc.in})
+		if err != nil {
+			t.Errorf("%q: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("urlencode(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestCancellationInterruptsAFilter pins that a filter doing sustained work is
+// interruptible.
+//
+// The context is only consulted from inside the budget, which a filter that
+// neither iterates a sequence nor writes output never reaches. One such call
+// overran a one-second deadline by seventeen seconds, and the error it
+// eventually returned was the output bound rather than the deadline. State.Poll
+// is the yield point; this pins that a filter using it stops.
+func TestCancellationInterruptsAFilter(t *testing.T) {
+	env := New(WithoutLimits())
+	started := make(chan struct{})
+	env.AddFilter("spin", func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+		close(started)
+		for i := 0; ; i++ {
+			if err := s.Poll(); err != nil {
+				return value.Undefined, err
+			}
+			if i > 1_000_000_000 {
+				return value.String("never"), nil
+			}
+		}
+	})
+	tmpl, err := env.FromString(`{% for i in [1] %}{{ i|spin }}{% endfor %}`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, rerr := tmpl.RenderString(ctx, nil)
+		done <- rerr
+	}()
+
+	select {
+	case rerr := <-done:
+		if rerr == nil {
+			t.Fatal("expected the cancelled render to fail")
+		}
+		if !errors.Is(rerr, context.Canceled) {
+			t.Errorf("got %v, want it to wrap context.Canceled", rerr)
+		}
+		t.Logf("cancelled filter returned after %v", time.Since(start))
+	case <-time.After(15 * time.Second):
+		t.Fatal("a cancelled render did not stop within 15s")
+	}
+}
+
+// TestPollIsSafeWithoutARender pins that the yield point is usable from
+// constant folding, which has a budget but no context, and from a nil State.
+func TestPollIsSafeWithoutARender(t *testing.T) {
+	var nilState *State
+	if err := nilState.Poll(); err != nil {
+		t.Errorf("Poll on a nil State: %v", err)
+	}
+	env := New()
+	env.AddFilter("polls", func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+		for range 10000 {
+			if err := s.Poll(); err != nil {
+				return value.Undefined, err
+			}
+		}
+		return v, nil
+	})
+	// All-constant, so this runs at compile time.
+	if _, err := env.FromString(`{{ "x"|polls }}`); err != nil {
+		t.Errorf("compile: %v", err)
+	}
+}
