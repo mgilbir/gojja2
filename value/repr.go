@@ -64,10 +64,10 @@ func writeRepr(b *strings.Builder, v Value) {
 	case KindFloat:
 		b.WriteString(FormatFloat(v.AsFloat()))
 	case KindString:
-		writeStringRepr(b, v.str)
+		writeStringRepr(b, v.str, false)
 	case KindBytes:
 		b.WriteByte('b')
-		writeStringRepr(b, v.str)
+		writeStringRepr(b, v.str, true)
 	case KindList:
 		s, _ := v.Seq()
 		b.WriteByte('[')
@@ -188,7 +188,7 @@ func FormatFloat(f float64) string {
 // writeStringRepr renders a str the way Python's repr does: single quotes
 // unless that would need escaping and double quotes would not, non-ASCII left
 // intact when printable, and the rest escaped shortest-first.
-func writeStringRepr(b *strings.Builder, s string) {
+func writeStringRepr(b *strings.Builder, s string, asciiOnly bool) {
 	quote := byte('\'')
 	if strings.ContainsRune(s, '\'') && !strings.ContainsRune(s, '"') {
 		quote = '"'
@@ -208,7 +208,7 @@ func writeStringRepr(b *strings.Builder, s string) {
 		case r == utf8.RuneError:
 			// Invalid UTF-8 survived the decode; show it as a byte.
 			b.WriteString(`�`)
-		case printable(r):
+		case printable(r) && (!asciiOnly || r < utf8.RuneSelf):
 			b.WriteRune(r)
 		case r < 0x100:
 			b.WriteString(`\x`)
@@ -230,6 +230,16 @@ func writeHex(b *strings.Builder, v uint32, width int) {
 		b.WriteByte('0')
 	}
 	b.WriteString(s)
+}
+
+// Ascii is Python's ascii(): repr() with every non-ASCII code point escaped.
+func Ascii(v Value) string {
+	if v.kind != KindString {
+		return Repr(v)
+	}
+	var b strings.Builder
+	writeStringRepr(&b, v.str, true)
+	return b.String()
 }
 
 // printable implements Python's str.isprintable for a single rune: graphic

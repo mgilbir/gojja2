@@ -1,0 +1,641 @@
+// Copyright 2026 The gojja2 Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package value
+
+import (
+	"math"
+	"math/big"
+
+	"github.com/mgilbir/gojja2/errs"
+)
+
+// maxPowBits caps the width of an integer produced by **.
+//
+// CPython has no such limit and will happily try to materialise 2**(1<<40).
+// Refusing is a deliberate divergence: an unbounded exponent in a template is
+// a denial-of-service vector, and no real template needs a 128 KiB integer.
+const maxPowBits = 1 << 20
+
+// IsTrue is Python truthiness.
+//
+// Only StrictUndefined can fail here; every other value has an answer. NaN is
+// true, matching Python, because float.__bool__ is `self != 0.0`.
+func IsTrue(v Value) (bool, error) {
+	switch v.kind {
+	case KindUndefined:
+		if v.undef().behavior == UndefinedStrict {
+			return false, v.UndefinedError()
+		}
+		return false, nil
+	case KindNone:
+		return false, nil
+	case KindBool:
+		return v.num != 0, nil
+	case KindInt:
+		if b, ok := v.obj.(*big.Int); ok {
+			return b.Sign() != 0, nil
+		}
+		return v.num != 0, nil
+	case KindFloat:
+		return v.AsFloat() != 0, nil
+	case KindString, KindBytes:
+		return v.str != "", nil
+	case KindList, KindTuple:
+		s, _ := v.Seq()
+		return s.Len() != 0, nil
+	case KindDict:
+		d, _ := v.Dict()
+		return d.Len() != 0, nil
+	case KindObject:
+		switch o := v.obj.(type) {
+		case Booler:
+			return o.IsTrue(), nil
+		case Mapping:
+			return o.Len() != 0, nil
+		case Sequence:
+			return o.Len() != 0, nil
+		}
+		return true, nil
+	}
+	return true, nil
+}
+
+// Len is Python's len(). Undefined has length 0 rather than failing, which is
+// what makes `{{ nope|length }}` render 0.
+func Len(v Value) (int, error) {
+	switch v.kind {
+	case KindUndefined:
+		if v.undef().behavior == UndefinedStrict {
+			return 0, v.UndefinedError()
+		}
+		return 0, nil
+	case KindString, KindBytes:
+		return runeLen(v.str, v.kind == KindBytes), nil
+	case KindList, KindTuple:
+		s, _ := v.Seq()
+		return s.Len(), nil
+	case KindDict:
+		d, _ := v.Dict()
+		return d.Len(), nil
+	case KindObject:
+		switch o := v.obj.(type) {
+		case Mapping:
+			return o.Len(), nil
+		case Sequence:
+			return o.Len(), nil
+		}
+	}
+	return 0, errs.New(errs.TypeError, "object of type '%s' has no len()", v.TypeName())
+}
+
+// --- numeric coercion --------------------------------------------------------
+
+// bothNumbers reports whether an arithmetic op should take the numeric path.
+func bothNumbers(a, b Value) bool { return a.IsNumber() && b.IsNumber() }
+
+// eitherFloat reports whether the result of a numeric op must be a float.
+func eitherFloat(a, b Value) bool { return a.kind == KindFloat || b.kind == KindFloat }
+
+func binTypeError(op string, a, b Value) error {
+	return errs.New(errs.TypeError, "unsupported operand type(s) for %s: '%s' and '%s'",
+		op, a.TypeName(), b.TypeName())
+}
+
+// addInt64 adds with overflow detection so the big.Int path is only taken when
+// it is actually needed.
+func addInt64(a, b int64) (int64, bool) {
+	c := a + b
+	return c, (a^c)&(b^c) >= 0
+}
+
+func subInt64(a, b int64) (int64, bool) {
+	c := a - b
+	return c, (a^b)&(a^c) >= 0
+}
+
+func mulInt64(a, b int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	if (a == -1 && b == math.MinInt64) || (b == -1 && a == math.MinInt64) {
+		return 0, false
+	}
+	c := a * b
+	return c, c/b == a
+}
+
+// --- arithmetic --------------------------------------------------------------
+
+// Add implements `+`: numeric addition, string concatenation, and sequence
+// concatenation between two lists or two tuples.
+func Add(a, b Value) (Value, error) {
+	switch {
+	case bothNumbers(a, b):
+		if eitherFloat(a, b) {
+			x, _ := a.Float64()
+			y, _ := b.Float64()
+			return Float(x + y), nil
+		}
+		x, xok := a.Int64()
+		y, yok := b.Int64()
+		if xok && yok {
+			if c, ok := addInt64(x, y); ok {
+				return Int(c), nil
+			}
+		}
+		bx, _ := a.BigInt()
+		by, _ := b.BigInt()
+		return BigInt(new(big.Int).Add(bx, by)), nil
+
+	case a.kind == KindString:
+		if b.kind != KindString {
+			// Concatenation failures are raised by the left
+			// operand's __add__, so the message names its type and
+			// is not the generic "unsupported operand type(s)" one.
+			return Undefined, errs.New(errs.TypeError,
+				"can only concatenate str (not \"%s\") to str", b.TypeName())
+		}
+		// Markup is only preserved when both halves are trusted;
+		// otherwise the result must still be escaped downstream.
+		return Value{kind: KindString, str: a.str + b.str, safe: a.safe && b.safe}, nil
+
+	case a.kind == KindBytes:
+		if b.kind != KindBytes {
+			return Undefined, errs.New(errs.TypeError,
+				"can't concat %s to bytes", b.TypeName())
+		}
+		return Bytes([]byte(a.str + b.str)), nil
+
+	case a.kind == KindList || a.kind == KindTuple:
+		if a.kind != b.kind {
+			return Undefined, errs.New(errs.TypeError,
+				"can only concatenate %s (not \"%s\") to %s",
+				a.TypeName(), b.TypeName(), a.TypeName())
+		}
+		as, _ := a.Seq()
+		bs, _ := b.Seq()
+		items := make([]Value, 0, as.Len()+bs.Len())
+		items = append(items, as.items...)
+		items = append(items, bs.items...)
+		if a.kind == KindTuple {
+			return NewTuple(items...), nil
+		}
+		return NewList(items...), nil
+	}
+	return Undefined, binTypeError("+", a, b)
+}
+
+// Sub implements `-`, which is numeric only.
+func Sub(a, b Value) (Value, error) {
+	if !bothNumbers(a, b) {
+		return Undefined, binTypeError("-", a, b)
+	}
+	if eitherFloat(a, b) {
+		x, _ := a.Float64()
+		y, _ := b.Float64()
+		return Float(x - y), nil
+	}
+	x, xok := a.Int64()
+	y, yok := b.Int64()
+	if xok && yok {
+		if c, ok := subInt64(x, y); ok {
+			return Int(c), nil
+		}
+	}
+	bx, _ := a.BigInt()
+	by, _ := b.BigInt()
+	return BigInt(new(big.Int).Sub(bx, by)), nil
+}
+
+// Mul implements `*`: numeric multiplication, and repetition of a str, list or
+// tuple by an integer count. A non-positive count yields an empty result.
+func Mul(a, b Value) (Value, error) {
+	if bothNumbers(a, b) {
+		if eitherFloat(a, b) {
+			x, _ := a.Float64()
+			y, _ := b.Float64()
+			return Float(x * y), nil
+		}
+		x, xok := a.Int64()
+		y, yok := b.Int64()
+		if xok && yok {
+			if c, ok := mulInt64(x, y); ok {
+				return Int(c), nil
+			}
+		}
+		bx, _ := a.BigInt()
+		by, _ := b.BigInt()
+		return BigInt(new(big.Int).Mul(bx, by)), nil
+	}
+	// Repetition is commutative in Python: "ab" * 2 and 2 * "ab" agree.
+	if seq, n, ok := repeatOperands(a, b); ok {
+		return repeat(seq, n)
+	}
+	// Once one operand is a sequence, the failure comes from
+	// sequence.__mul__ and names only the other operand's type.
+	if other, ok := nonSequenceOperand(a, b); ok {
+		return Undefined, errs.New(errs.TypeError,
+			"can't multiply sequence by non-int of type '%s'", other.TypeName())
+	}
+	return Undefined, binTypeError("*", a, b)
+}
+
+// isSequenceKind reports whether v participates in the sequence repetition
+// protocol: str, bytes, list and tuple.
+func isSequenceKind(v Value) bool {
+	switch v.kind {
+	case KindString, KindBytes, KindList, KindTuple:
+		return true
+	}
+	return false
+}
+
+// nonSequenceOperand returns the operand that is not a sequence, when exactly
+// the sequence-repetition message applies.
+func nonSequenceOperand(a, b Value) (Value, bool) {
+	switch {
+	case isSequenceKind(a):
+		return b, true
+	case isSequenceKind(b):
+		return a, true
+	}
+	return Undefined, false
+}
+
+func repeatOperands(a, b Value) (seq Value, n int64, ok bool) {
+	if a.IsInteger() {
+		a, b = b, a
+	}
+	if !b.IsInteger() {
+		return Undefined, 0, false
+	}
+	switch a.kind {
+	case KindString, KindBytes, KindList, KindTuple:
+	default:
+		return Undefined, 0, false
+	}
+	count, fits := b.Int64()
+	if !fits {
+		// A repetition count that does not fit in an int64 could never
+		// be allocated anyway.
+		return Undefined, 0, false
+	}
+	return a, count, true
+}
+
+func repeat(v Value, n int64) (Value, error) {
+	if n < 0 {
+		n = 0
+	}
+	switch v.kind {
+	case KindString, KindBytes:
+		if n > 0 && int64(len(v.str))*n > math.MaxInt32 {
+			return Undefined, errs.New(errs.OverflowError, "repeated string is too long")
+		}
+		out := Value{kind: v.kind, safe: v.safe}
+		if n > 0 {
+			buf := make([]byte, 0, len(v.str)*int(n))
+			for i := int64(0); i < n; i++ {
+				buf = append(buf, v.str...)
+			}
+			out.str = string(buf)
+		}
+		return out, nil
+	default:
+		s, _ := v.Seq()
+		if n > 0 && int64(s.Len())*n > math.MaxInt32 {
+			return Undefined, errs.New(errs.OverflowError, "repeated sequence is too long")
+		}
+		items := make([]Value, 0, s.Len()*int(n))
+		for i := int64(0); i < n; i++ {
+			items = append(items, s.items...)
+		}
+		if v.kind == KindTuple {
+			return NewTuple(items...), nil
+		}
+		return NewList(items...), nil
+	}
+}
+
+// floatOperand coerces a numeric operand to float64 for a mixed-type
+// operation. A wide integer that is outside float64's range cannot be
+// converted, which is an error in Python rather than an infinity.
+func floatOperand(v Value) (float64, error) {
+	f, ok := v.Float64()
+	if !ok {
+		return 0, errs.New(errs.TypeError, "must be real number, not %s", v.TypeName())
+	}
+	if math.IsInf(f, 0) && v.IsInteger() {
+		return 0, errs.New(errs.OverflowError, "int too large to convert to float")
+	}
+	return f, nil
+}
+
+// floatDivmod reproduces CPython's float_divmod, which is not the same as
+// math.Floor(x/y).
+//
+// The difference shows up wherever the naive form loses the sign or the last
+// bit: 1 // -inf is -1.0 rather than -0.0, and 0 % -2.5 is -0.0 rather than
+// 0.0. CPython derives the quotient from the remainder instead of dividing
+// twice, so that is what this does.
+func floatDivmod(x, y float64) (floordiv, mod float64) {
+	mod = math.Mod(x, y)
+	div := (x - mod) / y
+	if mod != 0 {
+		if (y < 0) != (mod < 0) {
+			mod += y
+			div--
+		}
+	} else {
+		mod = math.Copysign(0, y)
+	}
+	if div != 0 {
+		floordiv = math.Floor(div)
+		if div-floordiv > 0.5 {
+			floordiv++
+		}
+	} else {
+		floordiv = math.Copysign(0, x/y)
+	}
+	return floordiv, mod
+}
+
+// Div implements `/`, Python 3 true division, which always yields a float.
+//
+// Integer division is computed as an exact rational and rounded once, not by
+// converting both sides to float first: 1 / (2**53 + 1) differs between the
+// two, and CPython gives the exactly-rounded answer.
+func Div(a, b Value) (Value, error) {
+	if !bothNumbers(a, b) {
+		return Undefined, binTypeError("/", a, b)
+	}
+	if !eitherFloat(a, b) {
+		bx, _ := a.BigInt()
+		by, _ := b.BigInt()
+		if by.Sign() == 0 {
+			return Undefined, errs.New(errs.ZeroDivisionError, "division by zero")
+		}
+		if bx.Sign() == 0 {
+			// big.Rat has no signed zero, but 0 / -1 is -0.0.
+			return Float(math.Copysign(0, float64(by.Sign()))), nil
+		}
+		q, _ := new(big.Rat).SetFrac(bx, by).Float64()
+		return Float(q), nil
+	}
+	x, err := floatOperand(a)
+	if err != nil {
+		return Undefined, err
+	}
+	y, err := floatOperand(b)
+	if err != nil {
+		return Undefined, err
+	}
+	if y == 0 {
+		return Undefined, errs.New(errs.ZeroDivisionError, "float division by zero")
+	}
+	return Float(x / y), nil
+}
+
+// FloorDiv implements `//`, which rounds toward negative infinity rather than
+// toward zero as Go's integer division does.
+func FloorDiv(a, b Value) (Value, error) {
+	if !bothNumbers(a, b) {
+		return Undefined, binTypeError("//", a, b)
+	}
+	if eitherFloat(a, b) {
+		x, err := floatOperand(a)
+		if err != nil {
+			return Undefined, err
+		}
+		y, err := floatOperand(b)
+		if err != nil {
+			return Undefined, err
+		}
+		if y == 0 {
+			return Undefined, errs.New(errs.ZeroDivisionError, "float floor division by zero")
+		}
+		q, _ := floatDivmod(x, y)
+		return Float(q), nil
+	}
+	bx, _ := a.BigInt()
+	by, _ := b.BigInt()
+	if by.Sign() == 0 {
+		return Undefined, errs.New(errs.ZeroDivisionError, "integer division or modulo by zero")
+	}
+	// big.Int.Div is Euclidean; Python floors. They differ when exactly one
+	// operand is negative, so compute the truncated quotient and correct.
+	q, r := new(big.Int).QuoRem(bx, by, new(big.Int))
+	if r.Sign() != 0 && (r.Sign() < 0) != (by.Sign() < 0) {
+		q.Sub(q, big.NewInt(1))
+	}
+	return BigInt(q), nil
+}
+
+// Mod implements `%`: Python modulo on numbers, whose result takes the sign of
+// the divisor, and printf-style formatting on strings.
+func Mod(a, b Value) (Value, error) {
+	if a.kind == KindString {
+		return FormatPercent(a, b)
+	}
+	if !bothNumbers(a, b) {
+		return Undefined, binTypeError("%", a, b)
+	}
+	if eitherFloat(a, b) {
+		x, err := floatOperand(a)
+		if err != nil {
+			return Undefined, err
+		}
+		y, err := floatOperand(b)
+		if err != nil {
+			return Undefined, err
+		}
+		if y == 0 {
+			return Undefined, errs.New(errs.ZeroDivisionError, "float modulo")
+		}
+		_, m := floatDivmod(x, y)
+		return Float(m), nil
+	}
+	bx, _ := a.BigInt()
+	by, _ := b.BigInt()
+	if by.Sign() == 0 {
+		return Undefined, errs.New(errs.ZeroDivisionError, "integer modulo by zero")
+	}
+	r := new(big.Int).Rem(bx, by)
+	if r.Sign() != 0 && (r.Sign() < 0) != (by.Sign() < 0) {
+		r.Add(r, by)
+	}
+	return BigInt(r), nil
+}
+
+// Pow implements `**`.
+//
+// An integer base with a non-negative integer exponent stays exact; a negative
+// exponent falls to float, as it does in Python. A negative base with a
+// fractional exponent yields a complex number in Python -- a type with no
+// place in a template -- so that case is rejected rather than approximated.
+func Pow(a, b Value) (Value, error) {
+	if !bothNumbers(a, b) {
+		// pow() shares this operator's slot, so Python names both.
+		return Undefined, errs.New(errs.TypeError,
+			"unsupported operand type(s) for ** or pow(): '%s' and '%s'",
+			a.TypeName(), b.TypeName())
+	}
+	if a.IsInteger() && b.IsInteger() {
+		by, _ := b.BigInt()
+		if by.Sign() >= 0 {
+			if !by.IsInt64() {
+				return Undefined, errs.New(errs.OverflowError, "exponent too large")
+			}
+			bx, _ := a.BigInt()
+			if bits := estimatePowBits(bx, by.Int64()); bits > maxPowBits {
+				return Undefined, errs.New(errs.OverflowError,
+					"result of ** would be %d bits wide, over the %d bit limit", bits, maxPowBits)
+			}
+			return BigInt(new(big.Int).Exp(bx, by, nil)), nil
+		}
+	}
+	x, err := floatOperand(a)
+	if err != nil {
+		return Undefined, err
+	}
+	y, err := floatOperand(b)
+	if err != nil {
+		return Undefined, err
+	}
+	if x == 0 && y < 0 {
+		// Python reports this against the float it promoted to, so the
+		// message says 0.0 even when the base was the integer 0.
+		return Undefined, errs.New(errs.ZeroDivisionError,
+			"0.0 cannot be raised to a negative power")
+	}
+	if x < 0 && !math.IsInf(y, 0) && !math.IsNaN(y) && y != math.Trunc(y) {
+		return Undefined, errs.New(errs.ValueError,
+			"a negative number cannot be raised to a fractional power (gojja2 has no complex type)")
+	}
+	return Float(powFloat(x, y)), nil
+}
+
+// estimatePowBits bounds the width of base**exp without computing it.
+func estimatePowBits(base *big.Int, exp int64) int64 {
+	bits := int64(base.BitLen())
+	if bits <= 1 {
+		return 1 // 0 and +/-1 never grow
+	}
+	if exp > maxPowBits {
+		return math.MaxInt64
+	}
+	return bits * exp
+}
+
+// Neg implements unary `-`.
+func Neg(v Value) (Value, error) {
+	switch {
+	case v.kind == KindFloat:
+		return Float(-v.AsFloat()), nil
+	case v.IsInteger():
+		if i, ok := v.Int64(); ok && i != math.MinInt64 {
+			return Int(-i), nil
+		}
+		b, _ := v.BigInt()
+		return BigInt(new(big.Int).Neg(b)), nil
+	}
+	return Undefined, errs.New(errs.TypeError, "bad operand type for unary -: '%s'", v.TypeName())
+}
+
+// Pos implements unary `+`, which coerces bool to int and is otherwise the
+// identity on numbers.
+func Pos(v Value) (Value, error) {
+	switch {
+	case v.kind == KindFloat:
+		return v, nil
+	case v.kind == KindBool:
+		return Int(int64(v.num)), nil
+	case v.kind == KindInt:
+		return v, nil
+	}
+	return Undefined, errs.New(errs.TypeError, "bad operand type for unary +: '%s'", v.TypeName())
+}
+
+// Concat implements jinja2's `~`, which stringifies both sides and joins them.
+// Unlike `+` it never fails on a type mismatch.
+func Concat(a, b Value) Value {
+	return String(Str(a) + Str(b))
+}
+
+// powBits is the working precision used to round x**y correctly.
+const powBits = 320
+
+// powFloat computes x**y, agreeing with CPython where math.Pow does not.
+//
+// CPython delegates to the platform libm, which rounds correctly; Go's pure-Go
+// math.Pow can be a unit in the last place out, and that difference is visible
+// in rendered output (3 ** 2.5 differs in the final digit). Any exponent that
+// is a dyadic rational -- which every float with a modest fractional part is --
+// can be evaluated exactly: take the base's 2**-e'th root by repeated square
+// root, then raise to the remaining integer power, all at extended precision,
+// and round once at the end. Exponents outside that shape fall back to
+// math.Pow.
+func powFloat(x, y float64) float64 {
+	if r, ok := powExact(x, y); ok {
+		return r
+	}
+	return math.Pow(x, y)
+}
+
+func powExact(x, y float64) (float64, bool) {
+	switch {
+	case math.IsNaN(x) || math.IsNaN(y):
+		return 0, false
+	case math.IsInf(x, 0) || math.IsInf(y, 0):
+		return 0, false
+	case x == 0 || y == 0:
+		return 0, false
+	}
+
+	// Decompose y as m / 2**e with m an integer. Bounding both keeps the
+	// work constant: e square roots and at most log2(m) squarings.
+	const maxRootDepth, maxMantissa = 24, 1 << 16
+	e, t := 0, y
+	for t != math.Trunc(t) && e < maxRootDepth {
+		t *= 2
+		e++
+	}
+	if t != math.Trunc(t) || math.Abs(t) > maxMantissa {
+		return 0, false
+	}
+	m := int64(t)
+	if x < 0 && e != 0 {
+		return 0, false // would be complex; Pow rejects this earlier
+	}
+
+	base := new(big.Float).SetPrec(powBits).SetFloat64(x)
+	negative := base.Sign() < 0
+	if negative {
+		base.Neg(base)
+	}
+	for range e {
+		base.Sqrt(base)
+	}
+
+	acc := new(big.Float).SetPrec(powBits).SetInt64(1)
+	n := m
+	if n < 0 {
+		n = -n
+	}
+	for n > 0 {
+		if n&1 == 1 {
+			acc.Mul(acc, base)
+		}
+		base.Mul(base, base)
+		n >>= 1
+	}
+	if m < 0 {
+		acc.Quo(new(big.Float).SetPrec(powBits).SetInt64(1), acc)
+	}
+	if negative && m%2 != 0 {
+		acc.Neg(acc)
+	}
+	f, _ := acc.Float64()
+	return f, true
+}

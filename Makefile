@@ -91,3 +91,11 @@ clean: ## Remove build and generated artifacts
 .PHONY: repr-corpus
 repr-corpus: venv ## Regenerate the CPython repr() corpus used by value tests
 	$(PY) tools/oracle/gen_repr.py
+
+.PHONY: ops-corpus
+ops-corpus: venv ## Regenerate the CPython operator corpus used by value tests
+	$(PY) tools/oracle/gen_ops.py
+
+.PHONY: ask
+ask: venv ## Ask the oracle what CPython jinja2 renders: make ask T='{{ 1/2 }}'
+	@$(PY) tools/oracle/oracle.py --template '$(T)' --context '$(if $(C),$(C),{})'
