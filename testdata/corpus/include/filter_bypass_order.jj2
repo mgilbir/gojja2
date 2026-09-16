@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "inc.txt": "<x>"
+  }
+}
+---
+{% filter upper %}a{% include 'inc.txt' without context %}b{% endfilter %}

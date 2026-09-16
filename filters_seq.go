@@ -68,9 +68,25 @@ func filterFirst(s *State, v value.Value, _ *value.CallArgs) (value.Value, error
 }
 
 func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	// jinja2 takes the last item through reversed(), which reaches a
+	// string by __getitem__ -- so the last character of a Markup is
+	// Markup, while |first, which iterates, gives a plain str.
+	if v.IsString() {
+		last, ok := value.StrIndex(v.AsString(), -1)
+		if !ok {
+			return s.Undefined(value.UndefinedHint("No last item, sequence was empty.")), nil
+		}
+		if v.IsSafe() {
+			return value.Safe(last), nil
+		}
+		return value.String(last), nil
+	}
 	items, err := materialize(v)
 	if err != nil {
-		return value.Undefined, err
+		// jinja2 takes the last item with reversed(), so the failure
+		// names reversibility rather than iterability.
+		return value.Undefined, errs.New(errs.TypeError,
+			"'%s' object is not reversible", v.TypeName())
 	}
 	if len(items) == 0 {
 		return s.Undefined(value.UndefinedHint("No last item, sequence was empty.")), nil
@@ -142,7 +158,7 @@ func filterReverse(_ *State, v value.Value, _ *value.CallArgs) (value.Value, err
 	}
 	items, err := materialize(v)
 	if err != nil {
-		return value.Undefined, err
+		return value.Undefined, errs.New(errs.FilterArgumentError, "argument must be iterable")
 	}
 	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
 		items[i], items[j] = items[j], items[i]
@@ -207,8 +223,7 @@ func filterDictsort(s *State, v value.Value, args *value.CallArgs) (value.Value,
 			}
 			d, _ = out.Dict()
 		} else {
-			return value.Undefined, errs.New(errs.TypeError,
-				"'%s' object is not a mapping", v.TypeName())
+			return value.Undefined, itemsAttributeError(v)
 		}
 	}
 
@@ -236,7 +251,7 @@ func filterUnique(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, err
 	}
 	attribute, _ := arg(args, 1, "attribute")
-	key := sortKeyFunc(s, attribute, caseSensitive)
+	key := attrKeyFunc(s, attribute, caseSensitive)
 
 	items, err := materialize(v)
 	if err != nil {
@@ -248,6 +263,12 @@ func filterUnique(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		k, err := key(item)
 		if err != nil {
 			return value.Undefined, err
+		}
+		// jinja2 tracks what it has seen in a set, so an unhashable key
+		// is an error rather than merely never matching.
+		if !value.Hashable(k) {
+			return value.Undefined, errs.New(errs.TypeError,
+				"unhashable type: '%s'", k.TypeName())
 		}
 		duplicate := false
 		for _, prev := range seen {
@@ -271,7 +292,7 @@ func filterMinMax(wantMax bool) Filter {
 			return value.Undefined, err
 		}
 		attribute, _ := arg(args, 1, "attribute")
-		key := sortKeyFunc(s, attribute, caseSensitive)
+		key := attrKeyFunc(s, attribute, caseSensitive)
 
 		items, err := materialize(v)
 		if err != nil {
@@ -422,7 +443,10 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	var currentKey value.Value
 	flush := func() {
 		if len(current) > 0 {
-			out = append(out, value.NewTuple(currentKey, value.NewList(current...)))
+			out = append(out, value.FromObject(&groupObject{
+				key:   currentKey,
+				items: value.NewList(current...),
+			}))
 			current = nil
 		}
 	}
@@ -573,3 +597,44 @@ func isFalsey(v value.Value) (bool, error) {
 	truth, err := value.IsTrue(v)
 	return !truth, err
 }
+
+// groupObject is one result of |groupby.
+//
+// jinja2 returns a named tuple whose fields are `grouper` and `list`, so a
+// template can write either `{{ group.grouper }}` or `{% for key, items in
+// ... %}`. It reports the tuple repr to hide the subclass, but names itself
+// _GroupTuple in a type error -- both of which are visible, so both are here.
+type groupObject struct {
+	key   value.Value
+	items value.Value
+}
+
+func (g *groupObject) GetAttr(name string) (value.Value, bool) {
+	switch name {
+	case "grouper":
+		return g.key, true
+	case "list":
+		return g.items, true
+	}
+	return value.Undefined, false
+}
+
+func (g *groupObject) Len() int { return 2 }
+
+func (g *groupObject) GetIndex(i int) (value.Value, bool) {
+	switch i {
+	case 0:
+		return g.key, true
+	case 1:
+		return g.items, true
+	}
+	return value.Undefined, false
+}
+
+func (g *groupObject) Repr() string {
+	return "(" + value.Repr(g.key) + ", " + value.Repr(g.items) + ")"
+}
+
+func (g *groupObject) TypeName() string { return "_GroupTuple" }
+
+func (g *groupObject) QualifiedName() string { return "jinja2.filters._GroupTuple" }

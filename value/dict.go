@@ -4,6 +4,7 @@
 package value
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"strconv"
@@ -214,6 +215,12 @@ func hash(v Value) (hashKey, error) {
 				return hashKey{kind: KindObject, str: s}, nil
 			}
 		}
+		// A Python object with no __hash__ of its own hashes by
+		// identity, so `ns in d` is a lookup that misses rather than a
+		// TypeError. Only list, dict and set are actually unhashable.
+		return hashKey{kind: KindObject, str: fmt.Sprintf("%p", v.obj)}, nil
+	case KindFunc:
+		return hashKey{kind: KindFunc, str: fmt.Sprintf("%p", v.obj)}, nil
 	}
 	return hashKey{}, errs.New(errs.TypeError, "unhashable type: '%s'", v.TypeName())
 }

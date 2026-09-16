@@ -28,16 +28,23 @@ func registerDefaultTests(env *Environment) {
 		"false":     func(v value.Value) bool { return v.Kind() == value.KindBool && !v.AsBool() },
 		"sequence":  isSequenceValue,
 		"iterable":  isIterableValue,
-		"callable":  isCallableValue,
-		"lower":     allCased(unicode.IsLower, unicode.IsUpper),
-		"upper":     allCased(unicode.IsUpper, unicode.IsLower),
+		// "callable" is registered separately: jinja2 maps it straight
+		// to Python's builtin, which words its arity error differently.
+		"lower": allCased(unicode.IsLower, unicode.IsUpper),
+		"upper": allCased(unicode.IsUpper, unicode.IsLower),
 	}
+	simple["callable"] = isCallableValue
 	for name, fn := range simple {
 		addTest(env, name, "test_"+name, 0,
 			func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
 				return fn(v), nil
 			})
 	}
+	// Re-register with the builtin's own name so its arity error matches.
+	addTest(env, "callable", "callable", 0,
+		func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
+			return isCallableValue(v), nil
+		})
 
 	addTest(env, "odd", "test_odd", 0, intParity(1))
 	addTest(env, "even", "test_even", 0, intParity(0))
@@ -69,6 +76,11 @@ func registerDefaultTests(env *Environment) {
 func addTest(env *Environment, name, pyName string, maxArgs int, fn Test) {
 	env.AddTest(name, func(s *State, v value.Value, args *value.CallArgs) (bool, error) {
 		if len(args.Pos) > maxArgs {
+			if pyName == "callable" {
+				// A C builtin phrases this its own way.
+				return false, errs.New(errs.TypeError,
+					"callable() takes exactly one argument (%d given)", len(args.Pos)+1)
+			}
 			return false, errs.New(errs.TypeError,
 				"%s() takes %d positional argument%s but %d were given",
 				pyName, maxArgs+1, plural(maxArgs+1), len(args.Pos)+1)
@@ -85,6 +97,11 @@ func plural(n int) string {
 }
 
 func isSequenceValue(v value.Value) bool {
+	// jinja2's test asks for len() and __getitem__, and Undefined has
+	// both, so it answers True even though using either one raises.
+	if v.IsUndefined() {
+		return true
+	}
 	switch v.Kind() {
 	case value.KindList, value.KindTuple, value.KindString, value.KindBytes, value.KindDict:
 		return true
@@ -98,6 +115,11 @@ func isSequenceValue(v value.Value) bool {
 }
 
 func isIterableValue(v value.Value) bool {
+	// Undefined defines __iter__ -- it yields nothing -- so iter() accepts
+	// it and the test answers True.
+	if v.IsUndefined() {
+		return true
+	}
 	if isSequenceValue(v) {
 		return true
 	}
@@ -106,17 +128,22 @@ func isIterableValue(v value.Value) bool {
 }
 
 func isCallableValue(v value.Value) bool {
+	// Undefined defines __call__ -- it raises, but it is there -- so
+	// callable() answers True for it.
+	if v.IsUndefined() {
+		return true
+	}
 	_, ok := v.Interface().(value.Caller)
 	return ok
 }
 
+// allCased implements `is lower` and `is upper`, which jinja2 writes as
+// str(value).islower(). The stringification matters: a list is tested by its
+// repr, so `['a'] is lower` is true.
 func allCased(want, other func(rune) bool) func(value.Value) bool {
 	return func(v value.Value) bool {
-		if !v.IsString() {
-			return false
-		}
 		seen := false
-		for _, r := range v.AsString() {
+		for _, r := range value.Str(v) {
 			if other(r) {
 				return false
 			}
@@ -128,19 +155,19 @@ func allCased(want, other func(rune) bool) func(value.Value) bool {
 	}
 }
 
-// intParity implements `is odd` and `is even`, which require an integer.
+// intParity implements `is odd` and `is even`.
+//
+// jinja2 writes these as `value % 2`, which is not the same as asking whether
+// the value is an integer: `'0' is even` reaches str.__mod__ and fails as
+// printf formatting, not as a type mismatch. Going through the same operator
+// inherits that for free.
 func intParity(want int64) Test {
 	return func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
-		n, ok := v.Int64()
-		if !ok {
-			b, isInt := v.BigInt()
-			if !isInt {
-				return false, errs.New(errs.TypeError,
-					"unsupported operand type(s) for %%: '%s' and 'int'", v.TypeName())
-			}
-			return b.Bit(0) == uint(want), nil
+		rem, err := value.Mod(v, value.Int(2))
+		if err != nil {
+			return false, err
 		}
-		return ((n%2)+2)%2 == want, nil
+		return value.Equal(rem, value.Int(want)), nil
 	}
 }
 

@@ -221,6 +221,25 @@ func decodeFrom(dec *json.Decoder, tok json.Token) (value.Value, error) {
 	return value.Undefined, fmt.Errorf("unsupported JSON token %v", tok)
 }
 
+// DecodeContext decodes a JSON object into template values, preserving key
+// order and the int/float distinction. It is how the fuzzer hands gojja2 the
+// same bytes the oracle is given.
+func DecodeContext(raw json.RawMessage) (map[string]value.Value, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	out := make(map[string]value.Value, len(fields))
+	for name, field := range fields {
+		v, err := fromJSON(field)
+		if err != nil {
+			return nil, fmt.Errorf("context %q: %w", name, err)
+		}
+		out[name] = v
+	}
+	return out, nil
+}
+
 // Environment builds the environment a case runs under.
 func (c *Case) Environment() *gojja2.Environment {
 	sources := make(map[string]string, len(c.Templates)+1)

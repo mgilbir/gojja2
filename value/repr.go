@@ -64,6 +64,14 @@ func writeRepr(b *strings.Builder, v Value) {
 	case KindFloat:
 		b.WriteString(FormatFloat(v.AsFloat()))
 	case KindString:
+		if v.safe {
+			// markupsafe's Markup has a repr of its own, which is
+			// what |pprint and a container's repr show.
+			b.WriteString("Markup(")
+			writeStringRepr(b, v.str, false)
+			b.WriteByte(')')
+			return
+		}
 		writeStringRepr(b, v.str, false)
 	case KindBytes:
 		b.WriteByte('b')
@@ -250,4 +258,25 @@ func printable(r rune) bool {
 		return true
 	}
 	return unicode.IsGraphic(r) && !unicode.Is(unicode.Zs, r)
+}
+
+// htmlEscaper matches markupsafe's escape(), which uses numeric references for
+// the quotes rather than the named entities.
+var htmlEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"<", "&lt;",
+	">", "&gt;",
+	"'", "&#39;",
+	`"`, "&#34;",
+)
+
+// EscapeHTML is markupsafe.escape for text that is not already Markup.
+func EscapeHTML(s string) string { return htmlEscaper.Replace(s) }
+
+// Escape returns v as Markup, escaping it unless it already is.
+func Escape(v Value) Value {
+	if v.IsSafe() {
+		return v
+	}
+	return Safe(EscapeHTML(Str(v)))
 }

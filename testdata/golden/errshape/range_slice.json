@@ -1,0 +1,9 @@
+{
+  "case": "errshape/range_slice.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "range(0, 3, 2)|range(2, 8, 3)|range(2, 8, 2)"
+}

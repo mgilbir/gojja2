@@ -1,0 +1,226 @@
+// Copyright 2026 The gojja2 Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package conformance_test
+
+import (
+	"encoding/json"
+	"fmt"
+	"math/rand/v2"
+	"os"
+	"runtime/debug"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/mgilbir/gojja2"
+	"github.com/mgilbir/gojja2/conformance"
+	"github.com/mgilbir/gojja2/value"
+)
+
+// The differential runner: generate a template, render it with CPython jinja2
+// and with gojja2, and require them to agree. Everything either side does --
+// output, exception class, message, line -- is compared, so a divergence is a
+// finding whether the template works or fails.
+
+// harness holds the live oracle and the decoded shared context.
+type harness struct {
+	oracle    *conformance.Oracle
+	context   map[string]value.Value
+	rawCtx    json.RawMessage
+	templates map[string]string
+	once      sync.Once
+}
+
+// newHarness starts the oracle, or skips when there is none to ask.
+func newHarness(t testing.TB) *harness {
+	t.Helper()
+	oracle, err := conformance.StartOracle()
+	if err != nil {
+		t.Skipf("%v", err)
+	}
+	t.Cleanup(func() { _ = oracle.Close() })
+
+	raw, err := conformance.FuzzContext()
+	if err != nil {
+		t.Fatalf("fuzz context: %v", err)
+	}
+	ctx, err := conformance.DecodeContext(raw)
+	if err != nil {
+		t.Fatalf("decode fuzz context: %v", err)
+	}
+	return &harness{
+		oracle:    oracle,
+		context:   ctx,
+		rawCtx:    raw,
+		templates: conformance.FuzzTemplates(),
+	}
+}
+
+const fuzzTemplateName = "fuzz.txt"
+
+// renderGojja2 renders with gojja2, turning a panic into a reportable result
+// rather than taking the test process down mid-run.
+func (h *harness) renderGojja2(src string) (out string, err error, panicked string) {
+	sources := make(map[string]string, len(h.templates)+1)
+	for name, text := range h.templates {
+		sources[name] = text
+	}
+	sources[fuzzTemplateName] = src
+
+	defer func() {
+		if r := recover(); r != nil {
+			panicked = fmt.Sprintf("%v\n%s", r, debug.Stack())
+		}
+	}()
+
+	env := gojja2.New(gojja2.WithLoader(gojja2.DictLoader(sources)))
+	tmpl, err := env.GetTemplate(fuzzTemplateName)
+	if err != nil {
+		return "", err, ""
+	}
+	out, err = tmpl.RenderValues(h.context)
+	return out, err, ""
+}
+
+// check compares one template, returning nil when the two agree or when the
+// case cannot be graded.
+func (h *harness) check(t testing.TB, src string) *conformance.Divergence {
+	want, err := h.oracle.Render(conformance.OracleRequest{
+		Name:      fuzzTemplateName,
+		Source:    src,
+		Context:   h.rawCtx,
+		Templates: h.templates,
+	})
+	if err != nil {
+		t.Fatalf("oracle: %v", err)
+	}
+	if !conformance.Comparable(want) {
+		return nil
+	}
+
+	out, renderErr, panicked := h.renderGojja2(src)
+	if panicked != "" {
+		return &conformance.Divergence{Kind: conformance.KindPanic, Detail: panicked}
+	}
+	return conformance.Compare(want.Expected(), out, renderErr)
+}
+
+// minimize shrinks a diverging template and re-reads the divergence from the
+// reduced one.
+//
+// Reporting the original divergence beside the reduced template would be
+// actively misleading: reduction only preserves the *kind*, so the detail --
+// which outputs differed, which exception was raised -- has to be taken from
+// the template that is actually printed.
+func (h *harness) minimize(t testing.TB, src string, budget int) (string, *conformance.Divergence) {
+	minimal := conformance.Shrink(src, budget, func(candidate string) *conformance.Divergence {
+		return h.check(t, candidate)
+	})
+	d := h.check(t, minimal)
+	if d == nil {
+		// Reduction lost the divergence; report what was actually seen.
+		return src, h.check(t, src)
+	}
+	return minimal, d
+}
+
+// report prints a divergence compactly: the kind, what each side did, and the
+// minimised template. The shared context is a constant, so it is named rather
+// than dumped -- a hundred lines of JSON per finding buries the finding.
+func report(t testing.TB, src string, d *conformance.Divergence) {
+	t.Helper()
+	if d == nil {
+		return
+	}
+	t.Errorf("[%s] %s\n%s\n  (context: conformance.FuzzContextJSON)",
+		d.Kind, strconv.Quote(src), indent(d.Detail))
+}
+
+// FuzzTemplate is the coverage-guided target. Input bytes are the generator's
+// decisions, so a mutation changes one grammar choice rather than corrupting
+// a byte of template text.
+func FuzzTemplate(f *testing.F) {
+	h := newHarness(f)
+
+	// Seeds steer the generator toward each area rather than leaving it to
+	// find them by mutation.
+	for _, seed := range [][]byte{
+		{}, {1}, {2, 3}, {4, 5, 6},
+		[]byte("filters"), []byte("inheritance"), []byte("loops and macros"),
+		[]byte("\x00\x01\x02\x03\x04\x05\x06\x07"),
+		[]byte("\xff\xfe\xfd\xfc\xfb\xfa"),
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, input []byte) {
+		if len(input) > 512 {
+			input = input[:512]
+		}
+		src := conformance.GenerateTemplate(input)
+		d := h.check(t, src)
+		if d == nil {
+			return
+		}
+		min, minD := h.minimize(t, src, 300)
+		report(t, min, minD)
+	})
+}
+
+// TestDifferential runs the same comparison over a fixed number of seeded
+// inputs, so ordinary `go test` gets differential coverage without anyone
+// having to remember to start a fuzzer.
+//
+// GOJJA2_FUZZ_N and GOJJA2_FUZZ_SEED override the count and the seed, which is
+// how a long soak is run: GOJJA2_FUZZ_N=200000 go test ./conformance/ -run Differential
+func TestDifferential(t *testing.T) {
+	h := newHarness(t)
+
+	count := envInt(t, "GOJJA2_FUZZ_N", 3000)
+	seed := uint64(envInt(t, "GOJJA2_FUZZ_SEED", 20260916))
+	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
+
+	var checked, skipped int
+	var failures int
+	for range count {
+		input := make([]byte, 1+rng.IntN(96))
+		for i := range input {
+			input[i] = byte(rng.UintN(256))
+		}
+		src := conformance.GenerateTemplate(input)
+		if strings.TrimSpace(src) == "" {
+			skipped++
+			continue
+		}
+		checked++
+
+		d := h.check(t, src)
+		if d == nil {
+			continue
+		}
+		failures++
+		if failures > 10 {
+			t.Errorf("... stopping after 10 divergences")
+			break
+		}
+		min, minD := h.minimize(t, src, 200)
+		report(t, min, minD)
+	}
+	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), %d empty",
+		checked, seed, skipped)
+}
+
+func envInt(t testing.TB, name string, def int) int {
+	t.Helper()
+	text := os.Getenv(name)
+	if text == "" {
+		return def
+	}
+	n, err := strconv.Atoi(text)
+	if err != nil {
+		t.Fatalf("%s=%q: %v", name, text, err)
+	}
+	return n
+}

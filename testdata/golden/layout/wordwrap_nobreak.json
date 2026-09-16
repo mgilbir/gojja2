@@ -1,0 +1,9 @@
+{
+  "case": "layout/wordwrap_nobreak.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "abcdefghij\nkl|abcd\nefgh\nij\nkl"
+}

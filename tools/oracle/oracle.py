@@ -33,48 +33,16 @@ from pathlib import Path
 
 import jinja2
 
+from jinjaoracle import (  # noqa: E402 - sibling module, not a package
+    SETTING_KEYS,
+    CaseError,
+    build_environment,
+    describe,
+)
+
 ORACLE = {"impl": "cpython-jinja2", "version": jinja2.__version__}
 
 SEPARATOR = "\n---\n"
-
-# Environment options a case may set. Anything else in __settings__ is an error,
-# so a typo in a fixture fails loudly instead of being silently ignored.
-SETTING_KEYS = {
-    "block_start_string",
-    "block_end_string",
-    "variable_start_string",
-    "variable_end_string",
-    "comment_start_string",
-    "comment_end_string",
-    "line_statement_prefix",
-    "line_comment_prefix",
-    "trim_blocks",
-    "lstrip_blocks",
-    "newline_sequence",
-    "keep_trailing_newline",
-    "autoescape",
-    "optimized",
-    "undefined",
-    "extensions",
-}
-
-# Optional tags, named the short way a case writes them.
-EXTENSION_MODULES = {
-    "do": "jinja2.ext.do",
-    "loopcontrols": "jinja2.ext.loopcontrols",
-}
-
-UNDEFINED_KINDS = {
-    "default": jinja2.Undefined,
-    "strict": jinja2.StrictUndefined,
-    "chainable": jinja2.ChainableUndefined,
-    "debug": jinja2.DebugUndefined,
-}
-
-
-class CaseError(Exception):
-    """A malformed fixture (as opposed to a template that fails to render)."""
-
 
 class Case:
     def __init__(self, path: Path, root: Path):
@@ -101,54 +69,17 @@ class Case:
             raise CaseError(f"{self.rel}: unknown __settings__ keys: {sorted(unknown)}")
 
     def environment(self) -> jinja2.Environment:
-        opts = dict(self.settings)
-        undefined = opts.pop("undefined", "default")
-        if undefined not in UNDEFINED_KINDS:
-            raise CaseError(f"{self.rel}: unknown undefined kind {undefined!r}")
-
-        extensions = []
-        for name in opts.pop("extensions", []):
-            module = EXTENSION_MODULES.get(name)
-            if module is None:
-                raise CaseError(f"{self.rel}: unknown extension {name!r}")
-            extensions.append(module)
         sources = dict(self.templates)
         sources[self.rel] = self.source
-        return jinja2.Environment(
-            loader=jinja2.DictLoader(sources),
-            undefined=UNDEFINED_KINDS[undefined],
-            extensions=extensions,
-            **opts,
-        )
+        return build_environment(self.settings, sources, self.rel)
 
     def render(self) -> dict:
         try:
-            env = self.environment()
-            template = env.get_template(self.rel)
+            template = self.environment().get_template(self.rel)
             output = template.render(self.context)
         except Exception as exc:  # noqa: BLE001 - any exception is a valid result
             return {"ok": False, "error": describe(exc)}
         return {"ok": True, "output": output}
-
-
-def describe(exc: BaseException) -> dict:
-    """Serialise an exception the way a conformance check needs to see it.
-
-    `type` is the assertion that matters and is compared strictly; `message`
-    and `lineno` are recorded so divergence is visible but can be graded more
-    loosely while error strings are still being brought into line.
-    """
-    info = {"type": type(exc).__name__, "message": str(exc)}
-    # An exception can carry anything on these attributes -- a KeyError raised
-    # from a template may hold an Undefined, which is not JSON -- so both are
-    # coerced rather than trusted.
-    lineno = getattr(exc, "lineno", None)
-    if isinstance(lineno, int):
-        info["lineno"] = lineno
-    name = getattr(exc, "name", None)
-    if isinstance(name, str):
-        info["name"] = name
-    return info
 
 
 def golden_for(case: Case) -> dict:

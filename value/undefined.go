@@ -158,7 +158,17 @@ func ObjectTypeRepr(v Value) string {
 		return "None"
 	case KindUndefined:
 		return "jinja2.runtime." + v.ClassName() + " object"
-	default:
-		return v.TypeName() + " object"
+	case KindString:
+		if v.safe {
+			return "markupsafe.Markup object"
+		}
+	case KindObject:
+		// object_type_repr qualifies a class outside builtins with its
+		// module, so a Joiner is "jinja2.utils.Joiner object" here even
+		// though a type error names it plain "Joiner".
+		if q, ok := v.obj.(interface{ QualifiedName() string }); ok {
+			return q.QualifiedName() + " object"
+		}
 	}
+	return v.TypeName() + " object"
 }

@@ -58,6 +58,23 @@ func (r *rangeObject) GetAttr(name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
+// Slice returns the sub-range a slice selects. Slicing a range in Python
+// yields another range rather than a list, so `range(3)[1:]` renders
+// "range(1, 3)" and not "[1, 2]".
+func (r *rangeObject) Slice(start, stop, step *int) (value.Value, error) {
+	begin, end, st, err := value.SliceBounds(r.Len(), start, stop, step)
+	if err != nil {
+		return value.Undefined, err
+	}
+	// The bounds are positions within this range, so they map back onto
+	// the original start and step.
+	return value.FromObject(&rangeObject{
+		start: r.start + int64(begin)*r.step,
+		stop:  r.start + int64(end)*r.step,
+		step:  r.step * int64(st),
+	}), nil
+}
+
 func (r *rangeObject) TypeName() string { return "range" }
 
 func (r *rangeObject) Repr() string {
@@ -188,6 +205,10 @@ type cyclerObject struct {
 
 func (c *cyclerObject) GetAttr(name string) (value.Value, bool) {
 	switch name {
+	case "items":
+		// jinja2's Cycler stores its rotation here. It is not a method,
+		// which is why `cycler(...)|xmlattr` fails calling a tuple.
+		return value.NewTuple(c.items...), true
 	case "current":
 		if len(c.items) == 0 {
 			return value.Undefined, true
@@ -215,6 +236,7 @@ func (c *cyclerObject) next() (value.Value, error) {
 
 func (c *cyclerObject) Call(*value.CallArgs) (value.Value, error) { return c.next() }
 func (c *cyclerObject) TypeName() string                          { return "Cycler" }
+func (c *cyclerObject) QualifiedName() string                     { return "jinja2.utils.Cycler" }
 func (c *cyclerObject) Repr() string                              { return "<Cycler>" }
 
 func globalCycler(args *value.CallArgs) (value.Value, error) {
@@ -233,6 +255,7 @@ type joinerObject struct {
 
 func (j *joinerObject) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
 func (j *joinerObject) TypeName() string                   { return "Joiner" }
+func (j *joinerObject) QualifiedName() string              { return "jinja2.utils.Joiner" }
 func (j *joinerObject) Repr() string                       { return "<Joiner>" }
 
 func (j *joinerObject) Call(*value.CallArgs) (value.Value, error) {

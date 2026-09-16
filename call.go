@@ -4,8 +4,6 @@
 package gojja2
 
 import (
-	"strings"
-
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/internal/ast"
 	"github.com/mgilbir/gojja2/value"
@@ -88,7 +86,7 @@ func (ex *exec) invoke(callee value.Value, args *value.CallArgs, at ast.Expr) (v
 		return fn.Call(args)
 	}
 	return value.Undefined, errs.New(errs.TypeError,
-		"%s object is not callable", value.ObjectTypeRepr(callee))
+		"'%s' object is not callable", callee.TypeName())
 }
 
 // callMacro binds arguments and renders a macro body.
@@ -194,12 +192,14 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 		sc.set(param.Name, ex.st.Undefined(value.NewUndefined(param.Name)))
 	}
 
+	declareFrameLocals(sc, ex.st, m.node.Body)
+
 	// Escaping follows the call site, not the definition site: jinja2
 	// passes the caller's eval context into the macro.
 	autoescape := ex.autoescape
 	prevTmpl := ex.st.tmpl
 	ex.st.tmpl = m.tmpl
-	text, err := ex.capture(sc, func(sub *exec) error {
+	text, err := ex.captureFunction(sc, func(sub *exec) error {
 		sub.autoescape = autoescape
 		// A macro body is not inside the block that called it, so
 		// super() must not resolve through to one.
@@ -345,6 +345,9 @@ func (ex *exec) assign(target ast.Expr, v value.Value) error {
 	case *ast.Name:
 		ex.sc.set(t.Name, v)
 		if ex.sc == ex.st.ctx {
+			// A top-level assignment also lands in context.vars,
+			// which is what a block body resolves against.
+			ex.st.contextVars.set(t.Name, v)
 			ex.st.export(t.Name)
 		}
 		return nil
@@ -394,16 +397,5 @@ func (ex *exec) unpack(t *ast.Tuple, v value.Value) error {
 	return nil
 }
 
-// --- escaping ----------------------------------------------------------------
-
-// htmlEscaper matches markupsafe's escape(), which uses numeric references for
-// the quotes rather than the named entities.
-var htmlEscaper = strings.NewReplacer(
-	"&", "&amp;",
-	"<", "&lt;",
-	">", "&gt;",
-	"'", "&#39;",
-	`"`, "&#34;",
-)
-
-func escapeHTML(s string) string { return htmlEscaper.Replace(s) }
+// escapeHTML is markupsafe's escape, kept here as the name the renderer uses.
+func escapeHTML(s string) string { return value.EscapeHTML(s) }

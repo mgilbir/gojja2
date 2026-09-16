@@ -1,0 +1,9 @@
+{
+  "case": "markup/concat.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "<b>&lt;i&gt;|a&lt;i&gt;<b>|<b><i>"
+}

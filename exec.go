@@ -22,6 +22,17 @@ type exec struct {
 	st  *State
 	sc  *scope
 	out *strings.Builder
+	// stream is the output of the enclosing *function* -- the template
+	// root, a block, or a macro body. It differs from out only inside a
+	// {% filter %} or a block {% set %}, which buffer within a function.
+	//
+	// jinja2 compiles `{% include ... without context %}` to a yield
+	// straight into the function's own stream, so its output escapes any
+	// such buffer: `{% filter escape %}{% include "x" without context %}`
+	// leaves the included text unescaped, and emits it first. That is an
+	// artefact of jinja2 caching a context-free module's body, but it is
+	// observable, so it is reproduced.
+	stream *strings.Builder
 	// autoescape is per-frame so `{% autoescape %}` can change it for a
 	// span without disturbing the rest of the render.
 	autoescape bool
@@ -47,7 +58,8 @@ func (ex *exec) child(sc *scope) *exec {
 	return &next
 }
 
-// capture runs fn with output redirected into a fresh buffer.
+// capture runs fn with output redirected into a fresh buffer. The enclosing
+// function's stream is left alone, because a buffer is not a function.
 func (ex *exec) capture(sc *scope, fn func(*exec) error) (string, error) {
 	var buf strings.Builder
 	sub := *ex
@@ -57,6 +69,15 @@ func (ex *exec) capture(sc *scope, fn func(*exec) error) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// captureFunction is capture for a new function body -- a macro or a block --
+// where the stream moves with the buffer.
+func (ex *exec) captureFunction(sc *scope, fn func(*exec) error) (string, error) {
+	return ex.capture(sc, func(sub *exec) error {
+		sub.stream = sub.out
+		return fn(sub)
+	})
 }
 
 func (ex *exec) execBody(body []ast.Stmt) error {
@@ -244,6 +265,7 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		body := ex.child(newScope(ex.sc))
 		body.loop = loopValue
 		body.sc.set("loop", loopValue)
+		declareFrameLocals(body.sc, ex.st, n.Body)
 
 		if err := body.assign(n.Target, src.At(i)); err != nil {
 			return err
@@ -298,7 +320,9 @@ func (ex *exec) execAssign(n *ast.Assign) error {
 }
 
 func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
-	text, err := ex.capture(newScope(ex.sc), func(sub *exec) error {
+	inner := newScope(ex.sc)
+	declareFrameLocals(inner, ex.st, n.Body)
+	text, err := ex.capture(inner, func(sub *exec) error {
 		return sub.execBody(n.Body)
 	})
 	if err != nil {
@@ -320,6 +344,7 @@ func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 func (ex *exec) execWith(n *ast.With) error {
 	inner := newScope(ex.sc)
 	sub := ex.child(inner)
+	declareFrameLocals(inner, ex.st, n.Body)
 	for i, target := range n.Targets {
 		// Values are evaluated in the enclosing scope, so
 		// `{% with a = a %}` refers to the outer a.
@@ -351,6 +376,7 @@ func (ex *exec) execMacro(n *ast.Macro) error {
 	}
 	ex.sc.set(n.Name, value.FromObject(m))
 	if ex.sc == ex.st.ctx {
+		ex.st.contextVars.set(n.Name, value.FromObject(m))
 		ex.st.export(n.Name)
 	}
 	return nil
@@ -387,7 +413,9 @@ func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaul
 }
 
 func (ex *exec) execFilterBlock(n *ast.FilterBlock) error {
-	text, err := ex.capture(newScope(ex.sc), func(sub *exec) error {
+	inner := newScope(ex.sc)
+	declareFrameLocals(inner, ex.st, n.Body)
+	text, err := ex.capture(inner, func(sub *exec) error {
 		return sub.execBody(n.Body)
 	})
 	if err != nil {
@@ -422,9 +450,16 @@ func (ex *exec) execBlock(n *ast.Block) error {
 
 	ref := &blockReference{st: ex.st, name: n.Name, index: 0}
 	if n.Scoped {
-		// A scoped block can see the frame it sits in, so a block
-		// inside a loop can read the loop variable.
-		ref.sc = newScope(ex.sc)
+		// A scoped block is handed its immediate frame's own bindings
+		// -- the loop variable and `loop` -- on top of context.vars.
+		// It is not given the whole enclosing chain, so a name the root
+		// frame owns but has not assigned yet still resolves from the
+		// render arguments.
+		scoped := newScope(ex.st.contextVars)
+		for name, v := range ex.sc.vars {
+			scoped.set(name, v)
+		}
+		ref.sc = scoped
 	}
 	v, err := ref.render()
 	if err != nil {
@@ -480,7 +515,11 @@ func (ex *exec) execInclude(n *ast.Include) error {
 	if err != nil {
 		return err
 	}
-	ex.out.WriteString(out)
+	target := ex.out
+	if !n.WithContext {
+		target = ex.stream
+	}
+	target.WriteString(out)
 	return nil
 }
 
@@ -525,6 +564,7 @@ func (ex *exec) execImport(n *ast.Import) error {
 	}
 	ex.sc.set(n.Target, module)
 	if ex.sc == ex.st.ctx {
+		ex.st.contextVars.set(n.Target, module)
 		ex.st.export(n.Target)
 	}
 	return nil
@@ -547,6 +587,7 @@ func (ex *exec) execFromImport(n *ast.FromImport) error {
 		}
 		ex.sc.set(entry.Alias, v)
 		if ex.sc == ex.st.ctx {
+			ex.st.contextVars.set(entry.Alias, v)
 			ex.st.export(entry.Alias)
 		}
 	}
@@ -572,7 +613,7 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 	st := tmpl.newState(vars)
 	st.depth = ex.st.depth
 	var discard strings.Builder
-	sub := &exec{st: st, sc: st.ctx, out: &discard, autoescape: st.autoescape}
+	sub := &exec{st: st, sc: st.ctx, out: &discard, stream: &discard, autoescape: st.autoescape}
 	if err := sub.execBody(tmpl.tree.Body); err != nil {
 		return value.Undefined, err
 	}

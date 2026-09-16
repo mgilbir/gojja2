@@ -104,6 +104,41 @@ case("control/loop_controls", "{% for x in seq %}{% if x == 2 %}{% continue %}{%
 case("control/do", "{% set l = [] %}{% do l.append(1) %}{% do l.append(2) %}{{ l }}",
      __settings__={"extensions": ["do"]})
 
+# --- frame scoping ------------------------------------------------------------
+# Whether a name resolves from the render arguments or from the template's own
+# frame depends on which mention comes first, and nested frames read through to
+# the root rather than to the arguments.
+SCOPE = {"x": 5}
+case("scope/set_then_read", "{% set x = 1 %}{{ x }}", **SCOPE)
+case("scope/read_then_set", "{{ x }}{% set x = 1 %}", **SCOPE)
+case("scope/conditional_set", "{% if false %}{% set x = 9 %}{% endif %}[{{ x }}]", **SCOPE)
+case("scope/taken_conditional_set", "{% if true %}{% set x = 9 %}{% endif %}[{{ x }}]", **SCOPE)
+case("scope/loop_before_set", "{% for i in [1] %}[{{ x }}]{% endfor %}{% set x = 1 %}", **SCOPE)
+case("scope/loop_no_set", "{% for i in [1] %}[{{ x }}]{% endfor %}", **SCOPE)
+case("scope/macro_no_set", "{% macro mm() %}[{{ x }}]{% endmacro %}{{ mm() }}", **SCOPE)
+case("scope/macro_after_set", "{% macro mm() %}[{{ x }}]{% endmacro %}{% set x = 9 %}{{ mm() }}", **SCOPE)
+case("scope/macro_before_set", "{% macro mm() %}[{{ x }}]{% endmacro %}{{ mm() }}{% set x = 9 %}{{ mm() }}", **SCOPE)
+case("scope/with_before_set", "{% with %}[{{ x }}]{% endwith %}{% set x = 1 %}", **SCOPE)
+case("scope/filter_before_set", "{% filter upper %}[{{ x }}]{% endfilter %}{% set x = 1 %}", **SCOPE)
+case("scope/block_before_set", "{% block b %}[{{ x }}]{% endblock %}{% set x = 1 %}", **SCOPE)
+case("scope/block_after_set", "{% set x = 9 %}{% block b %}[{{ x }}]{% endblock %}", **SCOPE)
+case("scope/setblock_before_set", "{% set v %}[{{ x }}]{% endset %}{{ v }}{% set x = 1 %}", **SCOPE)
+case("scope/scoped_block_in_loop", "{% for i in [1] %}{% block b scoped %}[{{ x }}][{{ i }}]{% endblock %}{% endfor %}{% set x = 1 %}", **SCOPE)
+case("scope/import_after_use", "{% macro mm() %}[{{ m }}]{% endmacro %}{{ mm() }}{% from 'mac.txt' import m %}",
+     __templates__={"mac.txt": "{% macro m(x) %}M{% endmacro %}"}, m=10)
+case("scope/loop_conditional_set", "{% for i in [1,2,3] %}{% if loop.first %}{% set c = 0 %}{% endif %}{{ c }}{% endfor %}")
+
+# --- constant folding ---------------------------------------------------------
+# A print tag whose whole expression is literal is evaluated at compile time
+# through a lookup that swallows failures, so it renders nothing where the same
+# subscript raises anywhere else.
+case("folding/constant_print", "[{{ 0[1:] }}]")
+case("folding/constant_operand", "{{ 0[1:] * -2 }}")
+case("folding/constant_in_if", "{% if 0[1:] %}y{% else %}n{% endif %}")
+case("folding/constant_dict_slice", "[{{ {'a': 1}[:] }}]")
+case("folding/nonconstant_dict_slice", "[{{ d[:] }}]", d={"a": 1})
+case("folding/constant_filter", "{% set w = 3[1:]|urlencode %}[{{ w }}]")
+
 # --- macros -------------------------------------------------------------------
 case("macro/basic", "{% macro m(a, b=2) %}[{{a}},{{b}}]{% endmacro %}{{ m(1) }}{{ m(1,3) }}{{ m(b=4, a=5) }}")
 case("macro/varargs", "{% macro m(a) %}{{a}}|{{ varargs }}|{{ kwargs }}{% endmacro %}{{ m(1,2,3,x=4) }}")
@@ -141,6 +176,20 @@ case("include/ignore_missing", "A{% include 'nope.html' ignore missing %}B", __t
 case("import/module", "{% import 'mac.html' as m %}{{ m.f(1) }}{{ m.exported }}", __templates__=INC)
 case("import/from", "{% from 'mac.html' import f, f as g %}{{ f(1) }}{{ g(2) }}", __templates__=INC)
 case("import/from_missing", "{% from 'mac.html' import nope %}{{ nope }}", __templates__=INC)
+
+# --- context-free includes ----------------------------------------------------
+# `{% include ... without context %}` yields into the enclosing function's
+# output in jinja2, bypassing any {% filter %} or block {% set %} buffer around
+# it, so the included text is neither filtered nor escaped and lands first.
+BYPASS = {"inc.txt": "<x>"}
+case("include/filter_bypass", "{% filter escape %}{% include 'inc.txt' without context %}{% endfilter %}",
+     __templates__=BYPASS)
+case("include/filter_with_context", "{% filter escape %}{% include 'inc.txt' %}{% endfilter %}",
+     __templates__=BYPASS)
+case("include/filter_bypass_order", "{% filter upper %}a{% include 'inc.txt' without context %}b{% endfilter %}",
+     __templates__=BYPASS)
+case("include/setblock_bypass", "{% set v %}{% include 'inc.txt' without context %}{% endset %}[{{ v }}]",
+     __templates__=BYPASS)
 
 # --- whitespace ---------------------------------------------------------------
 for name, settings in [
@@ -243,6 +292,34 @@ case("filters/pprint", "{{ map|pprint }}|{{ 'a'|pprint }}", **MAP)
 case("filters/attr", "{{ d|attr('a') }}|{{ d|attr('missing') }}", d={"a": 1})
 case("filters/items", "{{ map|items|list }}", **MAP)
 case("filters/list_string", "{{ 'abc'|list }}|{{ map|list }}|{{ 1|string }}|{{ none|string }}", **MAP)
+
+# --- markupsafe ---------------------------------------------------------------
+# Markup absorbs whatever it is joined to, escaping it and staying Markup, and
+# it reports itself as Markup in type errors.
+case("markup/concat", "{{ ('<b>'|safe) + '<i>' }}|{{ 'a<i>' + ('<b>'|safe) }}|{{ ('<b>'|safe) + ('<i>'|safe) }}")
+case("markup/type_name", "{{ ('a'|safe) + 1 }}")
+case("markup/preserved", "{{ ('<b>'|safe)|upper|pprint }}|{{ ('a b'|safe)|trim|pprint }}|{{ ('ab'|safe)|title|pprint }}")
+case("markup/indexing", "{{ ('ab'|safe)[0]|pprint }}|{{ ('ab'|safe)|last|pprint }}|{{ ('ab'|safe)|first|pprint }}")
+case("markup/tojson_is_markup", "{{ ([1]|tojson)|pprint }}")
+
+# --- textwrap and pprint ------------------------------------------------------
+case("layout/wordwrap_escaped", "{{ {1: 'a', 2: 'b'}|urlize|wordwrap(10) }}")
+case("layout/wordwrap_hyphens", "{{ 'a-very-long-hyphenated-word here'|wordwrap(8) }}")
+case("layout/wordwrap_nobreak", "{{ 'abcdefghij kl'|wordwrap(5, false) }}|{{ 'abcdefghij kl'|wordwrap(4) }}")
+case("layout/pprint_wrapping", "{{ users|pprint }}|{{ {'a': users}|pprint }}", **USERS)
+case("layout/indent_empty", "[{{ ''|indent(2, true) }}]")
+
+# --- error shapes -------------------------------------------------------------
+case("errshape/sort_mixed", "{{ mix|sort }}", mix=[1, "a", 2.5, True, None])
+case("errshape/sort_mixed_reverse", "{{ mix|sort(true) }}", mix=[1, "a", 2.5, True, None])
+case("errshape/indent_types", "{{ nope|indent(2) }}")
+case("errshape/indent_tuple", "{{ (1, 2)|indent(2) }}")
+case("errshape/truncate_list", "{{ long|truncate(3) }}", long=list("abcdefghijklmnopqrst"))
+case("errshape/groupby_tuple", "{% for g in users|groupby('city') %}[{{ g.grouper }}:{{ g.list|length }}]{% endfor %}|{{ users|groupby('city') }}", **USERS)
+case("errshape/range_slice", "{{ range(3)[::2] }}|{{ range(10)[2:8:3] }}|{{ range(0,10,2)[1:4] }}")
+case("errshape/format_char", "{{ '%S' % 'a' }}")
+case("errshape/callable_arity", "{{ 1 is callable(2) }}")
+case("errshape/wordcount_unicode", "{{ ['héllo', 1]|wordcount }}")
 
 # --- tests --------------------------------------------------------------------
 case("tests/kinds", "{{ 1 is integer }}{{ 1.0 is float }}{{ 1 is number }}{{ 'a' is string }}{{ [] is sequence }}{{ {} is mapping }}{{ none is none }}{{ true is boolean }}")

@@ -29,6 +29,21 @@ func (s *scope) lookup(name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
+// lookupUntil searches the chain up to and including stop, ignoring anything
+// below it. It is how a frame asks whether an *enclosing frame* binds a name,
+// without seeing the render arguments underneath them.
+func (s *scope) lookupUntil(name string, stop *scope) (value.Value, bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if v, ok := cur.vars[name]; ok {
+			return v, true
+		}
+		if cur == stop {
+			break
+		}
+	}
+	return value.Undefined, false
+}
+
 func (s *scope) set(name string, v value.Value) {
 	if s.vars == nil {
 		s.vars = make(map[string]value.Value)

@@ -1,0 +1,5 @@
+{
+  "x": 5
+}
+---
+{% for i in [1] %}{% block b scoped %}[{{ x }}][{{ i }}]{% endblock %}{% endfor %}{% set x = 1 %}

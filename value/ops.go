@@ -97,6 +97,20 @@ func bothNumbers(a, b Value) bool { return a.IsNumber() && b.IsNumber() }
 // eitherFloat reports whether the result of a numeric op must be a float.
 func eitherFloat(a, b Value) bool { return a.kind == KindFloat || b.kind == KindFloat }
 
+// undefinedOperand reports the error an undefined raises when it is computed
+// with. jinja2's Undefined routes every arithmetic dunder to its own failure,
+// so `0 + nope` names the missing variable rather than complaining about int
+// and Undefined -- which is the difference between a useful message and a
+// puzzle.
+func undefinedOperand(vs ...Value) error {
+	for _, v := range vs {
+		if v.kind == KindUndefined {
+			return v.UndefinedError()
+		}
+	}
+	return nil
+}
+
 func binTypeError(op string, a, b Value) error {
 	return errs.New(errs.TypeError, "unsupported operand type(s) for %s: '%s' and '%s'",
 		op, a.TypeName(), b.TypeName())
@@ -130,6 +144,9 @@ func mulInt64(a, b int64) (int64, bool) {
 // Add implements `+`: numeric addition, string concatenation, and sequence
 // concatenation between two lists or two tuples.
 func Add(a, b Value) (Value, error) {
+	if err := undefinedOperand(a, b); err != nil {
+		return Undefined, err
+	}
 	switch {
 	case bothNumbers(a, b):
 		if eitherFloat(a, b) {
@@ -148,17 +165,25 @@ func Add(a, b Value) (Value, error) {
 		by, _ := b.BigInt()
 		return BigInt(new(big.Int).Add(bx, by)), nil
 
-	case a.kind == KindString:
+	case a.kind == KindString || (b.kind == KindString && b.safe):
+		// Markup absorbs the other side: it escapes it and stays
+		// Markup, in either order. That is the point of it -- joining
+		// trusted markup to untrusted text must not untrust the result
+		// or trust the text.
+		if a.safe || b.safe {
+			if b.kind != KindString {
+				// Markup.__add__ returns NotImplemented for a
+				// non-string, which falls through to Python's
+				// generic operand error.
+				return Undefined, binTypeError("+", a, b)
+			}
+			return Safe(markupText(a) + markupText(b)), nil
+		}
 		if b.kind != KindString {
-			// Concatenation failures are raised by the left
-			// operand's __add__, so the message names its type and
-			// is not the generic "unsupported operand type(s)" one.
 			return Undefined, errs.New(errs.TypeError,
 				"can only concatenate str (not \"%s\") to str", b.TypeName())
 		}
-		// Markup is only preserved when both halves are trusted;
-		// otherwise the result must still be escaped downstream.
-		return Value{kind: KindString, str: a.str + b.str, safe: a.safe && b.safe}, nil
+		return String(a.str + b.str), nil
 
 	case a.kind == KindBytes:
 		if b.kind != KindBytes {
@@ -186,8 +211,20 @@ func Add(a, b Value) (Value, error) {
 	return Undefined, binTypeError("+", a, b)
 }
 
+// markupText renders one side of a Markup concatenation, escaping it if it is
+// not already trusted.
+func markupText(v Value) string {
+	if v.safe {
+		return v.str
+	}
+	return EscapeHTML(v.str)
+}
+
 // Sub implements `-`, which is numeric only.
 func Sub(a, b Value) (Value, error) {
+	if err := undefinedOperand(a, b); err != nil {
+		return Undefined, err
+	}
 	if !bothNumbers(a, b) {
 		return Undefined, binTypeError("-", a, b)
 	}
@@ -211,6 +248,9 @@ func Sub(a, b Value) (Value, error) {
 // Mul implements `*`: numeric multiplication, and repetition of a str, list or
 // tuple by an integer count. A non-positive count yields an empty result.
 func Mul(a, b Value) (Value, error) {
+	if err := undefinedOperand(a, b); err != nil {
+		return Undefined, err
+	}
 	if bothNumbers(a, b) {
 		if eitherFloat(a, b) {
 			x, _ := a.Float64()
@@ -233,8 +273,20 @@ func Mul(a, b Value) (Value, error) {
 		return repeat(seq, n)
 	}
 	// Once one operand is a sequence, the failure comes from
-	// sequence.__mul__ and names only the other operand's type.
+	// sequence.__mul__ and names only the other operand's type. Markup
+	// coerces through __index__ instead, so it reports the other operand
+	// as not interpretable as an integer.
 	if other, ok := nonSequenceOperand(a, b); ok {
+		if a.safe || b.safe {
+			// Markup multiplies through __index__, so the operand
+			// named is the one that is not the Markup.
+			nonMarkup := a
+			if a.safe {
+				nonMarkup = b
+			}
+			return Undefined, errs.New(errs.TypeError,
+				"'%s' object cannot be interpreted as an integer", nonMarkup.TypeName())
+		}
 		return Undefined, errs.New(errs.TypeError,
 			"can't multiply sequence by non-int of type '%s'", other.TypeName())
 	}
@@ -367,6 +419,9 @@ func floatDivmod(x, y float64) (floordiv, mod float64) {
 // converting both sides to float first: 1 / (2**53 + 1) differs between the
 // two, and CPython gives the exactly-rounded answer.
 func Div(a, b Value) (Value, error) {
+	if err := undefinedOperand(a, b); err != nil {
+		return Undefined, err
+	}
 	if !bothNumbers(a, b) {
 		return Undefined, binTypeError("/", a, b)
 	}
@@ -400,6 +455,9 @@ func Div(a, b Value) (Value, error) {
 // FloorDiv implements `//`, which rounds toward negative infinity rather than
 // toward zero as Go's integer division does.
 func FloorDiv(a, b Value) (Value, error) {
+	if err := undefinedOperand(a, b); err != nil {
+		return Undefined, err
+	}
 	if !bothNumbers(a, b) {
 		return Undefined, binTypeError("//", a, b)
 	}
@@ -436,7 +494,12 @@ func FloorDiv(a, b Value) (Value, error) {
 // the divisor, and printf-style formatting on strings.
 func Mod(a, b Value) (Value, error) {
 	if a.kind == KindString {
+		// `"%s" % nope` formats the undefined as "", so the operand
+		// check must not run before the string path.
 		return FormatPercent(a, b)
+	}
+	if err := undefinedOperand(a, b); err != nil {
+		return Undefined, err
 	}
 	if !bothNumbers(a, b) {
 		return Undefined, binTypeError("%", a, b)
@@ -475,6 +538,9 @@ func Mod(a, b Value) (Value, error) {
 // fractional exponent yields a complex number in Python -- a type with no
 // place in a template -- so that case is rejected rather than approximated.
 func Pow(a, b Value) (Value, error) {
+	if err := undefinedOperand(a, b); err != nil {
+		return Undefined, err
+	}
 	if !bothNumbers(a, b) {
 		// pow() shares this operator's slot, so Python names both.
 		return Undefined, errs.New(errs.TypeError,
@@ -530,6 +596,9 @@ func estimatePowBits(base *big.Int, exp int64) int64 {
 
 // Neg implements unary `-`.
 func Neg(v Value) (Value, error) {
+	if err := undefinedOperand(v); err != nil {
+		return Undefined, err
+	}
 	switch {
 	case v.kind == KindFloat:
 		return Float(-v.AsFloat()), nil
@@ -546,6 +615,9 @@ func Neg(v Value) (Value, error) {
 // Pos implements unary `+`, which coerces bool to int and is otherwise the
 // identity on numbers.
 func Pos(v Value) (Value, error) {
+	if err := undefinedOperand(v); err != nil {
+		return Undefined, err
+	}
 	switch {
 	case v.kind == KindFloat:
 		return v, nil

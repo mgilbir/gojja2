@@ -58,7 +58,7 @@ func (t *Template) render(vars map[string]value.Value, depth int) (string, error
 	st := t.newState(vars)
 	st.depth = depth
 	var out strings.Builder
-	ex := &exec{st: st, sc: st.ctx, out: &out, autoescape: st.autoescape}
+	ex := &exec{st: st, sc: st.ctx, out: &out, stream: &out, autoescape: st.autoescape}
 
 	if err := ex.execBody(t.tree.Body); err != nil {
 		return "", err
@@ -95,10 +95,15 @@ type State struct {
 	root *Template // the template the render started from
 
 	globals *scope
-	// ctx holds template-level variables: the render arguments plus
-	// whatever top-level `{% set %}` assigns. Macros and unscoped blocks
-	// resolve against it rather than against the local frame.
+	// ctx is the template's root frame: the render arguments sit in a
+	// scope beneath it, so a top-level `{% set %}` shadows an argument of
+	// the same name from the start of the render.
 	ctx *scope
+	// contextVars is that underlying scope -- jinja2's context.vars. A
+	// top-level assignment is written here as well as into the frame, and
+	// blocks resolve against it, which is why a block sees an argument the
+	// root frame has shadowed but not yet assigned.
+	contextVars *scope
 
 	blocks     map[string][]blockEntry
 	autoescape bool
@@ -130,25 +135,34 @@ func (s *State) Undefined(v value.Value) value.Value {
 
 func (t *Template) newState(vars map[string]value.Value) *State {
 	globals := &scope{vars: t.env.globals}
-	ctx := newScope(globals)
+	// The render arguments get a scope of their own, below the one the
+	// template writes into. A top-level `{% set %}` then shadows an
+	// argument of the same name from the start of the render, which is
+	// what makes `{% for %}{{ x }}{% endfor %}{% set x = 1 %}` render
+	// nothing even when x was passed in.
+	arguments := newScope(globals)
 	for k, v := range vars {
-		ctx.vars[k] = v
+		arguments.vars[k] = v
 	}
+	ctx := newScope(arguments)
 
 	blocks := make(map[string][]blockEntry, len(t.blocks))
 	for name, node := range t.blocks {
 		blocks[name] = []blockEntry{{tmpl: t, node: node}}
 	}
 
-	return &State{
-		env:        t.env,
-		tmpl:       t,
-		root:       t,
-		globals:    globals,
-		ctx:        ctx,
-		blocks:     blocks,
-		autoescape: t.env.escapes(t.name),
+	st := &State{
+		env:         t.env,
+		tmpl:        t,
+		root:        t,
+		globals:     globals,
+		ctx:         ctx,
+		contextVars: arguments,
+		blocks:      blocks,
+		autoescape:  t.env.escapes(t.name),
 	}
+	declareFrameLocals(ctx, st, t.tree.Body)
+	return st
 }
 
 // enter bounds template recursion. The limit is a safety control: a template

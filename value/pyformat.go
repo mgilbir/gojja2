@@ -69,6 +69,9 @@ func FormatPercent(format, args Value) (Value, error) {
 		if i, err = parseConversion(spec, i, &conv); err != nil {
 			return Undefined, err
 		}
+		// CPython reports where an unknown conversion was found, and
+		// the index it gives is of the character after the verb.
+		conv.at = i
 
 		// Resolve the value this conversion formats.
 		var arg Value
@@ -133,6 +136,11 @@ func isMappingArg(v Value) bool {
 	switch v.kind {
 	case KindDict, KindList:
 		return true
+	case KindUndefined:
+		// Undefined defines __getitem__, so it passes the subscript
+		// check and `"x" % nope` formats rather than complaining about
+		// unconverted arguments.
+		return true
 	case KindObject:
 		switch v.Interface().(type) {
 		case Mapping, Sequence:
@@ -180,6 +188,9 @@ type conversion struct {
 	hasPrec   bool
 	starPrec  bool
 	verb      byte
+	// at is the offset just past the verb, which is the position
+	// CPython names when the verb is not one it knows.
+	at int
 }
 
 func parseConversion(spec string, i int, c *conversion) (int, error) {
@@ -328,7 +339,7 @@ func (c *conversion) apply(v Value) (string, error) {
 		return string(rune(n)), nil
 	}
 	return "", errs.New(errs.ValueError,
-		"unsupported format character '%c' (0x%x)", c.verb, c.verb)
+		"unsupported format character '%c' (0x%x) at index %d", c.verb, c.verb, c.at-1)
 }
 
 // integerArg coerces to an integer the way Python's %d does, which accepts a

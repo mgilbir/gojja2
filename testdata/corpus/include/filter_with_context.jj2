@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "inc.txt": "<x>"
+  }
+}
+---
+{% filter escape %}{% include 'inc.txt' %}{% endfilter %}

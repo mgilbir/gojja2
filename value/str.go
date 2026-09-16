@@ -77,6 +77,59 @@ func StrSlice(s string, start, stop, step *int) (string, error) {
 	return b.String(), nil
 }
 
+// SliceBounds resolves a Python slice to the raw (start, stop, step) it
+// selects, without materialising the indices.
+//
+// A range needs these rather than the index list: slicing a range yields
+// another range, and Python keeps the slice's stop rather than deriving one
+// from the last element, so range(3)[::2] is range(0, 3, 2) and not
+// range(0, 4, 2).
+func SliceBounds(length int, start, stop, step *int) (begin, end, st int, err error) {
+	st = 1
+	if step != nil {
+		st = *step
+	}
+	if st == 0 {
+		return 0, 0, 0, errs.New(errs.ValueError, "slice step cannot be zero")
+	}
+
+	var lower, upper int
+	if st > 0 {
+		lower, upper = 0, length
+	} else {
+		lower, upper = -1, length-1
+	}
+	clamp := func(v int) int {
+		if v < 0 {
+			v += length
+			if v < lower {
+				return lower
+			}
+			return v
+		}
+		if v > upper {
+			return upper
+		}
+		return v
+	}
+
+	begin = lower
+	if st < 0 {
+		begin = upper
+	}
+	if start != nil {
+		begin = clamp(*start)
+	}
+	end = upper
+	if st < 0 {
+		end = lower
+	}
+	if stop != nil {
+		end = clamp(*stop)
+	}
+	return begin, end, st, nil
+}
+
 // SliceIndices resolves a Python slice against a sequence of the given length
 // and returns the indices it selects, in order.
 //

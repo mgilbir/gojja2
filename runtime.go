@@ -165,6 +165,8 @@ func (l *loopObject) Iterate() iter.Seq[value.Value] {
 
 func (l *loopObject) TypeName() string { return "LoopContext" }
 
+func (l *loopObject) QualifiedName() string { return "jinja2.runtime.LoopContext" }
+
 func (l *loopObject) Repr() string {
 	return fmt.Sprintf("<LoopContext %d/%d>", l.index+1, l.src.Len())
 }
@@ -242,7 +244,9 @@ func (m *macroObject) GetAttr(name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
-func (m *macroObject) TypeName() string { return "macro" }
+func (m *macroObject) TypeName() string { return "Macro" }
+
+func (m *macroObject) QualifiedName() string { return "jinja2.runtime.Macro" }
 
 func (m *macroObject) Repr() string {
 	if m.name == "" {
@@ -271,17 +275,17 @@ func (n *namespaceObject) GetAttr(name string) (value.Value, bool) {
 
 func (n *namespaceObject) SetAttr(name string, v value.Value) { n.d.SetString(name, v) }
 
-func (n *namespaceObject) GetItem(key value.Value) (value.Value, bool) {
-	v, ok, err := n.d.Get(key)
-	if err != nil {
-		return value.Undefined, false
-	}
-	return v, ok
-}
+// A Namespace holds attributes, not items: jinja2's is neither a mapping nor
+// iterable, so `{% for x in ns %}` and `ns|items` fail there and must here.
 
-func (n *namespaceObject) Keys() []value.Value { return n.d.Keys() }
-func (n *namespaceObject) Len() int            { return n.d.Len() }
-func (n *namespaceObject) TypeName() string    { return "Namespace" }
+func (n *namespaceObject) TypeName() string { return "Namespace" }
+
+func (n *namespaceObject) QualifiedName() string { return "jinja2.utils.Namespace" }
+
+// AttributeError is the message jinja2's Namespace raises for a missing
+// attribute: its __getattribute__ raises AttributeError(name), so the message
+// is the bare name with no explanation around it.
+func (n *namespaceObject) AttributeError(name string) string { return name }
 
 func (n *namespaceObject) Repr() string {
 	return "<Namespace " + value.Repr(value.Value(dictValue(n.d))) + ">"
@@ -313,6 +317,8 @@ func (r *templateReference) GetAttr(name string) (value.Value, bool) {
 
 func (r *templateReference) TypeName() string { return "TemplateReference" }
 
+func (r *templateReference) QualifiedName() string { return "jinja2.runtime.TemplateReference" }
+
 func (r *templateReference) Repr() string {
 	return "<TemplateReference " + value.Repr(value.String(r.st.root.name)) + ">"
 }
@@ -331,6 +337,8 @@ type blockReference struct {
 func (b *blockReference) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
 
 func (b *blockReference) TypeName() string { return "BlockReference" }
+
+func (b *blockReference) QualifiedName() string { return "jinja2.runtime.BlockReference" }
 
 func (b *blockReference) Repr() string {
 	return "<BlockReference " + value.Repr(value.String(b.name)) + ">"
@@ -354,13 +362,17 @@ func (b *blockReference) render() (value.Value, error) {
 
 	sc := b.sc
 	if sc == nil {
-		sc = newScope(b.st.ctx)
+		// A block body is its own function, resolving against
+		// context.vars rather than against the root frame's locals.
+		sc = newScope(b.st.contextVars)
 	}
+	declareFrameLocals(sc, b.st, entry.node.Body)
 	var out strings.Builder
 	ex := &exec{
 		st:         b.st,
 		sc:         sc,
 		out:        &out,
+		stream:     &out,
 		autoescape: b.st.autoescape,
 		blockName:  b.name,
 		blockIndex: b.index,

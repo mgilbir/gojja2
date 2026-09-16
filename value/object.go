@@ -41,6 +41,13 @@ type Iterable interface {
 	Iterate() iter.Seq[Value]
 }
 
+// Slicer lets an Object answer a slice itself, for types where the result is
+// not simply a list of the selected elements.
+type Slicer interface {
+	Object
+	Slice(start, stop, step *int) (Value, error)
+}
+
 // Reprer overrides how an Object renders. Repr is Python's repr(), used inside
 // containers; Str is Python's str(), used when the value is printed on its own.
 type Reprer interface {

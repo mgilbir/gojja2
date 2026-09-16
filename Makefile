@@ -86,6 +86,15 @@ import: suites venv ## Import MiniJinja's fixtures and record jinja2's answers
 test: ## Run the Go test suite
 	go test ./...
 
+.PHONY: soak
+soak: venv ## Differential-test N generated templates against CPython (make soak N=200000)
+	GOJJA2_FUZZ_N=$(if $(N),$(N),50000) GOJJA2_FUZZ_SEED=$(if $(SEED),$(SEED),0) \
+		go test ./conformance/ -run TestDifferential -timeout 60m -v
+
+.PHONY: fuzz
+fuzz: venv ## Coverage-guided differential fuzzing (make fuzz TIME=5m)
+	go test ./conformance/ -run xxx -fuzz FuzzTemplate -fuzztime $(if $(TIME),$(TIME),1m)
+
 .PHONY: conformance
 conformance: ## Report conformance pass-rate against the full corpus
 	go test ./conformance/... -run TestConformance -v

@@ -76,6 +76,33 @@ The first corpus is committed with its goldens, so `go test ./...` grades
 against CPython's answers on a fresh checkout with no network and no Python.
 Run `make suites && make import` to add the other two.
 
+## Differential fuzzing
+
+A corpus only covers what someone thought to write down. `make soak` generates
+templates from the grammar, renders each with both implementations, and
+requires them to agree on everything -- output, exception class, message and
+line:
+
+```
+make soak N=200000      # seeded run, reproducible
+make fuzz TIME=5m       # coverage-guided, via go test -fuzz
+```
+
+Generation is structured rather than byte-level: random bytes are read as
+*grammar decisions*, so almost every case renders instead of being a syntax
+error, and a mutation changes one choice rather than corrupting a tag. The
+oracle runs as a warm subprocess -- about 5,000 templates a second rather than
+ten -- under a memory cap and a per-render timeout, so a pathological case
+degrades to an error instead of taking the machine down. A divergence is
+shrunk against the same check before it is reported, so findings arrive
+minimal.
+
+This is where most of the subtler behaviour in this list came from: that
+jinja2 wraps a sort key in a list (so two undefineds sort but do not compare),
+that `{% include ... without context %}` bypasses an enclosing filter buffer,
+and that a name assigned anywhere at template level is invisible to nested
+scopes until the assignment runs.
+
 ## Scope
 
 Jinja2's template language, not Python. Constructs that only exist because

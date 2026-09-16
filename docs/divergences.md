@@ -110,3 +110,31 @@ they raise instead. Every such case is listed in
 `testdata/known_failures.txt`.
 
 This is the one place where not matching CPython is the point.
+
+## A macro containing a context-free include
+
+```jinja
+{% macro m(x) %}{% include "other.txt" without context %}{% endmacro %}{{ m(1) }}
+```
+
+`{% include ... without context %}` compiles, in jinja2, to a yield straight
+into the enclosing function's output stream. Inside a macro that turns the
+macro itself into a Python generator, which `{{ m(1) }}` then renders as
+`<generator object root.<locals>.macro at 0x7f...>` -- an address, and a body
+that never ran.
+
+gojja2 renders the macro. The bypass itself *is* reproduced -- a context-free
+include still escapes an enclosing `{% filter %}` buffer, which is covered by
+the corpus -- but turning a function into an unconsumed generator is an
+artefact of compiling to Python, not a property of the language.
+
+## Comparison order inside a long sort
+
+Sorting values that cannot be compared raises, and the message names the two
+operands the sort happened to reach first. gojja2 reproduces CPython's order
+exactly for lists of 64 elements or fewer, which is where CPython sorts a list
+as a single run.
+
+Above that, CPython splits the list into runs and merges them, and gojja2 uses
+a stable sort of its own. The result is identical; only which pair a failing
+comparison names can differ.

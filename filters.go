@@ -4,9 +4,11 @@
 package gojja2
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,7 +24,12 @@ func registerDefaultFilters(env *Environment) {
 	// text
 	add("upper", stringFilter(strings.ToUpper))
 	add("lower", stringFilter(strings.ToLower))
-	add("title", stringFilter(jinjaTitle))
+	// title is the one case filter that does not preserve Markup: jinja2
+	// assembles it with "".join(...), and joining on a plain str gives a
+	// plain str.
+	add("title", func(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.String(jinjaTitle(value.Str(v))), nil
+	})
 	add("capitalize", stringFilter(pythonCapitalize))
 	add("trim", filterTrim)
 	add("string", filterString)
@@ -109,10 +116,27 @@ func definedFilter(f Filter) Filter {
 	}
 }
 
+// stringFilter adapts a plain string transform, keeping Markup markup.
+//
+// markupsafe's Markup overrides the str methods these filters use, and they
+// return Markup: changing the case of escaped text cannot unescape it. So
+// `{{ x|safe|upper }}` stays safe, and reports its type as Markup.
 func stringFilter(fn func(string) string) Filter {
 	return func(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.String(fn(value.Str(v))), nil
+		out := fn(value.Str(v))
+		if v.IsSafe() {
+			return value.Safe(out), nil
+		}
+		return value.String(out), nil
 	}
+}
+
+// keepSafe carries a value's Markup-ness onto a derived string.
+func keepSafe(src value.Value, out string) value.Value {
+	if src.IsSafe() {
+		return value.Safe(out)
+	}
+	return value.String(out)
 }
 
 // materialize collects an iterable into a slice, which most sequence filters
@@ -134,9 +158,9 @@ func materialize(v value.Value) ([]value.Value, error) {
 func attrPath(s *State, v value.Value, path string) (value.Value, error) {
 	ex := &exec{st: s, sc: s.ctx, autoescape: s.autoescape}
 	for _, part := range strings.Split(path, ".") {
-		if v.IsUndefined() {
-			return v, nil
-		}
+		// No early exit for an undefined receiver: the next lookup has
+		// to raise, which is what makes a second |map(attribute=...)
+		// over the results of a first one fail.
 		if n, err := strconv.Atoi(part); err == nil {
 			item, err := ex.getItem(v, value.Int(int64(n)))
 			if err != nil {
@@ -154,8 +178,14 @@ func attrPath(s *State, v value.Value, path string) (value.Value, error) {
 	return v, nil
 }
 
-// sortKeyFunc builds the key extractor a sorting filter uses.
-func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value.Value) (value.Value, error) {
+// attrKeyFunc builds the key extractor for the filters that compare bare
+// values: min, max, unique and groupby.
+//
+// sortKeyFunc wraps the same key in a list, because jinja2's sort uses
+// make_multi_attrgetter while these use make_attrgetter. The difference is
+// visible: a list comparison settles equal keys without ordering them, so
+// `[nope1, nope2]|sort` succeeds where `[nope1, nope2]|max` raises.
+func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value.Value) (value.Value, error) {
 	fold := func(v value.Value) value.Value {
 		if !caseSensitive && v.IsString() {
 			return value.String(strings.ToLower(v.AsString()))
@@ -164,6 +194,35 @@ func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 	}
 	if attribute.IsUndefined() || attribute.IsNone() {
 		return func(v value.Value) (value.Value, error) { return fold(v), nil }
+	}
+	path := strings.TrimSpace(value.Str(attribute))
+	return func(v value.Value) (value.Value, error) {
+		k, err := attrPath(s, v, path)
+		if err != nil {
+			return value.Undefined, err
+		}
+		return fold(k), nil
+	}
+}
+
+// sortKeyFunc builds the key extractor a sorting filter uses.
+func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value.Value) (value.Value, error) {
+	fold := func(v value.Value) value.Value {
+		if !caseSensitive && v.IsString() {
+			return value.String(strings.ToLower(v.AsString()))
+		}
+		return v
+	}
+	// The key is always a list, even for a single sort field.
+	//
+	// That is not decoration: list comparison tests elements for equality
+	// before ordering them, so two equal keys never reach `<`. It is what
+	// lets `{{ [nope1, nope2]|sort }}` succeed while `{{ nope1 < nope2 }}`
+	// raises -- two undefineds are equal, so nothing asks which is smaller.
+	if attribute.IsUndefined() || attribute.IsNone() {
+		return func(v value.Value) (value.Value, error) {
+			return value.NewList(fold(v)), nil
+		}
 	}
 	// A comma-separated specification sorts by several keys in turn.
 	paths := strings.Split(value.Str(attribute), ",")
@@ -176,16 +235,18 @@ func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 			}
 			keys[i] = fold(k)
 		}
-		if len(keys) == 1 {
-			return keys[0], nil
-		}
-		return value.NewTuple(keys...), nil
+		return value.NewList(keys...), nil
 	}
 }
 
-// stableSortBy sorts in place, keeping the first comparison error. Go's sort
-// cannot return one, and silently ordering values Python refuses to compare
-// would be worse than reporting it.
+// stableSortBy sorts in place, reproducing CPython's comparison order.
+//
+// The order is observable, because comparing incomparable values raises and
+// the message names the two operands the sort happened to reach first.
+// CPython reverses the slice *before* sorting when reverse is set and reverses
+// it again afterwards -- so `[1, 'a', 2.5, True, None]|sort(true)` fails on
+// True against None, the first pair of the reversed list, and not on the first
+// pair of the original.
 func stableSortBy(items []value.Value, key func(value.Value) (value.Value, error), reverse bool) error {
 	keys := make([]value.Value, len(items))
 	for i, item := range items {
@@ -196,46 +257,130 @@ func stableSortBy(items []value.Value, key func(value.Value) (value.Value, error
 		keys[i] = k
 	}
 
+	if reverse {
+		reverseBoth(items, keys)
+	}
+	err := pythonSort(items, keys)
+	if reverse {
+		reverseBoth(items, keys)
+	}
+	return err
+}
+
+func reverseBoth(items, keys []value.Value) {
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+		keys[i], keys[j] = keys[j], keys[i]
+	}
+}
+
+// binarySortLimit is the length below which CPython sorts a list as a single
+// run. Above it timsort splits and merges, and the comparison order stops
+// being worth reproducing: the result is the same either way, only the
+// operands named by a comparison failure differ.
+const binarySortLimit = 64
+
+func pythonSort(items, keys []value.Value) error {
+	n := len(items)
+	if n < 2 {
+		return nil
+	}
+	if n > binarySortLimit {
+		return stableSortFallback(items, keys)
+	}
+
+	var failure error
+	less := func(i, j int) bool {
+		if failure != nil {
+			return false
+		}
+		ok, err := value.Ordered("<", keys[i], keys[j])
+		if err != nil {
+			failure = err
+		}
+		return ok
+	}
+	swap := func(i, j int) {
+		items[i], items[j] = items[j], items[i]
+		keys[i], keys[j] = keys[j], keys[i]
+	}
+
+	// count_run: measure the ordered run the list already starts with, and
+	// flip it if it runs downwards.
+	runLen := 2
+	descending := less(1, 0)
+	if failure != nil {
+		return failure
+	}
+	if descending {
+		for runLen < n && less(runLen, runLen-1) {
+			runLen++
+		}
+		for i, j := 0, runLen-1; i < j; i, j = i+1, j-1 {
+			swap(i, j)
+		}
+	} else {
+		for runLen < n && !less(runLen, runLen-1) {
+			runLen++
+		}
+	}
+	if failure != nil {
+		return failure
+	}
+
+	// binarysort: place each remaining element by binary search, comparing
+	// the element being placed against the midpoint.
+	for start := runLen; start < n; start++ {
+		pivotItem, pivotKey := items[start], keys[start]
+		lo, hi := 0, start
+		for lo < hi {
+			mid := lo + (hi-lo)/2
+			ok, err := value.Ordered("<", pivotKey, keys[mid])
+			if err != nil {
+				return err
+			}
+			if ok {
+				hi = mid
+			} else {
+				lo = mid + 1
+			}
+		}
+		copy(items[lo+1:start+1], items[lo:start])
+		copy(keys[lo+1:start+1], keys[lo:start])
+		items[lo], keys[lo] = pivotItem, pivotKey
+	}
+	return nil
+}
+
+// stableSortFallback keeps long lists out of a quadratic sort. The result is
+// the same stable ordering; only the comparison order differs.
+func stableSortFallback(items, keys []value.Value) error {
+	var failure error
 	idx := make([]int, len(items))
 	for i := range idx {
 		idx[i] = i
 	}
-	var failure error
-	less := func(a, b int) bool {
+	sort.SliceStable(idx, func(a, b int) bool {
 		if failure != nil {
 			return false
 		}
-		ok, err := value.Ordered("<", keys[a], keys[b])
+		ok, err := value.Ordered("<", keys[idx[a]], keys[idx[b]])
 		if err != nil {
 			failure = err
-			return false
 		}
 		return ok
+	})
+	if failure != nil {
+		return failure
 	}
-	// Insertion sort keeps the order stable and lets an error stop early
-	// without leaving the slice half-ordered by a broken comparison.
-	for i := 1; i < len(idx); i++ {
-		for j := i; j > 0; j-- {
-			a, b := idx[j-1], idx[j]
-			if reverse {
-				a, b = b, a
-			}
-			if !less(b, a) {
-				break
-			}
-			idx[j-1], idx[j] = idx[j], idx[j-1]
-		}
-		if failure != nil {
-			return failure
-		}
-	}
-
-	sorted := make([]value.Value, len(items))
+	sortedItems := make([]value.Value, len(items))
+	sortedKeys := make([]value.Value, len(keys))
 	for i, j := range idx {
-		sorted[i] = items[j]
+		sortedItems[i], sortedKeys[i] = items[j], keys[j]
 	}
-	copy(items, sorted)
-	return failure
+	copy(items, sortedItems)
+	copy(keys, sortedKeys)
+	return nil
 }
 
 func boolArg(args *value.CallArgs, i int, name string, def bool) (bool, error) {
@@ -255,9 +400,9 @@ func filterTrim(_ *State, v value.Value, args *value.CallArgs) (value.Value, err
 			return value.Undefined, errs.New(errs.TypeError,
 				"strip arg must be None or str")
 		}
-		return value.String(strings.Trim(text, chars.AsString())), nil
+		return keepSafe(v, strings.Trim(text, chars.AsString())), nil
 	}
-	return value.String(strings.TrimFunc(text, unicode.IsSpace)), nil
+	return keepSafe(v, strings.TrimFunc(text, unicode.IsSpace)), nil
 }
 
 // filterString converts to str, leaving a Markup value safe.
@@ -305,7 +450,7 @@ func filterCenter(_ *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err != nil {
 		return value.Undefined, err
 	}
-	return value.String(pad(value.Str(v), width, " ", padCentered)), nil
+	return keepSafe(v, pad(value.Str(v), width, " ", padCentered)), nil
 }
 
 func filterIndent(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
@@ -331,19 +476,60 @@ func filterIndent(_ *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, err
 	}
 
-	// jinja2 strips one trailing newline, indents, then puts it back.
-	text := value.Str(v) + "\n"
-	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
-	for i, line := range lines {
-		if i == 0 && !first {
-			continue
+	// jinja2 writes `s += newline` and then calls s.splitlines(), and the
+	// augmented assignment is not the same as `+`: on a list it extends
+	// rather than failing, so a list gets past it and dies on splitlines,
+	// while a bool or None fails on the `+=` itself.
+	// jinja2 writes `s += newline` and then calls s.splitlines(). The
+	// augmented assignment is not plain `+`: a list has __iadd__ and
+	// extends, so it survives and dies on splitlines instead, while
+	// everything else fails on the assignment with whatever `+` would
+	// have said -- reworded to name `+=`.
+	switch {
+	case v.Kind() == value.KindList:
+		return value.Undefined, errs.New(errs.AttributeError,
+			"'%s' object has no attribute 'splitlines'", v.TypeName())
+	case !v.IsString():
+		if _, err := value.Add(v, value.String("\n")); err != nil {
+			return value.Undefined, augmentedAssign(err)
 		}
-		if line == "" && !blank {
-			continue
-		}
-		lines[i] = prefix + line
+		return value.Undefined, errs.New(errs.AttributeError,
+			"'%s' object has no attribute 'splitlines'", v.TypeName())
 	}
-	return value.String(strings.Join(lines, "\n")), nil
+	// The first line is handled apart from the rest: `first` indents it
+	// whether or not it is blank, while `blank` governs only the lines
+	// after it. Conflating the two makes `""|indent(2, true)` empty
+	// instead of two spaces.
+	lines := splitLinesKeepingEmpty(value.Str(v) + "\n")
+	head, rest := lines[0], lines[1:]
+	out := head
+	if len(rest) > 0 {
+		indented := make([]string, len(rest))
+		for i, line := range rest {
+			if blank || line != "" {
+				line = prefix + line
+			}
+			indented[i] = line
+		}
+		out += "\n" + strings.Join(indented, "\n")
+	}
+	if first {
+		out = prefix + out
+	}
+
+	// jinja2 makes the indentation and the newline Markup when the input
+	// is, so the joined result stays Markup.
+	return keepSafe(v, out), nil
+}
+
+// splitLinesKeepingEmpty is Python's str.splitlines: it drops a single
+// trailing newline rather than producing an empty last element.
+func splitLinesKeepingEmpty(s string) []string {
+	out := strings.Split(s, "\n")
+	if len(out) > 1 && out[len(out)-1] == "" {
+		out = out[:len(out)-1]
+	}
+	return out
 }
 
 func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
@@ -368,18 +554,43 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 			"expected length >= %d, got %d", len(end), length)
 	}
 
-	text := value.Str(v)
-	if value.StrLen(text) <= length+leeway {
-		return value.String(text), nil
+	// jinja2 measures len(s) on the value itself, not on its string form,
+	// and returns it unchanged when it is short enough -- as the value. A
+	// dict of two entries is length 2 however long its repr is, and
+	// `[]|truncate(15)` is the empty list, which is falsey where its
+	// string form "[]" would be truthy.
+	size, err := value.Len(v)
+	if err != nil {
+		return value.Undefined, err
 	}
+	if size <= length+leeway {
+		return v, nil
+	}
+	text := value.Str(v)
+	// Past the length check jinja2 slices the value and then, unless
+	// killwords, calls rsplit on it -- so a non-string gets this far and
+	// fails on one of those rather than on being the wrong kind of input.
+	if !v.IsString() {
+		if killwords {
+			sliced, err := sliceValue(v, length-value.StrLen(end))
+			if err != nil {
+				return value.Undefined, err
+			}
+			_, err = value.Add(sliced, value.String(end))
+			return value.Undefined, err
+		}
+		return value.Undefined, errs.New(errs.AttributeError,
+			"'%s' object has no attribute 'rsplit'", v.TypeName())
+	}
+
 	head, _ := value.StrSlice(text, nil, ptr(length-value.StrLen(end)), nil)
 	if killwords {
-		return value.String(head + end), nil
+		return keepSafe(v, head+end), nil
 	}
 	if i := strings.LastIndexByte(head, ' '); i >= 0 {
 		head = head[:i]
 	}
-	return value.String(head + end), nil
+	return keepSafe(v, head+end), nil
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -402,6 +613,18 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 		wrapString = value.Str(w)
 	}
 
+	// jinja2 calls value.splitlines(), so a non-string fails as a missing
+	// attribute rather than being stringified.
+	if !v.IsString() {
+		return value.Undefined, errs.New(errs.AttributeError,
+			"'%s' object has no attribute 'splitlines'", v.TypeName())
+	}
+
+	if width <= 0 {
+		return value.Undefined, errs.New(errs.ValueError,
+			"invalid width %d (must be > 0)", width)
+	}
+
 	var out []string
 	for _, paragraph := range strings.Split(value.Str(v), "\n") {
 		out = append(out, wrapLine(paragraph, width, breakLong, breakOnHyphens)...)
@@ -409,11 +632,18 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 	return value.String(strings.Join(out, wrapString)), nil
 }
 
-// wrapLine reproduces textwrap.wrap for one paragraph.
+// wrapLine reproduces textwrap._wrap_chunks for one paragraph.
 //
-// The differences from a naive greedy fill are visible: whitespace between
-// words is a chunk of its own, so the first line keeps its indentation while
-// later lines do not, and every line has its trailing whitespace removed.
+// The details decide where the breaks land, and guessing at them gives output
+// that is close but wrong on most inputs:
+//
+//   - a chunk is only treated as an over-long word when it exceeds the *whole*
+//     width, not merely the space left on the current line;
+//   - such a word is cut at exactly the space remaining, which may be nothing,
+//     leaving an empty piece;
+//   - exactly one trailing whitespace chunk is dropped from a finished line,
+//     so a line can still end in a space when an empty piece was dropped
+//     ahead of it.
 func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
 	chunks := wrapChunks(text, breakOnHyphens)
 	var lines []string
@@ -429,17 +659,28 @@ func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
 
 		var cur []string
 		curLen := 0
-		for len(chunks) > 0 && curLen+value.StrLen(chunks[0]) <= width {
-			curLen += value.StrLen(chunks[0])
+		for len(chunks) > 0 {
+			size := value.StrLen(chunks[0])
+			if curLen+size > width {
+				break
+			}
 			cur = append(cur, chunks[0])
 			chunks = chunks[1:]
+			curLen += size
 		}
 
-		// A single chunk wider than the line has to be split, or kept
-		// whole and allowed to overflow.
+		// The next chunk is too big for any line, not just this one.
 		if len(chunks) > 0 && value.StrLen(chunks[0]) > width {
-			space := max(width-curLen, 1)
 			if breakLong {
+				space := max(width-curLen, 0)
+				if width < 1 {
+					space = 1
+				}
+				if breakOnHyphens && space > 0 {
+					if at := lastHyphenBefore(chunks[0], space); at > 0 {
+						space = at + 1
+					}
+				}
 				head, _ := value.StrSlice(chunks[0], nil, &space, nil)
 				tail, _ := value.StrSlice(chunks[0], &space, nil, nil)
 				cur = append(cur, head)
@@ -450,17 +691,42 @@ func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
 			}
 		}
 
-		for len(cur) > 0 && strings.TrimSpace(cur[len(cur)-1]) == "" {
+		// Exactly one trailing whitespace chunk goes, not every one.
+		if len(cur) > 0 && strings.TrimSpace(cur[len(cur)-1]) == "" {
 			cur = cur[:len(cur)-1]
 		}
-		if len(cur) > 0 {
-			lines = append(lines, strings.Join(cur, ""))
+		if len(cur) == 0 {
+			// No progress is possible; stop rather than spin.
+			break
 		}
+		lines = append(lines, strings.Join(cur, ""))
 	}
 	if len(lines) == 0 {
 		return []string{""}
 	}
 	return lines
+}
+
+// lastHyphenBefore finds the hyphen a long word may be broken after, which
+// textwrap prefers over cutting mid-word. It reports -1 when there is none, or
+// when everything before it is hyphens.
+func lastHyphenBefore(chunk string, limit int) int {
+	runes := []rune(chunk)
+	if limit > len(runes) {
+		limit = len(runes)
+	}
+	for i := limit - 1; i > 0; i-- {
+		if runes[i] != '-' {
+			continue
+		}
+		for _, r := range runes[:i] {
+			if r != '-' {
+				return i
+			}
+		}
+		return -1
+	}
+	return -1
 }
 
 // wrapChunks splits text into the pieces textwrap considers indivisible:
@@ -500,8 +766,14 @@ func splitOnHyphens(word string) []string {
 	return append(out, string(runes[start:]))
 }
 
+// wordRe matches what jinja2's wordcount counts: runs of word characters. It
+// is not the same as splitting on whitespace -- "[]" has one field and no
+// words.
+// Go's \w is ASCII-only; Python's is not, so the class is spelled out.
+var wordRe = regexp.MustCompile(`[\p{L}\p{N}_]+`)
+
 func filterWordcount(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	return value.Int(int64(len(strings.Fields(value.Str(v))))), nil
+	return value.Int(int64(len(wordRe.FindAllString(value.Str(v), -1)))), nil
 }
 
 // filterStriptags removes markup and normalises whitespace, the way jinja2
@@ -544,10 +816,82 @@ func filterFormat(_ *State, v value.Value, args *value.CallArgs) (value.Value, e
 	return value.Mod(value.String(value.Str(v)), value.NewTuple(args.Pos...))
 }
 
-// filterPprint renders a value the way Python's pprint.pformat does, which is
-// repr() with dict keys sorted rather than in insertion order.
+// filterPprint renders a value the way Python's pprint.pformat does: repr()
+// with dict keys sorted, wrapped across lines once it no longer fits.
 func filterPprint(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	return value.String(value.Repr(sortDictKeys(v))), nil
+	// pformat returns a str even for Markup input -- what it renders is the
+	// repr, which for Markup is `Markup('...')`.
+	var b strings.Builder
+	pformat(&b, sortDictKeys(v), 0, 0)
+	return value.String(b.String()), nil
+}
+
+// pprintWidth is pprint.pformat's default line width.
+const pprintWidth = 80
+
+// pformat lays a value out the way pprint does.
+//
+// The rule is one line if it fits and one element per line if it does not,
+// with the continuation indented past the opening bracket. indent is the
+// column the value starts at; allowance is the space reserved on the last line
+// for whatever closes around it.
+func pformat(b *strings.Builder, v value.Value, indent, allowance int) {
+	rep := value.Repr(v)
+	if len(rep) <= pprintWidth-indent-allowance {
+		b.WriteString(rep)
+		return
+	}
+
+	switch v.Kind() {
+	case value.KindList, value.KindTuple:
+		s, _ := v.Seq()
+		open, close := "[", "]"
+		if v.Kind() == value.KindTuple {
+			open, close = "(", ")"
+		}
+		b.WriteString(open)
+		pformatItems(b, s.Items(), indent, allowance+1, func(b *strings.Builder, item value.Value, at, room int) {
+			pformat(b, item, at, room)
+		})
+		if v.Kind() == value.KindTuple && s.Len() == 1 {
+			b.WriteString(",")
+		}
+		b.WriteString(close)
+
+	case value.KindDict:
+		d, _ := v.Dict()
+		b.WriteString("{")
+		pformatItems(b, d.Keys(), indent, allowance+1, func(b *strings.Builder, key value.Value, at, room int) {
+			keyRep := value.Repr(key)
+			b.WriteString(keyRep)
+			b.WriteString(": ")
+			val, _, _ := d.Get(key)
+			pformat(b, val, at+len(keyRep)+2, room)
+		})
+		b.WriteString("}")
+
+	default:
+		b.WriteString(rep)
+	}
+}
+
+// pformatItems writes a sequence of entries one per line, indented one column
+// past the bracket that opened them.
+func pformatItems[T any](b *strings.Builder, items []T, indent, allowance int,
+	write func(*strings.Builder, T, int, int),
+) {
+	inner := indent + 1
+	separator := ",\n" + strings.Repeat(" ", inner)
+	for i, item := range items {
+		if i > 0 {
+			b.WriteString(separator)
+		}
+		room := 1
+		if i == len(items)-1 {
+			room = allowance
+		}
+		write(b, item, inner, room)
+	}
 }
 
 func sortDictKeys(v value.Value) value.Value {
@@ -679,36 +1023,72 @@ func filterRound(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 	if m, ok := arg(args, 1, "method"); ok {
 		method = value.Str(m)
 	}
+	if method != "common" && method != "ceil" && method != "floor" {
+		return value.Undefined, errs.New(errs.FilterArgumentError,
+			"method must be common, ceil or floor")
+	}
+
+	// The two methods fail differently, because jinja2 implements them
+	// differently: "common" calls round(), so a value with no __round__ is
+	// a TypeError, while ceil and floor multiply by a power of ten first,
+	// so an undefined raises its own error before any rounding happens.
+	if method != "common" {
+		// jinja2 writes `func(value * (10 ** precision)) / (10 ** precision)`,
+		// and 10**precision is an *integer* for a non-negative precision.
+		// That matters: `[a, b] * 1` is a list, which math.ceil then
+		// rejects as "must be real number, not list" rather than the
+		// multiplication failing first.
+		scale, err := value.Pow(value.Int(10), value.Int(int64(precision)))
+		if err != nil {
+			return value.Undefined, err
+		}
+		scaled, err := value.Mul(v, scale)
+		if err != nil {
+			return value.Undefined, err
+		}
+		f, ok := scaled.Float64()
+		if !ok {
+			return value.Undefined, errs.New(errs.TypeError,
+				"must be real number, not %s", scaled.TypeName())
+		}
+		divisor, _ := scale.Float64()
+		if method == "ceil" {
+			return value.Float(math.Ceil(f) / divisor), nil
+		}
+		return value.Float(math.Floor(f) / divisor), nil
+	}
+
+	// Python's round() preserves the numeric type: round(5, 2) is the int
+	// 5, while round(2.5, 0) is the float 2.0.
+	if v.IsInteger() {
+		if v.Kind() == value.KindBool {
+			n, _ := v.Int64()
+			return value.Int(n), nil
+		}
+		if precision >= 0 {
+			return v, nil
+		}
+	}
+
 	f, ok := v.Float64()
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError,
-			"type %s doesn't define __round__ method", value.Repr(value.String(v.TypeName())))
+			"type %s doesn't define __round__ method", v.TypeName())
 	}
-
-	scale := math.Pow(10, float64(precision))
-	switch method {
-	case "common":
-		// Python rounds the decimal value, not the value scaled by a
-		// power of ten: 2.675 is really 2.67499..., so round(2.675, 2)
-		// is 2.67, while 2.675*100 rounds up to 267.5 and would give
-		// 2.68. Formatting to the requested precision rounds correctly
-		// against the true value, ties to even included.
-		if precision >= 0 {
-			rounded, err := strconv.ParseFloat(
-				strconv.FormatFloat(f, 'f', precision, 64), 64)
-			if err != nil {
-				return value.Undefined, err
-			}
-			return value.Float(rounded), nil
+	// Python rounds the decimal value, not the value scaled by a power of
+	// ten: 2.675 is really 2.67499..., so round(2.675, 2) is 2.67, while
+	// 2.675*100 rounds up to 267.5 and would give 2.68. Formatting to the
+	// requested precision rounds correctly against the true value, ties to
+	// even included.
+	if precision >= 0 {
+		rounded, err := strconv.ParseFloat(strconv.FormatFloat(f, 'f', precision, 64), 64)
+		if err != nil {
+			return value.Undefined, err
 		}
-		return value.Float(math.RoundToEven(f*scale) / scale), nil
-	case "ceil":
-		return value.Float(math.Ceil(f*scale) / scale), nil
-	case "floor":
-		return value.Float(math.Floor(f*scale) / scale), nil
+		return value.Float(rounded), nil
 	}
-	return value.Undefined, errs.New(errs.FilterArgumentError,
-		"method must be common, ceil or floor")
+	scale := math.Pow(10, float64(precision))
+	return value.Float(math.RoundToEven(f*scale) / scale), nil
 }
 
 func filterSum(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
@@ -743,10 +1123,16 @@ func filterFilesizeformat(_ *State, v value.Value, args *value.CallArgs) (value.
 	}
 	bytes, ok := v.Float64()
 	if !ok {
-		f, convErr := strconv.ParseFloat(value.Str(v), 64)
-		if convErr != nil {
+		// jinja2 calls float(value), so the failure is float()'s.
+		if !v.IsString() {
 			return value.Undefined, errs.New(errs.TypeError,
-				"cannot convert %s to a number", value.Repr(v))
+				"float() argument must be a string or a real number, not '%s'",
+				v.TypeName())
+		}
+		f, convErr := strconv.ParseFloat(strings.TrimSpace(v.AsString()), 64)
+		if convErr != nil {
+			return value.Undefined, errs.New(errs.ValueError,
+				"could not convert string to float: %s", value.Repr(v))
 		}
 		bytes = f
 	}
@@ -762,7 +1148,9 @@ func filterFilesizeformat(_ *State, v value.Value, args *value.CallArgs) (value.
 		return value.String("1 Byte"), nil
 	}
 	if bytes < base {
-		return value.String(fmt.Sprintf("%.0f Bytes", bytes)), nil
+		// jinja2 writes int(bytes) here, which truncates: 1.5 bytes is
+		// "1 Bytes", not the "2 Bytes" a rounding format would give.
+		return value.String(fmt.Sprintf("%d Bytes", int64(bytes))), nil
 	}
 	for i, prefix := range prefixes {
 		unit := math.Pow(base, float64(i+2))
@@ -859,4 +1247,33 @@ func jinjaTitle(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// augmentedAssign rewords a `+` failure as the `+=` jinja2 actually performed.
+func augmentedAssign(err error) error {
+	var e *errs.Error
+	if errors.As(err, &e) && strings.HasPrefix(e.Msg, "unsupported operand type(s) for +:") {
+		e.Msg = strings.Replace(e.Msg, "for +:", "for +=:", 1)
+	}
+	return err
+}
+
+// sliceValue takes the first n elements of a sequence value.
+func sliceValue(v value.Value, n int) (value.Value, error) {
+	seq, ok := v.Seq()
+	if !ok {
+		return v, nil
+	}
+	idx, err := value.SliceIndices(seq.Len(), nil, &n, nil)
+	if err != nil {
+		return value.Undefined, err
+	}
+	items := make([]value.Value, len(idx))
+	for i, j := range idx {
+		items[i] = seq.At(j)
+	}
+	if v.Kind() == value.KindTuple {
+		return value.NewTuple(items...), nil
+	}
+	return value.NewList(items...), nil
 }

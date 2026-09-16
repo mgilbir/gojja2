@@ -25,17 +25,23 @@ func filterURLEncode(_ *State, v value.Value, _ *value.CallArgs) (value.Value, e
 		}
 		return value.String(strings.Join(parts, "&")), nil
 	}
-	if v.Kind() == value.KindList || v.Kind() == value.KindTuple {
-		s, _ := v.Seq()
-		parts := make([]string, 0, s.Len())
-		for _, item := range s.Items() {
-			pair, ok := item.Seq()
-			if !ok || pair.Len() != 2 {
-				return value.Undefined, errs.New(errs.TypeError,
-					"urlencode expects a mapping or a sequence of pairs")
+	// Anything iterable that is not a string is a sequence of pairs, a
+	// range included.
+	if !v.IsString() && isIterableValue(v) {
+		items, err := materialize(v)
+		if err != nil {
+			return value.Undefined, err
+		}
+		parts := make([]string, 0, len(items))
+		for _, item := range items {
+			// jinja2 writes `for k, v in items`, so each element is
+			// unpacked and fails with Python's unpacking errors --
+			// a string of six characters is iterable but too long.
+			k, val, err := unpackPair(item)
+			if err != nil {
+				return value.Undefined, err
 			}
-			parts = append(parts, quotePlus(value.Str(pair.At(0)))+"="+
-				quotePlus(value.Str(pair.At(1))))
+			parts = append(parts, quotePlus(value.Str(k))+"="+quotePlus(value.Str(val)))
 		}
 		return value.String(strings.Join(parts, "&")), nil
 	}
@@ -276,8 +282,7 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	}
 	d, ok := v.Dict()
 	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"xmlattr expects a mapping, not %s", v.TypeName())
+		return value.Undefined, itemsAttributeError(v)
 	}
 
 	var parts []string
@@ -318,19 +323,13 @@ func filterToJSON(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err != nil {
 		return value.Undefined, err
 	}
-	if v.IsUndefined() {
-		return value.Undefined, errs.New(errs.TypeError,
-			"Object of type %s is not JSON serializable", v.TypeName())
-	}
 	var b strings.Builder
 	if err := writeJSON(&b, v, indent, 0); err != nil {
 		return value.Undefined, err
 	}
-	out := htmlSafeJSON(b.String())
-	if s.autoescape {
-		return value.Safe(out), nil
-	}
-	return value.String(out), nil
+	// htmlsafe_json_dumps returns Markup whatever the autoescape setting,
+	// because its output is escaped by construction.
+	return value.Safe(htmlSafeJSON(b.String())), nil
 }
 
 // jsonHTMLEscaper makes serialised JSON safe to embed in a <script> block:
@@ -357,7 +356,10 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 	}
 
 	switch v.Kind() {
-	case value.KindUndefined, value.KindNone:
+	case value.KindUndefined:
+		return errs.New(errs.TypeError,
+			"Object of type %s is not JSON serializable", v.TypeName())
+	case value.KindNone:
 		b.WriteString("null")
 	case value.KindBool:
 		if v.AsBool() {
@@ -417,6 +419,11 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 				b.WriteString(comma + nl)
 			}
 			b.WriteString(pad)
+			if !jsonKeyable(e.Key) {
+				return errs.New(errs.TypeError,
+					"keys must be str, int, float, bool or None, not %s",
+					e.Key.TypeName())
+			}
 			writeJSONString(b, value.Str(e.Key))
 			b.WriteString(": ")
 			if err := writeJSON(b, e.Value, indent, depth+1); err != nil {
@@ -425,6 +432,10 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 		}
 		b.WriteString(nl + padEnd + "}")
 	case value.KindObject:
+		// A Go struct or map reaches a template as a Mapping and is
+		// serialised like the dict it stands for. Everything else --
+		// a range, a cycler, a macro -- is not serialisable, which is
+		// what json.dumps says about jinja2's own types too.
 		if m, ok := v.Interface().(value.Mapping); ok {
 			out := value.NewDict()
 			target, _ := out.Dict()
@@ -433,13 +444,6 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 				_ = target.Set(k, val)
 			}
 			return writeJSON(b, out, indent, depth)
-		}
-		if seq, ok := v.Interface().(value.Sequence); ok {
-			items := make([]value.Value, seq.Len())
-			for i := range items {
-				items[i], _ = seq.GetIndex(i)
-			}
-			return writeJSON(b, value.NewList(items...), indent, depth)
 		}
 		return errs.New(errs.TypeError,
 			"Object of type %s is not JSON serializable", v.TypeName())
@@ -469,12 +473,74 @@ func writeJSONString(b *strings.Builder, s string) {
 		case '\f':
 			b.WriteString(`\f`)
 		default:
-			if r < 0x20 {
+			// json.dumps defaults to ensure_ascii, so everything
+			// outside ASCII is escaped, astral planes as surrogate
+			// pairs.
+			switch {
+			case r < 0x20 || r > 0x7e:
+				if r > 0xffff {
+					r -= 0x10000
+					fmt.Fprintf(b, `\u%04x\u%04x`,
+						0xd800+(r>>10), 0xdc00+(r&0x3ff))
+					continue
+				}
 				fmt.Fprintf(b, `\u%04x`, r)
-				continue
+			default:
+				b.WriteRune(r)
 			}
-			b.WriteRune(r)
 		}
 	}
 	b.WriteByte('"')
+}
+
+// itemsAttributeError reports what `d.items()` does to a value that is not a
+// mapping.
+//
+// Usually the attribute is simply missing. A Cycler is the exception: jinja2's
+// keeps its rotation in an attribute named `items`, so the call finds a tuple
+// and fails trying to call it -- which is the error a template author sees.
+func itemsAttributeError(v value.Value) error {
+	if attr, ok := lookupAttr(v, "items"); ok {
+		if _, callable := attr.Interface().(value.Caller); !callable {
+			return errs.New(errs.TypeError, "'%s' object is not callable", attr.TypeName())
+		}
+	}
+	if o, ok := v.Interface().(interface{ AttributeError(string) string }); ok {
+		return errs.New(errs.AttributeError, "%s", o.AttributeError("items"))
+	}
+	return errs.New(errs.AttributeError,
+		"'%s' object has no attribute 'items'", v.TypeName())
+}
+
+// unpackPair destructures one element into a key and a value, reporting the
+// failure the way `k, v = item` does in Python.
+func unpackPair(item value.Value) (value.Value, value.Value, error) {
+	seq, err := value.Iterate(item)
+	if err != nil {
+		return value.Undefined, value.Undefined, errs.New(errs.TypeError,
+			"cannot unpack non-iterable %s object", item.TypeName())
+	}
+	var items []value.Value
+	for v := range seq {
+		items = append(items, v)
+		if len(items) > 2 {
+			return value.Undefined, value.Undefined, errs.New(errs.ValueError,
+				"too many values to unpack (expected 2)")
+		}
+	}
+	if len(items) < 2 {
+		return value.Undefined, value.Undefined, errs.New(errs.ValueError,
+			"not enough values to unpack (expected 2, got %d)", len(items))
+	}
+	return items[0], items[1], nil
+}
+
+// jsonKeyable reports whether a dict key can be a JSON object name. json.dumps
+// coerces the scalar types and refuses everything else.
+func jsonKeyable(v value.Value) bool {
+	switch v.Kind() {
+	case value.KindString, value.KindInt, value.KindFloat, value.KindBool, value.KindNone:
+		return true
+	}
+	return false
 }

@@ -1,0 +1,21 @@
+{
+  "users": [
+    {
+      "name": "ana",
+      "age": 30,
+      "city": "Lisbon"
+    },
+    {
+      "name": "bo",
+      "age": 25,
+      "city": "Porto"
+    },
+    {
+      "name": "cy",
+      "age": 30,
+      "city": "Lisbon"
+    }
+  ]
+}
+---
+{% for g in users|groupby('city') %}[{{ g.grouper }}:{{ g.list|length }}]{% endfor %}|{{ users|groupby('city') }}

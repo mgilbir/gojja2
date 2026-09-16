@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "inc.txt": "<x>"
+  }
+}
+---
+{% set v %}{% include 'inc.txt' without context %}{% endset %}[{{ v }}]

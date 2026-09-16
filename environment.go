@@ -317,6 +317,12 @@ func (e *Environment) compile(source, name string) (*Template, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Order matters: the general fold runs first, as jinja2's optimizer
+	// does, and the print-specific one then catches the undefined results
+	// the optimizer refuses to turn into constants.
+	folder := newConstEvaluator(e, name)
+	foldConstantExpressions(folder, tree.Body)
+	foldConstantPrints(folder, tree.Body)
 	if err := e.checkDependencies(tree.Body, name, source); err != nil {
 		return nil, err
 	}

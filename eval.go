@@ -22,6 +22,12 @@ func (ex *exec) eval(e ast.Expr) (value.Value, error) {
 func (ex *exec) evalInner(e ast.Expr) (value.Value, error) {
 	switch n := e.(type) {
 	case *ast.Const:
+		// A constant holding a container came from folding a literal,
+		// which must produce a fresh one per evaluation.
+		switch n.Value.Kind() {
+		case value.KindList, value.KindDict, value.KindTuple:
+			return value.Copy(n.Value), nil
+		}
 		return n.Value, nil
 	case *ast.TemplateData:
 		// Literal markup from the template source is trusted.
@@ -187,13 +193,6 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
-	if err := ex.checkOperand(left); err != nil {
-		return value.Undefined, err
-	}
-	if err := ex.checkOperand(right); err != nil {
-		return value.Undefined, err
-	}
-
 	switch n.Op {
 	case ast.OpAdd:
 		return value.Add(left, right)
@@ -213,15 +212,6 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 	return value.Undefined, errs.New(errs.TemplateRuntimeError, "unknown operator %s", n.Op)
 }
 
-// checkOperand turns an undefined into the error arithmetic on it would raise.
-// Undefined is tolerated when printed or tested, but never when computed with.
-func (ex *exec) checkOperand(v value.Value) error {
-	if v.IsUndefined() {
-		return v.UndefinedError()
-	}
-	return nil
-}
-
 func (ex *exec) evalUnaryOp(n *ast.UnaryOp) (value.Value, error) {
 	v, err := ex.eval(n.Node)
 	if err != nil {
@@ -235,14 +225,8 @@ func (ex *exec) evalUnaryOp(n *ast.UnaryOp) (value.Value, error) {
 		}
 		return value.Bool(!ok), nil
 	case ast.OpNeg:
-		if err := ex.checkOperand(v); err != nil {
-			return value.Undefined, err
-		}
 		return value.Neg(v)
 	case ast.OpPos:
-		if err := ex.checkOperand(v); err != nil {
-			return value.Undefined, err
-		}
 		return value.Pos(v)
 	}
 	return value.Undefined, errs.New(errs.TemplateRuntimeError, "unknown operator %s", n.Op)
@@ -461,6 +445,11 @@ func (ex *exec) indexSequence(base, key value.Value) (value.Value, error) {
 		if !ok {
 			return ex.st.Undefined(value.UndefinedIndex(base, int(i))), nil
 		}
+		// Markup.__getitem__ returns Markup, so a slice of escaped text
+		// is still escaped.
+		if base.IsSafe() {
+			return value.Safe(s), nil
+		}
 		return value.String(s), nil
 	case value.KindBytes:
 		raw := base.AsString()
@@ -558,7 +547,29 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 		}
 		return value.NewList(items...), nil
 	case value.KindUndefined:
-		return base, nil
+		if base.UndefinedBehavior() == value.UndefinedChainable {
+			return base, nil
+		}
+		return value.Undefined, base.UndefinedError()
+	case value.KindObject:
+		if sl, ok := base.Interface().(value.Slicer); ok {
+			return sl.Slice(start, stop, step)
+		}
+		if seq, ok := base.Interface().(value.Sequence); ok {
+			idx, err := value.SliceIndices(seq.Len(), start, stop, step)
+			if err != nil {
+				return value.Undefined, err
+			}
+			items := make([]value.Value, len(idx))
+			for i, j := range idx {
+				items[i], _ = seq.GetIndex(j)
+			}
+			return value.NewList(items...), nil
+		}
+	case value.KindDict:
+		// A slice is not hashable, so a mapping rejects it as a key
+		// rather than as an unsupported operation.
+		return value.Undefined, errs.New(errs.TypeError, "unhashable type: 'slice'")
 	}
 	return value.Undefined, errs.New(errs.TypeError,
 		"'%s' object is not subscriptable", base.TypeName())

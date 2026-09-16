@@ -149,6 +149,12 @@ func (v Value) TypeName() string {
 		// Python reports the class, and every Undefined flavour is a
 		// class of its own.
 		return v.ClassName()
+	case KindString:
+		if v.safe {
+			// markupsafe.Markup is a str subclass, and Python names
+			// the subclass in type errors.
+			return "Markup"
+		}
 	}
 	return v.kind.String()
 }

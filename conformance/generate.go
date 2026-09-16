@@ -1,0 +1,558 @@
+// Copyright 2026 The gojja2 Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package conformance
+
+import (
+	"encoding/json"
+	"strings"
+)
+
+// A structured generator, not a byte mutator.
+//
+// Mutating template text at random almost always produces a syntax error, and
+// two implementations agreeing that something is a syntax error is the least
+// interesting thing they can agree on. Generating from the grammar instead
+// means nearly every case renders, so divergence shows up in output rather
+// than in error text.
+//
+// Choices are drawn from the fuzzer's input bytes rather than from a random
+// source, so flipping one byte changes one decision and coverage-guided
+// mutation does something useful. When the input runs out every choice takes
+// its first alternative, which is the simplest one, so generation terminates.
+
+// FuzzContextJSON is the context every generated template renders against.
+//
+// It is JSON so that both sides are handed byte-identical data: the Go decoder
+// preserves key order and the int/float distinction, and the same bytes go to
+// the oracle. Values cover the shapes that make filters behave differently --
+// empty and non-empty, mixed types, unicode, nested, and markup.
+const FuzzContextJSON = `{
+  "n": 3, "m": 10, "neg": -4, "zero": 0, "one": 1,
+  "f": 2.5, "fz": 0.0, "fneg": -1.5,
+  "s": "Hello World", "blank": "", "uni": "héllo wörld",
+  "t": "  the quick brown fox jumps over the lazy dog  ",
+  "yes": true, "no": false, "nil": null,
+  "lst": [3, 1, 2], "mix": [1, "a", 2.5, true, null], "e": [],
+  "strs": ["banana", "Apple", "cherry", "Apple"],
+  "d": {"b": 2, "a": 1, "C": 3}, "ed": {},
+  "users": [
+    {"name": "ana", "age": 30, "city": "Lisbon"},
+    {"name": "bo", "age": 25, "city": "Porto"},
+    {"name": "cy", "age": 30, "city": "Lisbon"}
+  ],
+  "nested": {"x": {"y": [1, 2]}},
+  "html": "<b>a &amp; b</b>",
+  "pairs": [[1, 2], [3, 4]]
+}`
+
+// FuzzTemplates are the auxiliary templates a generated case can reach, so
+// inheritance, inclusion and importing are exercised rather than only
+// producing TemplateNotFound.
+func FuzzTemplates() map[string]string {
+	return map[string]string{
+		"base.txt": "[{% block a %}A{% endblock %}|{% block b %}B{% endblock %}]",
+		"inc.txt":  "<{{ n|default('?') }}{{ item|default('') }}>",
+		"mac.txt":  "{% macro m(x, y=2) %}({{ x }},{{ y }}){% endmacro %}{% set ex = 'E' %}",
+	}
+}
+
+// names are the context bindings a generated expression may reference.
+// "nope" is deliberately absent from the context so undefined paths are
+// reached as often as defined ones.
+var names = []string{
+	"n", "m", "neg", "zero", "one", "f", "fz", "fneg",
+	"s", "blank", "uni", "t", "yes", "no", "nil",
+	"lst", "mix", "e", "strs", "d", "ed", "users", "nested", "html", "pairs",
+	"nope",
+}
+
+// smallInts keep multiplication and exponentiation from asking for an
+// allocation the size of the machine.
+var smallInts = []string{"0", "1", "2", "3", "5", "-1", "-2"}
+
+var intLiterals = []string{
+	"0", "1", "2", "3", "7", "10", "-1", "-7", "255",
+	"1_000", "0x1f", "0o17", "0b101", "2147483648", "9223372036854775808",
+}
+
+var floatLiterals = []string{"0.0", "1.5", "-2.5", "0.1", "1e3", "1e-5", "2.675", "1e16"}
+
+var stringLiterals = []string{
+	`'a'`, `'abc'`, `''`, `'A b-c'`, `'héllo'`, `'<x>&'`, `"it's"`, `'%s'`, `'a,b,c'`,
+}
+
+// deterministicFilters exclude anything whose output embeds an address or a
+// random draw; those cannot be compared against a recording, not even against
+// CPython's own.
+var deterministicFilters = []string{
+	"upper", "lower", "title", "capitalize", "trim", "length", "count",
+	"list", "first", "last", "reverse", "sort", "sum", "min", "max",
+	"abs", "int", "float", "round", "string", "escape", "safe", "forceescape",
+	"striptags", "wordcount", "center", "indent", "truncate", "batch",
+	"slice", "unique", "dictsort", "items", "default", "replace", "format",
+	"urlencode", "tojson", "pprint", "filesizeformat", "wordwrap", "attr",
+	"join", "map", "select", "reject", "selectattr", "rejectattr", "groupby",
+	"xmlattr", "urlize", "e", "d",
+}
+
+// lazyFilters return generators in jinja2. Two things follow, and both are
+// reasons to force them with |list: their repr is a memory address, which
+// nothing can reproduce, and they defer their input checks until iteration,
+// so an unused one hides an error gojja2 raises eagerly. Forcing them makes
+// the comparison about the elements, which is the part that has an answer.
+var lazyFilters = map[string]bool{
+	"map": true, "select": true, "reject": true,
+	"selectattr": true, "rejectattr": true, "unique": true, "items": true,
+	"groupby": true, "slice": true, "batch": true, "reverse": true,
+}
+
+// filterArgs supplies arguments for the filters that need them, and plausible
+// ones for those that merely accept them.
+var filterArgs = map[string][]string{
+	"join":           {`'-'`, `', '`, `'', attribute='name'`},
+	"default":        {`'D'`, `'D', true`, `boolean=true`},
+	"replace":        {`'a', 'b'`, `'o', '0', 1`},
+	"format":         {`'x'`, `1, 2`},
+	"round":          {`2`, `0, 'ceil'`, `1, 'floor'`},
+	"int":            {``, `9`, `0, 16`},
+	"float":          {``, `1.5`},
+	"indent":         {`2`, `2, true`, `4, false, true`},
+	"truncate":       {`10`, `12, true`, `15, false, '~'`},
+	"center":         {`12`},
+	"batch":          {`2`, `2, 'X'`},
+	"slice":          {`3`, `2, 'X'`},
+	"wordwrap":       {`10`, `12, false`},
+	"sort":           {``, `true`, `attribute='name'`, `reverse=true, attribute='age'`},
+	"dictsort":       {``, `true`, `by='value'`, `false, 'value', true`},
+	"unique":         {``, `true`, `attribute='city'`},
+	"min":            {``, `attribute='age'`},
+	"max":            {``, `attribute='age'`},
+	"sum":            {``, `attribute='age'`, `start=10`},
+	"map":            {`'upper'`, `attribute='name'`, `attribute='nope', default='?'`},
+	"select":         {`'odd'`, `'defined'`, ``},
+	"reject":         {`'odd'`, `'none'`, ``},
+	"selectattr":     {`'age', 'eq', 30`, `'name'`},
+	"rejectattr":     {`'age', 'gt', 25`, `'name'`},
+	"groupby":        {`'city'`, `'age'`},
+	"attr":           {`'name'`, `'nope'`},
+	"tojson":         {``, `indent=2`},
+	"urlize":         {``, `10`, `target='_blank'`},
+	"filesizeformat": {``, `true`},
+	"truncate_":      {``},
+}
+
+var testNames = []string{
+	"defined", "undefined", "none", "boolean", "integer", "float", "number",
+	"string", "mapping", "sequence", "iterable", "callable", "odd", "even",
+	"lower", "upper", "escaped", "true", "false",
+}
+
+var testWithArg = map[string][]string{
+	"divisibleby": {"2", "3"},
+	"eq":          {"1", "'a'", "n"},
+	"ne":          {"1", "'a'"},
+	"lt":          {"5"}, "le": {"5"}, "gt": {"0"}, "ge": {"0"},
+	"in":     {"lst", "'abc'", "d"},
+	"sameas": {"none", "true"},
+	"filter": {},
+	"test":   {},
+}
+
+var binaryOps = []string{"+", "-", "*", "/", "//", "%", "~"}
+var compareOps = []string{"==", "!=", "<", "<=", ">", ">=", "in", "not in"}
+
+// globals are the calls a generated expression may make. A cycler, a joiner
+// and a namespace are reached through their attributes rather than printed
+// whole: jinja2's reprs for the first two embed a memory address, which
+// nothing can reproduce, and a template that prints one is a case with no
+// answer rather than a case that fails.
+var globals = []string{
+	"range(3)", "range(1, 5)", "range(0, 6, 2)", "range(3, 0, -1)",
+	"dict(a=1, b=2)", "namespace(v=1).v", "cycler('a','b').next()",
+	"cycler('a','b').current", "joiner('-')()",
+}
+
+// chooser draws decisions from the fuzzer's input. Past the end of the input
+// every decision is zero, so generation always terminates.
+type chooser struct {
+	b []byte
+	i int
+}
+
+func (c *chooser) next() byte {
+	if c.i >= len(c.b) {
+		return 0
+	}
+	v := c.b[c.i]
+	c.i++
+	return v
+}
+
+func (c *chooser) intn(n int) int {
+	if n <= 1 {
+		return 0
+	}
+	return int(c.next()) % n
+}
+
+func (c *chooser) pick(options []string) string {
+	if len(options) == 0 {
+		return ""
+	}
+	return options[c.intn(len(options))]
+}
+
+// chance reports a one-in-n decision.
+func (c *chooser) chance(n int) bool { return c.intn(n) == 0 }
+
+func (c *chooser) exhausted() bool { return c.i >= len(c.b) }
+
+type generator struct {
+	c *chooser
+	b strings.Builder
+}
+
+// GenerateTemplate builds a template from fuzzer input.
+func GenerateTemplate(input []byte) string {
+	g := &generator{c: &chooser{b: input}}
+	g.template()
+	return g.b.String()
+}
+
+const (
+	maxExprDepth = 4
+	maxStmts     = 6
+	maxBodyStmts = 3
+)
+
+func (g *generator) template() {
+	// A template either extends a base and fills blocks, or is a plain
+	// body. Both shapes need covering; the inheriting one is rarer because
+	// it constrains everything else.
+	if g.c.chance(12) {
+		g.b.WriteString("{% extends 'base.txt' %}")
+		for _, block := range []string{"a", "b"} {
+			if g.c.chance(2) {
+				continue
+			}
+			g.b.WriteString("{% block " + block + " %}")
+			g.body(1)
+			g.b.WriteString("{% endblock %}")
+		}
+		return
+	}
+	g.statements(maxStmts, 2)
+}
+
+func (g *generator) statements(count, depth int) {
+	for range count {
+		if g.c.exhausted() {
+			return
+		}
+		g.stmt(depth)
+	}
+}
+
+// body emits a short run of statements for the inside of a tag.
+func (g *generator) body(depth int) {
+	g.statements(1+g.c.intn(maxBodyStmts), depth)
+}
+
+// tag writes an opening delimiter, occasionally with whitespace control.
+func (g *generator) open(kind string) {
+	mark := ""
+	switch g.c.intn(8) {
+	case 0:
+		mark = "-"
+	case 1:
+		mark = "+"
+	}
+	g.b.WriteString(kind + mark + " ")
+}
+
+func (g *generator) close(kind string) {
+	mark := ""
+	switch g.c.intn(8) {
+	case 0:
+		mark = "-"
+	case 1:
+		mark = "+"
+	}
+	g.b.WriteString(" " + mark + kind)
+}
+
+func (g *generator) stmt(depth int) {
+	if depth <= 0 {
+		g.b.WriteString("x")
+		return
+	}
+	switch g.c.intn(14) {
+	case 0:
+		g.b.WriteString(g.c.pick([]string{"text ", "\n", " ", "a\nb", "<p>", "  "}))
+	case 1, 2, 3:
+		g.open("{{")
+		g.b.WriteString(g.expr(maxExprDepth))
+		g.close("}}")
+	case 4, 5:
+		g.ifStmt(depth)
+	case 6, 7:
+		g.forStmt(depth)
+	case 8:
+		g.setStmt(depth)
+	case 9:
+		g.withStmt(depth)
+	case 10:
+		g.macroStmt(depth)
+	case 11:
+		g.filterStmt(depth)
+	case 12:
+		g.b.WriteString(g.c.pick([]string{
+			"{% raw %}{{ x }}{% endraw %}",
+			"{#- a comment -#}",
+			"{# c #}",
+			"{% include 'inc.txt' %}",
+			// A context-free include is deliberately absent: inside
+			// a macro jinja2 turns the whole macro into a generator
+			// that is never consumed, which is an artefact of its
+			// compilation rather than a behaviour to match. See
+			// docs/divergences.md.
+			"{% include 'nope.txt' ignore missing %}",
+			"{% import 'mac.txt' as mm %}{{ mm.m(1) }}{{ mm.ex }}",
+			"{% from 'mac.txt' import m %}{{ m(1, 3) }}",
+		}))
+	default:
+		g.open("{{")
+		g.b.WriteString(g.expr(2))
+		g.close("}}")
+	}
+}
+
+func (g *generator) ifStmt(depth int) {
+	g.open("{%")
+	g.b.WriteString("if " + g.expr(2))
+	g.close("%}")
+	g.body(depth - 1)
+	if g.c.chance(3) {
+		g.open("{%")
+		g.b.WriteString("elif " + g.expr(2))
+		g.close("%}")
+		g.body(depth - 1)
+	}
+	if g.c.chance(2) {
+		g.b.WriteString("{% else %}")
+		g.body(depth - 1)
+	}
+	g.b.WriteString("{% endif %}")
+}
+
+func (g *generator) forStmt(depth int) {
+	target, iterable := "i", g.c.pick([]string{
+		"lst", "strs", "mix", "e", "d", "users", "range(3)", "nope", "s", "pairs",
+	})
+	if iterable == "pairs" && g.c.chance(2) {
+		target = "a, b"
+	}
+
+	g.open("{%")
+	g.b.WriteString("for " + target + " in " + iterable)
+	if g.c.chance(4) {
+		g.b.WriteString(" if " + g.expr(1))
+	}
+	g.close("%}")
+	g.body(depth - 1)
+	if g.c.chance(4) {
+		g.b.WriteString("{% else %}empty")
+	}
+	g.b.WriteString("{% endfor %}")
+}
+
+func (g *generator) setStmt(depth int) {
+	switch g.c.intn(4) {
+	case 0:
+		g.b.WriteString("{% set v = " + g.expr(3) + " %}{{ v }}")
+	case 1:
+		g.b.WriteString("{% set p, q = " + g.c.pick([]string{"1, 2", "lst[0], lst[1]", "pairs[0]"}) + " %}{{ p }}{{ q }}")
+	case 2:
+		g.b.WriteString("{% set ns = namespace(total=0) %}{% for i in lst %}{% set ns.total = ns.total + i %}{% endfor %}{{ ns.total }}")
+	default:
+		g.b.WriteString("{% set v %}")
+		g.body(depth - 1)
+		g.b.WriteString("{% endset %}{{ v }}")
+	}
+}
+
+func (g *generator) withStmt(depth int) {
+	g.b.WriteString("{% with w = " + g.expr(2) + " %}{{ w }}")
+	g.body(depth - 1)
+	g.b.WriteString("{% endwith %}")
+}
+
+func (g *generator) macroStmt(depth int) {
+	g.b.WriteString("{% macro mm(x")
+	if g.c.chance(2) {
+		g.b.WriteString(", y=" + g.c.pick(smallInts))
+	}
+	g.b.WriteString(") %}")
+	g.body(depth - 1)
+	g.b.WriteString("[{{ x }}]{% endmacro %}")
+
+	if g.c.chance(3) {
+		g.b.WriteString("{% call mm(1) %}called{% endcall %}")
+		return
+	}
+	g.b.WriteString("{{ mm(" + g.c.pick([]string{"1", "'a'", "lst", "1, 2"}) + ") }}")
+}
+
+func (g *generator) filterStmt(depth int) {
+	g.b.WriteString("{% filter " + g.c.pick([]string{"upper", "trim", "lower|trim", "escape"}) + " %}")
+	g.body(depth - 1)
+	g.b.WriteString("{% endfilter %}")
+}
+
+// --- expressions -------------------------------------------------------------
+
+func (g *generator) expr(depth int) string {
+	if depth <= 0 || g.c.exhausted() {
+		return g.atom()
+	}
+	switch g.c.intn(14) {
+	case 0, 1, 2, 3:
+		return g.atom()
+	case 4:
+		return g.binary(depth)
+	case 5:
+		return g.c.pick([]string{"not ", "-", "+"}) + g.expr(depth-1)
+	case 6:
+		return g.comparison(depth)
+	case 7, 8:
+		return g.filtered(depth)
+	case 9:
+		return g.tested(depth)
+	case 10:
+		return g.subscript(depth)
+	case 11:
+		return g.expr(depth-1) + " " + g.c.pick([]string{"and", "or"}) + " " + g.expr(depth-1)
+	case 12:
+		return g.expr(depth-1) + " if " + g.expr(1) + " else " + g.expr(depth-1)
+	default:
+		return "(" + g.expr(depth-1) + ")"
+	}
+}
+
+func (g *generator) binary(depth int) string {
+	op := g.c.pick(binaryOps)
+	// Repetition and exponentiation take a small literal on the right, so a
+	// generated template cannot ask for a terabyte of list.
+	if g.c.chance(6) {
+		return g.expr(depth-1) + " ** " + g.c.pick([]string{"0", "1", "2", "3"})
+	}
+	if op == "*" {
+		return g.expr(depth-1) + " * " + g.c.pick(smallInts)
+	}
+	return g.expr(depth-1) + " " + op + " " + g.expr(depth-1)
+}
+
+func (g *generator) comparison(depth int) string {
+	out := g.expr(depth - 1)
+	for range 1 + g.c.intn(2) {
+		out += " " + g.c.pick(compareOps) + " " + g.expr(depth-1)
+	}
+	return out
+}
+
+func (g *generator) filtered(depth int) string {
+	out := g.expr(depth - 1)
+	for range 1 + g.c.intn(2) {
+		name := g.c.pick(deterministicFilters)
+		out += "|" + name
+		if args, ok := filterArgs[name]; ok && len(args) > 0 {
+			if arg := g.c.pick(args); arg != "" {
+				out += "(" + arg + ")"
+			}
+		}
+		if lazyFilters[name] {
+			// Printing a generator would compare two memory
+			// addresses, so the elements are forced.
+			out += "|list"
+		}
+	}
+	return out
+}
+
+func (g *generator) tested(depth int) string {
+	if g.c.chance(3) {
+		for name, args := range testWithArg {
+			if len(args) == 0 {
+				continue
+			}
+			return g.expr(depth-1) + " is " + name + "(" + g.c.pick(args) + ")"
+		}
+	}
+	negate := ""
+	if g.c.chance(4) {
+		negate = "not "
+	}
+	return g.expr(depth-1) + " is " + negate + g.c.pick(testNames)
+}
+
+func (g *generator) subscript(depth int) string {
+	// Parenthesised, because `x|filter` followed by `.name` would be read
+	// as the dotted filter name `filter.name` rather than as an attribute
+	// of the filtered value -- a template that does not mean what the
+	// generator intended is a wasted case.
+	base := "(" + g.expr(depth-1) + ")"
+	switch g.c.intn(6) {
+	case 0:
+		return base + "[" + g.c.pick([]string{"0", "1", "-1", "5", "'a'", "'nope'", "n"}) + "]"
+	case 1:
+		return base + "." + g.c.pick([]string{"a", "b", "name", "nope", "0"})
+	case 2:
+		return base + "[" + g.c.pick([]string{"1:", ":2", "1:2", "::2", "::-1", ":", "-2:"}) + "]"
+	case 3:
+		return base + "|attr(" + g.c.pick([]string{"'a'", "'name'", "'nope'"}) + ")"
+	default:
+		return base
+	}
+}
+
+func (g *generator) atom() string {
+	switch g.c.intn(10) {
+	case 0:
+		return g.c.pick(intLiterals)
+	case 1:
+		return g.c.pick(floatLiterals)
+	case 2:
+		return g.c.pick(stringLiterals)
+	case 3:
+		return g.c.pick([]string{"true", "false", "none", "True", "False", "None"})
+	case 4, 5, 6:
+		return g.c.pick(names)
+	case 7:
+		return "[" + g.list(2) + "]"
+	case 8:
+		return g.c.pick([]string{
+			"{'a': 1}", "{}", "{1: 'a', 2: 'b'}", "{'a': 1, 'b': [1,2]}",
+			"{1: 'a', 1.0: 'b'}", "{(1,2): 'x'}",
+		})
+	default:
+		return g.c.pick(globals)
+	}
+}
+
+func (g *generator) list(n int) string {
+	parts := make([]string, 0, n)
+	for range 1 + g.c.intn(n) {
+		parts = append(parts, g.atom())
+	}
+	return strings.Join(parts, ", ")
+}
+
+// FuzzContext decodes the shared context for handing to gojja2.
+func FuzzContext() (json.RawMessage, error) {
+	var check any
+	if err := json.Unmarshal([]byte(FuzzContextJSON), &check); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(FuzzContextJSON), nil
+}

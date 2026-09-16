@@ -411,3 +411,36 @@ func Iterate(v Value) (iter.Seq[Value], error) {
 	}
 	return nil, errTypeNotIterable(v)
 }
+
+// Copy returns a deep copy of a container value, and the value itself for
+// anything immutable.
+//
+// It exists for constant folding: an expression folded to a literal container
+// would otherwise hand every render the same list, and a template that
+// appended to it would see its own history. jinja2 has that bug; copying is
+// the same behaviour without it.
+func Copy(v Value) Value {
+	switch v.Kind() {
+	case KindList, KindTuple:
+		s, _ := v.Seq()
+		items := make([]Value, s.Len())
+		for i, item := range s.Items() {
+			items[i] = Copy(item)
+		}
+		if v.Kind() == KindTuple {
+			return NewTuple(items...)
+		}
+		return NewList(items...)
+	case KindDict:
+		d, _ := v.Dict()
+		out := NewDict()
+		target, _ := out.Dict()
+		for _, e := range d.Entries() {
+			if err := target.Set(e.Key, Copy(e.Value)); err != nil {
+				return v
+			}
+		}
+		return out
+	}
+	return v
+}

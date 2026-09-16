@@ -1,0 +1,12 @@
+{
+  "case": "errshape/sort_mixed_reverse.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "'<' not supported between instances of 'bool' and 'NoneType'"
+  }
+}

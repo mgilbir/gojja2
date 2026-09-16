@@ -1,0 +1,8 @@
+{
+  "__templates__": {
+    "mac.txt": "{% macro m(x) %}M{% endmacro %}"
+  },
+  "m": 10
+}
+---
+{% macro mm() %}[{{ m }}]{% endmacro %}{{ mm() }}{% from 'mac.txt' import m %}

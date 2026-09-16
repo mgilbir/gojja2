@@ -1,0 +1,12 @@
+{
+  "case": "errshape/callable_arity.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "callable() takes exactly one argument (2 given)"
+  }
+}

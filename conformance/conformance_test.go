@@ -5,8 +5,6 @@ package conformance_test
 
 import (
 	"bufio"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/mgilbir/gojja2/conformance"
-	"github.com/mgilbir/gojja2/errs"
 )
 
 // corpus names a set of cases and the goldens recorded for it.
@@ -171,45 +168,10 @@ func runCase(t *testing.T, corpusName, caseRoot, goldenRoot, path string) result
 	}
 
 	out, renderErr := c.Render()
-
-	switch {
-	case golden.OK && renderErr != nil:
-		return result{id: id, details: fmt.Sprintf(
-			"jinja2 rendered %q\ngojja2 raised %s: %v",
-			golden.Output, errs.KindOf(renderErr), renderErr)}
-
-	case golden.OK:
-		if out == golden.Output {
-			return result{id: id, ok: true}
-		}
-		return result{id: id, details: fmt.Sprintf(
-			"output differs\n  jinja2: %q\n  gojja2: %q", golden.Output, out)}
-
-	case renderErr == nil:
-		return result{id: id, details: fmt.Sprintf(
-			"jinja2 raised %s: %s\ngojja2 rendered %q",
-			golden.Error.Type, golden.Error.Message, out)}
-
-	default:
-		gotKind := errs.KindOf(renderErr).String()
-		if gotKind != golden.Error.Type {
-			return result{id: id, details: fmt.Sprintf(
-				"error class differs\n  jinja2: %s: %s\n  gojja2: %s: %v",
-				golden.Error.Type, golden.Error.Message, gotKind, renderErr)}
-		}
-		if renderErr.Error() != golden.Error.Message {
-			return result{id: id, details: fmt.Sprintf(
-				"error message differs (%s)\n  jinja2: %s\n  gojja2: %s",
-				gotKind, golden.Error.Message, renderErr.Error())}
-		}
-		var e *errs.Error
-		if golden.Error.Lineno != 0 && errors.As(renderErr, &e) && e.Line != golden.Error.Lineno {
-			return result{id: id, details: fmt.Sprintf(
-				"error line differs: jinja2 says %d, gojja2 says %d",
-				golden.Error.Lineno, e.Line)}
-		}
-		return result{id: id, ok: true}
+	if d := conformance.Compare(golden.Expected(), out, renderErr); d != nil {
+		return result{id: id, details: d.String()}
 	}
+	return result{id: id, ok: true}
 }
 
 func indent(s string) string {

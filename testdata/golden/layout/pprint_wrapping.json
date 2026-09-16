@@ -1,0 +1,9 @@
+{
+  "case": "layout/pprint_wrapping.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "[{'age': 30, 'city': 'Lisbon', 'name': 'ana'},\n {'age': 25, 'city': 'Porto', 'name': 'bo'},\n {'age': 30, 'city': 'Lisbon', 'name': 'cy'}]|{'a': [{'age': 30, 'city': 'Lisbon', 'name': 'ana'},\n       {'age': 25, 'city': 'Porto', 'name': 'bo'},\n       {'age': 30, 'city': 'Lisbon', 'name': 'cy'}]}"
+}
