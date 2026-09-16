@@ -813,16 +813,58 @@ var htmlUnescaper = strings.NewReplacer(
 func unescapeHTML(s string) string { return htmlUnescaper.Replace(s) }
 
 // filterFormat is the `%` operator in filter form.
+// filterFormat is jinja2's `|format`, which is `%` interpolation.
+//
+// On a Markup receiver that is markupsafe's Markup.__mod__, not str's: it
+// escapes every substituted argument and returns Markup. Dropping the safe
+// flag and interpolating raw, as this did, put an unescaped argument inside a
+// value the template had already been told to trust -- so
+// `{{ tmpl|safe|format(comment) }}` emitted the comment's markup verbatim
+// where CPython emits it escaped.
 func filterFormat(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+	safe := v.IsSafe()
+	format := value.String(value.Str(v))
+
+	var out value.Value
+	var err error
 	if len(args.Kwargs) > 0 {
 		d := value.NewDict()
 		dict, _ := d.Dict()
 		for _, kw := range args.Kwargs {
-			dict.SetString(kw.Name, kw.Value)
+			dict.SetString(kw.Name, escapeArg(safe, kw.Value))
 		}
-		return value.Mod(value.String(value.Str(v)), d)
+		out, err = value.Mod(format, d)
+	} else {
+		pos := make([]value.Value, len(args.Pos))
+		for i, arg := range args.Pos {
+			pos[i] = escapeArg(safe, arg)
+		}
+		out, err = value.Mod(format, value.NewTuple(pos...))
 	}
-	return value.Mod(value.String(value.Str(v)), value.NewTuple(args.Pos...))
+	if err != nil {
+		return value.Undefined, err
+	}
+	return keepSafe(v, value.Str(out)), nil
+}
+
+// escapeArg escapes a value about to be interpolated into Markup. A non-Markup
+// format string interpolates its arguments as they are, so nothing is escaped
+// there -- the escaping is Markup's doing, not `%`'s.
+//
+// A number, bool or None is handed over untouched. markupsafe wraps each
+// argument in a helper that escapes only when the conversion asks for text, so
+// `"%d" % 5` still sees an int; escaping it to the string "5" here would make
+// `{{ "%d"|safe|format(5) }}` fail with "a real number is required". Their
+// rendered forms contain nothing to escape either way.
+func escapeArg(safe bool, v value.Value) value.Value {
+	if !safe {
+		return v
+	}
+	switch v.Kind() {
+	case value.KindInt, value.KindFloat, value.KindBool, value.KindNone:
+		return v
+	}
+	return escapeIfNeeded(v)
 }
 
 // filterPprint renders a value the way Python's pprint.pformat does: repr()
@@ -854,6 +896,14 @@ func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) {
 
 	switch v.Kind() {
 	case value.KindString:
+		// pprint dispatches on type(obj).__repr__, and Markup defines its
+		// own, so a Markup never reaches the str handler that splits a
+		// long string into parenthesised chunks. It is printed by repr on
+		// one line however long it is.
+		if v.IsSafe() {
+			b.WriteString(rep)
+			return
+		}
 		pformatString(b, v.AsString(), rep, indent, allowance, level+1)
 
 	case value.KindList, value.KindTuple:

@@ -2,7 +2,9 @@
   "case": "literals/bignum.jj2",
   "oracle": {
     "impl": "cpython-jinja2",
-    "version": "3.1.6"
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
   },
   "ok": true,
   "output": "1267650600228229401496703205376|9223372036854775808|-1180591620717411303424"

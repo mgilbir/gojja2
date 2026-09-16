@@ -1,0 +1,3 @@
+{"long": "the quick brown fox jumps over the lazy dog and keeps on running well past eighty columns"}
+---
+{{ "x"|safe|pprint }}|{{ "x"|pprint }}|{{ ["a"]|safe|pprint }}|{{ long|escape|pprint }}|{{ long|pprint }}

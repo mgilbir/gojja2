@@ -1,0 +1,3 @@
+{}
+---
+{{ "%s"|safe|format("<b>") }}|{{ "%s"|format("<b>") }}|{{ "%(a)s"|safe|format(a="<b>") }}|{{ "%s and %s"|safe|format("<a>", "<b>") }}|{{ "%d"|safe|format(5) }}|{{ "%s"|safe|format(["<b>"]) }}|{{ "%s"|safe|format(none) }}|{{ "%s"|safe|format(true) }}|{{ "%s"|safe|format("x"|safe) }}|{{ ("%s"|safe|format("x")).__class__.__name__ }}|{{ ("%s"|format("x")).__class__.__name__ }}

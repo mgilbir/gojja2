@@ -1,0 +1,11 @@
+{
+  "case": "escape/markup_percent_format.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "&lt;b&gt;|<b>|&lt;b&gt;|&lt;a&gt; and &lt;b&gt;|5|[&#39;&lt;b&gt;&#39;]|None|True|x|Markup|str"
+}
