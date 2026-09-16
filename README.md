@@ -56,10 +56,10 @@ at all -- silently.
 
 | corpus | cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 245 | 245 |
+| gojja2's own (committed, with goldens) | 253 | 253 |
 | MiniJinja fixtures | 161 | 156 |
 | Jinja's own test suite (harvested templates) | 658 | 646 |
-| **total** | **1063** | **1047 (98.5%)** |
+| **total** | **1071** | **1055 (98.5%)** |
 
 On top of that, roughly a million generated templates have been rendered by
 both implementations and compared (see below).
