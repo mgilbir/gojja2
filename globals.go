@@ -4,6 +4,8 @@
 package gojja2
 
 import (
+	"math"
+	"math/big"
 	"math/rand/v2"
 	"strings"
 
@@ -26,17 +28,49 @@ type rangeObject struct {
 	start, stop, step int64
 }
 
+// bigLen is the exact element count, computed the way CPython computes it:
+// (stop - start + step -+ 1) // step, clamped at zero.
+//
+// It has to be arbitrary precision. `range(-2**63, 2**63-1)` holds 2**64-1
+// elements, and the obvious int64 form of this expression overflows and wraps
+// negative -- which read as a length of -1, made `|length` render -1 and made
+// the loop run zero times.
+func (r *rangeObject) bigLen() *big.Int {
+	start := big.NewInt(r.start)
+	stop := big.NewInt(r.stop)
+	step := big.NewInt(r.step)
+
+	span := new(big.Int).Sub(stop, start)
+	adjust := big.NewInt(-1)
+	if r.step < 0 {
+		adjust = big.NewInt(1)
+	}
+	// span + step - sign(step), then truncated division by step.
+	span.Add(span, step)
+	span.Add(span, adjust)
+	if span.Sign() == 0 {
+		return big.NewInt(0)
+	}
+	n := new(big.Int).Quo(span, step)
+	if n.Sign() < 0 {
+		return big.NewInt(0)
+	}
+	return n
+}
+
+// BigLen reports the exact length, which len() must render even when it does
+// not fit in an int.
+func (r *rangeObject) BigLen() *big.Int { return r.bigLen() }
+
+// Len is the length clamped into an int, which is what indexing and iteration
+// need. A range longer than maxInt cannot be walked under any budget, so the
+// clamp is unobservable except through len(), which uses BigLen instead.
 func (r *rangeObject) Len() int {
-	if r.step > 0 {
-		if r.stop <= r.start {
-			return 0
-		}
-		return int((r.stop - r.start + r.step - 1) / r.step)
+	n := r.bigLen()
+	if !n.IsInt64() || n.Int64() > int64(math.MaxInt) {
+		return math.MaxInt
 	}
-	if r.stop >= r.start {
-		return 0
-	}
-	return int((r.start - r.stop - r.step - 1) / -r.step)
+	return int(n.Int64())
 }
 
 func (r *rangeObject) GetIndex(i int) (value.Value, bool) {
@@ -149,57 +183,16 @@ func globalDict(args *value.CallArgs) (value.Value, error) {
 			"dict expected at most 1 argument, got %d", len(args.Pos))
 	}
 	if len(args.Pos) == 1 {
-		src := args.Pos[0]
-		if src.IsUndefined() {
-			// dict() looks for a keys() method first, and that probe
-			// is what fails on an Undefined.
-			return value.Undefined, src.UndefinedError()
-		}
-		if sd, ok := src.Dict(); ok {
-			for _, e := range sd.Entries() {
-				if err := d.Set(e.Key, e.Value); err != nil {
-					return value.Undefined, err
-				}
-			}
-		} else if m, ok := src.Interface().(value.Mapping); ok {
-			for _, k := range m.Keys() {
-				v, _ := m.GetItem(k)
-				if err := d.Set(k, v); err != nil {
-					return value.Undefined, err
-				}
-			}
-		} else {
-			// dict() also accepts an iterable of key/value pairs.
-			pairs, err := value.Iterate(src)
-			if err != nil {
-				return value.Undefined, errs.New(errs.TypeError,
-					"'%s' object is not iterable", src.TypeName())
-			}
-			for pair := range pairs {
-				seq, ok := pair.Seq()
-				if !ok || seq.Len() != 2 {
-					return value.Undefined, errs.New(errs.ValueError,
-						"dictionary update sequence element has length %d; 2 is required",
-						seqLen(pair))
-				}
-				if err := d.Set(seq.At(0), seq.At(1)); err != nil {
-					return value.Undefined, err
-				}
-			}
+		// dict() and dict.update() accept exactly the same shapes and
+		// refuse them the same way, so they share one implementation.
+		if err := updateDictFrom(d, args.Pos[0]); err != nil {
+			return value.Undefined, err
 		}
 	}
 	for _, kw := range args.Kwargs {
 		d.SetString(kw.Name, kw.Value)
 	}
 	return out, nil
-}
-
-func seqLen(v value.Value) int {
-	if s, ok := v.Seq(); ok {
-		return s.Len()
-	}
-	n, _ := value.Len(v)
-	return n
 }
 
 func globalNamespace(args *value.CallArgs) (value.Value, error) {

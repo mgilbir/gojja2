@@ -404,9 +404,15 @@ func (b *blockReference) render() (value.Value, error) {
 
 // Str makes `{{ self.body }}` render the block without an explicit call, which
 // is how jinja2's BlockReference behaves.
+//
+// Rendering can fail and Str cannot say so, so the error is parked on the
+// render state and raised by the statement loop. Discarding it rendered the
+// block as "" and reported success -- a ZeroDivisionError inside a block
+// reached through `self` simply vanished.
 func (b *blockReference) Str() string {
 	v, err := b.render()
 	if err != nil {
+		b.st.deferError(err)
 		return ""
 	}
 	return value.Str(v)

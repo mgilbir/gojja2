@@ -31,7 +31,7 @@ defines as the specification.
 | C10 | High | limits | A context deadline cannot interrupt a filter: 1 s deadline returned after 17.44 s | limits.go:527-548 | CONFIRMED |
 | C11 | High | filters | `urlencode` is O(n²) on bytes below 0x10, incl. `\n` and `\t` | filters_web.go:60-80 | CONFIRMED |
 | C12 | High | inheritance | `{{ self.block }}` swallows the block's error and renders `""` | runtime.go:407-413 | CONFIRMED |
-| C13 | Medium | globals | `range` length overflows int64 → `|length` reports `-1` | globals.go:29-40 | CONFIRMED |
+| C13 | Medium | globals | `range` length overflows int64 → `|length` reports `-1` where CPython raises | globals.go:29-40 | CONFIRMED |
 | C14 | Medium | methods | `center`/`ljust`/`rjust` accept a fill CPython rejects → silent wrong output | methods.go:646 | CONFIRMED |
 | C15 | Medium | Go bridge | Every exported method is callable **with arguments**; docs say "nullary" | convert.go:188-191,256 | CONFIRMED |
 | C16 | Medium | Go bridge | Pointer-receiver methods are silently invisible to templates | convert.go:99-103 | CONFIRMED |
@@ -583,9 +583,16 @@ MEASURED:
 
 | expression | gojja2 | CPython |
 |---|---|---|
-| `range(MIN, MAX)\|length` | **`-1`** | `18446744073709551615` |
+| `range(MIN, MAX)\|length` | **`-1`** | `OverflowError: Python int too large to convert to C ssize_t` |
 | `range(MIN, MAX)\|list\|length` | `0` | (huge) |
 | `{% for i in range(MIN, MAX) %}x{% endfor %}` | 0 iterations | (huge) |
+
+**Correction.** An earlier draft of this entry recorded CPython's answer as
+`18446744073709551615`. That is the arithmetic length, but not what `len()`
+returns: CPython narrows it to a `Py_ssize_t` and raises `OverflowError` past
+that bound. `range(0, 2**63-1)|length` succeeds and `range(-2**63, 0)|length`
+raises. The defect is the same either way -- gojja2 rendered `-1` -- but the
+correct behaviour is to raise, not to report the bignum.
 
 A negative `Len()` is worse than a wrong number: it reaches
 `make([]T, 0, n)`-shaped call sites in `objectSource` consumers. Nothing found

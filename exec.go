@@ -105,6 +105,11 @@ func (ex *exec) execBody(body []ast.Stmt) error {
 
 func (ex *exec) execStmt(stmt ast.Stmt) error {
 	err := ex.execStmtInner(stmt)
+	if err == nil {
+		// A value stringified during this statement may have failed
+		// somewhere that could not return an error; see State.deferred.
+		err = ex.st.takeDeferred()
+	}
 	if err != nil && !errors.Is(err, errBreakLoop) && !errors.Is(err, errContinueLoop) {
 		err = errs.At(err, ex.st.tmpl.name, stmt.Line())
 	}

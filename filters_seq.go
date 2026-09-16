@@ -12,11 +12,9 @@ import (
 )
 
 func filterLength(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	n, err := value.Len(v)
-	if err != nil {
-		return value.Undefined, err
-	}
-	return value.Int(int64(n)), nil
+	// LenValue rather than Len: a Python length is an arbitrary-precision
+	// integer, and range() can exceed what an int holds.
+	return value.LenValue(v)
 }
 
 func filterList(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {

@@ -208,6 +208,24 @@ whole extension rather than on any trailing substring, and a template compiled
 from a string is escaped by default (jinja2's `default_for_string=True`).
 Asserted by the tests in `autoescape_test.go`.
 
+## `len()` of a very long range
+
+```jinja
+{{ range(-9223372036854775808, 0)|length }}
+```
+
+CPython raises `OverflowError: Python int too large to convert to C ssize_t`,
+because `len()` narrows its result to a `Py_ssize_t`. gojja2 reproduces that,
+including the wording and the exact boundary: a length of `2**63-1` is returned
+and `2**63` raises.
+
+Internally the length is still computed exactly, in arbitrary precision, and
+only clamped where a Go `int` is required -- iterating or indexing such a range.
+That clamp is unobservable: a loop over a range that long is stopped by the
+render budget long before the count could matter. Asserted by
+`TestRangeLengthDoesNotOverflow` and graded against CPython over 1,452
+start/stop/step combinations.
+
 ## Identifier characters
 
 jinja2 matches names against a table generated from Python's `str.isidentifier`.
