@@ -1,0 +1,13 @@
+{
+  "case": "methods/format_attr_on_dict.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "AttributeError",
+    "message": "'dict' object has no attribute 'foo'",
+    "name": "foo"
+  }
+}

@@ -346,6 +346,11 @@ case("globals/joiner", "{% set j = joiner('; ') %}{% for x in [1,2,3] %}{{ j() }
 
 # --- string methods -----------------------------------------------------------
 case("methods/string", "{{ 'a,b,c'.split(',') }}|{{ ' a  b '.split() }}|{{ '-'.join(['a','b']) }}|{{ 'abc'.startswith('a') }}|{{ 'abc'.find('b') }}")
+# str.format's replacement fields take attribute and index accessors, and the
+# attribute form does not fall back to items -- which is why a dict raises.
+case("methods/format_fields", '{{ "{0[foo]}".format({"foo": 42}) }}|{{ "{0[0]}".format([1,2]) }}|{{ "{a[b][0]}".format(a={"b":[7]}) }}|{{ "{x[k]}".format_map({"x":{"k":1}}) }}')
+case("methods/format_attr_on_dict", '{{ "{0.foo}".format({"foo": 42}) }}')
+case("methods/format_index_range", '{{ "{0[9]}".format([1]) }}')
 case("methods/string_more", "{{ 'a'.center(5,'*') }}|{{ '5'.zfill(3) }}|{{ 'a\\nb'.splitlines() }}|{{ 'AbC'.swapcase() }}|{{ 'a{0}b{x}'.format(1, x=2) }}")
 case("methods/dict", "{{ map.keys()|list }}|{{ map.values()|list }}|{{ map.items()|list }}|{{ map.get('a') }}|{{ map.get('z', 'd') }}", **MAP)
 case("methods/list", "{% set l = [3,1,2] %}{{ l.index(1) }}{{ l.count(3) }}{% do l.append(4) %}{% do l.reverse() %}{{ l }}",

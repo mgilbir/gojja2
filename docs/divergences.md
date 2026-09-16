@@ -124,6 +124,11 @@ they raise instead. Every such case is listed in
 
 This is the one place where not matching CPython is the point.
 
+Note what is *not* in this category. `str.format`'s replacement fields take
+attribute and index accessors -- `"{0.foo}"`, `"{user[id]}"` -- and that is an
+ordinary documented feature, implemented and matched. The tests above only use
+it as a route to `__class__`.
+
 ## A macro containing a context-free include
 
 ```jinja

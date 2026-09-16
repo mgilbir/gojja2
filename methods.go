@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -77,58 +78,65 @@ func intArg(args *value.CallArgs, i int, name string, def int) (int, error) {
 
 // --- string methods ----------------------------------------------------------
 
-var stringMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
-	"upper": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.String(strings.ToUpper(r.AsString())), nil
-	},
-	"lower": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.String(strings.ToLower(r.AsString())), nil
-	},
-	"title": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.String(pythonTitle(r.AsString())), nil
-	},
-	"capitalize": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.String(pythonCapitalize(r.AsString())), nil
-	},
-	"swapcase": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.String(swapCase(r.AsString())), nil
-	},
-	"casefold": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.String(strings.ToLower(r.AsString())), nil
-	},
+// stringMethods is populated in init rather than in its declaration: format
+// reaches back into attribute lookup, which reads this table, and Go rejects
+// the initialisation cycle that would create.
+var stringMethods map[string]func(value.Value, *value.CallArgs) (value.Value, error)
 
-	"strip":  trimMethod(strings.Trim, strings.TrimFunc),
-	"lstrip": trimMethod(strings.TrimLeft, strings.TrimLeftFunc),
-	"rstrip": trimMethod(strings.TrimRight, strings.TrimRightFunc),
+func init() {
+	stringMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
+		"upper": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+			return value.String(strings.ToUpper(r.AsString())), nil
+		},
+		"lower": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+			return value.String(strings.ToLower(r.AsString())), nil
+		},
+		"title": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+			return value.String(pythonTitle(r.AsString())), nil
+		},
+		"capitalize": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+			return value.String(pythonCapitalize(r.AsString())), nil
+		},
+		"swapcase": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+			return value.String(swapCase(r.AsString())), nil
+		},
+		"casefold": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+			return value.String(strings.ToLower(r.AsString())), nil
+		},
 
-	"split":      splitMethod(false),
-	"rsplit":     splitMethod(true),
-	"splitlines": methodSplitlines,
-	"join":       methodJoin,
-	"replace":    methodReplace,
-	"startswith": affixMethod(strings.HasPrefix),
-	"endswith":   affixMethod(strings.HasSuffix),
-	"count":      methodStrCount,
-	"find":       findMethod(strings.Index),
-	"rfind":      findMethod(strings.LastIndex),
-	"index":      indexMethod(strings.Index, "index"),
-	"rindex":     indexMethod(strings.LastIndex, "rindex"),
-	"format":     methodFormat,
-	"format_map": methodFormatMap,
-	"zfill":      methodZfill,
-	"ljust":      padMethod(padLeftAligned),
-	"rjust":      padMethod(padRightAligned),
-	"center":     padMethod(padCentered),
-	"encode": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.Bytes([]byte(r.AsString())), nil
-	},
+		"strip":  trimMethod(strings.Trim, strings.TrimFunc),
+		"lstrip": trimMethod(strings.TrimLeft, strings.TrimLeftFunc),
+		"rstrip": trimMethod(strings.TrimRight, strings.TrimRightFunc),
 
-	"isdigit": classifyMethod(unicode.IsDigit),
-	"isalpha": classifyMethod(unicode.IsLetter),
-	"isalnum": classifyMethod(func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }),
-	"isspace": classifyMethod(unicode.IsSpace),
-	"isupper": caseMethod(unicode.IsUpper, unicode.IsLower),
-	"islower": caseMethod(unicode.IsLower, unicode.IsUpper),
+		"split":      splitMethod(false),
+		"rsplit":     splitMethod(true),
+		"splitlines": methodSplitlines,
+		"join":       methodJoin,
+		"replace":    methodReplace,
+		"startswith": affixMethod(strings.HasPrefix),
+		"endswith":   affixMethod(strings.HasSuffix),
+		"count":      methodStrCount,
+		"find":       findMethod(strings.Index),
+		"rfind":      findMethod(strings.LastIndex),
+		"index":      indexMethod(strings.Index, "index"),
+		"rindex":     indexMethod(strings.LastIndex, "rindex"),
+		"format":     methodFormat,
+		"format_map": methodFormatMap,
+		"zfill":      methodZfill,
+		"ljust":      padMethod(padLeftAligned),
+		"rjust":      padMethod(padRightAligned),
+		"center":     padMethod(padCentered),
+		"encode": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+			return value.Bytes([]byte(r.AsString())), nil
+		},
+
+		"isdigit": classifyMethod(unicode.IsDigit),
+		"isalpha": classifyMethod(unicode.IsLetter),
+		"isalnum": classifyMethod(func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }),
+		"isspace": classifyMethod(unicode.IsSpace),
+		"isupper": caseMethod(unicode.IsUpper, unicode.IsLower),
+		"islower": caseMethod(unicode.IsLower, unicode.IsUpper),
+	}
 }
 
 func trimMethod(withCutset func(string, string) string, withFunc func(string, func(rune) bool) string) func(value.Value, *value.CallArgs) (value.Value, error) {
@@ -418,9 +426,134 @@ func methodFormatMap(r value.Value, args *value.CallArgs) (value.Value, error) {
 	return methodFormat(r, &value.CallArgs{Kwargs: kwargs})
 }
 
+// resolveFormatField resolves one replacement field.
+//
+// A field is a name or position followed by any number of `.attr` and `[key]`
+// accessors: "{0.name}", "{user[id]}", "{0.a[1].b}". The attribute form is a
+// real attribute lookup with no fall-back to items, which is why
+// `"{0.foo}".format({"foo": 42})` raises rather than finding the entry.
 func resolveFormatField(field string, args *value.CallArgs, auto *int) (value.Value, error) {
-	name, _, _ := strings.Cut(field, "!")
-	name, _, _ = strings.Cut(name, ":")
+	name, accessors := splitFieldName(field)
+
+	v, err := resolveFieldBase(name, args, auto)
+	if err != nil {
+		return value.Undefined, err
+	}
+	for _, a := range accessors {
+		if v, err = a.apply(v); err != nil {
+			return value.Undefined, err
+		}
+	}
+	return v, nil
+}
+
+// fieldAccessor is one `.attr` or `[key]` step.
+type fieldAccessor struct {
+	name    string
+	isIndex bool
+}
+
+func (a fieldAccessor) apply(v value.Value) (value.Value, error) {
+	if a.isIndex {
+		key := value.String(a.name)
+		if isAllDigits(a.name) {
+			n, err := strconv.ParseInt(a.name, 10, 64)
+			if err != nil {
+				return value.Undefined, errs.New(errs.ValueError,
+					"invalid index %q", a.name)
+			}
+			key = value.Int(n)
+		}
+		if item, ok := lookupItem(v, key); ok {
+			return item, nil
+		}
+		if idx, ok := key.Int64(); ok {
+			if seq, isSeq := v.Seq(); isSeq {
+				i := int(idx)
+				if i < 0 {
+					i += seq.Len()
+				}
+				if i >= 0 && i < seq.Len() {
+					return seq.At(i), nil
+				}
+				return value.Undefined, errs.New(errs.IndexError,
+					"%s index out of range", v.TypeName())
+			}
+		}
+		return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
+	}
+
+	// Attribute access, with no item fall-back.
+	if attr, ok := lookupAttr(v, a.name); ok {
+		return attr, nil
+	}
+	return value.Undefined, errs.New(errs.AttributeError,
+		"'%s' object has no attribute '%s'", v.TypeName(), a.name)
+}
+
+// splitFieldName separates the base of a replacement field from its accessors,
+// stopping at the conversion or format spec. The scan is bracket-aware, so a
+// colon inside "[a:b]" does not end the field name.
+func splitFieldName(field string) (string, []fieldAccessor) {
+	end := len(field)
+	depth := 0
+	for i := 0; i < len(field); i++ {
+		switch field[i] {
+		case '[':
+			depth++
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		case '!', ':':
+			if depth == 0 {
+				end = i
+				i = len(field)
+			}
+		}
+	}
+	field = field[:end]
+
+	// The base runs to the first accessor.
+	base := field
+	if i := strings.IndexAny(field, ".["); i >= 0 {
+		base, field = field[:i], field[i:]
+	} else {
+		field = ""
+	}
+
+	var accessors []fieldAccessor
+	for field != "" {
+		switch field[0] {
+		case '.':
+			field = field[1:]
+			next := strings.IndexAny(field, ".[")
+			if next < 0 {
+				next = len(field)
+			}
+			accessors = append(accessors, fieldAccessor{name: field[:next]})
+			field = field[next:]
+		case '[':
+			close := strings.IndexByte(field, ']')
+			if close < 0 {
+				accessors = append(accessors,
+					fieldAccessor{name: field[1:], isIndex: true})
+				field = ""
+				continue
+			}
+			accessors = append(accessors,
+				fieldAccessor{name: field[1:close], isIndex: true})
+			field = field[close+1:]
+		default:
+			field = ""
+		}
+	}
+	return base, accessors
+}
+
+// resolveFieldBase finds the argument a field names: automatic numbering when
+// empty, positional when all digits, keyword otherwise.
+func resolveFieldBase(name string, args *value.CallArgs, auto *int) (value.Value, error) {
 	switch {
 	case name == "":
 		v, ok := args.Arg(*auto)
