@@ -42,7 +42,9 @@ an escaped-by-configuration project ends up emitting raw user input.
 `SelectAutoescapeWith` takes the disabled-extension and default settings as
 well.
 
-Every render takes a `context.Context` and stops when it is cancelled. Behind
+Every render takes a `context.Context` and stops when it is cancelled -- at the
+next loop iteration, output write, or filter yield point, which is where the
+context is read. Behind
 it, a render is bounded by default to ten million loop iterations and 256 MiB
 of output, and anything a template sizes from a number it chose -- a pad width,
 an indent, a rounding precision -- is charged against that budget before it is

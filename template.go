@@ -39,9 +39,15 @@ func (t *Template) Name() string { return t.name }
 // must not emit a partial document should render into a buffer, or use
 // [Template.RenderString].
 //
-// ctx bounds the render. Cancel it, or give it a deadline, and the render
-// stops at the next loop iteration or output write and returns an error
-// wrapping ctx.Err().
+// ctx bounds the render. Cancel it, or give it a deadline, and the render stops
+// at the next loop iteration, output write, or filter yield point, and returns
+// an error wrapping ctx.Err().
+//
+// Those are the points at which the context is read, so how promptly a render
+// stops depends on reaching one. The built-in filters that do sustained work
+// call [State.Poll] for exactly this reason; one registered with [Environment.AddFilter]
+// that loops without writing output should do the same, or it is a region
+// nothing can interrupt.
 func (t *Template) Render(ctx context.Context, w io.Writer, vars map[string]any) error {
 	return t.RenderValues(ctx, w, t.env.valuesFromGo(vars))
 }
@@ -225,6 +231,23 @@ func (s *State) Step(n int) error {
 		return nil
 	}
 	return s.budget.chargeSteps(n)
+}
+
+// Poll consults the render's context without charging anything against the
+// budget, and reports an error once it is cancelled or expired.
+//
+// It is the yield point for a filter, test or global doing sustained work that
+// neither iterates a sequence nor writes output. The context is only read from
+// inside the budget, so a call that does neither is a region nothing can
+// interrupt: a single filter once overran a one-second deadline by seventeen
+// seconds, and the error it eventually returned was the output bound rather
+// than the deadline. Calling this every few thousand units of work is cheap --
+// it is an increment and a comparison until the counter wraps round.
+func (s *State) Poll() error {
+	if s == nil || s.budget == nil {
+		return nil
+	}
+	return s.budget.tick()
 }
 
 // Env returns the environment the render is running under.

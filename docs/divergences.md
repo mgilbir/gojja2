@@ -287,6 +287,19 @@ would mean every loader implementing a second method.
 to pick up an edit; the template cache is otherwise a bounded LRU, defaulting to
 the same 400 entries jinja2 uses.
 
+## How promptly a cancelled render stops
+
+A render reads its context at three points: a loop iteration, an output write,
+and a filter's call to `State.Poll`. Cancellation is noticed at the first of
+those it reaches, not at the instant it happens -- reading the context on every
+operation would put a synchronisation on the inner loop of every template.
+
+The built-in filters that do sustained work without writing output poll as they
+go, so a cancelled render stops within microseconds rather than at the end of
+whatever was running. A filter registered by a caller that loops without
+writing output should poll too; one that does not is a region nothing can
+interrupt.
+
 ## Identifier characters
 
 jinja2 matches names against a table generated from Python's `str.isidentifier`.
