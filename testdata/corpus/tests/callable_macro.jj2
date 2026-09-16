@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "mac.html": "{% macro f(x) %}<{{x}}>{% endmacro %}{% set exported = 'E' %}"
+  }
+}
+---
+{% macro local(x) %}{% endmacro %}{% from 'mac.html' import f %}{% import 'mac.html' as mod %}{{ local is callable }}{{ f is callable }}{{ mod.f is callable }}{{ mod.exported is callable }}{{ local(1) is callable }}

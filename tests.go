@@ -133,6 +133,14 @@ func isCallableValue(v value.Value) bool {
 	if v.IsUndefined() {
 		return true
 	}
+	// A macro is invoked through a path of its own in exec.invoke, before
+	// the value.Caller check, and so does not implement Caller. Testing
+	// only for Caller answered False for the one callable a template
+	// defines for itself, while calling it worked. Whatever invoke will
+	// call, this has to agree is callable.
+	if _, ok := v.Interface().(*macroObject); ok {
+		return true
+	}
 	_, ok := v.Interface().(value.Caller)
 	return ok
 }

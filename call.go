@@ -186,13 +186,24 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 
 	// Defaults fill the parameters still unbound; the rest stay undefined.
 	//
+	// The expression is evaluated here, at the call, and in the macro's own
+	// frame -- jinja2 compiles defaults into the macro body, so they run
+	// once per call and see the parameters bound before them. Two things
+	// turn on that: `{% macro m(v=[]) %}` gets a fresh list every call
+	// rather than sharing one, and `{% macro m(a, b=2, c=b) %}` resolves
+	// c to 2 rather than to an undefined.
 	firstDefault := len(params) - len(m.defaults)
+	defEx := ex.child(sc)
 	for i, param := range params {
 		if bound[param.Name] {
 			continue
 		}
 		if i >= firstDefault {
-			sc.set(param.Name, m.defaults[i-firstDefault])
+			v, err := defEx.eval(m.defaults[i-firstDefault])
+			if err != nil {
+				return value.Undefined, err
+			}
+			sc.set(param.Name, v)
 			continue
 		}
 		sc.set(param.Name, ex.st.Undefined(value.NewUndefined(param.Name)))

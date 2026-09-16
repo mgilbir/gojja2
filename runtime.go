@@ -206,9 +206,17 @@ func Func(name string, fn func(args *value.CallArgs) (value.Value, error)) value
 
 // macroObject is a `{% macro %}`, closed over the scope it was defined in.
 type macroObject struct {
-	name     string
-	node     *ast.Macro
-	defaults []value.Value
+	name string
+	node *ast.Macro
+	// defaults are the default-argument *expressions*, not their values.
+	//
+	// jinja2 compiles them into the macro body, so they are evaluated once
+	// per call rather than once per definition. That is observable twice
+	// over: `{% macro m(v=[]) %}` gets a fresh list every call, where a
+	// stored value would carry one call's appends into the next; and a
+	// default naming an outer variable sees the value that variable has at
+	// the call, not at the definition.
+	defaults []ast.Expr
 	// defScope is the scope the macro was defined in; its body resolves
 	// free names there, not at the call site.
 	defScope *scope

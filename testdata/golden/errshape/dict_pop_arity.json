@@ -1,0 +1,12 @@
+{
+  "case": "errshape/dict_pop_arity.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "pop expected at least 1 argument, got 0"
+  }
+}

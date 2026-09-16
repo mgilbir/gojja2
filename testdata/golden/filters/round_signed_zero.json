@@ -1,0 +1,9 @@
+{
+  "case": "filters/round_signed_zero.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "0.0|0.0|-0.0|-1.0|0.0|0.0|-2.0|0.0"
+}

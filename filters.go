@@ -1158,10 +1158,19 @@ func filterRound(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 				"must be real number, not %s", scaled.TypeName())
 		}
 		divisor, _ := scale.Float64()
+		rounded := math.Floor(f)
 		if method == "ceil" {
-			return value.Float(math.Ceil(f) / divisor), nil
+			rounded = math.Ceil(f)
 		}
-		return value.Float(math.Floor(f) / divisor), nil
+		// math.ceil and math.floor return a Python *int*, which has no
+		// signed zero, so dividing it yields +0.0. Go's return a float
+		// and keep the sign, which made `-0.0|round(1, "floor")` render
+		// "-0.0" where jinja2 renders "0.0". Assigning the literal
+		// normalises -0.0 to +0.0 and leaves every other value alone.
+		if rounded == 0 {
+			rounded = 0
+		}
+		return value.Float(rounded / divisor), nil
 	}
 
 	// Python's round() preserves the numeric type: round(5, 2) is the int

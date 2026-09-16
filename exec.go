@@ -407,19 +407,11 @@ func (ex *exec) execMacro(n *ast.Macro) error {
 }
 
 func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaults []ast.Expr) (*macroObject, error) {
-	values := make([]value.Value, len(defaults))
-	for i, d := range defaults {
-		v, err := ex.eval(d)
-		if err != nil {
-			return nil, err
-		}
-		values[i] = v
-	}
 	undeclared := findUndeclared(node.Body, "varargs", "kwargs", "caller")
 	m := &macroObject{
 		name:         name,
 		node:         node,
-		defaults:     values,
+		defaults:     defaults,
 		defScope:     ex.sc,
 		st:           ex.st,
 		tmpl:         ex.st.tmpl,

@@ -1,0 +1,7 @@
+{}
+---
+{% macro fresh(v=[]) %}{% set _ = v.append(1) %}{{ v }}{% endmacro %}{{ fresh() }} {{ fresh() }}
+{%- set n = 1 %}{% macro outer(x=n) %}{{ x }}{% endmacro %}{{ outer() }}{% set n = 2 %}{{ outer() }}
+{%- set L = [9] %}{% macro shared(v=L) %}{% set _ = v.append(1) %}{{ v }}{% endmacro %}{{ shared() }} {{ shared() }} {{ L }}
+{%- macro chain(a, b=2, c=b) %}{{ a }}{{ b }}{{ c }}{% endmacro %}{{ chain(1) }}
+{%- macro dct(v={}) %}{% set _ = v.update({"a": 1}) %}{{ v }}{% endmacro %}{{ dct() }} {{ dct() }}

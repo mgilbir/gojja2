@@ -481,8 +481,14 @@ func (p *parser) parseSubscript(node ast.Expr) ast.Expr {
 			args = append(args, p.parseSubscribed())
 		}
 		p.expect(kindRule(lexer.RBracket))
-		arg := args[0]
-		if len(args) != 1 {
+		// jinja2 wraps anything that is not exactly one subscript in a
+		// tuple, and an empty subscript is not a syntax error there: it
+		// takes `a[]` to mean `a[()]`. Reading args[0] before the count
+		// is checked panicked on that input rather than parsing it.
+		var arg ast.Expr
+		if len(args) == 1 {
+			arg = args[0]
+		} else {
 			arg = &ast.Tuple{Pos: ast.At(tok.Line), Items: args}
 		}
 		return &ast.Getitem{Pos: ast.At(tok.Line), Node: node, Arg: arg}

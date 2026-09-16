@@ -797,7 +797,11 @@ func methodDictPop(r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	key, ok := arg(args, 0, "key")
 	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "pop expected at least 1 argument")
+		// CPython names the count it actually got, and dict.pop() is a
+		// C function so the message comes from the argument clinic
+		// rather than from Python.
+		return value.Undefined, errs.New(errs.TypeError,
+			"pop expected at least 1 argument, got %d", len(args.Pos))
 	}
 	v, found, err := d.Get(key)
 	if err != nil {
