@@ -74,13 +74,24 @@ func (s *State) ChargeItems(n int64) error {
 // repeats nothing, as Python's `"x" * -1` does, rather than panicking the way
 // strings.Repeat does.
 func (s *State) repeatString(unit string, count int) (string, error) {
+	return s.repeatStringN(unit, int64(count))
+}
+
+// repeatStringN is repeatString for a count that has already been computed in
+// int64, and must be charged at its true size.
+//
+// Taking an int here would mean the caller clamping first, and clamping an
+// enormous count down to the ceiling turns "refuse this" into "allocate the
+// largest thing allowed" -- the same way a wrapped negative reads as a tiny
+// allocation. The charge has to see the number the template actually asked for.
+func (s *State) repeatStringN(unit string, count int64) (string, error) {
 	if count <= 0 || unit == "" {
 		return "", nil
 	}
-	if err := s.ChargeBytes(int64(len(unit)) * int64(count)); err != nil {
+	if err := s.ChargeBytes(saturatingMulInt(int64(len(unit)), count)); err != nil {
 		return "", err
 	}
-	return strings.Repeat(unit, count), nil
+	return strings.Repeat(unit, int(count)), nil
 }
 
 // saturatingMulInt multiplies without wrapping, so a product that overflows

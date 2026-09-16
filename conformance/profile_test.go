@@ -32,7 +32,7 @@ func TestProfileMatchesOracle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start oracle: %v", err)
 	}
-	defer oracle.Close()
+	defer func() { _ = oracle.Close() }()
 
 	// The context is raw JSON text, not a Go map, because these probes turn
 	// on key *order* and a Go map has none to give. encoding/json sorts a

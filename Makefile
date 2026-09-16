@@ -238,7 +238,11 @@ vet: ## Run go vet
 	go vet ./...
 
 .PHONY: check
-check: fmt-check vet test ## Everything CI should run
+check: fmt-check vet test race ## Everything CI runs
+
+.PHONY: race
+race: ## Run the Go test suite under the race detector
+	go test -race ./...
 
 .PHONY: fmt-check
 fmt-check: ## Fail if any source is unformatted

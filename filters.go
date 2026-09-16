@@ -504,10 +504,6 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, err
 	}
 
-	// jinja2 writes `s += newline` and then calls s.splitlines(), and the
-	// augmented assignment is not the same as `+`: on a list it extends
-	// rather than failing, so a list gets past it and dies on splitlines,
-	// while a bool or None fails on the `+=` itself.
 	// jinja2 writes `s += newline` and then calls s.splitlines(). The
 	// augmented assignment is not plain `+`: a list has __iadd__ and
 	// extends, so it survives and dies on splitlines instead, while
@@ -830,7 +826,6 @@ var htmlUnescaper = strings.NewReplacer(
 
 func unescapeHTML(s string) string { return htmlUnescaper.Replace(s) }
 
-// filterFormat is the `%` operator in filter form.
 // filterFormat is jinja2's `|format`, which is `%` interpolation.
 //
 // On a Markup receiver that is markupsafe's Markup.__mod__, not str's: it

@@ -5,7 +5,6 @@ package gojja2
 
 import (
 	"math"
-	"strings"
 	"unicode"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -260,9 +259,3 @@ func escapeIfNeeded(v value.Value) value.Value {
 	}
 	return value.Safe(escapeHTML(value.Str(v)))
 }
-
-// stringOf renders a value for a filter that works on text.
-func stringOf(v value.Value) string { return value.Str(v) }
-
-// joinStrings is used by filters that assemble output from parts.
-func joinStrings(parts []string, sep string) string { return strings.Join(parts, sep) }

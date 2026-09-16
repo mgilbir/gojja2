@@ -12,7 +12,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -32,7 +31,6 @@ type harness struct {
 	context   map[string]value.Value
 	rawCtx    json.RawMessage
 	templates map[string]string
-	once      sync.Once
 }
 
 // newHarness starts the oracle, or skips when there is none to ask.
@@ -64,7 +62,7 @@ const fuzzTemplateName = "fuzz.txt"
 
 // renderGojja2 renders with gojja2, turning a panic into a reportable result
 // rather than taking the test process down mid-run.
-func (h *harness) renderGojja2(src string) (out string, err error, panicked string) {
+func (h *harness) renderGojja2(src string) (out string, panicked string, err error) {
 	sources := make(map[string]string, len(h.templates)+1)
 	for name, text := range h.templates {
 		sources[name] = text
@@ -80,7 +78,7 @@ func (h *harness) renderGojja2(src string) (out string, err error, panicked stri
 	env := gojja2.New(gojja2.WithLoader(gojja2.DictLoader(sources)))
 	tmpl, err := env.GetTemplate(fuzzTemplateName)
 	if err != nil {
-		return "", err, ""
+		return "", "", err
 	}
 	// The oracle runs each case under a five-second alarm, so gojja2 gets
 	// the same deadline: a generated template is free to ask for a billion
@@ -90,7 +88,7 @@ func (h *harness) renderGojja2(src string) (out string, err error, panicked stri
 	defer cancel()
 	var buf strings.Builder
 	err = tmpl.RenderValues(ctx, &buf, h.context)
-	return buf.String(), err, ""
+	return buf.String(), "", err
 }
 
 // check compares one template, returning nil when the two agree or when the
@@ -109,7 +107,7 @@ func (h *harness) check(t testing.TB, src string) *conformance.Divergence {
 		return nil
 	}
 
-	out, renderErr, panicked := h.renderGojja2(src)
+	out, panicked, renderErr := h.renderGojja2(src)
 	if panicked != "" {
 		return &conformance.Divergence{Kind: conformance.KindPanic, Detail: panicked}
 	}

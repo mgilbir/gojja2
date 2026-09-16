@@ -18,9 +18,11 @@ if err != nil {
 return tmpl.Render(ctx, w, map[string]any{"user": user, "items": items})
 ```
 
-Output is streamed to `w` as the template produces it. `tmpl.RenderString(ctx,
-vars)` returns the whole document instead, and returns nothing at all when the
-render fails.
+Output is streamed to `w` as the template produces it, with one exception:
+`{% include %}` renders the included template in full before writing it on, so
+peak memory tracks the largest include rather than the write buffer.
+`tmpl.RenderString(ctx, vars)` returns the whole document instead, and returns
+nothing at all when the render fails.
 
 Go values cross into templates by reflection: structs expose their exported
 fields (by name or by `json` tag) and their methods that take no arguments,
@@ -88,7 +90,7 @@ at all -- silently.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 269 | 269 |
+| gojja2's own (committed, with goldens) | 271 | 271 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -96,7 +98,7 @@ at all -- silently.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **2589** | **2585 (99.8%)** |
+| **total** | **2591** | **2587 (99.8%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -107,7 +109,9 @@ rendered by both implementations and compared (see below).
 
 The 4 that differ are listed, with reasons, in `testdata/known_failures.txt`;
 a case on that list which starts passing fails the test, so the list can only
-shrink deliberately. Two are Jinja's own sandbox-escape tests, which walk a
+shrink deliberately. The table above is checked against the suite by
+`TestConformance` whenever every corpus is present, so it cannot drift from
+what is actually measured -- it had. Two are Jinja's own sandbox-escape tests, which walk a
 Python object graph out to `__subclasses__` and `__import__`. `__class__` *is*
 implemented; these two go past it. The other two are DeepSeek-R1's chat
 template, which writes `{{ tools|map(attribute='function')|tojson }}` -- jinja2's

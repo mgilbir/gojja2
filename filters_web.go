@@ -416,11 +416,11 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent, depth int, 
 		// which panics -- so the multiplication saturates rather than
 		// wrapping, and the result is charged before it is built.
 		var err error
-		pad, err = st.repeatString(" ", clampToInt(saturatingMulInt(int64(indent), int64(depth+1))))
+		pad, err = st.repeatStringN(" ", saturatingMulInt(int64(indent), int64(depth+1)))
 		if err != nil {
 			return err
 		}
-		padEnd, err = st.repeatString(" ", clampToInt(saturatingMulInt(int64(indent), int64(depth))))
+		padEnd, err = st.repeatStringN(" ", saturatingMulInt(int64(indent), int64(depth)))
 		if err != nil {
 			return err
 		}

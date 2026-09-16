@@ -88,7 +88,7 @@ func loadOpCorpus(t *testing.T) ([]string, []opCase) {
 	if err != nil {
 		t.Fatalf("open corpus: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
