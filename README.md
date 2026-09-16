@@ -3,6 +3,26 @@
 A pure Go implementation of the [Jinja2](https://jinja.palletsprojects.com/)
 template language, built to be behaviourally identical to CPython's `jinja2`.
 
+## Using it
+
+```go
+env := gojja2.New(
+    gojja2.WithLoader(gojja2.FSLoader{FS: os.DirFS("templates")}),
+    gojja2.WithAutoescapeFunc(gojja2.SelectAutoescape(".html")),
+)
+
+tmpl, err := env.GetTemplate("page.html")
+if err != nil {
+    return err
+}
+return tmpl.RenderTo(w, map[string]any{"user": user, "items": items})
+```
+
+Go values cross into templates by reflection: structs expose their exported
+fields (by name or by `json` tag) and their nullary methods, slices become
+lists, and maps become dicts. Errors carry the Python exception class jinja2
+would have raised, so `errors.Is(err, errs.UndefinedError)` works.
+
 ## Ground truth
 
 CPython's `jinja2` **is** the specification. Every behavioural question is

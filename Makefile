@@ -98,6 +98,13 @@ fmt: ## Format Go sources
 vet: ## Run go vet
 	go vet ./...
 
+.PHONY: check
+check: fmt-check vet test ## Everything CI should run
+
+.PHONY: fmt-check
+fmt-check: ## Fail if any source is unformatted
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "unformatted:"; echo "$$out"; exit 1; fi
+
 .PHONY: clean
 clean: ## Remove build and generated artifacts
 	rm -rf bin testdata/generated
