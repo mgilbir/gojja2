@@ -266,9 +266,8 @@ func filterUnique(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		}
 		// jinja2 tracks what it has seen in a set, so an unhashable key
 		// is an error rather than merely never matching.
-		if !value.Hashable(k) {
-			return value.Undefined, errs.New(errs.TypeError,
-				"unhashable type: '%s'", k.TypeName())
+		if err := value.CheckHashable(k); err != nil {
+			return value.Undefined, err
 		}
 		duplicate := false
 		for _, prev := range seen {

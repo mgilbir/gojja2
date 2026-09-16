@@ -56,10 +56,13 @@ at all -- silently.
 
 | corpus | cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 190 | 190 |
+| gojja2's own (committed, with goldens) | 242 | 242 |
 | MiniJinja fixtures | 161 | 156 |
 | Jinja's own test suite (harvested templates) | 658 | 643 |
-| **total** | **1009** | **989 (98.0%)** |
+| **total** | **1060** | **1040 (98.1%)** |
+
+On top of that, roughly a million generated templates have been rendered by
+both implementations and compared (see below).
 
 The 20 that differ are listed, with reasons, in `testdata/known_failures.txt`;
 a case on that list which starts passing fails the test, so the list can only

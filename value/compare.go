@@ -251,8 +251,8 @@ func Contains(item, container Value) (bool, error) {
 		return false, nil
 	case KindDict:
 		d, _ := container.Dict()
-		if !Hashable(item) {
-			return false, errs.New(errs.TypeError, "unhashable type: '%s'", item.TypeName())
+		if err := CheckHashable(item); err != nil {
+			return false, err
 		}
 		_, ok, err := d.Get(item)
 		return ok, err

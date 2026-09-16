@@ -259,7 +259,13 @@ func encodeKey(b *strings.Builder, h hashKey) {
 }
 
 // Hashable reports whether v can be used as a dict key.
-func Hashable(v Value) bool {
+func Hashable(v Value) bool { return CheckHashable(v) == nil }
+
+// CheckHashable reports why v cannot be a key, naming the element at fault.
+//
+// The distinction matters: a tuple holding a list is unhashable, and Python
+// blames the list rather than the tuple that contains it.
+func CheckHashable(v Value) error {
 	_, err := hash(v)
-	return err == nil
+	return err
 }
