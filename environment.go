@@ -7,7 +7,6 @@ package gojja2
 
 import (
 	"strings"
-	"sync"
 
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/internal/ast"
@@ -63,8 +62,8 @@ type Environment struct {
 	maxIterations  int64
 	maxOutputBytes int64
 
-	cacheMu sync.RWMutex
-	cache   map[string]*Template
+	// cache holds compiled templates, bounded and least-recently-used.
+	cache *templateCache
 }
 
 // Policies are the filter defaults jinja2 keeps in Environment.policies.
@@ -98,7 +97,7 @@ func New(opts ...Option) *Environment {
 		filters:        make(map[string]Filter),
 		tests:          make(map[string]Test),
 		globals:        make(map[string]value.Value),
-		cache:          make(map[string]*Template),
+		cache:          newTemplateCache(defaultCacheSize),
 	}
 	registerDefaultFilters(env)
 	registerDefaultTests(env)
@@ -331,11 +330,16 @@ func WithMaxRecursion(n int) Option {
 // every {% for %} pass and every item a filter pulls out of a sequence.
 // Exceeding it fails the render with an error wrapping [ErrTooManyIterations].
 //
-// A negative or zero n removes the bound. Do that only when the templates are
-// trusted and a context deadline is doing the job instead: without either, a
-// template is free to loop until the process is killed.
+// Zero restores the default. To remove the bound entirely, pass a negative n or
+// use [WithoutLimits]; do that only when the templates are trusted and a context
+// deadline is doing the job instead.
 func WithMaxIterations(n int64) Option {
-	return func(e *Environment) { e.maxIterations = n }
+	return func(e *Environment) {
+		if n == 0 {
+			n = defaultMaxIterations
+		}
+		e.maxIterations = n
+	}
 }
 
 // WithMaxOutputBytes bounds how much text one render may produce, counting
@@ -343,10 +347,30 @@ func WithMaxIterations(n int64) Option {
 // well as text that reaches the writer. Exceeding it fails the render with an
 // error wrapping [ErrOutputTooLarge].
 //
-// A negative or zero n removes the bound, with the same caveat as
-// [WithMaxIterations].
+// Zero restores the default, with the same caveat as [WithMaxIterations].
 func WithMaxOutputBytes(n int64) Option {
-	return func(e *Environment) { e.maxOutputBytes = n }
+	return func(e *Environment) {
+		if n == 0 {
+			n = defaultMaxOutputBytes
+		}
+		e.maxOutputBytes = n
+	}
+}
+
+// WithoutLimits removes the iteration and output bounds.
+//
+// It exists so that removing them is something a reader can find. The three
+// limit options used to disagree about what zero meant -- WithMaxRecursion(0)
+// restored its default while WithMaxIterations(0) and WithMaxOutputBytes(0)
+// switched their bounds off -- so a config struct deserialised from YAML or
+// flags, with fields nobody set, quietly disabled two of the three. Zero now
+// means "default" for all three, and turning a safety control off has to be
+// said out loud.
+func WithoutLimits() Option {
+	return func(e *Environment) {
+		e.maxIterations = -1
+		e.maxOutputBytes = -1
+	}
 }
 
 // WithPolicies overrides the filter default policies.
@@ -387,10 +411,7 @@ func (e *Environment) FromNamedString(name, source string) (*Template, error) {
 
 // GetTemplate loads and compiles a template by name, caching the result.
 func (e *Environment) GetTemplate(name string) (*Template, error) {
-	e.cacheMu.RLock()
-	tmpl, ok := e.cache[name]
-	e.cacheMu.RUnlock()
-	if ok {
+	if tmpl, ok := e.cache.get(name); ok {
 		return tmpl, nil
 	}
 
@@ -401,16 +422,42 @@ func (e *Environment) GetTemplate(name string) (*Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err = e.compile(source, name, false)
+	tmpl, err := e.compile(source, name, false)
 	if err != nil {
 		return nil, err
 	}
 
-	e.cacheMu.Lock()
-	e.cache[name] = tmpl
-	e.cacheMu.Unlock()
+	e.cache.put(name, tmpl)
 	return tmpl, nil
 }
+
+// WithCacheSize bounds how many compiled templates the environment keeps.
+//
+// Zero restores the default of 400, which is jinja2's. A negative size makes
+// the cache unbounded; that is worth asking for only when the set of template
+// names is closed and known, since an unbounded cache over names a template can
+// influence grows for the life of the process -- and retains the constants
+// folded into each tree along with it.
+func WithCacheSize(n int) Option {
+	return func(e *Environment) {
+		if n == 0 {
+			n = defaultCacheSize
+		}
+		e.cache = newTemplateCache(n)
+	}
+}
+
+// ClearCache drops every compiled template, so the next GetTemplate reads from
+// the loader again.
+//
+// This is how a long-running process picks up an edited template. There is no
+// automatic reload: a Loader returns source and nothing else, so an environment
+// has no way to ask whether what it compiled is still current. See
+// docs/divergences.md.
+func (e *Environment) ClearCache() { e.cache.clear() }
+
+// ForgetTemplate drops one compiled template from the cache.
+func (e *Environment) ForgetTemplate(name string) { e.cache.forget(name) }
 
 // SelectTemplate returns the first of names that exists, which is what an
 // `{% extends %}` or `{% include %}` given a list does.

@@ -44,8 +44,14 @@ well.
 
 Every render takes a `context.Context` and stops when it is cancelled. Behind
 it, a render is bounded by default to ten million loop iterations and 256 MiB
-of output, so an attacker-supplied template cannot spend the process; see
-[docs/divergences.md](docs/divergences.md).
+of output, and anything a template sizes from a number it chose -- a pad width,
+an indent, a rounding precision -- is charged against that budget before it is
+allocated. Zero means "the default" for every limit option; removing a bound
+takes `WithoutLimits()`, so a configuration nobody filled in is the safe one.
+See [docs/divergences.md](docs/divergences.md).
+
+Compiled templates are cached in a bounded LRU of 400, as jinja2 does;
+`WithCacheSize` adjusts it and `ClearCache` picks up an edited template.
 
 ## Ground truth
 
