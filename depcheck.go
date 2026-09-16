@@ -56,6 +56,11 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 	case *ast.Output:
 		c.exprs(n.Nodes, soft)
 	case *ast.For:
+		// `loop` is bound by the loop itself, so assigning it anywhere
+		// inside would leave the two fighting over one name.
+		if line, found := findLoopStore(n); found {
+			c.failAt(line, "Can't assign to special loop variable in for-loop target")
+		}
 		c.expr(n.Iter, soft)
 		c.expr(n.Test, soft)
 		c.stmts(n.Body, soft)
@@ -78,9 +83,11 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 		c.exprs(n.Values, soft)
 		c.stmts(n.Body, soft)
 	case *ast.Macro:
+		c.checkCallerDefault(n.Args, n.Defaults, n.Line())
 		c.exprs(n.Defaults, soft)
 		c.stmts(n.Body, soft)
 	case *ast.CallBlock:
+		c.checkCallerDefault(n.Args, n.Defaults, n.Line())
 		c.expr(n.Call, soft)
 		c.exprs(n.Defaults, soft)
 		c.stmts(n.Body, soft)
@@ -105,6 +112,80 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 		c.expr(n.Value, soft)
 		c.stmts(n.Body, soft)
 	}
+}
+
+func (c *depChecker) failAt(line int, format string, args ...any) {
+	if c.err != nil {
+		return
+	}
+	e := errs.New(errs.TemplateAssertionError, format, args...)
+	e.Line, e.Name, e.Source = line, c.name, c.source
+	c.err = e
+}
+
+// checkCallerDefault enforces that a declared `caller` parameter has a
+// default. Without one, a macro invoked outside a {% call %} block would leave
+// it unbound, and jinja2 refuses the definition rather than the call.
+func (c *depChecker) checkCallerDefault(params []*ast.Name, defaults []ast.Expr, line int) {
+	for i, p := range params {
+		if p.Name != "caller" && i >= len(params)-len(defaults) {
+			continue
+		}
+		if p.Name == "caller" && i < len(params)-len(defaults) {
+			c.failAt(line, "When defining macros or call blocks the special"+
+				` "caller" argument must be omitted or be given a default.`)
+			return
+		}
+	}
+}
+
+// findLoopStore reports an assignment to `loop` anywhere inside a for loop.
+func findLoopStore(n *ast.For) (int, bool) {
+	var line int
+	found := false
+	var walkExpr func(ast.Expr)
+	walkExpr = func(e ast.Expr) {
+		switch t := e.(type) {
+		case *ast.Name:
+			if t.Store && t.Name == "loop" && !found {
+				line, found = t.Line(), true
+			}
+		case *ast.Tuple:
+			for _, item := range t.Items {
+				walkExpr(item)
+			}
+		}
+	}
+	var walk func([]ast.Stmt)
+	walk = func(body []ast.Stmt) {
+		for _, stmt := range body {
+			switch t := stmt.(type) {
+			case *ast.Assign:
+				walkExpr(t.Target)
+			case *ast.AssignBlock:
+				walkExpr(t.Target)
+			case *ast.For:
+				walkExpr(t.Target)
+				walk(t.Body)
+				walk(t.Else)
+			case *ast.If:
+				walk(t.Body)
+				for _, elif := range t.Elif {
+					walk(elif.Body)
+				}
+				walk(t.Else)
+			case *ast.With:
+				for _, target := range t.Targets {
+					walkExpr(target)
+				}
+				walk(t.Body)
+			}
+		}
+	}
+	walkExpr(n.Target)
+	walk(n.Body)
+	walk(n.Else)
+	return line, found
 }
 
 func (c *depChecker) exprs(list []ast.Expr, soft bool) {

@@ -32,6 +32,28 @@ That last one is not academic. A template like
 renders `a`, and an implementation that stringifies dict keys renders nothing
 at all -- silently.
 
+## Conformance
+
+| corpus | cases | matching CPython jinja2 |
+|---|---|---|
+| MiniJinja fixtures | 161 | 156 |
+| Jinja's own test suite (harvested templates) | 658 | 643 |
+| **total** | **819** | **799 (97.6%)** |
+
+The 20 that differ are listed, with reasons, in `testdata/known_failures.txt`;
+a case on that list which starts passing fails the test, so the list can only
+shrink deliberately. Fifteen of them are Jinja's sandbox-escape regression
+tests, which reach into Python's object model -- see
+[docs/divergences.md](docs/divergences.md).
+
+Underneath, the pieces are graded separately against the real thing: CPython's
+`repr()` over 3,200 floats and strings, every binary operator over a 39-value
+pool (20,665 cases), jinja2's own token stream (113 cases) and its own parse
+tree (100 cases).
+
+Run `make suites && make import` to fetch the reference corpora, then
+`make test`.
+
 ## Scope
 
 Jinja2's template language, not Python. Constructs that only exist because

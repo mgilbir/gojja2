@@ -21,24 +21,24 @@ func registerDefaultFilters(env *Environment) {
 	// text
 	add("upper", stringFilter(strings.ToUpper))
 	add("lower", stringFilter(strings.ToLower))
-	add("title", stringFilter(pythonTitle))
+	add("title", stringFilter(jinjaTitle))
 	add("capitalize", stringFilter(pythonCapitalize))
 	add("trim", filterTrim)
 	add("string", filterString)
 	add("replace", filterReplace)
 	add("center", filterCenter)
-	add("indent", filterIndent)
+	add("indent", definedFilter(filterIndent))
 	add("truncate", filterTruncate)
-	add("wordwrap", filterWordwrap)
+	add("wordwrap", definedFilter(filterWordwrap))
 	add("wordcount", filterWordcount)
 	add("striptags", filterStriptags)
 	add("format", filterFormat)
 	add("urlencode", filterURLEncode)
 	add("urlize", filterUrlize)
-	add("filesizeformat", filterFilesizeformat)
+	add("filesizeformat", definedFilter(filterFilesizeformat))
 	add("pprint", filterPprint)
 	add("tojson", filterToJSON)
-	add("xmlattr", filterXMLAttr)
+	add("xmlattr", definedFilter(filterXMLAttr))
 
 	// escaping
 	add("safe", filterSafe)
@@ -48,8 +48,8 @@ func registerDefaultFilters(env *Environment) {
 
 	// numbers
 	add("abs", filterAbs)
-	add("int", filterInt)
-	add("float", filterFloat)
+	add("int", definedFilter(filterInt))
+	add("float", definedFilter(filterFloat))
 	add("round", filterRound)
 	add("sum", filterSum)
 
@@ -64,7 +64,7 @@ func registerDefaultFilters(env *Environment) {
 	add("join", filterJoin)
 	add("reverse", filterReverse)
 	add("sort", filterSort)
-	add("dictsort", filterDictsort)
+	add("dictsort", definedFilter(filterDictsort))
 	add("unique", filterUnique)
 	add("min", filterMinMax(false))
 	add("max", filterMinMax(true))
@@ -84,6 +84,29 @@ func registerDefaultFilters(env *Environment) {
 }
 
 // --- helpers -----------------------------------------------------------------
+
+// requireDefined rejects an undefined input.
+//
+// Most filters tolerate undefined -- `{{ nope|upper }}` is "" -- but the ones
+// that do arithmetic or indexing on their argument raise in jinja2, because
+// Undefined has no __int__, __iter__ or __len__ to offer them. Which filters
+// those are is not guessable; it is whatever CPython does, and it is asserted
+// by the conformance corpus.
+func requireDefined(v value.Value) error {
+	if v.IsUndefined() {
+		return v.UndefinedError()
+	}
+	return nil
+}
+
+func definedFilter(f Filter) Filter {
+	return func(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+		if err := requireDefined(v); err != nil {
+			return value.Undefined, err
+		}
+		return f(s, v, args)
+	}
+}
 
 func stringFilter(fn func(string) string) Filter {
 	return func(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -225,11 +248,15 @@ func boolArg(args *value.CallArgs, i int, name string, def bool) (bool, error) {
 // --- text filters ------------------------------------------------------------
 
 func filterTrim(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	s := value.Str(v)
+	text := value.Str(v)
 	if chars, ok := arg(args, 0, "chars"); ok && !chars.IsNone() {
-		return value.String(strings.Trim(s, value.Str(chars))), nil
+		if !chars.IsString() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"strip arg must be None or str")
+		}
+		return value.String(strings.Trim(text, chars.AsString())), nil
 	}
-	return value.String(strings.TrimFunc(s, unicode.IsSpace)), nil
+	return value.String(strings.TrimFunc(text, unicode.IsSpace)), nil
 }
 
 // filterString converts to str, leaving a Markup value safe.
@@ -281,13 +308,18 @@ func filterCenter(_ *State, v value.Value, args *value.CallArgs) (value.Value, e
 }
 
 func filterIndent(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	width, err := intArg(args, 0, "width", 4)
-	if err != nil {
-		return value.Undefined, err
-	}
-	prefix := strings.Repeat(" ", width)
-	if w, ok := arg(args, 0, "width"); ok && w.IsString() {
-		prefix = w.AsString()
+	// The width may be given as the indent string itself.
+	prefix := "    "
+	if w, ok := arg(args, 0, "width"); ok {
+		if w.IsString() {
+			prefix = w.AsString()
+		} else {
+			width, err := intArg(args, 0, "width", 4)
+			if err != nil {
+				return value.Undefined, err
+			}
+			prefix = strings.Repeat(" ", width)
+		}
 	}
 	first, err := boolArg(args, 1, "first", false)
 	if err != nil {
@@ -313,7 +345,7 @@ func filterIndent(_ *State, v value.Value, args *value.CallArgs) (value.Value, e
 	return value.String(strings.Join(lines, "\n")), nil
 }
 
-func filterTruncate(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	length, err := intArg(args, 0, "length", 255)
 	if err != nil {
 		return value.Undefined, err
@@ -326,7 +358,7 @@ func filterTruncate(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 	if e, ok := arg(args, 2, "end"); ok {
 		end = value.Str(e)
 	}
-	leeway, err := intArg(args, 3, "leeway", 5)
+	leeway, err := intArg(args, 3, "leeway", s.env.policies.TruncateLeeway)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -335,11 +367,11 @@ func filterTruncate(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 			"expected length >= %d, got %d", len(end), length)
 	}
 
-	s := value.Str(v)
-	if value.StrLen(s) <= length+leeway {
-		return value.String(s), nil
+	text := value.Str(v)
+	if value.StrLen(text) <= length+leeway {
+		return value.String(text), nil
 	}
-	head, _ := value.StrSlice(s, nil, ptr(length-value.StrLen(end)), nil)
+	head, _ := value.StrSlice(text, nil, ptr(length-value.StrLen(end)), nil)
 	if killwords {
 		return value.String(head + end), nil
 	}
@@ -670,8 +702,53 @@ func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 		return value.Undefined, errs.New(errs.FilterArgumentError,
 			"attr() missing required argument 'name'")
 	}
+	// getattr() on an Undefined raises rather than missing.
+	if err := requireDefined(v); err != nil {
+		return value.Undefined, err
+	}
 	if attr, ok := lookupAttr(v, value.Str(name)); ok {
 		return attr, nil
 	}
 	return s.Undefined(value.UndefinedAttr(v, value.Str(name))), nil
+}
+
+// wordBeginnings splits on the runs jinja2 treats as starting a new word:
+// hyphens, whitespace, and the opening brackets.
+func isWordBreak(r rune) bool {
+	switch r {
+	case '-', ' ', '\t', '\n', '\r', '\v', '\f', '(', '{', '[', '<':
+		return true
+	}
+	return false
+}
+
+// jinjaTitle is jinja2's do_title, which is not str.title().
+//
+// It splits on runs of hyphen, whitespace and opening brackets, then
+// uppercases the first character of each remaining chunk and lowercases the
+// rest. An apostrophe does not start a word, so "foo's bar" becomes
+// "Foo's Bar" where str.title() would give "Foo'S Bar".
+func jinjaTitle(s string) string {
+	var b strings.Builder
+	runes := []rune(s)
+	i := 0
+	for i < len(runes) {
+		if isWordBreak(runes[i]) {
+			for i < len(runes) && isWordBreak(runes[i]) {
+				b.WriteRune(runes[i])
+				i++
+			}
+			continue
+		}
+		start := i
+		for i < len(runes) && !isWordBreak(runes[i]) {
+			i++
+		}
+		word := runes[start:i]
+		b.WriteRune(unicode.ToUpper(word[0]))
+		for _, r := range word[1:] {
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
 }

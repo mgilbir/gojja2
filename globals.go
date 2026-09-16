@@ -113,6 +113,11 @@ func globalDict(args *value.CallArgs) (value.Value, error) {
 	}
 	if len(args.Pos) == 1 {
 		src := args.Pos[0]
+		if src.IsUndefined() {
+			// dict() looks for a keys() method first, and that probe
+			// is what fails on an Undefined.
+			return value.Undefined, src.UndefinedError()
+		}
 		if sd, ok := src.Dict(); ok {
 			for _, e := range sd.Entries() {
 				if err := d.Set(e.Key, e.Value); err != nil {

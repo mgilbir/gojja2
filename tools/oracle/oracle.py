@@ -124,11 +124,14 @@ def describe(exc: BaseException) -> dict:
     loosely while error strings are still being brought into line.
     """
     info = {"type": type(exc).__name__, "message": str(exc)}
+    # An exception can carry anything on these attributes -- a KeyError raised
+    # from a template may hold an Undefined, which is not JSON -- so both are
+    # coerced rather than trusted.
     lineno = getattr(exc, "lineno", None)
-    if lineno is not None:
+    if isinstance(lineno, int):
         info["lineno"] = lineno
     name = getattr(exc, "name", None)
-    if name is not None:
+    if isinstance(name, str):
         info["name"] = name
     return info
 

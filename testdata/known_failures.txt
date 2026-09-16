@@ -21,3 +21,26 @@ minijinja/loop-recursion-error_txt.jj2   # RecursionError message is CPython-int
 # on every run, including between two runs of CPython itself. gojja2's sequence
 # filters are eager and print the list. See docs/divergences.md.
 minijinja/opfilters_txt.jj2              # jinja2 prints a generator's address
+
+# --- Python object introspection ----------------------------------------------
+# These are jinja2's own sandbox-escape regression tests. They exist because a
+# jinja2 template runs against real Python objects and can therefore reach
+# __class__, __subclasses__, __builtins__ and __import__, or use a format spec
+# like "{0.foo}" to take an attribute. gojja2 has no Python object graph to
+# reach into: the attribute simply does not exist, so the templates cannot be
+# reproduced rather than merely failing to be. See docs/divergences.md.
+jinja-harvest/ext_ff3adf256f.jj2          # __class__.__name__
+jinja-harvest/nativetypes_0de49aa39a.jj2  # true.__class__
+jinja-harvest/nativetypes_37361e19c1.jj2  # undefined.__class__
+jinja-harvest/nativetypes_b7ec26cc77.jj2  # true.__class__|string
+jinja-harvest/security_447948cd51.jj2     # __subclasses__
+jinja-harvest/security_57d24be07e.jj2     # format_map with {x.__class__}
+jinja-harvest/security_6463f94894.jj2     # format with {0.__class__}
+jinja-harvest/security_6d02ad47f1.jj2     # foo.__class__
+jinja-harvest/security_7e592f6f30.jj2     # format_map attribute spec {x.foo}
+jinja-harvest/security_8d81ee7e6f.jj2     # format_map attribute spec {x.foo}
+jinja-harvest/security_95a4f3be5a.jj2     # format with {0.__class__}
+jinja-harvest/security_9ef56faad5.jj2     # format attribute spec {0.foo}
+jinja-harvest/security_ad3b7dd838.jj2     # __class__.__subclasses__()
+jinja-harvest/security_ccdfed5fc2.jj2     # __builtins__[__import__]
+jinja-harvest/security_e05394bd7a.jj2     # format attribute spec {0.foo}

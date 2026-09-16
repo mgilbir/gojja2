@@ -43,6 +43,10 @@ type Environment struct {
 	tests   map[string]Test
 	globals map[string]value.Value
 
+	// policies mirror jinja2's environment policies, which some filters
+	// read for their defaults.
+	policies Policies
+
 	// maxRecursion bounds include/extends/macro nesting. It is a safety
 	// control, not a tuning knob: without it a self-including template
 	// takes the process down.
@@ -50,6 +54,22 @@ type Environment struct {
 
 	cacheMu sync.RWMutex
 	cache   map[string]*Template
+}
+
+// Policies are the filter defaults jinja2 keeps in Environment.policies.
+type Policies struct {
+	// URLizeRel is added to the rel attribute of every link urlize
+	// generates. jinja2 defaults it to "noopener".
+	URLizeRel string
+	// URLizeTarget is the target attribute urlize adds, if any.
+	URLizeTarget string
+	// TruncateLeeway is how much longer than its limit a string may be
+	// before truncate shortens it.
+	TruncateLeeway int
+}
+
+func defaultPolicies() Policies {
+	return Policies{URLizeRel: "noopener", TruncateLeeway: 5}
 }
 
 // Option configures an Environment.
@@ -60,6 +80,7 @@ func New(opts ...Option) *Environment {
 	env := &Environment{
 		syntax:       lexer.DefaultSyntax(),
 		undefined:    value.UndefinedDefault,
+		policies:     defaultPolicies(),
 		maxRecursion: 100,
 		filters:      make(map[string]Filter),
 		tests:        make(map[string]Test),
@@ -189,6 +210,12 @@ func WithMaxRecursion(n int) Option {
 	}
 }
 
+// WithPolicies overrides the filter default policies.
+func WithPolicies(p Policies) Option { return func(e *Environment) { e.policies = p } }
+
+// Policies returns the environment's filter defaults.
+func (e *Environment) Policies() Policies { return e.policies }
+
 // AddFilter registers a filter, replacing any filter of the same name.
 func (e *Environment) AddFilter(name string, f Filter) { e.filters[name] = f }
 
@@ -248,8 +275,32 @@ func (e *Environment) GetTemplate(name string) (*Template, error) {
 // SelectTemplate returns the first of names that exists, which is what an
 // `{% extends %}` or `{% include %}` given a list does.
 func (e *Environment) SelectTemplate(names []string) (*Template, error) {
-	for _, name := range names {
-		tmpl, err := e.GetTemplate(name)
+	values := make([]value.Value, len(names))
+	for i, name := range names {
+		values[i] = value.String(name)
+	}
+	return e.selectTemplateValues(values)
+}
+
+// selectTemplateValues is SelectTemplate over raw values, so that an undefined
+// entry can describe itself when nothing is found.
+//
+// jinja2's message lists each candidate, substituting an undefined's own
+// explanation for its (empty) string form -- which is what tells an author
+// that the variable holding the name was never set.
+func (e *Environment) selectTemplateValues(names []value.Value) (*Template, error) {
+	if len(names) == 0 {
+		return nil, errs.New(errs.TemplatesNotFound,
+			"Tried to select from an empty list of templates.")
+	}
+	parts := make([]string, len(names))
+	for i, name := range names {
+		if name.IsUndefined() {
+			parts[i] = name.UndefinedError().Error()
+			continue
+		}
+		parts[i] = value.Str(name)
+		tmpl, err := e.GetTemplate(parts[i])
 		if err == nil {
 			return tmpl, nil
 		}
@@ -258,7 +309,7 @@ func (e *Environment) SelectTemplate(names []string) (*Template, error) {
 		}
 	}
 	return nil, errs.New(errs.TemplatesNotFound,
-		"none of the templates given were found: %s", strings.Join(names, ", "))
+		"none of the templates given were found: %s", strings.Join(parts, ", "))
 }
 
 func (e *Environment) compile(source, name string) (*Template, error) {

@@ -27,11 +27,14 @@ func Tokenize(syn Syntax, source, name string) ([]Token, error) {
 		line:         1,
 		lineStarting: true,
 	}
-	if err := l.run(); err != nil {
-		return nil, err
-	}
+	// On failure the tokens lexed so far are still returned, with the error
+	// alongside. jinja2's lexer is a generator the parser pulls from, so a
+	// bad character late in a tag is only reported if the parser gets that
+	// far -- `{{ 'a': b }}` fails on the colon there, not on the brace
+	// after it. Returning the prefix lets the parser reproduce that order.
+	err := l.run()
 	l.emit(EOF, "")
-	return l.out, nil
+	return l.out, err
 }
 
 // normalizeNewlines collapses \r\n and \r to \n so the rest of the lexer only

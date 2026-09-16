@@ -90,3 +90,23 @@ configured value, which `WithMaxRecursion` controls.
 
 `lipsum()` and the `random` filter draw from a random source. Their output
 cannot match CPython's and is excluded from conformance comparison.
+
+## Python object introspection
+
+```jinja
+{{ true.__class__ }}
+{{ cls|attr("__subclasses__")() }}
+{{ "a{0.__class__}b".format(42) }}
+```
+
+jinja2 templates run against real Python objects, so they can reach
+`__class__`, `__subclasses__`, `__builtins__` and `__import__`, and a format
+spec like `{0.foo}` takes a Python attribute. Jinja's own test suite covers
+these precisely because they are the shape of a sandbox escape.
+
+gojja2 has no Python object graph behind its values. These attributes do not
+exist rather than being blocked, so the templates cannot be reproduced at all;
+they raise instead. Every such case is listed in
+`testdata/known_failures.txt`.
+
+This is the one place where not matching CPython is the point.

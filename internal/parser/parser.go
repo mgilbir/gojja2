@@ -29,11 +29,8 @@ type Options struct {
 
 // Parse lexes and parses a template.
 func Parse(syn lexer.Syntax, opts Options, source, name string) (tmpl *ast.Template, err error) {
-	tokens, err := lexer.Tokenize(syn, source, name)
-	if err != nil {
-		return nil, err
-	}
-	p := &parser{tokens: tokens, name: name, source: source, opts: opts}
+	tokens, lexErr := lexer.Tokenize(syn, source, name)
+	p := &parser{tokens: tokens, name: name, source: source, opts: opts, lexErr: lexErr}
 	defer func() {
 		if r := recover(); r != nil {
 			bail, ok := r.(parseError)
@@ -64,6 +61,9 @@ type parser struct {
 	tagStack []string
 	// endTokenStack holds, per open block, the tags that would close it.
 	endTokenStack [][]rule
+	// lexErr is a lexing failure that is only reported once the parser
+	// asks for the token where it happened.
+	lexErr error
 }
 
 // --- token stream ------------------------------------------------------------
@@ -93,7 +93,15 @@ func (r rule) describe() string {
 	return r.kind.Describe()
 }
 
-func (p *parser) current() lexer.Token { return p.tokens[p.pos] }
+func (p *parser) current() lexer.Token {
+	tok := p.tokens[p.pos]
+	if tok.Kind == lexer.EOF && p.lexErr != nil {
+		// The stream ran out because lexing failed here, not because
+		// the template ended.
+		panic(parseError{err: p.lexErr})
+	}
+	return tok
+}
 
 func (p *parser) look() lexer.Token {
 	if p.pos+1 < len(p.tokens) {

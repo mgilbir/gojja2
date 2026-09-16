@@ -493,11 +493,7 @@ func (ex *exec) loadTemplateExpr(e ast.Expr) (*Template, error) {
 		return ex.st.env.GetTemplate(v.AsString())
 	case value.KindList, value.KindTuple:
 		s, _ := v.Seq()
-		names := make([]string, 0, s.Len())
-		for _, item := range s.Items() {
-			names = append(names, value.Str(item))
-		}
-		return ex.st.env.SelectTemplate(names)
+		return ex.st.env.selectTemplateValues(s.Items())
 	case value.KindUndefined:
 		return nil, v.UndefinedError()
 	}

@@ -350,10 +350,11 @@ func (ex *exec) assign(target ast.Expr, v value.Value) error {
 		return nil
 
 	case *ast.NSRef:
-		base, ok := ex.sc.lookup(t.Name)
-		if !ok {
-			return errs.New(errs.UndefinedError, "'%s' is undefined", t.Name)
-		}
+		// The target's type is checked before it is used, so a name that
+		// resolves to undefined reports the namespace error rather than
+		// the undefined one -- the fix is to create a namespace either
+		// way, and that is what the message should say.
+		base, _ := ex.sc.lookup(t.Name)
 		ns, ok := base.Interface().(*namespaceObject)
 		if !ok {
 			return errs.New(errs.TemplateRuntimeError,

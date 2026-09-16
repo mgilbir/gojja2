@@ -140,10 +140,15 @@ func (v Value) Kind() Kind { return v.kind }
 
 // TypeName is the Python type name, as it appears in error messages.
 func (v Value) TypeName() string {
-	if v.kind == KindObject {
+	switch v.kind {
+	case KindObject:
 		if o, ok := v.obj.(interface{ TypeName() string }); ok {
 			return o.TypeName()
 		}
+	case KindUndefined:
+		// Python reports the class, and every Undefined flavour is a
+		// class of its own.
+		return v.ClassName()
 	}
 	return v.kind.String()
 }

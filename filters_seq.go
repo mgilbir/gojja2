@@ -364,7 +364,9 @@ func filterSlice(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 		}
 		row := append([]value.Value(nil), items[offset:min(offset+size, len(items))]...)
 		offset += size
-		if hasFill && !fill.IsNone() && i >= remainder && remainder > 0 {
+		// Every slice that did not get one of the extra items is padded,
+		// including when there are no items at all.
+		if hasFill && !fill.IsNone() && i >= remainder {
 			row = append(row, fill)
 		}
 		out = append(out, value.NewList(row...))
@@ -441,6 +443,11 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 
 // filterMap applies a filter, or extracts an attribute, across a sequence.
 func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+	// jinja2 short-circuits on a falsey input, so `none|map(...)` is empty
+	// rather than a type error.
+	if empty, err := isFalsey(v); err != nil || empty {
+		return value.NewList(), err
+	}
 	items, err := materialize(v)
 	if err != nil {
 		return value.Undefined, err
@@ -469,7 +476,9 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 	}
 	fn, ok := s.env.filters[value.Str(name)]
 	if !ok {
-		return value.Undefined, errs.New(errs.TemplateAssertionError,
+		// Looked up through Environment.call_filter, whose message has
+		// no trailing "found." unlike the deferred compile-time one.
+		return value.Undefined, errs.New(errs.TemplateRuntimeError,
 			"No filter named %s.", value.Repr(value.String(value.Str(name))))
 	}
 	rest := &value.CallArgs{Pos: args.Pos[1:], Kwargs: args.Kwargs}
@@ -491,6 +500,9 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 // `|select` drop the falsey entries.
 func filterSelectReject(keep, byAttribute bool) Filter {
 	return func(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+		if empty, err := isFalsey(v); err != nil || empty {
+			return value.NewList(), err
+		}
 		items, err := materialize(v)
 		if err != nil {
 			return value.Undefined, err
@@ -512,7 +524,7 @@ func filterSelectReject(keep, byAttribute bool) Filter {
 			name := value.Str(pos[0])
 			fn, ok := s.env.tests[name]
 			if !ok {
-				return value.Undefined, errs.New(errs.TemplateAssertionError,
+				return value.Undefined, errs.New(errs.TemplateRuntimeError,
 					"No test named %s.", value.Repr(value.String(name)))
 			}
 			testFn = fn
@@ -544,4 +556,20 @@ func filterSelectReject(keep, byAttribute bool) Filter {
 		}
 		return value.NewList(out...), nil
 	}
+}
+
+// isFalsey reports whether a filter should short-circuit on its input.
+//
+// jinja2's prepare_map and prepare_select_or_reject both begin with
+// `if not seq: return`, so an empty or falsey sequence -- None and undefined
+// included -- yields nothing instead of failing.
+func isFalsey(v value.Value) (bool, error) {
+	if v.IsUndefined() {
+		if v.UndefinedBehavior() == value.UndefinedStrict {
+			return false, v.UndefinedError()
+		}
+		return true, nil
+	}
+	truth, err := value.IsTrue(v)
+	return !truth, err
 }

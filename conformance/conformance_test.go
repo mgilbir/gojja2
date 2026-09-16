@@ -36,6 +36,12 @@ var corpora = []corpus{
 		golden:   "testdata/generated/minijinja-golden",
 		optional: true,
 	},
+	{
+		name:     "jinja-harvest",
+		cases:    "testdata/generated/jinja-harvest",
+		golden:   "testdata/generated/jinja-harvest-golden",
+		optional: true,
+	},
 }
 
 const knownFailuresPath = "testdata/known_failures.txt"

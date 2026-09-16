@@ -74,6 +74,10 @@ import: suites venv ## Import MiniJinja's fixtures and record jinja2's answers
 	$(PY) tools/oracle/oracle.py \
 		--corpus testdata/generated/minijinja \
 		--golden testdata/generated/minijinja-golden
+	$(PY) tools/oracle/harvest_jinja.py
+	$(PY) tools/oracle/oracle.py \
+		--corpus testdata/generated/jinja-harvest \
+		--golden testdata/generated/jinja-harvest-golden
 
 # --- tests -------------------------------------------------------------------
 

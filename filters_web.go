@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,105 +67,198 @@ func quoteURL(s string, keepSlash bool) string {
 	return b.String()
 }
 
-// urlizeTrailing are the characters stripped from the end of a detected link,
-// so that a URL at the end of a sentence does not swallow the punctuation.
-const urlizeTrailing = ".,:;!?)\"']}>"
+// httpRe recognises the URL shapes jinja2 links: a scheme or www prefix with
+// a TLD, a bare domain under a handful of generic TLDs, or a scheme with a
+// literal IPv4 or IPv6 address, each with an optional port, path and fragment.
+var httpRe = regexp.MustCompile(`(?is)^(` +
+	`(https?://|www\.)(([\w%-]+\.)+)?([a-z]{2,63}|xn--[\w%]{2,59})` +
+	`|([\w%-]{2,63}\.)+(com|net|int|edu|gov|org|info|mil)` +
+	`|(https?://)((([\d]{1,3})(\.[\d]{1,3}){3})|(\[([\da-f]{0,4}:){2}([\da-f]{0,4}:?){1,6}\]))` +
+	`)(:[\d]{1,5})?([/?#]\S*)?$`)
 
-// filterUrlize turns bare URLs and email addresses in text into links.
+var emailRe = regexp.MustCompile(`^\S+@\w[\w.-]*\.\w+$`)
+
+var urlizeLeadRe = regexp.MustCompile(`^([(<]|&lt;)+`)
+var urlizeTailRe = regexp.MustCompile(`([)>.,\n]|&gt;)+$`)
+
+// filterUrlize turns URLs and email addresses in text into links.
+//
+// The text is HTML-escaped before anything else, whatever the autoescape
+// setting, because the result is markup either way; linking unescaped text
+// would turn a URL containing "<" into a tag. The `rel` and `target`
+// attributes apply to web links only, not to mailto links.
 func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	trimLimit, err := intArg(args, 0, "trim_url_limit", 0)
+	trimLimit, hasLimit := 0, false
+	if lim, ok := arg(args, 0, "trim_url_limit"); ok && !lim.IsNone() {
+		n, err := intArg(args, 0, "trim_url_limit", 0)
+		if err != nil {
+			return value.Undefined, err
+		}
+		trimLimit, hasLimit = n, true
+	}
+	// jinja2's signature is (trim_url_limit, nofollow, target, rel,
+	// extra_schemes); the positional order matters for templates that pass
+	// arguments without naming them.
+	nofollow, err := boolArg(args, 1, "nofollow", false)
 	if err != nil {
 		return value.Undefined, err
 	}
-	rel, _ := arg(args, 1, "rel")
 	target, _ := arg(args, 2, "target")
+	rel, _ := arg(args, 3, "rel")
 
-	extra := map[string]bool{}
-	if schemes, ok := arg(args, 3, "extra_schemes"); ok && !schemes.IsNone() {
+	// The rel attribute is the union of the argument, "nofollow" when
+	// asked, and the environment's urlize.rel policy -- which defaults to
+	// "noopener", so every generated link carries it unless the policy is
+	// cleared. The parts are sorted, as jinja2 sorts the set.
+	relParts := map[string]bool{}
+	for _, part := range strings.Fields(attrText(rel)) {
+		relParts[part] = true
+	}
+	if nofollow {
+		relParts["nofollow"] = true
+	}
+	for _, part := range strings.Fields(s.env.policies.URLizeRel) {
+		relParts[part] = true
+	}
+	sortedRel := make([]string, 0, len(relParts))
+	for part := range relParts {
+		sortedRel = append(sortedRel, part)
+	}
+	sort.Strings(sortedRel)
+
+	if target.IsUndefined() || target.IsNone() {
+		target = value.String(s.env.policies.URLizeTarget)
+	}
+
+	var extra []string
+	if schemes, ok := arg(args, 4, "extra_schemes"); ok && !schemes.IsNone() {
 		items, err := materialize(schemes)
 		if err != nil {
 			return value.Undefined, err
 		}
 		for _, item := range items {
-			extra[value.Str(item)] = true
+			extra = append(extra, value.Str(item))
 		}
 	}
 
-	var attrs strings.Builder
-	if !rel.IsUndefined() && !rel.IsNone() && value.Str(rel) != "" {
-		fmt.Fprintf(&attrs, ` rel="%s"`, escapeHTML(value.Str(rel)))
+	attrs := ""
+	if len(sortedRel) > 0 {
+		attrs += ` rel="` + escapeHTML(strings.Join(sortedRel, " ")) + `"`
 	}
-	if !target.IsUndefined() && !target.IsNone() && value.Str(target) != "" {
-		fmt.Fprintf(&attrs, ` target="%s"`, escapeHTML(value.Str(target)))
+	if targetText := attrText(target); targetText != "" {
+		attrs += ` target="` + escapeHTML(targetText) + `"`
 	}
 
-	esc := func(text string) string {
-		if s.autoescape {
-			return escapeHTML(text)
+	trim := func(x string) string {
+		if hasLimit && value.StrLen(x) > trimLimit {
+			head, _ := value.StrSlice(x, nil, &trimLimit, nil)
+			return head + "..."
 		}
-		return text
+		return x
 	}
 
-	words := strings.Split(value.Str(v), " ")
+	escaped := value.Str(escapeIfNeeded(v))
+	words := splitKeepingSpace(escaped)
+
 	for i, word := range words {
-		head, middle, tail := splitAffixes(word)
-		link, label := linkFor(middle, extra, trimLimit)
-		if link == "" {
-			words[i] = esc(head) + esc(middle) + esc(tail)
-			continue
+		head, middle, tail := peelPunctuation(word)
+
+		switch {
+		case httpRe.MatchString(middle):
+			href := middle
+			if !strings.HasPrefix(middle, "https://") && !strings.HasPrefix(middle, "http://") {
+				href = "https://" + middle
+			}
+			middle = `<a href="` + href + `"` + attrs + `>` + trim(middle) + `</a>`
+
+		case strings.HasPrefix(middle, "mailto:") && emailRe.MatchString(middle[7:]):
+			middle = `<a href="` + middle + `">` + middle[7:] + `</a>`
+
+		case strings.Contains(middle, "@") &&
+			!strings.HasPrefix(middle, "www.") &&
+			!strings.HasPrefix(middle, "@") &&
+			!strings.Contains(middle, ":") &&
+			emailRe.MatchString(middle):
+			middle = `<a href="mailto:` + middle + `">` + middle + `</a>`
+
+		default:
+			for _, scheme := range extra {
+				if middle != scheme && strings.HasPrefix(middle, scheme) {
+					middle = `<a href="` + middle + `"` + attrs + `>` + middle + `</a>`
+					break
+				}
+			}
 		}
-		words[i] = esc(head) +
-			`<a href="` + escapeHTML(link) + `"` + attrs.String() + `>` +
-			esc(label) + `</a>` + esc(tail)
+		words[i] = head + middle + tail
 	}
 
-	out := strings.Join(words, " ")
+	out := strings.Join(words, "")
 	if s.autoescape {
 		return value.Safe(out), nil
 	}
 	return value.String(out), nil
 }
 
-// splitAffixes peels leading openers and trailing punctuation off a word.
-func splitAffixes(word string) (head, middle, tail string) {
-	middle = word
-	for len(middle) > 0 && strings.IndexByte("(<\"'", middle[0]) >= 0 {
-		head += middle[:1]
-		middle = middle[1:]
+func attrText(v value.Value) string {
+	if v.IsUndefined() || v.IsNone() {
+		return ""
 	}
-	for len(middle) > 0 && strings.IndexByte(urlizeTrailing, middle[len(middle)-1]) >= 0 {
-		tail = middle[len(middle)-1:] + tail
-		middle = middle[:len(middle)-1]
-	}
-	return head, middle, tail
+	return value.Str(v)
 }
 
-// linkFor decides whether a word is a link, returning its href and the text to
-// show, which may be shortened.
-func linkFor(word string, extra map[string]bool, trimLimit int) (href, label string) {
-	shorten := func(text string) string {
-		if trimLimit > 0 && value.StrLen(text) > trimLimit {
-			head, _ := value.StrSlice(text, nil, &trimLimit, nil)
-			return head + "..."
+// splitKeepingSpace splits on whitespace runs but keeps them, so rejoining
+// reproduces the original spacing exactly.
+func splitKeepingSpace(s string) []string {
+	var out []string
+	i := 0
+	for i < len(s) {
+		start := i
+		inSpace := isASCIISpace(s[i])
+		for i < len(s) && isASCIISpace(s[i]) == inSpace {
+			i++
 		}
-		return text
+		out = append(out, s[start:i])
+	}
+	return out
+}
+
+func isASCIISpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '\v', '\f':
+		return true
+	}
+	return false
+}
+
+// peelPunctuation splits leading openers and trailing punctuation off a word,
+// then moves back whatever is needed to keep brackets balanced -- so a URL
+// inside parentheses keeps its own closing bracket.
+func peelPunctuation(word string) (head, middle, tail string) {
+	middle = word
+	if m := urlizeLeadRe.FindString(middle); m != "" {
+		head, middle = m, middle[len(m):]
+	}
+	if strings.HasSuffix(middle, ")") || strings.HasSuffix(middle, ">") ||
+		strings.HasSuffix(middle, ".") || strings.HasSuffix(middle, ",") ||
+		strings.HasSuffix(middle, "\n") || strings.HasSuffix(middle, "&gt;") {
+		if loc := urlizeTailRe.FindStringIndex(middle); loc != nil {
+			tail, middle = middle[loc[0]:], middle[:loc[0]]
+		}
 	}
 
-	switch {
-	case strings.HasPrefix(word, "https://"), strings.HasPrefix(word, "http://"):
-		return word, shorten(word)
-	case strings.HasPrefix(word, "www."):
-		return "https://" + word, shorten(word)
-	case strings.Contains(word, "@") && !strings.Contains(word, ":") &&
-		strings.Contains(word[strings.Index(word, "@"):], "."):
-		return "mailto:" + word, word
-	}
-	for scheme := range extra {
-		if strings.HasPrefix(word, scheme) {
-			return word, shorten(word)
+	for _, pair := range [][2]string{{"(", ")"}, {"<", ">"}, {"&lt;", "&gt;"}} {
+		open, close := pair[0], pair[1]
+		opens := strings.Count(middle, open)
+		if opens <= strings.Count(middle, close) {
+			continue
+		}
+		for range min(opens, strings.Count(tail, close)) {
+			end := strings.Index(tail, close) + len(close)
+			middle += tail[:end]
+			tail = tail[end:]
 		}
 	}
-	return "", ""
+	return head, middle, tail
 }
 
 // filterXMLAttr renders a mapping as HTML attributes, skipping entries whose
@@ -185,7 +279,11 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		if e.Value.IsNone() || e.Value.IsUndefined() {
 			continue
 		}
-		key := value.Str(e.Key)
+		if !e.Key.IsString() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"expected string or bytes-like object, got '%s'", e.Key.TypeName())
+		}
+		key := e.Key.AsString()
 		// A key with whitespace or a quote could close the attribute
 		// and start another, so it is refused rather than escaped.
 		if strings.ContainsAny(key, " \t\n\r\f\v/>=") {
@@ -213,6 +311,10 @@ func filterToJSON(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	indent, err := intArg(args, 0, "indent", 0)
 	if err != nil {
 		return value.Undefined, err
+	}
+	if v.IsUndefined() {
+		return value.Undefined, errs.New(errs.TypeError,
+			"Object of type %s is not JSON serializable", v.TypeName())
 	}
 	var b strings.Builder
 	if err := writeJSON(&b, v, indent, 0); err != nil {

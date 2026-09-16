@@ -131,14 +131,33 @@ func (v Value) DebugText() (string, bool) {
 	}
 }
 
+// undefinedClassNames are the Python classes behind each Undefined flavour.
+var undefinedClassNames = [...]string{
+	UndefinedDefault:   "Undefined",
+	UndefinedChainable: "ChainableUndefined",
+	UndefinedDebug:     "DebugUndefined",
+	UndefinedStrict:    "StrictUndefined",
+}
+
+// ClassName is the Python class name of an undefined value, as it appears in
+// messages such as "'Undefined' object cannot be interpreted as an integer".
+func (v Value) ClassName() string {
+	if v.kind != KindUndefined {
+		return v.TypeName()
+	}
+	return undefinedClassNames[v.undef().behavior]
+}
+
 // ObjectTypeRepr describes a value the way jinja2's object_type_repr does,
-// for use in undefined messages: "dict object", "str object", "None".
+// for use in undefined messages: "dict object", "str object", "None". The
+// undefined classes live in jinja2.runtime rather than in builtins, so they
+// are qualified.
 func ObjectTypeRepr(v Value) string {
 	switch v.kind {
 	case KindNone:
 		return "None"
 	case KindUndefined:
-		return "undefined"
+		return "jinja2.runtime." + v.ClassName() + " object"
 	default:
 		return v.TypeName() + " object"
 	}

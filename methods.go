@@ -114,6 +114,7 @@ var stringMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, 
 	"index":      indexMethod(strings.Index, "index"),
 	"rindex":     indexMethod(strings.LastIndex, "rindex"),
 	"format":     methodFormat,
+	"format_map": methodFormatMap,
 	"zfill":      methodZfill,
 	"ljust":      padMethod(padLeftAligned),
 	"rjust":      padMethod(padRightAligned),
@@ -348,9 +349,15 @@ func indexMethod(search func(string, string) int, name string) func(value.Value,
 
 // methodFormat implements str.format for the positional and named forms
 // templates use. Format specs beyond a bare field name are not supported.
+//
+// Formatting a Markup string escapes every substituted value and yields
+// Markup, which is markupsafe's whole point: `("a{}"|safe).format("<x>")`
+// renders the escaped "<x>" rather than raw markup, so marking a *template*
+// safe does not mark its arguments safe.
 func methodFormat(r value.Value, args *value.CallArgs) (value.Value, error) {
 	var b strings.Builder
 	s := r.AsString()
+	safe := r.IsSafe()
 	auto := 0
 	for i := 0; i < len(s); {
 		switch {
@@ -372,7 +379,11 @@ func methodFormat(r value.Value, args *value.CallArgs) (value.Value, error) {
 			if err != nil {
 				return value.Undefined, err
 			}
-			b.WriteString(value.Str(v))
+			if safe && !v.IsSafe() {
+				b.WriteString(escapeHTML(value.Str(v)))
+			} else {
+				b.WriteString(value.Str(v))
+			}
 		case s[i] == '}':
 			return value.Undefined, errs.New(errs.ValueError,
 				"Single '}' encountered in format string")
@@ -381,7 +392,30 @@ func methodFormat(r value.Value, args *value.CallArgs) (value.Value, error) {
 			i++
 		}
 	}
+	if safe {
+		return value.Safe(b.String()), nil
+	}
 	return value.String(b.String()), nil
+}
+
+// methodFormatMap is str.format_map: the same substitution, with the fields
+// looked up in a single mapping argument rather than in keyword arguments.
+func methodFormatMap(r value.Value, args *value.CallArgs) (value.Value, error) {
+	mapping, ok := arg(args, 0, "mapping")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError,
+			"format_map() takes exactly one argument (0 given)")
+	}
+	d, ok := mapping.Dict()
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError,
+			"format_map() argument must be a mapping, not %s", mapping.TypeName())
+	}
+	kwargs := make([]value.Kwarg, 0, d.Len())
+	for _, e := range d.Entries() {
+		kwargs = append(kwargs, value.Kwarg{Name: value.Str(e.Key), Value: e.Value})
+	}
+	return methodFormat(r, &value.CallArgs{Kwargs: kwargs})
 }
 
 func resolveFormatField(field string, args *value.CallArgs, auto *int) (value.Value, error) {
@@ -690,6 +724,13 @@ var listMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, er
 	"count":   methodSeqCount,
 	"reverse": methodListReverse,
 	"copy":    func(r value.Value, _ *value.CallArgs) (value.Value, error) { return r.AsList(), nil },
+	"clear":   methodListClear,
+}
+
+func methodListClear(r value.Value, _ *value.CallArgs) (value.Value, error) {
+	s, _ := r.Seq()
+	*s = *mustSeq(value.NewList())
+	return value.None, nil
 }
 
 var tupleMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){

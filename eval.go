@@ -140,9 +140,13 @@ func (ex *exec) evalCond(n *ast.CondExpr) (value.Value, error) {
 	if n.False == nil {
 		// `a if b` with no else yields undefined, and jinja2 words the
 		// failure that way if the result is then used.
+		where := ""
+		if name := ex.st.tmpl.name; name != "" {
+			where = " in " + value.Repr(value.String(name))
+		}
 		return ex.st.Undefined(value.UndefinedHint(
-			"the inline if-expression on line %d evaluated to false and no else"+
-				" section was defined.", n.Line())), nil
+			"the inline if-expression on line %d%s evaluated to false and no else"+
+				" section was defined.", n.Line(), where)), nil
 	}
 	return ex.eval(n.False)
 }
