@@ -4,23 +4,13 @@
 # passing fails the conformance test, so the list can only shrink deliberately.
 # Anything not listed must match exactly.
 
-# --- CPython-internal wording -------------------------------------------------
-# The exception class matches (RecursionError); only the message differs.
-# CPython's text names where in the interpreter the limit was hit -- "while
-# calling a Python object", "in comparison" -- which varies with the call
-# shape and has no meaning in a Go library. gojja2 says which limit was
-# exceeded and what it was set to instead.
-minijinja/err_self_extends_txt.jj2       # RecursionError message is CPython-internal
-minijinja/err_self_include_txt.jj2       # RecursionError message is CPython-internal
-minijinja/err_self_macro_call_txt.jj2    # RecursionError message is CPython-internal
-minijinja/loop-recursion-error_txt.jj2   # RecursionError message is CPython-internal
-
-# --- lazy filters -------------------------------------------------------------
-# jinja2's map/select/reject return generators, so printing one without |list
-# renders "<generator object sync_do_map at 0x7f...>" -- an address that differs
-# on every run, including between two runs of CPython itself. gojja2's sequence
-# filters are eager and print the list. See docs/divergences.md.
-minijinja/opfilters_txt.jj2              # jinja2 prints a generator's address
+# --- not gradable -------------------------------------------------------------
+# Marked "ungradable": jinja2 does not pass this either. It prints a generator's
+# memory address, which differs between two runs of the same interpreter, so
+# there is no answer to match. Cases marked this way are reported separately and
+# left out of the conformance rate, because a case nothing can pass is not a
+# measure of anything.
+minijinja/opfilters_txt.jj2              ungradable: jinja2 prints a generator's address
 
 # --- Python object introspection ----------------------------------------------
 # The two that are left of jinja2's sandbox-escape regression tests.

@@ -480,7 +480,7 @@ func (ex *exec) execExtends(n *ast.Extends) error {
 	if err != nil {
 		return err
 	}
-	if err := ex.st.enter(); err != nil {
+	if err := ex.st.enterExtends(); err != nil {
 		return err
 	}
 	// The parent's blocks go behind the child's, so the most derived

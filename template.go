@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"errors"
 	"io"
 	"strings"
 
@@ -165,15 +166,42 @@ func (t *Template) newState(vars map[string]value.Value) *State {
 	return st
 }
 
+// RecursionMessage is what CPython reports when the interpreter runs out of
+// stack, and therefore what a template that recurses without a base case must
+// report here.
+//
+// The wording names where inside CPython the limit was hit, which says nothing
+// about a Go program -- but the actionable half is true in both, and anyone
+// diffing the two implementations should not have to filter this out. The
+// configured limit, which our own wording used to carry, is on the error's
+// Limit field instead.
+const RecursionMessage = "maximum recursion depth exceeded while calling a Python object"
+
+// RecursionMessageComparison is the variant CPython produces when the stack
+// ran out inside a comparison, which is what an inheritance cycle hits.
+const RecursionMessageComparison = "maximum recursion depth exceeded in comparison"
+
 // enter bounds template recursion. The limit is a safety control: a template
 // that includes itself would otherwise exhaust the stack.
 func (s *State) enter() error {
 	s.depth++
 	if s.depth > s.env.maxRecursion {
-		return errs.New(errs.RecursionError,
-			"maximum template recursion depth of %d exceeded", s.env.maxRecursion)
+		e := errs.New(errs.RecursionError, "%s", RecursionMessage)
+		e.Limit = s.env.maxRecursion
+		return e
 	}
 	return nil
+}
+
+// enterExtends is enter for an {% extends %} chain, which CPython reports with
+// its comparison wording because the cycle is detected while matching names.
+func (s *State) enterExtends() error {
+	err := s.enter()
+	var e *errs.Error
+	if errors.As(err, &e) && e.Kind == errs.RecursionError {
+		e.Msg = RecursionMessageComparison
+	}
+	return err
 }
 
 func (s *State) leave() { s.depth-- }

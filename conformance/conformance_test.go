@@ -80,7 +80,13 @@ func loadKnownFailures(t *testing.T, root string) map[string]string {
 		if name == "" {
 			continue
 		}
-		known[name] = strings.TrimSpace(reason)
+		reason = strings.TrimSpace(reason)
+		// A row may instead carry an inline reason, which is how an
+		// ungradable case is marked.
+		if fields := strings.SplitN(name, " ", 2); len(fields) == 2 {
+			name, reason = fields[0], strings.TrimSpace(fields[1])
+		}
+		known[name] = reason
 	}
 	if err := sc.Err(); err != nil {
 		t.Fatalf("read %s: %v", knownFailuresPath, err)
@@ -142,15 +148,26 @@ func TestConformance(t *testing.T) {
 		}
 	}
 
-	passed := 0
+	// A case marked ungradable has no answer for anyone to match -- jinja2
+	// fails it too -- so it is reported apart from the rate rather than
+	// counted against it. Nothing else is excluded: a case we simply fail
+	// stays in the denominator.
+	passed, gradable, ungradable := 0, 0, 0
 	for _, r := range all {
+		if strings.HasPrefix(known[r.id], "ungradable:") {
+			ungradable++
+			continue
+		}
+		gradable++
 		if r.ok {
 			passed++
 		}
 	}
-	if len(all) > 0 {
-		t.Logf("conformance: %d/%d cases match CPython jinja2 (%.1f%%), %d known divergences",
-			passed, len(all), 100*float64(passed)/float64(len(all)), len(known))
+	if gradable > 0 {
+		t.Logf("conformance: %d/%d gradable cases match CPython jinja2 (%.1f%%); "+
+			"%d known divergence(s), %d ungradable",
+			passed, gradable, 100*float64(passed)/float64(gradable),
+			len(known)-ungradable, ungradable)
 	}
 }
 

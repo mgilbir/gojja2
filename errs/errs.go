@@ -140,6 +140,10 @@ type Error struct {
 	Source string // template source, retained for error rendering
 	Stack  []Frame
 	Cause  error
+	// Limit is the bound a RecursionError hit. The message reproduces
+	// CPython's wording, which names where in *its* interpreter the stack
+	// ran out and so cannot say this; a Go caller reads it from here.
+	Limit int
 }
 
 func (e *Error) Error() string { return e.Msg }
