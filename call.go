@@ -30,6 +30,11 @@ func (ex *exec) evalArgs(a ast.Args) (*value.CallArgs, error) {
 				"Value after * must be an iterable, not %s", v.TypeName())
 		}
 		for item := range seq {
+			// `f(*range(10000000000))` builds the argument list before
+			// the call happens, so the walk is charged as it goes.
+			if err := ex.st.Step(1); err != nil {
+				return nil, err
+			}
 			out.Pos = append(out.Pos, item)
 		}
 	}
@@ -180,6 +185,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 	}
 
 	// Defaults fill the parameters still unbound; the rest stay undefined.
+	//
 	firstDefault := len(params) - len(m.defaults)
 	for i, param := range params {
 		if bound[param.Name] {
@@ -261,8 +267,7 @@ func (ex *exec) execCallBlock(n *ast.CallBlock) error {
 	if err != nil {
 		return err
 	}
-	ex.out.WriteString(text)
-	return nil
+	return ex.write(text)
 }
 
 // --- filters and tests -------------------------------------------------------
@@ -379,6 +384,12 @@ func (ex *exec) unpack(t *ast.Tuple, v value.Value) error {
 	}
 	var items []value.Value
 	for item := range seq {
+		// The length check below happens only once the whole iterable is
+		// in hand, so `{% set a, b = range(10000000000) %}` would
+		// allocate its way to the error without this.
+		if err := ex.st.Step(1); err != nil {
+			return err
+		}
 		items = append(items, item)
 	}
 	switch {

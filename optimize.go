@@ -384,6 +384,11 @@ func (c *constEvaluator) constBinOp(n *ast.BinOp) (value.Value, bool) {
 	case ast.OpSub:
 		out, err = value.Sub(left, right)
 	case ast.OpMul:
+		// Checked before the multiplication, not after: the point is to
+		// not make the allocation at all.
+		if size, _, isRepeat := value.RepeatSize(left, right); isRepeat && size > maxFoldedConst {
+			return value.Undefined, false
+		}
 		out, err = value.Mul(left, right)
 	case ast.OpDiv:
 		out, err = value.Div(left, right)
@@ -399,7 +404,37 @@ func (c *constEvaluator) constBinOp(n *ast.BinOp) (value.Value, bool) {
 	if err != nil {
 		return value.Undefined, false
 	}
+	if !constSizeOK(out) {
+		return value.Undefined, false
+	}
 	return out, true
+}
+
+// maxFoldedConst bounds a constant the optimizer is willing to build.
+//
+// Folding runs at compile time, where there is no render and so no budget to
+// charge: `{{ "x" * 1000000000 }}` allocated a gigabyte before anything asked
+// for the template to be rendered, and `{{ "x" * 60000 + "x" * 60000 }}`
+// doubles for every level a template nests. Refusing to fold leaves the
+// expression for runtime, where the render's budget bounds it -- the result is
+// the same, it is just not computed early.
+//
+// Nothing written on purpose builds a 64 KiB constant this way; the padding
+// and separator lines repetition is actually used for are three orders of
+// magnitude below it.
+const maxFoldedConst = 1 << 16
+
+// constSizeOK reports whether a folded value is small enough to keep.
+func constSizeOK(v value.Value) bool {
+	switch v.Kind() {
+	case value.KindString, value.KindBytes:
+		return len(v.AsString()) <= maxFoldedConst
+	case value.KindList, value.KindTuple:
+		if s, ok := v.Seq(); ok {
+			return s.Len() <= maxFoldedConst
+		}
+	}
+	return true
 }
 
 func (c *constEvaluator) constUnaryOp(n *ast.UnaryOp) (value.Value, bool) {
@@ -578,8 +613,11 @@ func (c *constEvaluator) constArgs(a ast.Args) (*value.CallArgs, bool) {
 }
 
 // constGetAttr mirrors Environment.getattr, which never raises.
+//
+// Constant folding runs at compile time, so there is no render to charge and
+// lookupAttr gets a nil State.
 func constGetAttr(base value.Value, name string) value.Value {
-	if v, ok := lookupAttr(base, name); ok {
+	if v, ok := lookupAttr(nil, base, name); ok {
 		return v
 	}
 	if v, ok := lookupItem(base, value.String(name)); ok {

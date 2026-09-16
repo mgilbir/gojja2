@@ -17,8 +17,23 @@ import (
 // templates actually use; anything missing shows up as an undefined attribute
 // rather than as silently wrong output.
 
+// statefulMethods are the methods that walk an iterable the caller supplies,
+// rather than working from the receiver alone. They need the render's budget
+// to bound that walk, so they are looked up before the ordinary tables.
+//
+// s is nil when the lookup comes from constant folding, which has no render to
+// charge; State.Step handles that.
+var statefulMethods = map[value.Kind]map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+	value.KindList: {"extend": methodListExtend},
+}
+
 // builtinMethod resolves a method on a built-in type, returning it bound.
-func builtinMethod(recv value.Value, name string) (value.Value, bool) {
+func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) {
+	if fn, ok := statefulMethods[recv.Kind()][name]; ok {
+		return Func(name, func(args *value.CallArgs) (value.Value, error) {
+			return fn(s, recv, args)
+		}), true
+	}
 	var table map[string]func(value.Value, *value.CallArgs) (value.Value, error)
 	switch recv.Kind() {
 	case value.KindString:
@@ -484,7 +499,7 @@ func (a fieldAccessor) apply(v value.Value) (value.Value, error) {
 	}
 
 	// Attribute access, with no item fall-back.
-	if attr, ok := lookupAttr(v, a.name); ok {
+	if attr, ok := lookupAttr(nil, v, a.name); ok {
 		return attr, nil
 	}
 	return value.Undefined, errs.New(errs.AttributeError,
@@ -849,7 +864,6 @@ func methodDictClear(r value.Value, _ *value.CallArgs) (value.Value, error) {
 
 var listMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
 	"append":  methodListAppend,
-	"extend":  methodListExtend,
 	"insert":  methodListInsert,
 	"pop":     methodListPop,
 	"remove":  methodListRemove,
@@ -882,7 +896,7 @@ func methodListAppend(r value.Value, args *value.CallArgs) (value.Value, error) 
 	return value.None, nil
 }
 
-func methodListExtend(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodListExtend(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	v, ok := arg(args, 0, "")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError, "extend() takes exactly one argument")
@@ -893,6 +907,11 @@ func methodListExtend(r value.Value, args *value.CallArgs) (value.Value, error) 
 	}
 	s, _ := r.Seq()
 	for item := range seq {
+		// `l.extend(range(10000000000))` grows the receiver without any
+		// {% for %} to bound it, so the walk is charged here.
+		if err := st.Step(1); err != nil {
+			return value.Undefined, err
+		}
 		s.Append(item)
 	}
 	return value.None, nil

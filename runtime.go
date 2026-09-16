@@ -47,7 +47,11 @@ func (s objectSource) At(i int) value.Value {
 // makeLoopSource turns an iterable into something a loop can index. Anything
 // that already knows its length is used in place; everything else, including
 // the filtered form of `{% for x in y if cond %}`, is materialised.
-func makeLoopSource(v value.Value) (loopSource, error) {
+//
+// The materialising path is charged against the budget as it walks: it runs
+// to completion before the first iteration of the loop does, so the per-pass
+// charge in runLoop would never be reached.
+func makeLoopSource(st *State, v value.Value) (loopSource, error) {
 	switch v.Kind() {
 	case value.KindList, value.KindTuple:
 		s, _ := v.Seq()
@@ -66,6 +70,9 @@ func makeLoopSource(v value.Value) (loopSource, error) {
 	}
 	var items []value.Value
 	for item := range seq {
+		if err := st.Step(1); err != nil {
+			return nil, err
+		}
 		items = append(items, item)
 	}
 	return sliceSource(items), nil

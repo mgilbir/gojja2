@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"math"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -199,6 +200,9 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 	case ast.OpSub:
 		return value.Sub(left, right)
 	case ast.OpMul:
+		if err := ex.chargeRepeat(left, right); err != nil {
+			return value.Undefined, err
+		}
 		return value.Mul(left, right)
 	case ast.OpDiv:
 		return value.Div(left, right)
@@ -210,6 +214,39 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 		return value.Pow(left, right)
 	}
 	return value.Undefined, errs.New(errs.TemplateRuntimeError, "unknown operator %s", n.Op)
+}
+
+// chargeRepeat charges what `left * right` is about to allocate, when it is a
+// repetition.
+//
+// value.repeat() caps a single result at 2**31 elements, which for a list of
+// values is tens of gigabytes and for a string is two -- far past any budget
+// the render has. The cap bounds one expression; the budget bounds the render,
+// and it has to be consulted before the allocation rather than after, because
+// after it the memory is already gone. `{{ "x" * 1000000000 }}` took the
+// process down with an output budget of four kilobytes in force.
+//
+// Bytes are charged against the output budget and elements against the
+// iteration budget, so each lands on the bound that measures the same unit.
+func (ex *exec) chargeRepeat(left, right value.Value) error {
+	size, isBytes, ok := value.RepeatSize(left, right)
+	if !ok || size <= 0 {
+		return nil
+	}
+	if isBytes {
+		return ex.st.budget.account(clampToInt(size))
+	}
+	return ex.st.Step(clampToInt(size))
+}
+
+// clampToInt caps a saturated int64 at the widest int the budget can take. The
+// budgets are far smaller than either, so clamping only affects a number that
+// was already past every bound.
+func clampToInt(n int64) int {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int(n)
 }
 
 func (ex *exec) evalUnaryOp(n *ast.UnaryOp) (value.Value, error) {
@@ -326,7 +363,7 @@ func (ex *exec) getAttr(base value.Value, name string) (value.Value, error) {
 		}
 		return value.Undefined, base.UndefinedError()
 	}
-	if v, ok := lookupAttr(base, name); ok {
+	if v, ok := lookupAttr(ex.st, base, name); ok {
 		return v, nil
 	}
 	if v, ok := lookupItem(base, value.String(name)); ok {
@@ -336,7 +373,11 @@ func (ex *exec) getAttr(base value.Value, name string) (value.Value, error) {
 }
 
 // lookupAttr resolves an attribute without falling back to item access.
-func lookupAttr(base value.Value, name string) (value.Value, bool) {
+//
+// s is the render the lookup belongs to, and is nil when there is none -- a
+// constant fold, or an error message being built. It is only used to bind a
+// method that needs the render's budget; see statefulMethods.
+func lookupAttr(s *State, base value.Value, name string) (value.Value, bool) {
 	// __class__ is a real attribute of every Python object, found before
 	// any __getattr__ hook, so it resolves even on an undefined.
 	if name == "__class__" {
@@ -347,7 +388,7 @@ func lookupAttr(base value.Value, name string) (value.Value, bool) {
 			return v, true
 		}
 	}
-	if fn, ok := builtinMethod(base, name); ok {
+	if fn, ok := builtinMethod(s, base, name); ok {
 		return fn, true
 	}
 	return value.Undefined, false
@@ -422,7 +463,7 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 	}
 
 	if key.Kind() == value.KindString {
-		if v, ok := lookupAttr(base, key.AsString()); ok {
+		if v, ok := lookupAttr(ex.st, base, key.AsString()); ok {
 			return v, nil
 		}
 		return ex.st.Undefined(value.UndefinedAttr(base, key.AsString())), nil
@@ -438,7 +479,7 @@ func (ex *exec) indexSequence(base, key value.Value) (value.Value, error) {
 	i, ok := key.Int64()
 	if !ok {
 		if key.Kind() == value.KindString {
-			if v, ok := lookupAttr(base, key.AsString()); ok {
+			if v, ok := lookupAttr(ex.st, base, key.AsString()); ok {
 				return v, nil
 			}
 			return ex.st.Undefined(value.UndefinedAttr(base, key.AsString())), nil

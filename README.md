@@ -15,13 +15,22 @@ tmpl, err := env.GetTemplate("page.html")
 if err != nil {
     return err
 }
-return tmpl.RenderTo(w, map[string]any{"user": user, "items": items})
+return tmpl.Render(ctx, w, map[string]any{"user": user, "items": items})
 ```
+
+Output is streamed to `w` as the template produces it. `tmpl.RenderString(ctx,
+vars)` returns the whole document instead, and returns nothing at all when the
+render fails.
 
 Go values cross into templates by reflection: structs expose their exported
 fields (by name or by `json` tag) and their nullary methods, slices become
 lists, and maps become dicts. Errors carry the Python exception class jinja2
 would have raised, so `errors.Is(err, errs.UndefinedError)` works.
+
+Every render takes a `context.Context` and stops when it is cancelled. Behind
+it, a render is bounded by default to ten million loop iterations and 256 MiB
+of output, so an attacker-supplied template cannot spend the process; see
+[docs/divergences.md](docs/divergences.md).
 
 ## Ground truth
 

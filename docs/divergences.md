@@ -98,6 +98,29 @@ Repeating a string or a sequence is refused once the result would exceed
 2**31 elements, for the same reason: the count is often attacker-influenced.
 CPython would attempt the allocation.
 
+That cap is on a single result. A repetition just under it is still gigabytes,
+so the render's budget is charged for what a repetition is about to allocate
+*before* it allocates -- bytes against the output budget, elements against the
+iteration budget. Charging it afterwards would be charging for memory that is
+already gone.
+
+### A size limit on constant folding
+
+```jinja
+{{ "x" * 1000000000 }}
+{{ "x" * 60000 + "x" * 60000 }}
+```
+
+Both are constant, so jinja2's optimizer and gojja2's evaluate them at compile
+time. There is no render at compile time and so no budget to charge, which made
+`env.FromString` on the first of these allocate a gigabyte before anything had
+asked for a render; the second doubles for every level a template nests it.
+
+gojja2 declines to fold a constant above 64 KiB, leaving the expression to be
+evaluated at render time where the budget bounds it. The rendered result is
+identical -- it is just not computed early. Ordinary constants still fold, and
+nothing written on purpose builds a 64 KiB one this way.
+
 ## A bound on nesting depth
 
 ```jinja
@@ -118,6 +141,43 @@ Runtime recursion -- a template that includes, extends or calls itself without
 a base case -- is bounded separately at 100 levels, controlled by
 `WithMaxRecursion`, and *does* raise `RecursionError` with CPython's wording.
 The configured limit is on the error's `Limit` field rather than in the message.
+
+## A budget on the work of one render
+
+```jinja
+{% for i in range(10000000000) %}{% endfor %}
+{{ range(10000000000)|list }}
+```
+
+CPython runs both until the machine gives up: the first spends hours, the
+second allocates until the OOM killer arrives. jinja2 has no bound on either,
+because it expects the caller to be running templates it wrote itself.
+
+gojja2 bounds one render three ways. The `context.Context` every render takes
+is the precise tool -- cancel it or give it a deadline and the render stops at
+the next loop pass or output write, returning an error wrapping `ctx.Err()`.
+Behind it sit two backstops for a caller who passes `context.Background()`:
+10,000,000 loop iterations (`WithMaxIterations`, `ErrTooManyIterations`) and
+256 MiB of output (`WithMaxOutputBytes`, `ErrOutputTooLarge`). Both are
+generous by design -- no template written on purpose comes near either -- and
+both can be turned off with a non-positive value when the templates are trusted
+and a deadline is doing the job instead.
+
+The budget counts every walk that can be made large from a template, not just
+`{% for %}`: a filter materialising a sequence, `f(*iterable)`, `{% set a, b =
+iterable %}` and `list.extend` all charge as they go, so none of them can
+allocate its way past the bound before the bound is consulted. It is shared
+across `{% include %}` and `{% extends %}`, so a nested render cannot start a
+fresh allowance.
+
+Output is counted wherever it lands, including text captured by
+`{% filter %}`, a block `{% set %}` or a macro body. Text that passes through
+two buffers is therefore counted twice; the buffers are the memory the bound
+exists to protect, so they are what has to be counted.
+
+Like the nesting bound, this is a safety control rather than a behavioural
+choice, which is why the errors have no CPython counterpart. Asserted by the
+tests in `limits_test.go`.
 
 ## Identifier characters
 

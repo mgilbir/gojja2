@@ -4,6 +4,8 @@
 package gojja2
 
 import (
+	"bufio"
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -25,44 +27,71 @@ type Template struct {
 // Name returns the template's name, empty for one compiled from a string.
 func (t *Template) Name() string { return t.name }
 
-// Render renders the template with the given variables.
-func (t *Template) Render(vars map[string]any) (string, error) {
+// Render renders the template into w.
+//
+// Output is streamed: w sees text as the template produces it, so a template
+// that fails partway will already have written what came before. Callers that
+// must not emit a partial document should render into a buffer, or use
+// [Template.RenderString].
+//
+// ctx bounds the render. Cancel it, or give it a deadline, and the render
+// stops at the next loop iteration or output write and returns an error
+// wrapping ctx.Err().
+func (t *Template) Render(ctx context.Context, w io.Writer, vars map[string]any) error {
+	return t.RenderValues(ctx, w, valuesFromGo(vars))
+}
+
+// RenderString renders the template and returns the result.
+//
+// Unlike [Template.Render] it is all-or-nothing: a render that fails returns
+// an empty string rather than the text produced before the failure.
+func (t *Template) RenderString(ctx context.Context, vars map[string]any) (string, error) {
+	var out strings.Builder
+	if err := t.RenderValues(ctx, &out, valuesFromGo(vars)); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+// RenderValues renders into w with variables that are already template values,
+// skipping the conversion from Go.
+func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[string]value.Value) error {
+	// A bufio.Writer keeps the many small writes a template makes from
+	// becoming many small syscalls, and gives the render one place to
+	// flush from.
+	bw := bufio.NewWriter(w)
+	err := t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env))
+	// Flush either way: a render that failed has still produced whatever
+	// came before the failure, and leaving it in the buffer would make the
+	// amount w receives depend on where the buffer happened to be.
+	if ferr := bw.Flush(); err == nil {
+		err = ferr
+	}
+	return err
+}
+
+func valuesFromGo(vars map[string]any) map[string]value.Value {
 	values := make(map[string]value.Value, len(vars))
 	for k, v := range vars {
 		values[k] = value.FromGo(v)
 	}
-	return t.RenderValues(values)
+	return values
 }
 
-// RenderTo renders the template into w.
-func (t *Template) RenderTo(w io.Writer, vars map[string]any) error {
-	out, err := t.Render(vars)
-	if err != nil {
-		return err
-	}
-	_, err = io.WriteString(w, out)
-	return err
-}
-
-// RenderValues renders the template with variables that are already template
-// values, skipping the Go conversion.
-func (t *Template) RenderValues(vars map[string]value.Value) (string, error) {
-	return t.render(vars, 0)
-}
-
-// render is RenderValues with an inherited recursion depth.
+// renderInto is the render every entry point funnels through.
 //
-// The depth has to cross the template boundary: an `{% include %}` renders
-// into a fresh State, so a counter that started at zero each time would never
-// fire and a self-including template would take the stack out instead.
-func (t *Template) render(vars map[string]value.Value, depth int) (string, error) {
+// The depth and the budget both have to cross the template boundary: an
+// `{% include %}` renders into a fresh State, so a counter that started at
+// zero each time would never fire and a self-including template would take the
+// stack out instead.
+func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int, b *budget) error {
 	st := t.newState(vars)
 	st.depth = depth
-	var out strings.Builder
-	ex := &exec{st: st, sc: st.ctx, out: &out, stream: &out, autoescape: st.autoescape}
+	st.budget = b
+	ex := &exec{st: st, sc: st.ctx, out: out, stream: out, autoescape: st.autoescape}
 
 	if err := ex.execBody(t.tree.Body); err != nil {
-		return "", err
+		return err
 	}
 	// A template that extends renders nothing itself beyond whatever came
 	// before the extends tag; the parent is rendered afterwards, with the
@@ -75,11 +104,23 @@ func (t *Template) render(vars map[string]value.Value, depth int) (string, error
 		err := ex.execBody(parent.tree.Body)
 		st.tmpl = prev
 		if err != nil {
-			return "", err
+			return err
 		}
 	}
-	return out.String(), nil
+	return nil
 }
+
+// writer is where an exec sends output. A *strings.Builder satisfies it, which
+// is what a {% filter %} buffer or a captured macro body uses; the root of a
+// render uses a stringWriter over the caller's io.Writer.
+type writer interface {
+	WriteString(s string) (int, error)
+}
+
+// stringWriter adapts an io.Writer to the writer interface.
+type stringWriter struct{ w io.Writer }
+
+func (s *stringWriter) WriteString(str string) (int, error) { return io.WriteString(s.w, str) }
 
 // blockEntry is one definition of a block in the inheritance chain. Index 0 of
 // a name's slice is the most derived definition, which is the one that
@@ -115,6 +156,30 @@ type State struct {
 	exported []string
 	// depth bounds include/extends/macro nesting.
 	depth int
+	// budget bounds the work of the whole render. It is shared with every
+	// nested render, so an {% include %} cannot start a fresh allowance.
+	budget *budget
+}
+
+// Context returns the context the render was started with. A filter or global
+// that does its own work should consult it, and stop when it is done.
+func (s *State) Context() context.Context {
+	if s.budget == nil || s.budget.ctx == nil {
+		return context.Background()
+	}
+	return s.budget.ctx
+}
+
+// Step charges n units of work against the render's budget, and reports an
+// error once the budget is spent or the context is done. A filter that walks a
+// sequence of caller-controlled length should call it.
+func (s *State) Step(n int) error {
+	// A nil State reaches here from constant folding, which runs without a
+	// render and so has no budget to charge.
+	if s == nil || s.budget == nil {
+		return nil
+	}
+	return s.budget.chargeSteps(n)
 }
 
 // Env returns the environment the render is running under.

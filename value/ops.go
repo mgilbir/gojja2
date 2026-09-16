@@ -336,6 +336,41 @@ func repeatOperands(a, b Value) (seq Value, n int64, ok bool) {
 	return a, count, true
 }
 
+// RepeatSize reports what `a * b` would allocate, when it is a repetition:
+// bytes for a string, elements for a sequence. ok is false for any other
+// multiplication.
+//
+// It lets the caller charge the allocation against a budget *before* it
+// happens. The limit repeat() enforces is on the size of a single result;
+// nothing here knows what a whole render has already spent, and a repetition
+// just under that limit is still gigabytes.
+func RepeatSize(a, b Value) (size int64, isBytes bool, ok bool) {
+	seq, n, ok := repeatOperands(a, b)
+	if !ok || n <= 0 {
+		return 0, false, ok
+	}
+	switch seq.kind {
+	case KindString, KindBytes:
+		return saturatingMul(int64(len(seq.str)), n), true, true
+	default:
+		s, _ := seq.Seq()
+		return saturatingMul(int64(s.Len()), n), false, true
+	}
+}
+
+// saturatingMul multiplies without wrapping. `"xx" * 9000000000000000000`
+// overflows int64, and a wrapped negative would read as a tiny allocation and
+// wave through the very thing the caller is trying to bound.
+func saturatingMul(a, n int64) int64 {
+	if a == 0 || n == 0 {
+		return 0
+	}
+	if a > math.MaxInt64/n {
+		return math.MaxInt64
+	}
+	return a * n
+}
+
 func repeat(v Value, n int64) (Value, error) {
 	if n < 0 {
 		n = 0

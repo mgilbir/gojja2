@@ -19,8 +19,8 @@ func filterLength(_ *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 	return value.Int(int64(n)), nil
 }
 
-func filterList(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	items, err := materialize(v)
+func filterList(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -57,7 +57,7 @@ func filterItems(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error
 }
 
 func filterFirst(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -81,7 +81,7 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 		}
 		return value.String(last), nil
 	}
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		// jinja2 takes the last item with reversed(), so the failure
 		// names reversibility rather than iterability.
@@ -97,7 +97,7 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 // filterRandom picks an element. Its result is necessarily not comparable
 // against CPython's; see docs/divergences.md.
 func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -114,7 +114,7 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	if d, ok := arg(args, 0, "d"); ok {
 		sep = value.Str(d)
 	}
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -144,7 +144,7 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	return value.Safe(strings.Join(parts, value.Str(escapeIfNeeded(sepValue)))), nil
 }
 
-func filterReverse(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+func filterReverse(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	if v.IsString() {
 		step := -1
 		out, err := value.StrSlice(v.AsString(), nil, nil, &step)
@@ -156,7 +156,7 @@ func filterReverse(_ *State, v value.Value, _ *value.CallArgs) (value.Value, err
 		}
 		return value.String(out), nil
 	}
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, errs.New(errs.FilterArgumentError, "argument must be iterable")
 	}
@@ -177,7 +177,7 @@ func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	}
 	attribute, _ := arg(args, 2, "attribute")
 
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -253,7 +253,7 @@ func filterUnique(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	attribute, _ := arg(args, 1, "attribute")
 	key := attrKeyFunc(s, attribute, caseSensitive)
 
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -293,7 +293,7 @@ func filterMinMax(wantMax bool) Filter {
 		attribute, _ := arg(args, 1, "attribute")
 		key := attrKeyFunc(s, attribute, caseSensitive)
 
-		items, err := materialize(v)
+		items, err := materialize(s, v)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -329,7 +329,7 @@ func filterMinMax(wantMax bool) Filter {
 	}
 }
 
-func filterBatch(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterBatch(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	size, err := intArg(args, 0, "linecount", 0)
 	if err != nil {
 		return value.Undefined, err
@@ -339,7 +339,7 @@ func filterBatch(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 	}
 	fill, hasFill := arg(args, 1, "fill_with")
 
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -359,7 +359,7 @@ func filterBatch(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 
 // filterSlice splits into a fixed number of columns, distributing the
 // remainder across the leading ones -- the transpose of batch.
-func filterSlice(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterSlice(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	count, err := intArg(args, 0, "slices", 0)
 	if err != nil {
 		return value.Undefined, err
@@ -369,7 +369,7 @@ func filterSlice(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 	}
 	fill, hasFill := arg(args, 1, "fill_with")
 
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -408,7 +408,7 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		return value.Undefined, err
 	}
 
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -471,7 +471,7 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 	if empty, err := isFalsey(v); err != nil || empty {
 		return value.NewList(), err
 	}
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -526,7 +526,7 @@ func filterSelectReject(keep, byAttribute bool) Filter {
 		if empty, err := isFalsey(v); err != nil || empty {
 			return value.NewList(), err
 		}
-		items, err := materialize(v)
+		items, err := materialize(s, v)
 		if err != nil {
 			return value.Undefined, err
 		}

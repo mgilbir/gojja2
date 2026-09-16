@@ -16,7 +16,7 @@ import (
 
 // filterURLEncode percent-encodes a string, or builds a query string from a
 // mapping or a sequence of pairs.
-func filterURLEncode(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	if d, ok := v.Dict(); ok {
 		parts := make([]string, 0, d.Len())
 		for _, e := range d.Entries() {
@@ -28,7 +28,7 @@ func filterURLEncode(_ *State, v value.Value, _ *value.CallArgs) (value.Value, e
 	// Anything iterable that is not a string is a sequence of pairs, a
 	// range included.
 	if !v.IsString() && isIterableValue(v) {
-		items, err := materialize(v)
+		items, err := materialize(s, v)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -144,7 +144,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 
 	var extra []string
 	if schemes, ok := arg(args, 4, "extra_schemes"); ok && !schemes.IsNone() {
-		items, err := materialize(schemes)
+		items, err := materialize(s, schemes)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -504,7 +504,7 @@ func writeJSONString(b *strings.Builder, s string) {
 // keeps its rotation in an attribute named `items`, so the call finds a tuple
 // and fails trying to call it -- which is the error a template author sees.
 func itemsAttributeError(v value.Value) error {
-	if attr, ok := lookupAttr(v, "items"); ok {
+	if attr, ok := lookupAttr(nil, v, "items"); ok {
 		if _, callable := attr.Interface().(value.Caller); !callable {
 			return errs.New(errs.TypeError, "'%s' object is not callable", attr.TypeName())
 		}

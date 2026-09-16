@@ -4,6 +4,7 @@
 package conformance_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/conformance"
@@ -80,8 +82,15 @@ func (h *harness) renderGojja2(src string) (out string, err error, panicked stri
 	if err != nil {
 		return "", err, ""
 	}
-	out, err = tmpl.RenderValues(h.context)
-	return out, err, ""
+	// The oracle runs each case under a five-second alarm, so gojja2 gets
+	// the same deadline: a generated template is free to ask for a billion
+	// iterations, and the two sides have to give up in the same way rather
+	// than one of them hanging the fuzzer.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var buf strings.Builder
+	err = tmpl.RenderValues(ctx, &buf, h.context)
+	return buf.String(), err, ""
 }
 
 // check compares one template, returning nil when the two agree or when the
@@ -103,6 +112,12 @@ func (h *harness) check(t testing.TB, src string) *conformance.Divergence {
 	out, renderErr, panicked := h.renderGojja2(src)
 	if panicked != "" {
 		return &conformance.Divergence{Kind: conformance.KindPanic, Detail: panicked}
+	}
+	if conformance.ResourceError(renderErr) {
+		// The generator is free to ask for a billion iterations. The
+		// oracle's side of that is already discarded by Comparable;
+		// this is the same discard for ours.
+		return nil
 	}
 	return conformance.Compare(want.Expected(), out, renderErr)
 }

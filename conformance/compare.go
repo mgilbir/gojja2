@@ -4,11 +4,13 @@
 package conformance
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/errs"
 )
 
@@ -88,6 +90,21 @@ func Compare(want Expected, out string, err error) *Divergence {
 		}
 		return nil
 	}
+}
+
+// ResourceError reports whether gojja2 stopped a render on one of its own
+// safety bounds -- the iteration budget, the output budget, or the context
+// the caller gave it -- rather than on the template's own terms.
+//
+// It is the mirror of the oracle's Resource flag. CPython jinja2 has no such
+// bounds (see docs/divergences.md), so the two sides give up in different
+// ways on a template that asks for unbounded work, and grading that would
+// report a divergence where there is no conformance question to answer.
+func ResourceError(err error) bool {
+	return errors.Is(err, gojja2.ErrTooManyIterations) ||
+		errors.Is(err, gojja2.ErrOutputTooLarge) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, context.Canceled)
 }
 
 // addressRe matches the repr of a Python object that embeds its address.

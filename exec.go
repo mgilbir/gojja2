@@ -21,7 +21,7 @@ import (
 type exec struct {
 	st  *State
 	sc  *scope
-	out *strings.Builder
+	out writer
 	// stream is the output of the enclosing *function* -- the template
 	// root, a block, or a macro body. It differs from out only inside a
 	// {% filter %} or a block {% set %}, which buffer within a function.
@@ -32,7 +32,7 @@ type exec struct {
 	// leaves the included text unescaped, and emits it first. That is an
 	// artefact of jinja2 caching a context-free module's body, but it is
 	// observable, so it is reproduced.
-	stream *strings.Builder
+	stream writer
 	// autoescape is per-frame so `{% autoescape %}` can change it for a
 	// span without disturbing the rest of the render.
 	autoescape bool
@@ -78,6 +78,20 @@ func (ex *exec) captureFunction(sc *scope, fn func(*exec) error) (string, error)
 		sub.stream = sub.out
 		return fn(sub)
 	})
+}
+
+// write sends text to this frame's output, charging it against the render's
+// budget first. Every byte a template produces goes through here.
+func (ex *exec) write(s string) error { return ex.writeTo(ex.out, s) }
+
+// writeTo is write aimed somewhere other than this frame's output, which only
+// a context-free {% include %} needs.
+func (ex *exec) writeTo(w writer, s string) error {
+	if err := ex.st.budget.account(len(s)); err != nil {
+		return err
+	}
+	_, err := w.WriteString(s)
+	return err
 }
 
 func (ex *exec) execBody(body []ast.Stmt) error {
@@ -154,7 +168,9 @@ func (ex *exec) execOutput(n *ast.Output) error {
 		if data, ok := node.(*ast.TemplateData); ok {
 			// Literal template text is the author's markup and is
 			// never escaped.
-			ex.out.WriteString(data.Data)
+			if err := ex.write(data.Data); err != nil {
+				return err
+			}
 			continue
 		}
 		v, err := ex.eval(node)
@@ -165,7 +181,9 @@ func (ex *exec) execOutput(n *ast.Output) error {
 		if err != nil {
 			return errs.At(err, ex.st.tmpl.name, node.Line())
 		}
-		ex.out.WriteString(text)
+		if err := ex.write(text); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -257,6 +275,9 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 	loopValue := value.FromObject(loop)
 
 	for i := range src.Len() {
+		if err := ex.st.budget.step(); err != nil {
+			return err
+		}
 		loop.index = i
 		// Each iteration gets a fresh scope, so a `{% set %}` in the
 		// body does not carry into the next pass -- jinja2 rebinds
@@ -288,7 +309,7 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 // and indices count only the items that survive.
 func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, error) {
 	if n.Test == nil {
-		return makeLoopSource(iterable)
+		return makeLoopSource(ex.st, iterable)
 	}
 	seq, err := value.Iterate(iterable)
 	if err != nil {
@@ -296,6 +317,9 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 	}
 	var kept []value.Value
 	for item := range seq {
+		if err := ex.st.budget.step(); err != nil {
+			return nil, err
+		}
 		filterScope := ex.child(newScope(ex.sc))
 		if err := filterScope.assign(n.Target, item); err != nil {
 			return nil, err
@@ -429,7 +453,9 @@ func (ex *exec) execFilterBlock(n *ast.FilterBlock) error {
 	if err != nil {
 		return err
 	}
-	ex.out.WriteString(out)
+	if err := ex.write(out); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -465,8 +491,7 @@ func (ex *exec) execBlock(n *ast.Block) error {
 	if err != nil {
 		return err
 	}
-	ex.out.WriteString(value.Str(v))
-	return nil
+	return ex.write(value.Str(v))
 }
 
 func (ex *exec) execExtends(n *ast.Extends) error {
@@ -511,16 +536,17 @@ func (ex *exec) execInclude(n *ast.Include) error {
 		// variables included, not just its top-level context.
 		vars = ex.sc.flatten()
 	}
-	out, err := tmpl.render(vars, ex.st.depth)
-	if err != nil {
+	var buf strings.Builder
+	if err := tmpl.renderInto(&buf, vars, ex.st.depth, ex.st.budget); err != nil {
 		return err
 	}
+	// A context-free include writes into the enclosing *function's* stream
+	// rather than this frame's buffer; see the note on exec.stream.
 	target := ex.out
 	if !n.WithContext {
 		target = ex.stream
 	}
-	target.WriteString(out)
-	return nil
+	return ex.writeTo(target, buf.String())
 }
 
 // loadTemplateName resolves a single template name, refusing a list.

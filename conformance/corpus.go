@@ -10,6 +10,7 @@
 package conformance
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -134,6 +135,7 @@ func LoadCase(root, path string) (*Case, error) {
 // `{{ 1.0 }}` would render the same; and object key order would be lost, so a
 // dict would sort differently here than in CPython, which preserves insertion
 // order.
+
 func fromJSON(raw json.RawMessage) (value.Value, error) {
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.UseNumber()
@@ -301,7 +303,11 @@ func (c *Case) Render() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return tmpl.RenderValues(c.Context)
+	var out strings.Builder
+	if err := tmpl.RenderValues(context.Background(), &out, c.Context); err != nil {
+		return "", err
+	}
+	return out.String(), nil
 }
 
 // LoadGolden reads the oracle's answer for a case.

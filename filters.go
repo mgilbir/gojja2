@@ -141,13 +141,23 @@ func keepSafe(src value.Value, out string) value.Value {
 
 // materialize collects an iterable into a slice, which most sequence filters
 // need because they reorder or count their input.
-func materialize(v value.Value) ([]value.Value, error) {
+//
+// Every filter that needs a sequence in hand goes through here, which makes it
+// the one place that can charge the walk against the render's budget. Without
+// that, `{{ range(10000000000)|list }}` allocates until the process dies: the
+// loop bound in runLoop never sees it, because no {% for %} is involved.
+func materialize(s *State, v value.Value) ([]value.Value, error) {
 	seq, err := value.Iterate(v)
 	if err != nil {
 		return nil, err
 	}
 	var out []value.Value
 	for item := range seq {
+		// Charged before the append, so the slice never grows past
+		// the bound by even one element.
+		if err := s.Step(1); err != nil {
+			return nil, err
+		}
 		out = append(out, item)
 	}
 	return out, nil
@@ -1188,7 +1198,7 @@ func filterRound(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 }
 
 func filterSum(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	items, err := materialize(v)
+	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1295,7 +1305,7 @@ func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 			"attr() missing required argument 'name'")
 	}
 	attrName := value.Str(name)
-	if attr, ok := lookupAttr(v, attrName); ok {
+	if attr, ok := lookupAttr(s, v, attrName); ok {
 		return attr, nil
 	}
 	// getattr() on an Undefined raises -- except for a dunder name, which

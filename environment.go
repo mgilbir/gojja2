@@ -52,6 +52,14 @@ type Environment struct {
 	// takes the process down.
 	maxRecursion int
 
+	// maxIterations and maxOutputBytes bound the work of one render, for a
+	// caller who has no deadline to give it. Safety controls in the same
+	// sense as maxRecursion: a loop over an attacker-influenced range, or
+	// a template whose output grows without limit, would otherwise run
+	// until the machine gives up.
+	maxIterations  int64
+	maxOutputBytes int64
+
 	cacheMu sync.RWMutex
 	cache   map[string]*Template
 }
@@ -78,14 +86,16 @@ type Option func(*Environment)
 // New returns an Environment with jinja2's defaults, adjusted by opts.
 func New(opts ...Option) *Environment {
 	env := &Environment{
-		syntax:       lexer.DefaultSyntax(),
-		undefined:    value.UndefinedDefault,
-		policies:     defaultPolicies(),
-		maxRecursion: 100,
-		filters:      make(map[string]Filter),
-		tests:        make(map[string]Test),
-		globals:      make(map[string]value.Value),
-		cache:        make(map[string]*Template),
+		syntax:         lexer.DefaultSyntax(),
+		undefined:      value.UndefinedDefault,
+		policies:       defaultPolicies(),
+		maxRecursion:   100,
+		maxIterations:  defaultMaxIterations,
+		maxOutputBytes: defaultMaxOutputBytes,
+		filters:        make(map[string]Filter),
+		tests:          make(map[string]Test),
+		globals:        make(map[string]value.Value),
+		cache:          make(map[string]*Template),
 	}
 	registerDefaultFilters(env)
 	registerDefaultTests(env)
@@ -208,6 +218,28 @@ func WithMaxRecursion(n int) Option {
 		}
 		e.maxRecursion = n
 	}
+}
+
+// WithMaxIterations bounds the loop iterations one render may take, counting
+// every {% for %} pass and every item a filter pulls out of a sequence.
+// Exceeding it fails the render with an error wrapping [ErrTooManyIterations].
+//
+// A negative or zero n removes the bound. Do that only when the templates are
+// trusted and a context deadline is doing the job instead: without either, a
+// template is free to loop until the process is killed.
+func WithMaxIterations(n int64) Option {
+	return func(e *Environment) { e.maxIterations = n }
+}
+
+// WithMaxOutputBytes bounds how much text one render may produce, counting
+// text captured into a buffer by {% filter %}, a block {% set %} or a macro as
+// well as text that reaches the writer. Exceeding it fails the render with an
+// error wrapping [ErrOutputTooLarge].
+//
+// A negative or zero n removes the bound, with the same caveat as
+// [WithMaxIterations].
+func WithMaxOutputBytes(n int64) Option {
+	return func(e *Environment) { e.maxOutputBytes = n }
 }
 
 // WithPolicies overrides the filter default policies.
