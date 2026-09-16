@@ -315,9 +315,10 @@ func (ex *exec) evalCompare(n *ast.Compare) (value.Value, error) {
 func compareStep(op string, left, right value.Value) (bool, error) {
 	switch op {
 	case "eq":
-		return value.Equal(left, right), nil
+		return value.EqualErr(left, right)
 	case "ne":
-		return !value.Equal(left, right), nil
+		equal, err := value.EqualErr(left, right)
+		return !equal, err
 	case "lt":
 		return value.Ordered("<", left, right)
 	case "lteq":

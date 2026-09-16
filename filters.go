@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -888,10 +889,31 @@ const pprintWidth = 80
 // for whatever closes around it; level counts how deep the dispatch has gone,
 // because a long string only gains its wrapping parentheses at the top.
 func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) {
+	pformatSeen(b, v, indent, allowance, level, nil)
+}
+
+// pformatSeen carries the containers on the active path.
+//
+// Repr already collapses a cycle to "{...}", so a small cyclic value never
+// reaches the recursive arms below; one whose repr is too wide to print on a
+// line does. CPython's pprint marks that case with the container's id, which
+// differs between runs there as it does here -- see docs/divergences.md.
+func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int, seen map[any]bool) {
 	rep := value.Repr(v)
 	if len(rep) <= pprintWidth-indent-allowance {
 		b.WriteString(rep)
 		return
+	}
+
+	switch v.Kind() {
+	case value.KindList, value.KindTuple, value.KindDict:
+		if seen[v.Interface()] {
+			fmt.Fprintf(b, "<Recursion on %s with id=%d>",
+				v.TypeName(), recursionID(v))
+			return
+		}
+		seen = markSeen(seen, v.Interface())
+		defer delete(seen, v.Interface())
 	}
 
 	switch v.Kind() {
@@ -914,7 +936,7 @@ func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) {
 		}
 		b.WriteString(open)
 		pformatItems(b, s.Items(), indent, allowance+1, func(b *strings.Builder, item value.Value, at, room int) {
-			pformat(b, item, at, room, level+1)
+			pformatSeen(b, item, at, room, level+1, seen)
 		})
 		if v.Kind() == value.KindTuple && s.Len() == 1 {
 			b.WriteString(",")
@@ -929,7 +951,7 @@ func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) {
 			b.WriteString(keyRep)
 			b.WriteString(": ")
 			val, _, _ := d.Get(key)
-			pformat(b, val, at+len(keyRep)+2, room, level+1)
+			pformatSeen(b, val, at+len(keyRep)+2, room, level+1, seen)
 		})
 		b.WriteString("}")
 
@@ -1050,9 +1072,22 @@ func pformatItems[T any](b *strings.Builder, items []T, indent, allowance int,
 	}
 }
 
-func sortDictKeys(v value.Value) value.Value {
+// sortDictKeys rebuilds a value with every dict in key order.
+//
+// seen carries the containers on the active path. A value graph can contain a
+// cycle, and rebuilding one without noticing runs until memory is gone; a
+// container already being rebuilt is left as it is, which is enough for
+// pformat to reach it and print its recursion marker.
+func sortDictKeys(v value.Value) value.Value { return sortDictKeysSeen(v, nil) }
+
+func sortDictKeysSeen(v value.Value, seen map[any]bool) value.Value {
 	switch v.Kind() {
 	case value.KindDict:
+		if seen[v.Interface()] {
+			return v
+		}
+		seen = markSeen(seen, v.Interface())
+		defer delete(seen, v.Interface())
 		d, _ := v.Dict()
 		entries := append([]value.DictEntry(nil), d.Entries()...)
 		sort.SliceStable(entries, func(i, j int) bool {
@@ -1061,14 +1096,19 @@ func sortDictKeys(v value.Value) value.Value {
 		out := value.NewDict()
 		target, _ := out.Dict()
 		for _, e := range entries {
-			_ = target.Set(e.Key, sortDictKeys(e.Value))
+			_ = target.Set(e.Key, sortDictKeysSeen(e.Value, seen))
 		}
 		return out
 	case value.KindList, value.KindTuple:
+		if seen[v.Interface()] {
+			return v
+		}
+		seen = markSeen(seen, v.Interface())
+		defer delete(seen, v.Interface())
 		seq, _ := v.Seq()
 		items := make([]value.Value, seq.Len())
 		for i, item := range seq.Items() {
-			items[i] = sortDictKeys(item)
+			items[i] = sortDictKeysSeen(item, seen)
 		}
 		if v.Kind() == value.KindTuple {
 			return value.NewTuple(items...)
@@ -1076,6 +1116,20 @@ func sortDictKeys(v value.Value) value.Value {
 		return value.NewList(items...)
 	}
 	return v
+}
+
+// recursionID is the identity CPython's pprint prints for a repeated
+// container. Python uses id(), which is the object's address; so is this.
+func recursionID(v value.Value) uintptr {
+	return reflect.ValueOf(v.Interface()).Pointer()
+}
+
+func markSeen(seen map[any]bool, key any) map[any]bool {
+	if seen == nil {
+		seen = make(map[any]bool, 4)
+	}
+	seen[key] = true
+	return seen
 }
 
 // --- escaping filters --------------------------------------------------------

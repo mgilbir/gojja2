@@ -10,18 +10,102 @@ import (
 	"reflect"
 	"slices"
 	"time"
+
+	"github.com/mgilbir/gojja2/errs"
 )
+
+// MethodInfo describes a Go method a template is trying to reach.
+type MethodInfo struct {
+	// Owner is the type the method was found on.
+	Owner reflect.Type
+	// Name is the method name as Go spells it.
+	Name string
+	// NumIn is the parameter count, excluding the receiver.
+	NumIn int
+	// NumOut is the result count.
+	NumOut int
+}
+
+// MethodPolicy decides whether a Go method may be reached from a template.
+//
+// The default is [NullaryMethods]. Widening it means templates choose the
+// arguments a host method is called with, so it is a decision the host makes
+// explicitly rather than one reflection makes on its behalf.
+type MethodPolicy func(MethodInfo) bool
+
+// NullaryMethods exposes only methods that take no arguments, which is what a
+// template can reach as a plain attribute and what this package documents.
+func NullaryMethods(m MethodInfo) bool { return m.NumIn == 0 }
+
+// AllMethods exposes every exported method, arguments included. Use it only
+// where template authors are as trusted as the Go code they are calling into.
+func AllMethods(MethodInfo) bool { return true }
+
+// containerID identifies a Go container by its runtime identity, so a
+// structure that refers to itself can be recognised on the way down.
+//
+// Length is part of the key because two slices over one backing array share a
+// data pointer; without it, a[:1] and a[:2] would be taken for the same value.
+type containerID struct {
+	typ reflect.Type
+	ptr uintptr
+	n   int
+}
+
+// converter carries the state a single FromGo walk needs.
+type converter struct {
+	// seen maps a container already being converted to the Value standing
+	// for it. A cyclic structure therefore converts into a cyclic Value
+	// rather than expanding until memory runs out -- which it did, before
+	// any render budget existed to stop it.
+	seen   map[containerID]Value
+	expose MethodPolicy
+}
+
+func (c *converter) memo(id containerID, v Value) {
+	if c.seen == nil {
+		c.seen = make(map[containerID]Value, 4)
+	}
+	c.seen[id] = v
+}
+
+// identify returns the memo key for a container, and false for one that cannot
+// take part in a cycle. An empty container is excluded deliberately: Go gives
+// every zero-length allocation the same address, so keying on it would alias
+// unrelated empty values onto one another.
+func identify(rv reflect.Value) (containerID, bool) {
+	if rv.Len() == 0 {
+		return containerID{}, false
+	}
+	switch rv.Kind() {
+	case reflect.Map:
+		return containerID{typ: rv.Type(), ptr: rv.Pointer()}, true
+	case reflect.Slice:
+		return containerID{typ: rv.Type(), ptr: rv.Pointer(), n: rv.Len()}, true
+	}
+	return containerID{}, false
+}
 
 // FromGo converts a Go value into a template value.
 //
 // Scalars, slices and maps are converted eagerly; structs are wrapped lazily,
-// so a large struct costs nothing until a template touches a field.
+// so a large struct costs nothing until a template touches a field. A
+// container that refers to itself, directly or through other containers, is
+// converted once and then shared, so the result is a cyclic value rather than
+// an endless expansion of one.
 //
 // Go maps have no iteration order, so their keys are sorted. This is a
 // deliberate divergence from a Python dict, which preserves insertion order:
 // there is no insertion order to preserve, and an arbitrary one would make
 // `{% for k, v in m|items %}` render differently on each run.
-func FromGo(v any) Value {
+func FromGo(v any) Value { return (&converter{}).fromAny(v) }
+
+// FromGoWith is [FromGo] under an explicit method policy.
+func FromGoWith(v any, expose MethodPolicy) Value {
+	return (&converter{expose: expose}).fromAny(v)
+}
+
+func (c *converter) fromAny(v any) Value {
 	switch v := v.(type) {
 	case nil:
 		return None
@@ -69,29 +153,58 @@ func FromGo(v any) Value {
 	case Object:
 		return FromObject(v)
 	case map[string]any:
-		// The common case, worth avoiding reflection for.
-		keys := make([]string, 0, len(v))
-		for k := range v {
-			keys = append(keys, k)
+		// The common case, worth avoiding reflection for -- but still
+		// keyed by identity, because a map holding itself is exactly the
+		// shape that used to expand until the process died.
+		rv := reflect.ValueOf(v)
+		if id, ok := identify(rv); ok {
+			if seen, hit := c.seen[id]; hit {
+				return seen
+			}
+			d := NewDict()
+			c.memo(id, d)
+			c.fillStringMap(d, v)
+			return d
 		}
-		slices.Sort(keys)
 		d := NewDict()
-		dict, _ := d.Dict()
-		for _, k := range keys {
-			dict.SetString(k, FromGo(v[k]))
-		}
+		c.fillStringMap(d, v)
 		return d
 	case []any:
+		rv := reflect.ValueOf(v)
+		if id, ok := identify(rv); ok {
+			if seen, hit := c.seen[id]; hit {
+				return seen
+			}
+			list := NewList(make([]Value, 0, len(v))...)
+			c.memo(id, list)
+			seq, _ := list.Seq()
+			for _, item := range v {
+				seq.Append(c.fromAny(item))
+			}
+			return list
+		}
 		items := make([]Value, len(v))
 		for i, item := range v {
-			items[i] = FromGo(item)
+			items[i] = c.fromAny(item)
 		}
 		return NewList(items...)
 	}
-	return fromReflect(reflect.ValueOf(v))
+	return c.fromReflect(reflect.ValueOf(v))
 }
 
-func fromReflect(rv reflect.Value) Value {
+func (c *converter) fillStringMap(d Value, m map[string]any) {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	dict, _ := d.Dict()
+	for _, k := range keys {
+		dict.SetString(k, c.fromAny(m[k]))
+	}
+}
+
+func (c *converter) fromReflect(rv reflect.Value) Value {
 	if !rv.IsValid() {
 		return None
 	}
@@ -100,7 +213,15 @@ func fromReflect(rv reflect.Value) Value {
 		if rv.IsNil() {
 			return None
 		}
-		return fromReflect(rv.Elem())
+		if rv.Kind() == reflect.Pointer && rv.Elem().Kind() == reflect.Struct {
+			// Wrap the pointer rather than the struct it points at:
+			// dereferencing here would discard the pointer's method
+			// set, which in Go is where methods usually live. That
+			// made a documented feature absent for exactly the
+			// receiver style most code uses.
+			return FromObject(&structObject{rv: rv, expose: c.expose})
+		}
+		return c.fromReflect(rv.Elem())
 
 	case reflect.Bool:
 		return Bool(rv.Bool())
@@ -117,22 +238,41 @@ func fromReflect(rv reflect.Value) Value {
 		if rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() == reflect.Uint8 {
 			return Bytes(rv.Bytes())
 		}
-		items := make([]Value, rv.Len())
-		for i := range items {
-			items[i] = FromGo(rv.Index(i).Interface())
+		id, cyclable := identify(rv)
+		if cyclable {
+			if seen, hit := c.seen[id]; hit {
+				return seen
+			}
 		}
-		return NewList(items...)
+		list := NewList(make([]Value, 0, rv.Len())...)
+		if cyclable {
+			c.memo(id, list)
+		}
+		seq, _ := list.Seq()
+		for i := range rv.Len() {
+			seq.Append(c.fromAny(rv.Index(i).Interface()))
+		}
+		return list
 
 	case reflect.Map:
+		id, cyclable := identify(rv)
+		if cyclable {
+			if seen, hit := c.seen[id]; hit {
+				return seen
+			}
+		}
+		d := NewDict()
+		if cyclable {
+			c.memo(id, d)
+		}
 		keys := rv.MapKeys()
 		// Sorting by rendered key gives a stable order for any key type.
 		slices.SortFunc(keys, func(a, b reflect.Value) int {
 			return compareReflectKeys(a, b)
 		})
-		d := NewDict()
 		dict, _ := d.Dict()
 		for _, k := range keys {
-			if err := dict.Set(FromGo(k.Interface()), FromGo(rv.MapIndex(k).Interface())); err != nil {
+			if err := dict.Set(c.fromAny(k.Interface()), c.fromAny(rv.MapIndex(k).Interface())); err != nil {
 				// An unhashable key cannot occur: Go map keys are
 				// always comparable, so this is unreachable.
 				continue
@@ -141,7 +281,7 @@ func fromReflect(rv reflect.Value) Value {
 		return d
 
 	case reflect.Struct:
-		return FromObject(&structObject{rv: rv})
+		return FromObject(&structObject{rv: rv, expose: c.expose})
 
 	case reflect.Func:
 		if rv.IsNil() {
@@ -171,25 +311,64 @@ func compareReflectKeys(a, b reflect.Value) int {
 // Field names are matched as written and, for convenience in templates that
 // were written against JSON, by their `gojja2` or `json` tag.
 type structObject struct {
-	rv reflect.Value
+	// rv is the struct, or a pointer to it. A pointer is kept as one so
+	// that the pointer's method set stays reachable.
+	rv     reflect.Value
+	expose MethodPolicy
+}
+
+// fields returns the struct value whose fields are being read, following one
+// level of pointer when rv is one.
+func (o *structObject) fields() reflect.Value {
+	if o.rv.Kind() == reflect.Pointer {
+		return o.rv.Elem()
+	}
+	return o.rv
 }
 
 func (o *structObject) GetAttr(name string) (Value, bool) {
-	rt := o.rv.Type()
+	fields := o.fields()
+	rt := fields.Type()
 	for i := range rt.NumField() {
 		f := rt.Field(i)
 		if !f.IsExported() {
 			continue
 		}
 		if f.Name == name || tagName(f) == name {
-			return FromGo(o.rv.Field(i).Interface()), true
+			return FromGoWith(fields.Field(i).Interface(), o.expose), true
 		}
 	}
-	// Methods with no arguments and one result read as attributes.
-	if m := o.rv.MethodByName(name); m.IsValid() {
-		return FromObject(&methodObject{fn: m, name: name}), true
+	if m, ok := o.method(name); ok {
+		return m, true
 	}
 	return Undefined, false
+}
+
+// method resolves an exported method the policy allows.
+//
+// The default policy is NullaryMethods, which is what this package documents
+// and what a template can reach as a plain attribute. Anything wider means the
+// template chooses the arguments a host method is called with, so it has to be
+// asked for.
+func (o *structObject) method(name string) (Value, bool) {
+	m := o.rv.MethodByName(name)
+	if !m.IsValid() {
+		return Undefined, false
+	}
+	t := m.Type()
+	expose := o.expose
+	if expose == nil {
+		expose = NullaryMethods
+	}
+	if !expose(MethodInfo{
+		Owner:  o.rv.Type(),
+		Name:   name,
+		NumIn:  t.NumIn(),
+		NumOut: t.NumOut(),
+	}) {
+		return Undefined, false
+	}
+	return FromObject(&methodObject{fn: m, name: name, expose: o.expose}), true
 }
 
 func tagName(f reflect.StructField) string {
@@ -214,7 +393,7 @@ func cutComma(s string) (string, string, bool) {
 
 // Keys lets a struct participate in `|items` and `{% for %}` over a mapping.
 func (o *structObject) Keys() []Value {
-	rt := o.rv.Type()
+	rt := o.fields().Type()
 	var keys []Value
 	for i := range rt.NumField() {
 		f := rt.Field(i)
@@ -239,16 +418,17 @@ func (o *structObject) GetItem(key Value) (Value, bool) {
 
 func (o *structObject) Len() int { return len(o.Keys()) }
 
-func (o *structObject) TypeName() string { return o.rv.Type().Name() }
+func (o *structObject) TypeName() string { return o.fields().Type().Name() }
 
 func (o *structObject) Repr() string {
-	return fmt.Sprintf("<%s object>", o.rv.Type())
+	return fmt.Sprintf("<%s object>", o.fields().Type())
 }
 
-// methodObject is a zero-argument Go method reached as an attribute.
+// methodObject is a Go method reached as an attribute.
 type methodObject struct {
-	fn   reflect.Value
-	name string
+	fn     reflect.Value
+	name   string
+	expose MethodPolicy
 }
 
 func (m *methodObject) GetAttr(string) (Value, bool) { return Undefined, false }
@@ -256,7 +436,7 @@ func (m *methodObject) GetAttr(string) (Value, bool) { return Undefined, false }
 func (m *methodObject) Call(args *CallArgs) (Value, error) {
 	t := m.fn.Type()
 	if t.NumIn() != len(args.Pos) || len(args.Kwargs) > 0 {
-		return Undefined, fmt.Errorf("%s() takes %d arguments, got %d",
+		return Undefined, errs.New(errs.TypeError, "%s() takes %d arguments, got %d",
 			m.name, t.NumIn(), len(args.Pos))
 	}
 	in := make([]reflect.Value, len(args.Pos))
@@ -264,22 +444,43 @@ func (m *methodObject) Call(args *CallArgs) (Value, error) {
 		want := t.In(i)
 		got := reflect.ValueOf(ToGo(a))
 		if !got.IsValid() || !got.Type().AssignableTo(want) {
-			return Undefined, fmt.Errorf("%s(): argument %d is not a %s", m.name, i+1, want)
+			return Undefined, errs.New(errs.TypeError,
+				"%s(): argument %d is not a %s", m.name, i+1, want)
 		}
 		in[i] = got
 	}
-	out := m.fn.Call(in)
+	out, err := m.call(in)
+	if err != nil {
+		return Undefined, err
+	}
 	switch len(out) {
 	case 0:
 		return None, nil
 	case 1:
-		return FromGo(out[0].Interface()), nil
+		return FromGoWith(out[0].Interface(), m.expose), nil
 	}
 	// A (value, error) pair is the idiomatic Go shape; surface the error.
 	if err, ok := out[len(out)-1].Interface().(error); ok && err != nil {
 		return Undefined, err
 	}
-	return FromGo(out[0].Interface()), nil
+	return FromGoWith(out[0].Interface(), m.expose), nil
+}
+
+// call invokes the method, turning a panic into an error.
+//
+// Host code reached from a template is called with arguments a template
+// chose, so it can be driven into states its author never tested. A panic
+// crossing Render unwinds the caller's goroutine, which for a template engine
+// is never the right answer: the template failed, so the render should fail.
+func (m *methodObject) call(in []reflect.Value) (out []reflect.Value, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			out = nil
+			err = errs.New(errs.TemplateRuntimeError,
+				"%s() panicked: %v", m.name, r)
+		}
+	}()
+	return m.fn.Call(in), nil
 }
 
 func (m *methodObject) Repr() string { return "<bound method " + m.name + ">" }
@@ -321,7 +522,19 @@ func (o timeObject) TypeName() string { return "datetime" }
 
 // ToGo converts a template value back into an ordinary Go value, for handing
 // to Go code such as a struct method.
-func ToGo(v Value) any {
+//
+// A value graph can contain a cycle, so the walk is depth-bounded: an
+// unbounded one would overflow the stack, which Go cannot recover from. The
+// bound is far past any structure a caller would hand to a method.
+func ToGo(v Value) any { return toGoDepth(v, 0) }
+
+// maxToGoDepth bounds the conversion back to Go.
+const maxToGoDepth = 100
+
+func toGoDepth(v Value, depth int) any {
+	if depth > maxToGoDepth {
+		return nil
+	}
 	switch v.Kind() {
 	case KindUndefined, KindNone:
 		return nil
@@ -343,14 +556,14 @@ func ToGo(v Value) any {
 		s, _ := v.Seq()
 		out := make([]any, s.Len())
 		for i, item := range s.Items() {
-			out[i] = ToGo(item)
+			out[i] = toGoDepth(item, depth+1)
 		}
 		return out
 	case KindDict:
 		d, _ := v.Dict()
 		out := make(map[string]any, d.Len())
 		for _, e := range d.Entries() {
-			out[Str(e.Key)] = ToGo(e.Value)
+			out[Str(e.Key)] = toGoDepth(e.Value, depth+1)
 		}
 		return out
 	}

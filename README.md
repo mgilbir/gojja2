@@ -23,9 +23,17 @@ vars)` returns the whole document instead, and returns nothing at all when the
 render fails.
 
 Go values cross into templates by reflection: structs expose their exported
-fields (by name or by `json` tag) and their nullary methods, slices become
-lists, and maps become dicts. Errors carry the Python exception class jinja2
-would have raised, so `errors.Is(err, errs.UndefinedError)` works.
+fields (by name or by `json` tag) and their methods that take no arguments,
+whether the receiver is a value or a pointer; slices become lists, and maps
+become dicts. Errors carry the Python exception class jinja2 would have raised,
+so `errors.Is(err, errs.UndefinedError)` works.
+
+A method that *takes* arguments is not exposed by default, because calling one
+means the template chooses what a host method is invoked with.
+`WithMethodPolicy(value.AllMethods)` opts in, for templates as trusted as the
+Go code they call into. A structure that refers to itself is fine to pass: it
+converts once and is shared, so it renders the way Python renders one
+(`{'k': 'v', 'self': {...}}`) rather than expanding forever.
 
 `SelectAutoescape` follows jinja2's `select_autoescape`: matching ignores case
 and a leading dot is optional, and a template compiled with `FromString` is

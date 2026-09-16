@@ -39,11 +39,33 @@ func Str(v Value) string {
 // Repr is Python's repr(): the form a value takes inside a container.
 func Repr(v Value) string {
 	var b strings.Builder
-	writeRepr(&b, v)
+	writeRepr(&b, v, nil)
 	return b.String()
 }
 
-func writeRepr(b *strings.Builder, v Value) {
+// active tracks the containers currently being rendered, so a value that
+// contains itself prints the way CPython prints one.
+//
+// CPython marks only a container on the *active* path: repr({'s': m}) where m
+// is the outer dict gives "{'s': {...}}", while two references to one
+// non-cyclic dict are both expanded in full. Adding on the way down and
+// removing on the way back up reproduces exactly that.
+type active map[any]bool
+
+func (a active) enter(key any) (active, bool) {
+	if a[key] {
+		return a, false
+	}
+	if a == nil {
+		a = make(active, 4)
+	}
+	a[key] = true
+	return a, true
+}
+
+func (a active) leave(key any) { delete(a, key) }
+
+func writeRepr(b *strings.Builder, v Value, seen active) {
 	switch v.kind {
 	case KindUndefined:
 		b.WriteString("Undefined")
@@ -78,22 +100,34 @@ func writeRepr(b *strings.Builder, v Value) {
 		writeStringRepr(b, v.str, true)
 	case KindList:
 		s, _ := v.Seq()
+		next, ok := seen.enter(v.obj)
+		if !ok {
+			b.WriteString("[...]")
+			return
+		}
+		defer next.leave(v.obj)
 		b.WriteByte('[')
 		for i, item := range s.items {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			writeRepr(b, item)
+			writeRepr(b, item, next)
 		}
 		b.WriteByte(']')
 	case KindTuple:
 		s, _ := v.Seq()
+		next, ok := seen.enter(v.obj)
+		if !ok {
+			b.WriteString("(...)")
+			return
+		}
+		defer next.leave(v.obj)
 		b.WriteByte('(')
 		for i, item := range s.items {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			writeRepr(b, item)
+			writeRepr(b, item, next)
 		}
 		// A one-element tuple needs the trailing comma to stay a tuple.
 		if len(s.items) == 1 {
@@ -102,14 +136,20 @@ func writeRepr(b *strings.Builder, v Value) {
 		b.WriteByte(')')
 	case KindDict:
 		d, _ := v.Dict()
+		next, ok := seen.enter(v.obj)
+		if !ok {
+			b.WriteString("{...}")
+			return
+		}
+		defer next.leave(v.obj)
 		b.WriteByte('{')
 		for i, e := range d.entries {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			writeRepr(b, e.Key)
+			writeRepr(b, e.Key, next)
 			b.WriteString(": ")
-			writeRepr(b, e.Value)
+			writeRepr(b, e.Value, next)
 		}
 		b.WriteByte('}')
 	case KindObject:

@@ -226,6 +226,21 @@ render budget long before the count could matter. Asserted by
 `TestRangeLengthDoesNotOverflow` and graded against CPython over 1,452
 start/stop/step combinations.
 
+## `|pprint` of a value that contains itself
+
+```jinja
+{{ cyclic|pprint }}
+```
+
+CPython's `pprint` marks a container it has already entered as
+`<Recursion on dict with id=131095544303808>`. The id is the object's address,
+which differs between two runs of CPython itself, so this case is no more
+gradable than `lipsum()` is. gojja2 prints the same form, with the address of
+its own container.
+
+A cyclic value reaches `pprint` at all only when its `repr` is too wide to
+print on one line; a small one collapses to `{...}` first, which is exact.
+
 ## Identifier characters
 
 jinja2 matches names against a table generated from Python's `str.isidentifier`.

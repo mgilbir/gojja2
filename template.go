@@ -43,7 +43,7 @@ func (t *Template) Name() string { return t.name }
 // stops at the next loop iteration or output write and returns an error
 // wrapping ctx.Err().
 func (t *Template) Render(ctx context.Context, w io.Writer, vars map[string]any) error {
-	return t.RenderValues(ctx, w, valuesFromGo(vars))
+	return t.RenderValues(ctx, w, t.env.valuesFromGo(vars))
 }
 
 // RenderString renders the template and returns the result.
@@ -52,7 +52,7 @@ func (t *Template) Render(ctx context.Context, w io.Writer, vars map[string]any)
 // an empty string rather than the text produced before the failure.
 func (t *Template) RenderString(ctx context.Context, vars map[string]any) (string, error) {
 	var out strings.Builder
-	if err := t.RenderValues(ctx, &out, valuesFromGo(vars)); err != nil {
+	if err := t.RenderValues(ctx, &out, t.env.valuesFromGo(vars)); err != nil {
 		return "", err
 	}
 	return out.String(), nil
@@ -75,10 +75,10 @@ func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[strin
 	return err
 }
 
-func valuesFromGo(vars map[string]any) map[string]value.Value {
+func (e *Environment) valuesFromGo(vars map[string]any) map[string]value.Value {
 	values := make(map[string]value.Value, len(vars))
 	for k, v := range vars {
-		values[k] = value.FromGo(v)
+		values[k] = value.FromGoWith(v, e.methods)
 	}
 	return values
 }
@@ -264,7 +264,10 @@ const RecursionMessage = "maximum recursion depth exceeded while calling a Pytho
 
 // RecursionMessageComparison is the variant CPython produces when the stack
 // ran out inside a comparison, which is what an inheritance cycle hits.
-const RecursionMessageComparison = "maximum recursion depth exceeded in comparison"
+//
+// It is defined in the value package, which raises it for a comparison that
+// descends too far, and re-exported here so there is one spelling of it.
+const RecursionMessageComparison = value.RecursionMessageComparison
 
 // enter bounds template recursion. The limit is a safety control: a template
 // that includes itself would otherwise exhaust the stack.
