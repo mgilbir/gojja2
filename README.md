@@ -220,4 +220,11 @@ make venv       # CPython + jinja2 oracle
 make suites     # download reference suites (gitignored)
 make oracle     # regenerate goldens from CPython jinja2
 make test       # go test ./...
+make check      # what CI runs: fmt, vet, test, race
 ```
+
+CI runs on every pull request and on every commit that reaches `main`. A pull
+request from a **fork** deliberately runs nothing until a maintainer has read
+the diff and added the `safe-to-test` label: CI executes the code in the pull
+request, and that is not something to do to an unreviewed branch. Pushing a new
+commit after the label is applied requires it to be applied again.
