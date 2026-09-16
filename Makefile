@@ -5,9 +5,9 @@
 # turns them into conformance corpora under ./testdata/generated/, also
 # gitignored.
 #
-# Five upstreams, each an independent reading of the language: Jinja's own
-# pytest suite, MiniJinja's fixtures, minja, llama.cpp's Jinja tests, and two
-# collections of real LLM chat templates. Only their *inputs* are used. Every
+# Six upstreams: Jinja's own pytest suite, MiniJinja's fixtures, minja,
+# llama.cpp's Jinja tests, two collections of real LLM chat templates, and a
+# documentation theme. Only their *inputs* are used. Every
 # expected output is regenerated from the pinned CPython jinja2, because that
 # is the specification; where an upstream disagrees with it, it is wrong here.
 
@@ -38,6 +38,12 @@ CHAT_TEMPLATES_REV  := 11c495621569969f264ee70b5c8bb49ba7a1a410
 LLAMACPP_REPO    := https://github.com/ggml-org/llama.cpp.git
 LLAMACPP_REV     := fb27a525d28381a16a4bb038858a10e4927381ca
 LLAMACPP_PATHS   := models/templates tests
+
+# Templates written to be used rather than tested: inheritance, partials and
+# blocks, which the chat-template corpora have none of. Also cloned sparsely.
+MKDOCS_REPO      := https://github.com/squidfunk/mkdocs-material.git
+MKDOCS_REV       := 1c73dca3ff4909e4cddd0d3b6e272298e902dec7
+MKDOCS_PATHS     := material/templates
 
 THIRD_PARTY := third_party
 VENV        := .venv
@@ -99,10 +105,23 @@ $(THIRD_PARTY)/llamacpp/.stamp:
 	git -C $(THIRD_PARTY)/llamacpp checkout --quiet FETCH_HEAD
 	@touch $@
 
+$(THIRD_PARTY)/mkdocs_material/.stamp:
+	@mkdir -p $(THIRD_PARTY)
+	rm -rf $(THIRD_PARTY)/mkdocs_material
+	git init --quiet $(THIRD_PARTY)/mkdocs_material
+	git -C $(THIRD_PARTY)/mkdocs_material remote add origin $(MKDOCS_REPO)
+	git -C $(THIRD_PARTY)/mkdocs_material sparse-checkout init --cone
+	git -C $(THIRD_PARTY)/mkdocs_material sparse-checkout set $(MKDOCS_PATHS)
+	git -C $(THIRD_PARTY)/mkdocs_material fetch --quiet --depth 1 --filter=blob:none \
+		origin $(MKDOCS_REV)
+	git -C $(THIRD_PARTY)/mkdocs_material checkout --quiet FETCH_HEAD
+	@touch $@
+
 .PHONY: suites
 suites: $(THIRD_PARTY)/jinja/.stamp $(THIRD_PARTY)/minijinja/.stamp \
         $(THIRD_PARTY)/minja/.stamp $(THIRD_PARTY)/chat_templates/.stamp \
-        $(THIRD_PARTY)/llamacpp/.stamp ## Download reference test suites (gitignored)
+        $(THIRD_PARTY)/llamacpp/.stamp $(THIRD_PARTY)/mkdocs_material/.stamp \
+        ## Download reference test suites (gitignored)
 
 .PHONY: clean-suites
 clean-suites: ## Remove downloaded suites
@@ -143,6 +162,10 @@ import: suites venv ## Build every imported corpus and record jinja2's answers
 	$(PY) tools/oracle/oracle.py \
 		--corpus testdata/generated/chat-templates \
 		--golden testdata/generated/chat-templates-golden
+	$(PY) tools/oracle/import_wild.py
+	$(PY) tools/oracle/oracle.py \
+		--corpus testdata/generated/wild \
+		--golden testdata/generated/wild-golden
 
 # --- tests -------------------------------------------------------------------
 

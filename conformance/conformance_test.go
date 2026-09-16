@@ -52,6 +52,12 @@ var corpora = []corpus{
 		optional: true,
 	},
 	{
+		name:     "wild",
+		cases:    "testdata/generated/wild",
+		golden:   "testdata/generated/wild-golden",
+		optional: true,
+	},
+	{
 		name:     "chat-templates",
 		cases:    "testdata/generated/chat-templates",
 		golden:   "testdata/generated/chat-templates-golden",
