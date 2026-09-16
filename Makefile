@@ -166,6 +166,11 @@ import: suites venv ## Build every imported corpus and record jinja2's answers
 	$(PY) tools/oracle/oracle.py \
 		--corpus testdata/generated/wild \
 		--golden testdata/generated/wild-golden
+	$(PY) tools/oracle/report_minijinja.py
+
+.PHONY: divergence-report
+divergence-report: venv ## Report where MiniJinja disagrees with CPython jinja2
+	$(PY) tools/oracle/report_minijinja.py
 
 # --- tests -------------------------------------------------------------------
 

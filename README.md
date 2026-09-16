@@ -119,6 +119,16 @@ filter, a callable -- is not guessed at; it is dropped, and `SOURCES.md` says
 why. That dropped list is a deliverable in its own right: it is the catalogue
 of what a JSON-context corpus structurally cannot reach.
 
+`make import` also writes `testdata/generated/minijinja-divergences.md`, which
+costs nothing and is worth having: MiniJinja ships a snapshot of what *it*
+renders for each of its fixtures, and the CPython goldens for those same
+fixtures are already recorded here. Of the 159 compared, 58 agree, 44 are
+rejected by both with different wording, and 57 genuinely diverge -- MiniJinja
+renders `range(3) * 3` and a case-insensitive `dictsort` where CPython raises,
+among others. gojja2 matches CPython on every gradable one, which is the useful
+part: those are the constructs two independent implementations read
+differently, so they are where a third is most likely to be wrong.
+
 Chat templates are not written against a bare environment -- `transformers`
 gives them `trim_blocks`, `lstrip_blocks`, `loopcontrols`, a `tojson` that does
 not sort keys or escape HTML, and the `raise_exception` and `strftime_now`
