@@ -3,7 +3,10 @@
 
 package value
 
-import "iter"
+import (
+	"iter"
+	"math/big"
+)
 
 // Object is a Go value exposed to a template.
 //
@@ -76,6 +79,17 @@ type Reprer interface {
 // its Repr, exactly as Python's object.__str__ does.
 type Strer interface {
 	Str() string
+}
+
+// BigLener is an Object whose length can exceed an int.
+//
+// Python's range can: range(-2**63, 2**63-1) holds 2**64-1 elements, more than
+// any Go slice can index. Len saturates so that indexing and iteration stay
+// well defined, and BigLen carries the exact count that len() has to report.
+// An Object implementing this must keep the two consistent: BigLen is the
+// truth, and Len is BigLen clamped into an int.
+type BigLener interface {
+	BigLen() *big.Int
 }
 
 // Booler overrides truthiness. Without it an Object is truthy unless it is a

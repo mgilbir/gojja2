@@ -98,6 +98,9 @@ func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int
 	if err := ex.execBody(t.tree.Body); err != nil {
 		return err
 	}
+	if err := st.takeDeferred(); err != nil {
+		return err
+	}
 	// A template that extends renders nothing itself beyond whatever came
 	// before the extends tag; the parent is rendered afterwards, with the
 	// blocks the child registered. The loop handles a chain of any depth.
@@ -109,6 +112,9 @@ func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int
 		err := ex.execBody(parent.tree.Body)
 		st.tmpl = prev
 		if err != nil {
+			return err
+		}
+		if err := st.takeDeferred(); err != nil {
 			return err
 		}
 	}
@@ -161,6 +167,15 @@ type State struct {
 	exported []string
 	// depth bounds include/extends/macro nesting.
 	depth int
+	// deferred holds an error raised somewhere that could not return one.
+	//
+	// Python's __str__ may raise; Go's Strer cannot. Rendering a block
+	// through `{{ self.body }}` goes through Str, so the only options were
+	// to discard the block's error -- which silently rendered "" and
+	// reported success -- or to park it here and have the statement loop
+	// pick it up. Parking it catches every path that stringifies a value,
+	// including filters and `~`, rather than only the print tag.
+	deferred error
 	// budget bounds the work of the whole render. It is shared with every
 	// nested render, so an {% include %} cannot start a fresh allowance.
 	budget *budget
@@ -275,3 +290,21 @@ func (s *State) enterExtends() error {
 }
 
 func (s *State) leave() { s.depth-- }
+
+// deferError records an error raised where none could be returned. The first
+// one wins: it is the cause, and the ones after it are likely consequences.
+func (s *State) deferError(err error) {
+	if s != nil && s.deferred == nil {
+		s.deferred = err
+	}
+}
+
+// takeDeferred returns and clears any parked error.
+func (s *State) takeDeferred() error {
+	if s == nil {
+		return nil
+	}
+	err := s.deferred
+	s.deferred = nil
+	return err
+}

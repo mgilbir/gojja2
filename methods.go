@@ -642,12 +642,37 @@ func padMethod(align padAlign) func(value.Value, *value.CallArgs) (value.Value, 
 		if err != nil {
 			return value.Undefined, err
 		}
-		fill := " "
-		if v, ok := arg(args, 1, "fillchar"); ok && v.Kind() == value.KindString {
-			fill = v.AsString()
+		fill, err := fillCharArg(args, 1, "fillchar")
+		if err != nil {
+			return value.Undefined, err
 		}
 		return value.String(pad(r.AsString(), width, fill, align)), nil
 	}
+}
+
+// fillCharArg reads the fill character str.center, str.ljust and str.rjust
+// take, with CPython's own refusals.
+//
+// Both checks are load-bearing rather than pedantic. A non-string fill used to
+// be ignored, so `"a".center(10, 5)` padded with spaces where CPython raises;
+// and a multi-character fill was accepted, so `"a".center(10, "ab")` returned
+// nineteen characters from a call that asked for ten. Silently returning a
+// string of the wrong length is worse than refusing.
+func fillCharArg(args *value.CallArgs, i int, name string) (string, error) {
+	v, ok := arg(args, i, name)
+	if !ok || v.IsNone() {
+		return " ", nil
+	}
+	if v.Kind() != value.KindString {
+		return "", errs.New(errs.TypeError,
+			"The fill character must be a unicode character, not %s", v.TypeName())
+	}
+	fill := v.AsString()
+	if value.StrLen(fill) != 1 {
+		return "", errs.New(errs.TypeError,
+			"The fill character must be exactly one character long")
+	}
+	return fill, nil
 }
 
 func pad(s string, width int, fill string, align padAlign) string {
@@ -840,18 +865,97 @@ func methodDictSetdefault(r value.Value, args *value.CallArgs) (value.Value, err
 func methodDictUpdate(r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	if other, ok := arg(args, 0, ""); ok {
-		if od, ok := other.Dict(); ok {
-			for _, e := range od.Entries() {
-				if err := d.Set(e.Key, e.Value); err != nil {
-					return value.Undefined, err
-				}
-			}
+		// Anything dict() accepts, update() accepts, and anything dict()
+		// refuses it refuses the same way. This used to test only for a
+		// mapping and discard everything else in silence, so
+		// `d.update([("a", 1)])` left the dict empty and reported success.
+		if err := updateDictFrom(d, other); err != nil {
+			return value.Undefined, err
 		}
 	}
 	for _, kw := range args.Kwargs {
 		d.SetString(kw.Name, kw.Value)
 	}
 	return value.None, nil
+}
+
+// updateDictFrom merges src into d, accepting the three shapes Python's
+// dict.update and dict() both take: a dict, any mapping, or an iterable of
+// key/value pairs. It is the single implementation behind both, so the two
+// cannot drift apart again.
+func updateDictFrom(d *value.Dict, src value.Value) error {
+	if src.IsUndefined() {
+		// dict() probes for a keys() method first, and that probe is what
+		// fails on an Undefined.
+		return src.UndefinedError()
+	}
+	if sd, ok := src.Dict(); ok {
+		for _, e := range sd.Entries() {
+			if err := d.Set(e.Key, e.Value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if m, ok := src.Interface().(value.Mapping); ok {
+		for _, k := range m.Keys() {
+			v, _ := m.GetItem(k)
+			if err := d.Set(k, v); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	pairs, err := value.Iterate(src)
+	if err != nil {
+		return errs.New(errs.TypeError, "'%s' object is not iterable", src.TypeName())
+	}
+	index := 0
+	for pair := range pairs {
+		key, val, err := unpackDictPair(pair, index)
+		if err != nil {
+			return err
+		}
+		if err := d.Set(key, val); err != nil {
+			return err
+		}
+		index++
+	}
+	return nil
+}
+
+// unpackDictPair splits one element of a dict-update sequence into its key and
+// value, with CPython's two refusals.
+//
+// The pair is *iterated* rather than required to be a list or tuple, because
+// Python unpacks anything iterable of length two: `dict(["ab", "cd"])` is
+// {'a': 'b', 'c': 'd'}, each pair being a two-character string. Testing for a
+// sequence instead rejected that, and reported it as "has length 2; 2 is
+// required" -- a message that contradicts itself, which is what gave the bug
+// away.
+func unpackDictPair(pair value.Value, index int) (value.Value, value.Value, error) {
+	items, err := value.Iterate(pair)
+	if err != nil {
+		return value.Undefined, value.Undefined, errs.New(errs.TypeError,
+			"cannot convert dictionary update sequence element #%d to a sequence", index)
+	}
+	var first, second value.Value
+	n := 0
+	for item := range items {
+		switch n {
+		case 0:
+			first = item
+		case 1:
+			second = item
+		}
+		n++
+	}
+	if n != 2 {
+		return value.Undefined, value.Undefined, errs.New(errs.ValueError,
+			"dictionary update sequence element #%d has length %d; 2 is required",
+			index, n)
+	}
+	return first, second, nil
 }
 
 func methodDictClear(r value.Value, _ *value.CallArgs) (value.Value, error) {

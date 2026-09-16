@@ -89,6 +89,35 @@ func Len(v Value) (int, error) {
 	return 0, errs.New(errs.TypeError, "object of type '%s' has no len()", v.TypeName())
 }
 
+// LenValue is len() as a template sees it.
+//
+// CPython's len() returns a Py_ssize_t, so a length past that is an
+// OverflowError rather than a large integer: len(range(-2**63, 0)) raises,
+// while len(range(0, 2**63-1)) is fine. An object that can be longer than an
+// int says so through BigLener, and this is where that length is either
+// reported exactly or refused the way CPython refuses it.
+//
+// Len itself saturates instead, because indexing and iteration need a usable
+// number and a loop over such a range is stopped by the render budget long
+// before the count matters.
+func LenValue(v Value) (Value, error) {
+	if v.kind == KindObject {
+		if b, ok := v.obj.(BigLener); ok {
+			n := b.BigLen()
+			if !n.IsInt64() {
+				return Undefined, errs.New(errs.OverflowError,
+					"Python int too large to convert to C ssize_t")
+			}
+			return BigInt(n), nil
+		}
+	}
+	n, err := Len(v)
+	if err != nil {
+		return Undefined, err
+	}
+	return Int(int64(n)), nil
+}
+
 // --- numeric coercion --------------------------------------------------------
 
 // bothNumbers reports whether an arithmetic op should take the numeric path.
