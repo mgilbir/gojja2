@@ -23,3 +23,21 @@ minijinja/opfilters_txt.jj2              ungradable: jinja2 prints a generator's
 # docs/divergences.md.
 jinja-harvest/security_ad3b7dd838.jj2     # __class__.__subclasses__()
 jinja-harvest/security_ccdfed5fc2.jj2     # __builtins__[__import__]
+
+# --- lazy sequence filters ----------------------------------------------------
+# Real model templates that hit the documented generator/list fork: DeepSeek-R1
+# writes `{{ tools | map(attribute='function') | tojson(indent=2) }}`, and
+# jinja2's map returns a generator, which json.dumps refuses. The template is
+# broken under CPython jinja2 and renders under gojja2. See docs/divergences.md,
+# "Lazy sequence filters".
+chat-templates/models_llama-cpp-deepseek-r1__tool_call.jj2   # map()|tojson: generator is not JSON serializable
+chat-templates/models_llama-cpp-deepseek-r1__tools.jj2       # map()|tojson: generator is not JSON serializable
+
+# --- generator addresses (not gradable) ---------------------------------------
+# `{{ [] | items }}` and friends: jinja2's items is lazy, so printing it renders
+# a generator's repr, which embeds a memory address that differs between two
+# runs of the same interpreter. Nothing can match these, gojja2 included, so
+# they are reported apart from the rate rather than counted against it.
+minja/syntax_2470465c79.jj2   ungradable: jinja2 prints a generator's address
+minja/syntax_abd817f094.jj2   ungradable: jinja2 prints a generator's address
+minja/syntax_decfafe0b4.jj2   ungradable: jinja2 prints a generator's address

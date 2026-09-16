@@ -39,6 +39,24 @@ var corpora = []corpus{
 		golden:   "testdata/generated/jinja-harvest-golden",
 		optional: true,
 	},
+	{
+		name:     "minja",
+		cases:    "testdata/generated/minja",
+		golden:   "testdata/generated/minja-golden",
+		optional: true,
+	},
+	{
+		name:     "llamacpp",
+		cases:    "testdata/generated/llamacpp",
+		golden:   "testdata/generated/llamacpp-golden",
+		optional: true,
+	},
+	{
+		name:     "chat-templates",
+		cases:    "testdata/generated/chat-templates",
+		golden:   "testdata/generated/chat-templates-golden",
+		optional: true,
+	},
 }
 
 const knownFailuresPath = "testdata/known_failures.txt"

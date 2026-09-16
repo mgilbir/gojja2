@@ -1,8 +1,15 @@
 # gojja2 - a pure Go, CPython-jinja2-compatible template engine.
 #
-# The reference test suites (Jinja's pytest suite, MiniJinja's fixture corpus)
-# are NOT vendored. `make suites` clones them, at pinned revisions, into
-# ./third_party/, which is gitignored.
+# The reference test suites are NOT vendored. `make suites` clones them, at
+# pinned revisions, into ./third_party/, which is gitignored, and `make import`
+# turns them into conformance corpora under ./testdata/generated/, also
+# gitignored.
+#
+# Five upstreams, each an independent reading of the language: Jinja's own
+# pytest suite, MiniJinja's fixtures, minja, llama.cpp's Jinja tests, and two
+# collections of real LLM chat templates. Only their *inputs* are used. Every
+# expected output is regenerated from the pinned CPython jinja2, because that
+# is the specification; where an upstream disagrees with it, it is wrong here.
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
@@ -16,6 +23,21 @@ JINJA_REV        := 2d4ce43010630478ee88b463f731389fa18953f4   # refs/tags/3.1.6
 
 MINIJINJA_REPO   := https://github.com/mitsuhiko/minijinja.git
 MINIJINJA_REV    := 3c4034f62a18db2b8d3ee708fd32a98a625b93a0   # minijinja-go/v3.0.0-alpha.1
+
+# Three more independent readings of the language, for breadth the corpora
+# above do not reach. Inputs only: every expected output is regenerated from
+# CPython jinja2, whatever these projects believe.
+MINJA_REPO       := https://github.com/google/minja.git
+MINJA_REV        := 021c2293c187789ef13d56c6cfd89c9b134fd80f
+
+CHAT_TEMPLATES_REPO := https://github.com/chujiezheng/chat_templates.git
+CHAT_TEMPLATES_REV  := 11c495621569969f264ee70b5c8bb49ba7a1a410
+
+# llama.cpp is cloned sparsely: the whole repository is gigabytes and all that
+# is wanted is its Jinja tests and its vendored model templates.
+LLAMACPP_REPO    := https://github.com/ggml-org/llama.cpp.git
+LLAMACPP_REV     := fb27a525d28381a16a4bb038858a10e4927381ca
+LLAMACPP_PATHS   := models/templates tests
 
 THIRD_PARTY := third_party
 VENV        := .venv
@@ -49,8 +71,38 @@ $(THIRD_PARTY)/minijinja/.stamp:
 	git -C $(THIRD_PARTY)/minijinja checkout --quiet $(MINIJINJA_REV)
 	@touch $@
 
+$(THIRD_PARTY)/minja/.stamp:
+	@mkdir -p $(THIRD_PARTY)
+	rm -rf $(THIRD_PARTY)/minja
+	git clone --quiet $(MINJA_REPO) $(THIRD_PARTY)/minja
+	git -C $(THIRD_PARTY)/minja checkout --quiet $(MINJA_REV)
+	@touch $@
+
+$(THIRD_PARTY)/chat_templates/.stamp:
+	@mkdir -p $(THIRD_PARTY)
+	rm -rf $(THIRD_PARTY)/chat_templates
+	git clone --quiet $(CHAT_TEMPLATES_REPO) $(THIRD_PARTY)/chat_templates
+	git -C $(THIRD_PARTY)/chat_templates checkout --quiet $(CHAT_TEMPLATES_REV)
+	@touch $@
+
+# Fetched by SHA rather than cloned, so the checkout is shallow, blobless and
+# pinned all at once -- `git clone --depth 1` can only take a branch tip.
+$(THIRD_PARTY)/llamacpp/.stamp:
+	@mkdir -p $(THIRD_PARTY)
+	rm -rf $(THIRD_PARTY)/llamacpp
+	git init --quiet $(THIRD_PARTY)/llamacpp
+	git -C $(THIRD_PARTY)/llamacpp remote add origin $(LLAMACPP_REPO)
+	git -C $(THIRD_PARTY)/llamacpp sparse-checkout init --cone
+	git -C $(THIRD_PARTY)/llamacpp sparse-checkout set $(LLAMACPP_PATHS)
+	git -C $(THIRD_PARTY)/llamacpp fetch --quiet --depth 1 --filter=blob:none \
+		origin $(LLAMACPP_REV)
+	git -C $(THIRD_PARTY)/llamacpp checkout --quiet FETCH_HEAD
+	@touch $@
+
 .PHONY: suites
-suites: $(THIRD_PARTY)/jinja/.stamp $(THIRD_PARTY)/minijinja/.stamp ## Download reference test suites (gitignored)
+suites: $(THIRD_PARTY)/jinja/.stamp $(THIRD_PARTY)/minijinja/.stamp \
+        $(THIRD_PARTY)/minja/.stamp $(THIRD_PARTY)/chat_templates/.stamp \
+        $(THIRD_PARTY)/llamacpp/.stamp ## Download reference test suites (gitignored)
 
 .PHONY: clean-suites
 clean-suites: ## Remove downloaded suites
@@ -70,7 +122,7 @@ oracle-check: venv ## Verify committed goldens still match CPython jinja2
 # --- imported corpora --------------------------------------------------------
 
 .PHONY: import
-import: suites venv ## Import MiniJinja's fixtures and record jinja2's answers
+import: suites venv ## Build every imported corpus and record jinja2's answers
 	$(PY) tools/oracle/import_minijinja.py
 	$(PY) tools/oracle/oracle.py \
 		--corpus testdata/generated/minijinja \
@@ -79,6 +131,18 @@ import: suites venv ## Import MiniJinja's fixtures and record jinja2's answers
 	$(PY) tools/oracle/oracle.py \
 		--corpus testdata/generated/jinja-harvest \
 		--golden testdata/generated/jinja-harvest-golden
+	$(PY) tools/oracle/import_minja.py
+	$(PY) tools/oracle/oracle.py \
+		--corpus testdata/generated/minja \
+		--golden testdata/generated/minja-golden
+	$(PY) tools/oracle/import_llamacpp.py
+	$(PY) tools/oracle/oracle.py \
+		--corpus testdata/generated/llamacpp \
+		--golden testdata/generated/llamacpp-golden
+	$(PY) tools/oracle/import_chat_templates.py
+	$(PY) tools/oracle/oracle.py \
+		--corpus testdata/generated/chat-templates \
+		--golden testdata/generated/chat-templates-golden
 
 # --- tests -------------------------------------------------------------------
 

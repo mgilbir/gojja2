@@ -55,6 +55,7 @@ Three things do not:
 | `{{ [1,2]\|map("string") }}` | `<generator object ... at 0x7f9c...>` | `['1', '2']` |
 | `{% if items\|selectattr("active") %}` | always taken | taken when non-empty |
 | `{{ items\|selectattr("active")\|length }}` | `TypeError: object of type 'generator' has no len()` | the count |
+| `{{ tools\|map(attribute="f")\|tojson }}` | `TypeError: Object of type generator is not JSON serializable` | the JSON |
 
 The first cannot be matched by anyone: the address differs between two runs of
 CPython itself, which is why the corpus case that prints one is marked
@@ -69,6 +70,11 @@ empty filter result would render the section. gojja2 answers the question the
 template asked. This is the one divergence here that can change what a working
 template renders, and it changes it toward what the author meant; if you are
 porting templates, `|list` before `|length` or a truth test is exact in both.
+
+The fourth is not hypothetical: DeepSeek-R1's own chat template, as vendored by
+llama.cpp, writes `{{ tools | map(attribute='function') | tojson(indent=2) }}`,
+which raises under CPython jinja2 and renders under gojja2. Both cases are in
+the chat-templates corpus, listed in testdata/known_failures.txt.
 
 A knock-on: a filter that raises does so at the point gojja2 applies it, where
 jinja2 defers until the generator is consumed. The exception is the same; where

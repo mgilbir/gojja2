@@ -41,6 +41,8 @@ type OracleRequest struct {
 	Context   json.RawMessage   `json:"ctx,omitempty"`
 	Settings  map[string]any    `json:"settings,omitempty"`
 	Templates map[string]string `json:"templates,omitempty"`
+	// Profile names an environment profile; see profile.go.
+	Profile string `json:"profile,omitempty"`
 }
 
 // OracleResult is what CPython jinja2 did with it.

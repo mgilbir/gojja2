@@ -65,6 +65,7 @@ def handle(request: dict) -> dict:
             request.get("ctx") or {},
             request.get("settings") or {},
             request.get("templates") or {},
+            request.get("profile"),
         )
         # render() catches everything, so a limit hit comes back as an
         # ordinary failure and has to be recognised here.

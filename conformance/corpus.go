@@ -36,6 +36,9 @@ type Case struct {
 	Templates map[string]string
 	// Settings are the environment options the case runs under.
 	Settings Settings
+	// Profile names the environment profile the case renders under, empty
+	// for a bare environment. See profile.go.
+	Profile string
 	// Source is the main template.
 	Source string
 }
@@ -103,6 +106,20 @@ func LoadCase(root, path string) (*Case, error) {
 	}
 
 	c := &Case{Rel: filepath.ToSlash(rel), Source: source}
+	// The profile is read first, because it seeds the settings a case may
+	// then override. Unmarshalling onto the seeded struct gives the same
+	// "case wins, key by key" merge the oracle does with dict.update.
+	if raw, ok := fields["__profile__"]; ok {
+		if err := json.Unmarshal(raw, &c.Profile); err != nil {
+			return nil, fmt.Errorf("%s: bad __profile__: %w", c.Rel, err)
+		}
+		seed, known := profileSettings(c.Profile)
+		if !known {
+			return nil, fmt.Errorf("%s: unknown __profile__ %q", c.Rel, c.Profile)
+		}
+		c.Settings = seed
+		delete(fields, "__profile__")
+	}
 	if raw, ok := fields["__settings__"]; ok {
 		if err := json.Unmarshal(raw, &c.Settings); err != nil {
 			return nil, fmt.Errorf("%s: bad __settings__: %w", c.Rel, err)
@@ -135,7 +152,12 @@ func LoadCase(root, path string) (*Case, error) {
 // `{{ 1.0 }}` would render the same; and object key order would be lost, so a
 // dict would sort differently here than in CPython, which preserves insertion
 // order.
-
+//
+// The same reasoning is why a context never travels as a Go map: a map has no
+// order to preserve, and the standard library does not agree with itself about
+// what to do with that -- encoding/json sorts the keys, encoding/json/v2
+// randomises them. Anywhere a context crosses a boundary it does so as raw
+// JSON text.
 func fromJSON(raw json.RawMessage) (value.Value, error) {
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.UseNumber()
@@ -280,7 +302,9 @@ func (c *Case) Environment() *gojja2.Environment {
 	if len(s.Extensions) > 0 {
 		opts = append(opts, gojja2.WithExtensions(s.Extensions...))
 	}
-	return gojja2.New(opts...)
+	env := gojja2.New(opts...)
+	applyProfile(env, c.Profile)
+	return env
 }
 
 func undefinedBehavior(name string) value.UndefinedBehavior {

@@ -10,13 +10,15 @@ gojja2 and this disagree, gojja2 is wrong.
 Case file format (`*.jj2`), deliberately close to MiniJinja's fixture format so
 its corpus can be consumed without rewriting:
 
-    {"json": "header", "__settings__": {...}, "__templates__": {...}}
+    {"json": "header", "__settings__": {...}, "__templates__": {...},
+     "__profile__": "..."}
     ---
     template source
 
 The header is the render context. Two reserved keys are stripped out of it:
 
     __settings__   environment options (see SETTING_KEYS)
+    __profile__    named environment profile (see profiles.py)
     __templates__  {name: source} of extra templates reachable by
                    include/import/extends
 
@@ -26,8 +28,10 @@ A file with no `\n---\n` separator is treated as all-template, empty context.
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -40,7 +44,15 @@ from jinjaoracle import (  # noqa: E402 - sibling module, not a package
     describe,
 )
 
-ORACLE = {"impl": "cpython-jinja2", "version": jinja2.__version__}
+# The oracle's identity travels with every golden. markupsafe is in here
+# because it is half the answer for anything escaped, and an upgrade of either
+# means the goldens are regenerated wholesale rather than piecemeal.
+ORACLE = {
+    "impl": "cpython-jinja2",
+    "version": jinja2.__version__,
+    "markupsafe": importlib.metadata.version("markupsafe"),
+    "python": platform.python_version(),
+}
 
 SEPARATOR = "\n---\n"
 
@@ -61,6 +73,7 @@ class Case:
 
         self.settings = ctx.pop("__settings__", {}) or {}
         self.templates = ctx.pop("__templates__", {}) or {}
+        self.profile = ctx.pop("__profile__", None)
         self.context = ctx
         self.source = source
 
@@ -71,7 +84,7 @@ class Case:
     def environment(self) -> jinja2.Environment:
         sources = dict(self.templates)
         sources[self.rel] = self.source
-        return build_environment(self.settings, sources, self.rel)
+        return build_environment(self.settings, sources, self.rel, self.profile)
 
     def render(self) -> dict:
         try:
@@ -103,12 +116,14 @@ def main() -> int:
     ap.add_argument("--check", action="store_true", help="fail instead of rewriting goldens")
     ap.add_argument("--template", help="render this source instead of a corpus")
     ap.add_argument("--context", default="{}", help="JSON context for --template")
+    ap.add_argument("--profile", default=None, help="environment profile (see profiles.py)")
     args = ap.parse_args()
 
     if args.template is not None:
         case = Case.__new__(Case)
         case.rel = "<stdin>"
         case.settings, case.templates = {}, {}
+        case.profile = args.profile
         case.context = json.loads(args.context)
         case.source = args.template
         print(dump(golden_for(case)), end="")

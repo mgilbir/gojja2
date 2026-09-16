@@ -1,6 +1,10 @@
 # Third-party test suites, fetched by `make suites`. Never vendored.
 /third_party/
 
+# Python bytecode from the oracle tools.
+__pycache__/
+*.pyc
+
 # Oracle virtualenv and generated conformance data.
 /.venv/
 /testdata/generated/

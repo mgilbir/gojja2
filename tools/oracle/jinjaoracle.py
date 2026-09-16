@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import jinja2
 
+import profiles
+
 # Environment options a case may set. Anything else is an error, so a typo in a
 # fixture fails loudly instead of being silently ignored.
 SETTING_KEYS = {
@@ -51,12 +53,22 @@ class CaseError(Exception):
     """A malformed case, as opposed to a template that fails to render."""
 
 
-def build_environment(settings: dict, sources: dict, where: str) -> jinja2.Environment:
+def build_environment(
+    settings: dict, sources: dict, where: str, profile: str | None = None
+) -> jinja2.Environment:
     unknown = set(settings) - SETTING_KEYS
     if unknown:
         raise CaseError(f"{where}: unknown __settings__ keys: {sorted(unknown)}")
 
-    opts = dict(settings)
+    # A profile supplies environment options of its own. A case may still
+    # override one -- a chat template corpus that needs keep_trailing_newline,
+    # say -- so the case's own settings win.
+    opts = {}
+    if profile is not None:
+        if profile not in profiles.PROFILES:
+            raise CaseError(f"{where}: unknown __profile__ {profile!r}")
+        opts.update(profiles.settings_for(profile))
+    opts.update(settings)
     undefined = opts.pop("undefined", "default")
     if undefined not in UNDEFINED_KINDS:
         raise CaseError(f"{where}: unknown undefined kind {undefined!r}")
@@ -68,12 +80,15 @@ def build_environment(settings: dict, sources: dict, where: str) -> jinja2.Envir
             raise CaseError(f"{where}: unknown extension {name!r}")
         extensions.append(module)
 
-    return jinja2.Environment(
+    env = jinja2.Environment(
         loader=jinja2.DictLoader(sources),
         undefined=UNDEFINED_KINDS[undefined],
         extensions=extensions,
         **opts,
     )
+    if profile is not None:
+        profiles.apply(env, profile)
+    return env
 
 
 def describe(exc: BaseException) -> dict:
@@ -95,12 +110,19 @@ def describe(exc: BaseException) -> dict:
     return info
 
 
-def render(name: str, source: str, context: dict, settings: dict, templates: dict) -> dict:
+def render(
+    name: str,
+    source: str,
+    context: dict,
+    settings: dict,
+    templates: dict,
+    profile: str | None = None,
+) -> dict:
     """Render one template, returning the output or the exception it raised."""
     try:
         sources = dict(templates)
         sources[name] = source
-        env = build_environment(settings, sources, name)
+        env = build_environment(settings, sources, name, profile)
         output = env.get_template(name).render(context)
     except Exception as exc:  # noqa: BLE001 - any exception is a valid result
         return {"ok": False, "error": describe(exc)}

@@ -65,25 +65,35 @@ at all -- silently.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 264 | 264 |
+| gojja2's own (committed, with goldens) | 269 | 269 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
-| **total** | **1081** | **1079 (99.8%)** |
+| minja's syntax tests | 162 | 162 |
+| llama.cpp's Jinja tests | 281 | 281 |
+| LLM chat templates x 10 conversation shapes | 810 | 808 |
+| **total** | **2339** | **2335 (99.8%)** |
 
-On top of that, roughly a million generated templates have been rendered by
-both implementations and compared (see below).
+Each imported corpus is a different project's independent reading of the
+language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, and the
+templates real models ship. Only their *inputs* are used: every expected output
+is regenerated from the pinned CPython jinja2, because that is the
+specification. On top of that, roughly a million generated templates have been
+rendered by both implementations and compared (see below).
 
-The 2 that differ are listed, with reasons, in `testdata/known_failures.txt`;
+The 4 that differ are listed, with reasons, in `testdata/known_failures.txt`;
 a case on that list which starts passing fails the test, so the list can only
-shrink deliberately. Both are Jinja's own sandbox-escape tests, which walk a
+shrink deliberately. Two are Jinja's own sandbox-escape tests, which walk a
 Python object graph out to `__subclasses__` and `__import__`. `__class__` *is*
-implemented; these two go past it -- see
-[docs/divergences.md](docs/divergences.md).
+implemented; these two go past it. The other two are DeepSeek-R1's chat
+template, which writes `{{ tools|map(attribute='function')|tojson }}` -- jinja2's
+`map` returns a generator, which `json.dumps` refuses, so the template raises
+under CPython and renders under gojja2. See
+[docs/divergences.md](docs/divergences.md) for both.
 
-One further case is marked *ungradable* and left out of the table: it renders a
-generator's memory address, which differs between two runs of CPython itself,
-so jinja2 does not match it either. Nothing else is excluded -- a case gojja2
-simply fails stays in the denominator.
+Four further cases are marked *ungradable* and left out of the table: they
+render a generator's memory address, which differs between two runs of CPython
+itself, so jinja2 does not match them either. Nothing else is excluded -- a case
+gojja2 simply fails stays in the denominator.
 
 Underneath, the pieces are graded separately against the real thing: CPython's
 `repr()` over 3,200 floats and strings, every binary operator over a 39-value
@@ -92,7 +102,19 @@ tree (100 cases).
 
 The first corpus is committed with its goldens, so `go test ./...` grades
 against CPython's answers on a fresh checkout with no network and no Python.
-Run `make suites && make import` to add the other two.
+Run `make suites && make import` to add the rest: the upstream repositories are
+cloned at pinned revisions into the gitignored `third_party/`, and the cases and
+their goldens are built into the gitignored `testdata/generated/`. Nothing from
+those projects is vendored or committed, and each generated corpus carries a
+`SOURCES.md` recording where it came from, under what license, and which inputs
+were dropped and why.
+
+Chat templates are not written against a bare environment -- `transformers`
+gives them `trim_blocks`, `lstrip_blocks`, `loopcontrols`, a `tojson` that does
+not sort keys or escape HTML, and the `raise_exception` and `strftime_now`
+globals. A case records that as `"__profile__": "transformers"`, implemented
+once for the oracle and once for gojja2, with `TestProfileMatchesOracle` pinning
+the two together so they cannot drift apart unnoticed.
 
 ## Differential fuzzing
 
