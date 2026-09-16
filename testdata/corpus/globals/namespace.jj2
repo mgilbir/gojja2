@@ -1,0 +1,3 @@
+{}
+---
+{% set ns = namespace(a=1) %}{{ ns.a }}{{ ns.missing }}|{{ ns }}

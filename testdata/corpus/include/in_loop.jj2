@@ -1,0 +1,8 @@
+{
+  "__templates__": {
+    "inc.html": "[{{ v|default('none') }}]",
+    "mac.html": "{% macro f(x) %}<{{x}}>{% endmacro %}{% set exported = 'E' %}"
+  }
+}
+---
+{% for v in [1,2] %}{% include 'inc.html' %}{% endfor %}

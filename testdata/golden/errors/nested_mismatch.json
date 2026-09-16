@@ -1,0 +1,14 @@
+{
+  "case": "errors/nested_mismatch.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateSyntaxError",
+    "message": "Encountered unknown tag 'endif'. Jinja was looking for the following tags: 'endfor' or 'else'. The innermost block that needs to be closed is 'for'.",
+    "lineno": 1,
+    "name": "errors/nested_mismatch.jj2"
+  }
+}

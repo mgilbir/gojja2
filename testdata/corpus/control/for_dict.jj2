@@ -1,0 +1,9 @@
+{
+  "map": {
+    "b": 2,
+    "a": 1,
+    "C": 3
+  }
+}
+---
+{% for k in map %}{{ k }}{% endfor %}|{% for k, v in map|items %}{{k}}{{v}}{% endfor %}

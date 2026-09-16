@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "v": "<x>"
+}
+---
+{{ ("a{}b"|safe).format(v) }}

@@ -1,0 +1,9 @@
+{
+  "map": {
+    "b": 2,
+    "a": 1,
+    "C": 3
+  }
+}
+---
+{{ map|dictsort }}|{{ map|dictsort(by='value') }}|{{ map|dictsort(case_sensitive=true) }}|{{ map|dictsort(reverse=true) }}

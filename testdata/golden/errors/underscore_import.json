@@ -1,0 +1,14 @@
+{
+  "case": "errors/underscore_import.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateAssertionError",
+    "message": "names starting with an underline can not be imported",
+    "lineno": 1,
+    "name": "errors/underscore_import.jj2"
+  }
+}

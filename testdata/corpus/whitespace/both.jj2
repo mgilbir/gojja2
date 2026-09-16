@@ -1,0 +1,12 @@
+{
+  "__settings__": {
+    "trim_blocks": true,
+    "lstrip_blocks": true
+  }
+}
+---
+a
+   {% if true %}
+b
+   {% endif %}
+c

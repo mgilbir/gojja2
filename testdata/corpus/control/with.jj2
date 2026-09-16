@@ -1,0 +1,5 @@
+{
+  "a": "outer"
+}
+---
+{% with a = 1, b = a %}{{ a }}{{ b }}{% endwith %}{{ a|default('-') }}

@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "base.html": "[{% block title %}base title{% endblock %}|{% block body %}base body{% endblock %}]"
+  }
+}
+---
+{% extends ['nope.html', 'base.html'] %}{% block body %}c{% endblock %}

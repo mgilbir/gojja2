@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "v": "<b>"
+}
+---
+{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{{ m(v) }}

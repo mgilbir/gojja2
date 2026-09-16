@@ -1,0 +1,9 @@
+{
+  "case": "methods/string.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "['a', 'b', 'c']|['a', 'b']|a-b|True|1"
+}

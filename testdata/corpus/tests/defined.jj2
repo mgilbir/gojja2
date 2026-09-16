@@ -1,0 +1,5 @@
+{
+  "x": 1
+}
+---
+{{ x is defined }}{{ nope is defined }}{{ nope is undefined }}{{ nope is not defined }}

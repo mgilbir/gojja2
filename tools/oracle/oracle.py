@@ -55,6 +55,13 @@ SETTING_KEYS = {
     "autoescape",
     "optimized",
     "undefined",
+    "extensions",
+}
+
+# Optional tags, named the short way a case writes them.
+EXTENSION_MODULES = {
+    "do": "jinja2.ext.do",
+    "loopcontrols": "jinja2.ext.loopcontrols",
 }
 
 UNDEFINED_KINDS = {
@@ -98,11 +105,19 @@ class Case:
         undefined = opts.pop("undefined", "default")
         if undefined not in UNDEFINED_KINDS:
             raise CaseError(f"{self.rel}: unknown undefined kind {undefined!r}")
+
+        extensions = []
+        for name in opts.pop("extensions", []):
+            module = EXTENSION_MODULES.get(name)
+            if module is None:
+                raise CaseError(f"{self.rel}: unknown extension {name!r}")
+            extensions.append(module)
         sources = dict(self.templates)
         sources[self.rel] = self.source
         return jinja2.Environment(
             loader=jinja2.DictLoader(sources),
             undefined=UNDEFINED_KINDS[undefined],
+            extensions=extensions,
             **opts,
         )
 

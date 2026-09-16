@@ -1,0 +1,9 @@
+{
+  "__settings__": {}
+}
+---
+a
+   {% if true %}
+b
+   {% endif %}
+c

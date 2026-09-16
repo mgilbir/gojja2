@@ -1,0 +1,3 @@
+{}
+---
+{{ '<p>a  <b>b</b></p>'|striptags }}|{{ '&lt;a&gt;'|striptags }}

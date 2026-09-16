@@ -1,0 +1,3 @@
+{}
+---
+{{ none is sameas none }}{{ true is sameas true }}{{ 1 is sameas 1.0 }}

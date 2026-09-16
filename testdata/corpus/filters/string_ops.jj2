@@ -1,0 +1,5 @@
+{
+  "text": "  the quick brown fox jumps over the lazy dog  "
+}
+---
+{{ 'a-b'|replace('-','+') }}|{{ 'aaa'|replace('a','b',2) }}|{{ 'ab'|center(6) }}|{{ text|wordcount }}

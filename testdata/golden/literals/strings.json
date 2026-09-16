@@ -1,0 +1,9 @@
+{
+  "case": "literals/strings.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "a\nb|it's|Aé|ab"
+}

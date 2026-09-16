@@ -1,0 +1,9 @@
+{
+  "case": "filters/urlize_args.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "go to <a href=\"http://example.com\" rel=\"noopener\" target=\"_blank\">http://exa...</a> now"
+}

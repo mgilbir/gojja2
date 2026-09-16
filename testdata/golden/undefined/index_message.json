@@ -1,0 +1,12 @@
+{
+  "case": "undefined/index_message.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "UndefinedError",
+    "message": "list object has no element 42"
+  }
+}

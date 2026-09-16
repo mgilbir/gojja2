@@ -1,0 +1,16 @@
+{
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "map": {
+    "b": 2,
+    "a": 1,
+    "C": 3
+  }
+}
+---
+{{ seq|length }}|{{ seq|count }}|{{ 'héllo'|length }}|{{ map|length }}

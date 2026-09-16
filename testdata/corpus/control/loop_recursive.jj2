@@ -1,0 +1,19 @@
+{
+  "tree": [
+    {
+      "name": "a",
+      "children": [
+        {
+          "name": "b",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "c",
+      "children": []
+    }
+  ]
+}
+---
+{% for item in tree recursive %}[{{ item.name }}{{ loop(item.children) if item.children }}]{% endfor %}

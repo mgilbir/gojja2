@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "v": "<b>"
+}
+---
+{% autoescape false %}{{ v }}{% endautoescape %}{{ v }}

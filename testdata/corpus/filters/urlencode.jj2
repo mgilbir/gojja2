@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a b/c?d'|urlencode }}|{{ {'a':'1 2'}|urlencode }}

@@ -1,0 +1,9 @@
+{
+  "words": [
+    "banana",
+    "Apple",
+    "cherry"
+  ]
+}
+---
+{{ words|sort }}|{{ words|sort(case_sensitive=true) }}|{{ words|sort(reverse=true) }}

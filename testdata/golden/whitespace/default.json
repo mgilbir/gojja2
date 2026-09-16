@@ -1,0 +1,9 @@
+{
+  "case": "whitespace/default.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "a\n   \nb\n   \nc"
+}

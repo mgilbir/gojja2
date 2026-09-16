@@ -1,0 +1,5 @@
+{
+  "text": "  the quick brown fox jumps over the lazy dog  "
+}
+---
+{{ text|truncate(20) }}|{{ text|truncate(20, true) }}|{{ 'short'|truncate(20) }}

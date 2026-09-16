@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -392,6 +393,10 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
+	breakOnHyphens, err := boolArg(args, 3, "break_on_hyphens", true)
+	if err != nil {
+		return value.Undefined, err
+	}
 	wrapString := "\n"
 	if w, ok := arg(args, 2, "wrapstring"); ok && !w.IsNone() {
 		wrapString = value.Str(w)
@@ -399,39 +404,100 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 
 	var out []string
 	for _, paragraph := range strings.Split(value.Str(v), "\n") {
-		out = append(out, wrapLine(paragraph, width, breakLong)...)
+		out = append(out, wrapLine(paragraph, width, breakLong, breakOnHyphens)...)
 	}
 	return value.String(strings.Join(out, wrapString)), nil
 }
 
-func wrapLine(text string, width int, breakLong bool) []string {
-	words := strings.Fields(text)
-	if len(words) == 0 {
+// wrapLine reproduces textwrap.wrap for one paragraph.
+//
+// The differences from a naive greedy fill are visible: whitespace between
+// words is a chunk of its own, so the first line keeps its indentation while
+// later lines do not, and every line has its trailing whitespace removed.
+func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
+	chunks := wrapChunks(text, breakOnHyphens)
+	var lines []string
+
+	for len(chunks) > 0 {
+		// Leading whitespace is dropped on every line but the first.
+		if len(lines) > 0 && strings.TrimSpace(chunks[0]) == "" {
+			chunks = chunks[1:]
+			if len(chunks) == 0 {
+				break
+			}
+		}
+
+		var cur []string
+		curLen := 0
+		for len(chunks) > 0 && curLen+value.StrLen(chunks[0]) <= width {
+			curLen += value.StrLen(chunks[0])
+			cur = append(cur, chunks[0])
+			chunks = chunks[1:]
+		}
+
+		// A single chunk wider than the line has to be split, or kept
+		// whole and allowed to overflow.
+		if len(chunks) > 0 && value.StrLen(chunks[0]) > width {
+			space := max(width-curLen, 1)
+			if breakLong {
+				head, _ := value.StrSlice(chunks[0], nil, &space, nil)
+				tail, _ := value.StrSlice(chunks[0], &space, nil, nil)
+				cur = append(cur, head)
+				chunks[0] = tail
+			} else if len(cur) == 0 {
+				cur = append(cur, chunks[0])
+				chunks = chunks[1:]
+			}
+		}
+
+		for len(cur) > 0 && strings.TrimSpace(cur[len(cur)-1]) == "" {
+			cur = cur[:len(cur)-1]
+		}
+		if len(cur) > 0 {
+			lines = append(lines, strings.Join(cur, ""))
+		}
+	}
+	if len(lines) == 0 {
 		return []string{""}
 	}
-	var lines []string
-	cur := ""
-	for _, w := range words {
-		switch {
-		case cur == "":
-			cur = w
-		case value.StrLen(cur)+1+value.StrLen(w) <= width:
-			cur += " " + w
-		default:
-			lines = append(lines, cur)
-			cur = w
-		}
-		for breakLong && value.StrLen(cur) > width {
-			head, _ := value.StrSlice(cur, nil, ptr(width), nil)
-			tail, _ := value.StrSlice(cur, ptr(width), nil, nil)
-			lines = append(lines, head)
-			cur = tail
-		}
-	}
-	if cur != "" {
-		lines = append(lines, cur)
-	}
 	return lines
+}
+
+// wrapChunks splits text into the pieces textwrap considers indivisible:
+// whitespace runs, and words, optionally broken after an internal hyphen.
+func wrapChunks(text string, breakOnHyphens bool) []string {
+	var chunks []string
+	runes := []rune(text)
+	i := 0
+	for i < len(runes) {
+		start := i
+		inSpace := unicode.IsSpace(runes[i])
+		for i < len(runes) && unicode.IsSpace(runes[i]) == inSpace {
+			i++
+		}
+		word := string(runes[start:i])
+		if inSpace || !breakOnHyphens {
+			chunks = append(chunks, word)
+			continue
+		}
+		chunks = append(chunks, splitOnHyphens(word)...)
+	}
+	return chunks
+}
+
+// splitOnHyphens breaks a word after a hyphen that joins two letters, which is
+// where textwrap allows a line to end.
+func splitOnHyphens(word string) []string {
+	runes := []rune(word)
+	var out []string
+	start := 0
+	for i := 1; i < len(runes)-1; i++ {
+		if runes[i] == '-' && unicode.IsLetter(runes[i-1]) && unicode.IsLetter(runes[i+1]) {
+			out = append(out, string(runes[start:i+1]))
+			start = i + 1
+		}
+	}
+	return append(out, string(runes[start:]))
 }
 
 func filterWordcount(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -478,8 +544,38 @@ func filterFormat(_ *State, v value.Value, args *value.CallArgs) (value.Value, e
 	return value.Mod(value.String(value.Str(v)), value.NewTuple(args.Pos...))
 }
 
+// filterPprint renders a value the way Python's pprint.pformat does, which is
+// repr() with dict keys sorted rather than in insertion order.
 func filterPprint(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	return value.String(value.Repr(v)), nil
+	return value.String(value.Repr(sortDictKeys(v))), nil
+}
+
+func sortDictKeys(v value.Value) value.Value {
+	switch v.Kind() {
+	case value.KindDict:
+		d, _ := v.Dict()
+		entries := append([]value.DictEntry(nil), d.Entries()...)
+		sort.SliceStable(entries, func(i, j int) bool {
+			return value.Str(entries[i].Key) < value.Str(entries[j].Key)
+		})
+		out := value.NewDict()
+		target, _ := out.Dict()
+		for _, e := range entries {
+			_ = target.Set(e.Key, sortDictKeys(e.Value))
+		}
+		return out
+	case value.KindList, value.KindTuple:
+		seq, _ := v.Seq()
+		items := make([]value.Value, seq.Len())
+		for i, item := range seq.Items() {
+			items[i] = sortDictKeys(item)
+		}
+		if v.Kind() == value.KindTuple {
+			return value.NewTuple(items...)
+		}
+		return value.NewList(items...)
+	}
+	return v
 }
 
 // --- escaping filters --------------------------------------------------------
@@ -592,7 +688,19 @@ func filterRound(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 	scale := math.Pow(10, float64(precision))
 	switch method {
 	case "common":
-		// Python's round() is banker's rounding: .5 goes to even.
+		// Python rounds the decimal value, not the value scaled by a
+		// power of ten: 2.675 is really 2.67499..., so round(2.675, 2)
+		// is 2.67, while 2.675*100 rounds up to 267.5 and would give
+		// 2.68. Formatting to the requested precision rounds correctly
+		// against the true value, ties to even included.
+		if precision >= 0 {
+			rounded, err := strconv.ParseFloat(
+				strconv.FormatFloat(f, 'f', precision, 64), 64)
+			if err != nil {
+				return value.Undefined, err
+			}
+			return value.Float(rounded), nil
+		}
 		return value.Float(math.RoundToEven(f*scale) / scale), nil
 	case "ceil":
 		return value.Float(math.Ceil(f*scale) / scale), nil

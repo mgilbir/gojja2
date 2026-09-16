@@ -1,0 +1,3 @@
+{}
+---
+{{ 'go to http://example.com now'|urlize(10, target='_blank') }}

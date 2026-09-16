@@ -20,8 +20,8 @@ func filterURLEncode(_ *State, v value.Value, _ *value.CallArgs) (value.Value, e
 	if d, ok := v.Dict(); ok {
 		parts := make([]string, 0, d.Len())
 		for _, e := range d.Entries() {
-			parts = append(parts, quoteURL(value.Str(e.Key), false)+"="+
-				quoteURL(value.Str(e.Value), false))
+			parts = append(parts, quotePlus(value.Str(e.Key))+"="+
+				quotePlus(value.Str(e.Value)))
 		}
 		return value.String(strings.Join(parts, "&")), nil
 	}
@@ -34,13 +34,19 @@ func filterURLEncode(_ *State, v value.Value, _ *value.CallArgs) (value.Value, e
 				return value.Undefined, errs.New(errs.TypeError,
 					"urlencode expects a mapping or a sequence of pairs")
 			}
-			parts = append(parts, quoteURL(value.Str(pair.At(0)), false)+"="+
-				quoteURL(value.Str(pair.At(1)), false))
+			parts = append(parts, quotePlus(value.Str(pair.At(0)))+"="+
+				quotePlus(value.Str(pair.At(1))))
 		}
 		return value.String(strings.Join(parts, "&")), nil
 	}
 	// A bare string keeps "/" unescaped, matching urllib.parse.quote.
 	return value.String(quoteURL(value.Str(v), true)), nil
+}
+
+// quotePlus is urllib.parse.quote_plus, which query strings use: a space
+// becomes "+" rather than "%20", and "/" is not exempt.
+func quotePlus(s string) string {
+	return strings.ReplaceAll(quoteURL(strings.ReplaceAll(s, " ", "\x00"), false), "%00", "+")
 }
 
 // quoteURL percent-encodes everything outside the unreserved set. keepSlash
@@ -327,11 +333,14 @@ func filterToJSON(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	return value.String(out), nil
 }
 
+// jsonHTMLEscaper makes serialised JSON safe to embed in a <script> block:
+// the characters that could close the tag or open an entity are written as
+// JSON unicode escapes, which parse back to themselves.
 var jsonHTMLEscaper = strings.NewReplacer(
-	"<", `<`,
-	">", `>`,
-	"&", `&`,
-	"'", `'`,
+	"<", "\\u003c",
+	">", "\\u003e",
+	"&", "\\u0026",
+	"'", "\\u0027",
 )
 
 func htmlSafeJSON(s string) string { return jsonHTMLEscaper.Replace(s) }

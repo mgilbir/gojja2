@@ -1,0 +1,9 @@
+{
+  "case": "filters/indent.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "a\n  b\n\n  c|  a\n  b|a\n  \n  b"
+}

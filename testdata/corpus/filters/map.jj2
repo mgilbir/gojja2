@@ -1,0 +1,28 @@
+{
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "users": [
+    {
+      "name": "ana",
+      "age": 30,
+      "city": "Lisbon"
+    },
+    {
+      "name": "bo",
+      "age": 25,
+      "city": "Porto"
+    },
+    {
+      "name": "cy",
+      "age": 30,
+      "city": "Lisbon"
+    }
+  ]
+}
+---
+{{ seq|map('string')|list }}|{{ users|map(attribute='name')|list }}|{{ users|map(attribute='nope', default='?')|list }}

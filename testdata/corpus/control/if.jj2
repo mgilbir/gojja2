@@ -1,0 +1,6 @@
+{
+  "a": false,
+  "b": true
+}
+---
+{% if a %}A{% elif b %}B{% else %}C{% endif %}

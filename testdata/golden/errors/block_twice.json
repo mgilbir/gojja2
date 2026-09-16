@@ -1,0 +1,14 @@
+{
+  "case": "errors/block_twice.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateAssertionError",
+    "message": "block 'b' defined twice",
+    "lineno": 1,
+    "name": "errors/block_twice.jj2"
+  }
+}

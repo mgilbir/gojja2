@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc' is lower }}{{ 'ABC' is upper }}{{ 'Abc' is lower }}{{ '123' is upper }}

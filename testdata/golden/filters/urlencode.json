@@ -1,0 +1,9 @@
+{
+  "case": "filters/urlencode.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "a%20b/c%3Fd|a=1+2"
+}

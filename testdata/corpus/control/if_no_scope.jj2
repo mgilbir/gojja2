@@ -1,0 +1,3 @@
+{}
+---
+{% set x = 1 %}{% if true %}{% set x = 2 %}{% endif %}{{ x }}

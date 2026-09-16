@@ -1,0 +1,3 @@
+{}
+---
+{{ nope|default('d') }}|{{ ''|default('d') }}|{{ ''|default('d', true) }}|{{ 0|default('d', boolean=true) }}

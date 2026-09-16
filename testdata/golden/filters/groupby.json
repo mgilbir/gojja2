@@ -1,0 +1,9 @@
+{
+  "case": "filters/groupby.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "[('Lisbon', [{'name': 'ana', 'age': 30, 'city': 'Lisbon'}, {'name': 'cy', 'age': 30, 'city': 'Lisbon'}]), ('Porto', [{'name': 'bo', 'age': 25, 'city': 'Porto'}])]"
+}

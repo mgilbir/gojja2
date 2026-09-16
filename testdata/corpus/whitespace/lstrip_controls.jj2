@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "lstrip_blocks": true
+  }
+}
+---
+  
+  {{- 1 -}}  
+  {%- if true -%}  x  {%- endif -%}  

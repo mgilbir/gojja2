@@ -1,0 +1,9 @@
+{
+  "case": "subscript/slice_neg.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "[4, 5]|[1, 2, 3]|[2, 3, 4]|[5, 4, 3]"
+}

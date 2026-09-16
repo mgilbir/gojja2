@@ -1,0 +1,14 @@
+{
+  "case": "errors/syntax_unclosed.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateSyntaxError",
+    "message": "Unexpected end of template. Jinja was looking for the following tags: 'elif' or 'else' or 'endif'. The innermost block that needs to be closed is 'if'.",
+    "lineno": 1,
+    "name": "errors/syntax_unclosed.jj2"
+  }
+}

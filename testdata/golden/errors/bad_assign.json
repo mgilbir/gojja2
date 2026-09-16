@@ -1,0 +1,14 @@
+{
+  "case": "errors/bad_assign.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateSyntaxError",
+    "message": "can't assign to 'const'",
+    "lineno": 1,
+    "name": "errors/bad_assign.jj2"
+  }
+}

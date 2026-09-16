@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "trim_blocks": true
+  }
+}
+---
+{% if true +%}
+x{% endif %}

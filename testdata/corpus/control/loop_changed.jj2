@@ -1,0 +1,11 @@
+{
+  "xs": [
+    1,
+    1,
+    2,
+    2,
+    1
+  ]
+}
+---
+{% for x in xs %}{{ loop.changed(x) }}{% endfor %}

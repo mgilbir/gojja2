@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "v": "<i>"
+}
+---
+<b>{{ v }}</b>

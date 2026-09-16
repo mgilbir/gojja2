@@ -1,0 +1,9 @@
+{
+  "case": "subscript/attr_fallback.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "True|shadowed|True"
+}

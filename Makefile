@@ -60,6 +60,7 @@ clean-suites: ## Remove downloaded suites
 
 .PHONY: oracle
 oracle: venv ## Regenerate golden files for testdata/corpus from CPython jinja2
+	$(PY) tools/oracle/gen_corpus.py
 	$(PY) tools/oracle/oracle.py --corpus testdata/corpus --golden testdata/golden
 
 .PHONY: oracle-check

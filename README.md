@@ -36,9 +36,10 @@ at all -- silently.
 
 | corpus | cases | matching CPython jinja2 |
 |---|---|---|
+| gojja2's own (committed, with goldens) | 190 | 190 |
 | MiniJinja fixtures | 161 | 156 |
 | Jinja's own test suite (harvested templates) | 658 | 643 |
-| **total** | **819** | **799 (97.6%)** |
+| **total** | **1009** | **989 (98.0%)** |
 
 The 20 that differ are listed, with reasons, in `testdata/known_failures.txt`;
 a case on that list which starts passing fails the test, so the list can only
@@ -51,8 +52,9 @@ Underneath, the pieces are graded separately against the real thing: CPython's
 pool (20,665 cases), jinja2's own token stream (113 cases) and its own parse
 tree (100 cases).
 
-Run `make suites && make import` to fetch the reference corpora, then
-`make test`.
+The first corpus is committed with its goldens, so `go test ./...` grades
+against CPython's answers on a fresh checkout with no network and no Python.
+Run `make suites && make import` to add the other two.
 
 ## Scope
 

@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "do"
+    ]
+  }
+}
+---
+{% set l = [3,1,2] %}{{ l.index(1) }}{{ l.count(3) }}{% do l.append(4) %}{% do l.reverse() %}{{ l }}

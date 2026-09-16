@@ -1,0 +1,3 @@
+{}
+---
+{% macro m() %}{{ caller(1,2) }}{% endmacro %}{% call(a, b) m() %}{{a}}-{{b}}{% endcall %}

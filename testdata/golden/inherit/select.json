@@ -1,0 +1,12 @@
+{
+  "case": "inherit/select.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "unhashable type: 'list'"
+  }
+}

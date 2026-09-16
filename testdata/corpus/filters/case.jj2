@@ -1,0 +1,3 @@
+{}
+---
+{{ 'hello wOrld' | upper }}|{{ 'HELLO' | lower }}|{{ "foo's bar-baz" | title }}|{{ 'hELLO' | capitalize }}

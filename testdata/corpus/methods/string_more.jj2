@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a'.center(5,'*') }}|{{ '5'.zfill(3) }}|{{ 'a\nb'.splitlines() }}|{{ 'AbC'.swapcase() }}|{{ 'a{0}b{x}'.format(1, x=2) }}

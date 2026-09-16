@@ -1,0 +1,7 @@
+{
+  "d": {
+    "items": "shadowed"
+  }
+}
+---
+{{ d.items is callable }}|{{ d['items'] }}|{{ d|attr('items') is callable }}

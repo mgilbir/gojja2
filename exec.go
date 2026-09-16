@@ -438,7 +438,10 @@ func (ex *exec) execExtends(n *ast.Extends) error {
 	if ex.st.parent != nil {
 		return errs.New(errs.TemplateRuntimeError, "extended multiple times")
 	}
-	parent, err := ex.loadTemplateExpr(n.Template)
+	// extends resolves through get_template, not select_template, so a
+	// list of candidates is an unhashable cache key rather than a choice.
+	// include is the tag that accepts a list.
+	parent, err := ex.loadTemplateName(n.Template)
 	if err != nil {
 		return err
 	}
@@ -479,6 +482,21 @@ func (ex *exec) execInclude(n *ast.Include) error {
 	}
 	ex.out.WriteString(out)
 	return nil
+}
+
+// loadTemplateName resolves a single template name, refusing a list.
+func (ex *exec) loadTemplateName(e ast.Expr) (*Template, error) {
+	v, err := ex.eval(e)
+	if err != nil {
+		return nil, err
+	}
+	switch v.Kind() {
+	case value.KindList, value.KindDict:
+		return nil, errs.New(errs.TypeError, "unhashable type: '%s'", v.TypeName())
+	case value.KindUndefined:
+		return nil, v.UndefinedError()
+	}
+	return ex.st.env.GetTemplate(value.Str(v))
 }
 
 // loadTemplateExpr resolves the template named by an expression, which may be

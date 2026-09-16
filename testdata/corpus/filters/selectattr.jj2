@@ -1,0 +1,21 @@
+{
+  "users": [
+    {
+      "name": "ana",
+      "age": 30,
+      "city": "Lisbon"
+    },
+    {
+      "name": "bo",
+      "age": 25,
+      "city": "Porto"
+    },
+    {
+      "name": "cy",
+      "age": 30,
+      "city": "Lisbon"
+    }
+  ]
+}
+---
+{{ users|selectattr('age', 'eq', 30)|map(attribute='name')|list }}|{{ users|rejectattr('age', 'eq', 30)|map(attribute='name')|list }}

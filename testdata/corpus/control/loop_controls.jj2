@@ -1,0 +1,16 @@
+{
+  "__settings__": {
+    "extensions": [
+      "loopcontrols"
+    ]
+  },
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{% for x in seq %}{% if x == 2 %}{% continue %}{% endif %}{% if x == 4 %}{% break %}{% endif %}{{ x }}{% endfor %}

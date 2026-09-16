@@ -1,0 +1,9 @@
+{
+  "case": "escape/off.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "<b>&'\"|&lt;b&gt;&amp;&#39;&#34;|<b>&'\""
+}

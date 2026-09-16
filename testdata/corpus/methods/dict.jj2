@@ -1,0 +1,9 @@
+{
+  "map": {
+    "b": 2,
+    "a": 1,
+    "C": 3
+  }
+}
+---
+{{ map.keys()|list }}|{{ map.values()|list }}|{{ map.items()|list }}|{{ map.get('a') }}|{{ map.get('z', 'd') }}

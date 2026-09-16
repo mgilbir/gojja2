@@ -1,0 +1,3 @@
+{}
+---
+{{ nope is defined }}{{ nope is undefined }}{{ nope == nope }}{{ nope|default('d') }}

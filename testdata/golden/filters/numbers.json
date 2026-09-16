@@ -1,0 +1,9 @@
+{
+  "case": "filters/numbers.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "3|3|0|9|255|3.7|1.5"
+}

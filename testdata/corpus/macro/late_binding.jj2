@@ -1,0 +1,3 @@
+{}
+---
+{% macro m() %}{{ x|default('none') }}{% endmacro %}{% set x = 5 %}{{ m() }}

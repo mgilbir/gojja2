@@ -1,0 +1,9 @@
+{
+  "case": "control/loop_vars.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "1054TrueFalse5 2143FalseFalse5 3232FalseFalse5 4321FalseFalse5 5410FalseTrue5 "
+}

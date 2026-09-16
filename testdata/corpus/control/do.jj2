@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "do"
+    ]
+  }
+}
+---
+{% set l = [] %}{% do l.append(1) %}{% do l.append(2) %}{{ l }}

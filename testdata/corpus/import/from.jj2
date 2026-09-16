@@ -1,0 +1,8 @@
+{
+  "__templates__": {
+    "inc.html": "[{{ v|default('none') }}]",
+    "mac.html": "{% macro f(x) %}<{{x}}>{% endmacro %}{% set exported = 'E' %}"
+  }
+}
+---
+{% from 'mac.html' import f, f as g %}{{ f(1) }}{{ g(2) }}

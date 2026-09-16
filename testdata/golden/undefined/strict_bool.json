@@ -1,0 +1,12 @@
+{
+  "case": "undefined/strict_bool.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "UndefinedError",
+    "message": "'nope' is undefined"
+  }
+}

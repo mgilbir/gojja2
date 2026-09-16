@@ -1,0 +1,14 @@
+{
+  "case": "errors/loop_assign.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateAssertionError",
+    "message": "Can't assign to special loop variable in for-loop target",
+    "lineno": 1,
+    "name": "errors/loop_assign.jj2"
+  }
+}
