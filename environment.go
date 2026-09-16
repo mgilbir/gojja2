@@ -34,8 +34,8 @@ type Environment struct {
 	loader    Loader
 
 	undefined value.UndefinedBehavior
-	// autoescape decides per template name. nil means never.
-	autoescape func(name string) bool
+	// autoescape decides per template. nil means never.
+	autoescape AutoescapeFunc
 	// finalize post-processes every printed value.
 	finalize func(value.Value) value.Value
 
@@ -150,6 +150,16 @@ func WithNewlineSequence(seq string) Option {
 	return func(e *Environment) { e.syntax.NewlineSequence = seq }
 }
 
+// AutoescapeFunc decides whether a template autoescapes.
+//
+// fromString is true for a template compiled by [Environment.FromString], which
+// has no name to decide by; name is "" in that case. jinja2 passes None for
+// exactly that case and its select_autoescape escapes such templates by
+// default, so a policy that ignores fromString escapes less than jinja2 does.
+// Distinguishing it from a named template that happens to match nothing is the
+// whole point of the parameter.
+type AutoescapeFunc func(name string, fromString bool) bool
+
 // WithAutoescape turns HTML escaping on or off for every template.
 func WithAutoescape(on bool) Option {
 	return func(e *Environment) {
@@ -157,31 +167,113 @@ func WithAutoescape(on bool) Option {
 			e.autoescape = nil
 			return
 		}
-		e.autoescape = func(string) bool { return true }
+		e.autoescape = func(string, bool) bool { return true }
 	}
 }
 
-// WithAutoescapeFunc decides escaping per template name, the way jinja2's
+// WithAutoescapeFunc decides escaping per template, the way jinja2's
 // select_autoescape does.
-func WithAutoescapeFunc(fn func(name string) bool) Option {
+func WithAutoescapeFunc(fn AutoescapeFunc) Option {
 	return func(e *Environment) { e.autoescape = fn }
+}
+
+// SelectAutoescapeConfig mirrors the parameters of jinja2's select_autoescape.
+//
+// The zero value follows jinja2's own defaults, with one documented exception
+// noted on Enabled: the HTML and XML extensions escape, nothing is explicitly
+// disabled, a template compiled from a string escapes, and anything else does
+// not. That is deliberate -- every field here is written so that the quiet
+// reading is the safe one, and a caller has to say something explicit to
+// escape less.
+type SelectAutoescapeConfig struct {
+	// Enabled lists the extensions that turn escaping on. A leading dot is
+	// optional and case is ignored. Empty means html, htm, xml and xhtml.
+	//
+	// jinja2's default set omits xhtml. Keeping it is a deliberate
+	// divergence: the set only ever turns escaping *on*, so a superset is
+	// strictly safer, and narrowing it would make this package escape less
+	// than the version that shipped before. See docs/divergences.md.
+	Enabled []string
+	// Disabled lists extensions that turn escaping off. It is consulted
+	// after Enabled, so an extension in both escapes.
+	Disabled []string
+	// DisableForString turns escaping off for templates compiled from a
+	// string. The zero value leaves it on, which is jinja2's
+	// default_for_string=True.
+	DisableForString bool
+	// Default is what a template matching neither list gets.
+	Default bool
 }
 
 // SelectAutoescape escapes templates whose name ends in one of the given
 // extensions, and is the usual choice for a mixed HTML and text project.
-func SelectAutoescape(extensions ...string) func(string) bool {
-	if len(extensions) == 0 {
-		extensions = []string{".html", ".htm", ".xml", ".xhtml"}
+//
+// Matching ignores case on both sides and a leading dot is optional, so
+// ".HTML", ".html" and "html" all select the same templates. jinja2 does the
+// same, and documents the case-insensitivity as a security property: an
+// extension list that is merely spelled unexpectedly must not silently turn
+// escaping off.
+//
+// Templates compiled from a string are escaped, as jinja2's
+// default_for_string does. Use [SelectAutoescapeWith] for the full set of
+// knobs.
+func SelectAutoescape(extensions ...string) AutoescapeFunc {
+	return SelectAutoescapeWith(SelectAutoescapeConfig{Enabled: extensions})
+}
+
+// defaultAutoescapeExtensions is what an empty Enabled means. See the note on
+// SelectAutoescapeConfig.Enabled for why xhtml is here and not in jinja2's.
+var defaultAutoescapeExtensions = []string{"html", "htm", "xml", "xhtml"}
+
+// SelectAutoescapeWith is [SelectAutoescape] with every parameter jinja2's
+// select_autoescape takes.
+func SelectAutoescapeWith(cfg SelectAutoescapeConfig) AutoescapeFunc {
+	enabled := cfg.Enabled
+	if len(enabled) == 0 {
+		enabled = defaultAutoescapeExtensions
 	}
-	return func(name string) bool {
-		lower := strings.ToLower(name)
-		for _, ext := range extensions {
-			if strings.HasSuffix(lower, ext) {
-				return true
-			}
+	enabledPatterns := normalizeExtensions(enabled)
+	disabledPatterns := normalizeExtensions(cfg.Disabled)
+	escapeStrings := !cfg.DisableForString
+
+	return func(name string, fromString bool) bool {
+		if fromString {
+			return escapeStrings
 		}
-		return false
+		lower := strings.ToLower(name)
+		if hasAnySuffix(lower, enabledPatterns) {
+			return true
+		}
+		if hasAnySuffix(lower, disabledPatterns) {
+			return false
+		}
+		return cfg.Default
 	}
+}
+
+// normalizeExtensions renders each extension as jinja2 does -- lower-cased and
+// carrying exactly one leading dot -- so that matching happens on an extension
+// boundary rather than on any trailing substring. Without the dot, "tml" would
+// select "page.html".
+func normalizeExtensions(extensions []string) []string {
+	out := make([]string, 0, len(extensions))
+	for _, ext := range extensions {
+		trimmed := strings.TrimLeft(ext, ".")
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, "."+strings.ToLower(trimmed))
+	}
+	return out
+}
+
+func hasAnySuffix(name string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if strings.HasSuffix(name, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // WithUndefined selects the Undefined behaviour for missing values.
@@ -260,21 +352,22 @@ func (e *Environment) AddGlobal(name string, v value.Value) { e.globals[name] = 
 // Globals returns the registered globals. The map must not be mutated.
 func (e *Environment) Globals() map[string]value.Value { return e.globals }
 
-// escapes reports whether a template of the given name is autoescaped.
-func (e *Environment) escapes(name string) bool {
-	return e.autoescape != nil && e.autoescape(name)
+// escapes reports whether a template is autoescaped. fromString marks one
+// compiled by FromString, which has no name for the policy to decide by.
+func (e *Environment) escapes(name string, fromString bool) bool {
+	return e.autoescape != nil && e.autoescape(name, fromString)
 }
 
 // FromString compiles a template that has no name, and so cannot be the target
 // of extends or include.
 func (e *Environment) FromString(source string) (*Template, error) {
-	return e.compile(source, "")
+	return e.compile(source, "", true)
 }
 
 // FromNamedString compiles a template under a name, which decides autoescaping
 // and appears in error messages.
 func (e *Environment) FromNamedString(name, source string) (*Template, error) {
-	return e.compile(source, name)
+	return e.compile(source, name, false)
 }
 
 // GetTemplate loads and compiles a template by name, caching the result.
@@ -293,7 +386,7 @@ func (e *Environment) GetTemplate(name string) (*Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err = e.compile(source, name)
+	tmpl, err = e.compile(source, name, false)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +437,7 @@ func (e *Environment) selectTemplateValues(names []value.Value) (*Template, erro
 		"none of the templates given were found: %s", strings.Join(parts, ", "))
 }
 
-func (e *Environment) compile(source, name string) (*Template, error) {
+func (e *Environment) compile(source, name string, fromString bool) (*Template, error) {
 	tree, err := parser.Parse(e.syntax, e.parseOpts, source, name)
 	if err != nil {
 		return nil, err
@@ -352,7 +445,7 @@ func (e *Environment) compile(source, name string) (*Template, error) {
 	// Order matters: the general fold runs first, as jinja2's optimizer
 	// does, and the print-specific one then catches the undefined results
 	// the optimizer refuses to turn into constants.
-	folder := newConstEvaluator(e, name)
+	folder := newConstEvaluator(e, name, fromString)
 	foldConstantExpressions(folder, tree.Body)
 	foldConstantPrints(folder, tree.Body)
 	if err := e.checkDependencies(tree.Body, name, source); err != nil {
@@ -363,11 +456,12 @@ func (e *Environment) compile(source, name string) (*Template, error) {
 		return nil, err
 	}
 	return &Template{
-		env:    e,
-		name:   name,
-		source: source,
-		tree:   tree,
-		blocks: blocks,
+		env:        e,
+		name:       name,
+		fromString: fromString,
+		source:     source,
+		tree:       tree,
+		blocks:     blocks,
 	}, nil
 }
 

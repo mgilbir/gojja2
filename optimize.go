@@ -501,8 +501,8 @@ type constEvaluator struct {
 }
 
 // newConstEvaluator builds an evaluator for a template being compiled.
-func newConstEvaluator(env *Environment, name string) *constEvaluator {
-	placeholder := &Template{env: env, name: name}
+func newConstEvaluator(env *Environment, name string, fromString bool) *constEvaluator {
+	placeholder := &Template{env: env, name: name, fromString: fromString}
 	globals := &scope{vars: env.globals}
 	st := &State{
 		env:        env,
@@ -511,7 +511,7 @@ func newConstEvaluator(env *Environment, name string) *constEvaluator {
 		globals:    globals,
 		ctx:        newScope(globals),
 		blocks:     map[string][]blockEntry{},
-		autoescape: env.escapes(name),
+		autoescape: env.escapes(name, fromString),
 	}
 	return &constEvaluator{env: env, st: st}
 }
