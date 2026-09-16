@@ -1,0 +1,38 @@
+name: Revoke CI approval
+
+# The `safe-to-test` label releases a fork pull request into CI. A label is
+# attached to the pull request, not to a commit, so on its own it keeps
+# applying after new commits arrive -- which is the well-known hole in
+# label-based gating: get the label on a harmless diff, then push whatever you
+# like and CI runs it. This removes the label whenever the branch moves, so the
+# approval always refers to code someone actually read.
+on:
+  pull_request_target:
+    types: [synchronize]
+
+# pull_request_target runs in the context of the base repository, so it has a
+# writable token even for a fork. That combination is only safe because this
+# workflow never checks out, builds or executes the pull request's code: it
+# calls one API and exits. Do not add a checkout step here.
+permissions:
+  pull-requests: write
+
+jobs:
+  revoke:
+    # Nothing to revoke for a branch in this repository, which was trusted
+    # without a label in the first place.
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove safe-to-test
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # 404 is the normal case: the label was not applied.
+          gh api --method DELETE \
+            "repos/$REPO/issues/$NUMBER/labels/safe-to-test" \
+            --silent 2>/dev/null \
+            && echo "Approval revoked: new commits need a fresh review." \
+            || echo "No approval to revoke."

@@ -5,15 +5,78 @@ name: CI
 # relies on -- that a known failure which starts passing fails the build -- held
 # only when someone remembered. It did drift.
 on:
+  # Every commit that reaches main is built, whatever put it there. A pull
+  # request is checked before merging, but that is not the same guarantee: the
+  # first stack merge into this repository landed eleven commits without firing
+  # a single run, because a push made by GitHub's own merge machinery does not
+  # trigger workflows. Only a push event says what is actually on main.
   push:
     branches: [main]
   pull_request:
+  # A safety net for the case above: if a merge lands without a run, this
+  # notices within the day rather than at the next unrelated push.
+  schedule:
+    - cron: "17 5 * * *"
+  # So a run can be asked for without an empty commit.
+  workflow_dispatch:
 
+# Read-only by default. Nothing here needs to write, and a fork pull request
+# gets no secrets and no write token regardless -- this makes that explicit
+# rather than relying on the repository setting staying where it is.
 permissions:
   contents: read
 
+concurrency:
+  # One run per branch or pull request; a new push cancels the previous run,
+  # except on main, where every commit's result is worth having.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
+  # Untrusted code does not run until somebody has looked at it.
+  #
+  # GitHub's own "require approval for outside collaborators" setting is the
+  # right mechanism, and it cannot be used here: the API refuses it for a
+  # private repository ("Fork PR approval is not allowed for private
+  # repositories"). This gate does the same job in the workflow, so it holds
+  # now and keeps holding if the repository is made public -- at which point
+  # the native setting should be turned on as well, and this becomes a second
+  # lock on the same door.
+  #
+  # A pull request from a branch in this repository needs write access to
+  # create, so it is trusted. One from a fork is not, until a maintainer adds
+  # the `safe-to-test` label -- which also takes write access.
+  authorize:
+    runs-on: ubuntu-latest
+    outputs:
+      trusted: ${{ steps.decide.outputs.trusted }}
+    steps:
+      - id: decide
+        # The decision is made entirely in an Actions expression. Nothing
+        # attacker-controlled -- a branch name, a title, an author -- is
+        # interpolated into a shell command, because that is how a fork pull
+        # request turns "we only read your code" into "we ran your code".
+        env:
+          TRUSTED: ${{ github.event_name != 'pull_request'
+            || github.event.pull_request.head.repo.full_name == github.repository
+            || contains(github.event.pull_request.labels.*.name, 'safe-to-test') }}
+        run: |
+          echo "trusted=$TRUSTED" >> "$GITHUB_OUTPUT"
+          if [ "$TRUSTED" = "true" ]; then
+            echo "Trusted source; running the full check." >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Waiting for approval"
+              echo
+              echo "This pull request comes from a fork, so CI has not run."
+              echo "A maintainer who has reviewed the diff can add the"
+              echo '`safe-to-test` label to release it.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   check:
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -54,6 +117,8 @@ jobs:
         run: go test -race ./...
 
   lint:
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
