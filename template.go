@@ -17,11 +17,16 @@ import (
 
 // Template is a compiled template.
 type Template struct {
-	env    *Environment
-	name   string
-	source string
-	tree   *ast.Template
-	blocks map[string]*ast.Block
+	env  *Environment
+	name string
+	// fromString marks a template compiled by Environment.FromString, which
+	// has no name. The autoescape policy needs to tell that apart from a
+	// named template whose name matches nothing: jinja2 passes None for the
+	// first and escapes it by default.
+	fromString bool
+	source     string
+	tree       *ast.Template
+	blocks     map[string]*ast.Block
 }
 
 // Name returns the template's name, empty for one compiled from a string.
@@ -225,7 +230,7 @@ func (t *Template) newState(vars map[string]value.Value) *State {
 		ctx:         ctx,
 		contextVars: arguments,
 		blocks:      blocks,
-		autoescape:  t.env.escapes(t.name),
+		autoescape:  t.env.escapes(t.name, t.fromString),
 	}
 	declareFrameLocals(ctx, st, t.tree.Body)
 	return st

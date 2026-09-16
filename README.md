@@ -27,6 +27,13 @@ fields (by name or by `json` tag) and their nullary methods, slices become
 lists, and maps become dicts. Errors carry the Python exception class jinja2
 would have raised, so `errors.Is(err, errs.UndefinedError)` works.
 
+`SelectAutoescape` follows jinja2's `select_autoescape`: matching ignores case
+and a leading dot is optional, and a template compiled with `FromString` is
+escaped -- it has no name to decide by, and defaulting it to *unescaped* is how
+an escaped-by-configuration project ends up emitting raw user input.
+`SelectAutoescapeWith` takes the disabled-extension and default settings as
+well.
+
 Every render takes a `context.Context` and stops when it is cancelled. Behind
 it, a render is bounded by default to ten million loop iterations and 256 MiB
 of output, so an attacker-supplied template cannot spend the process; see

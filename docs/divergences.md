@@ -185,6 +185,29 @@ Like the nesting bound, this is a safety control rather than a behavioural
 choice, which is why the errors have no CPython counterpart. Asserted by the
 tests in `limits_test.go`.
 
+## The default autoescape extension set
+
+```go
+gojja2.SelectAutoescape()        // html, htm, xml, xhtml
+```
+
+jinja2's `select_autoescape()` defaults to `html, htm, xml`. gojja2 adds
+`xhtml`.
+
+The extension set only ever turns escaping *on* -- a name matching nothing
+falls through to `Default`, which is `false` -- so a superset is strictly safer
+than jinja2's, and it is what gojja2 shipped before the set was normalised.
+Narrowing it to match would make this package escape less than it used to, which
+is the wrong direction for the one setting whose failure mode is cross-site
+scripting.
+
+Everything else about the policy follows jinja2 exactly, including the parts
+that are easy to get wrong: matching ignores case on both the template name and
+the configured extensions, a leading dot is optional, matching happens on a
+whole extension rather than on any trailing substring, and a template compiled
+from a string is escaped by default (jinja2's `default_for_string=True`).
+Asserted by the tests in `autoescape_test.go`.
+
 ## Identifier characters
 
 jinja2 matches names against a table generated from Python's `str.isidentifier`.
