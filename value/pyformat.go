@@ -374,8 +374,8 @@ func (c *conversion) integerArg(v Value) (any, error) {
 			return nil, errs.New(errs.OverflowError, "cannot convert float infinity to integer")
 		}
 		t := math.Trunc(f)
-		if t >= math.MinInt64 && t <= math.MaxInt64 {
-			return int64(t), nil
+		if n, ok := FloatToInt64(t); ok {
+			return n, nil
 		}
 		b, _ := big.NewFloat(t).Int(nil)
 		return b, nil

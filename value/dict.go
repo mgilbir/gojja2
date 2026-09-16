@@ -236,8 +236,8 @@ func hashFloat(f float64) hashKey {
 	if math.IsInf(f, 0) || math.IsNaN(f) || f != math.Trunc(f) {
 		return hashKey{kind: KindFloat, flt: f}
 	}
-	if f >= math.MinInt64 && f <= math.MaxInt64 {
-		return hashKey{kind: KindInt, num: int64(f)}
+	if n, ok := FloatToInt64(f); ok {
+		return hashKey{kind: KindInt, num: n}
 	}
 	bi, _ := big.NewFloat(f).Int(nil)
 	return hashKey{kind: KindInt, str: bi.String()}

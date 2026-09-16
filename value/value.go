@@ -121,6 +121,22 @@ func BigInt(i *big.Int) Value {
 	return Value{kind: KindInt, obj: i}
 }
 
+// maxInt64AsFloat is 2**63, the first float64 above math.MaxInt64.
+//
+// The obvious bound is wrong: math.MaxInt64 is not representable as a float64
+// and converts *up* to 2**63, so `f <= math.MaxInt64` admits exactly the one
+// value whose int64 conversion overflows -- which is how
+// `{{ 9223372036854775808|round(0, "ceil")|int }}` came out negative.
+const maxInt64AsFloat = 9223372036854775808.0
+
+// FloatToInt64 converts a float to an int64, reporting whether it fits.
+func FloatToInt64(f float64) (int64, bool) {
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < -maxInt64AsFloat || f >= maxInt64AsFloat {
+		return 0, false
+	}
+	return int64(f), true
+}
+
 // Float returns a Python float.
 func Float(f float64) Value { return Value{kind: KindFloat, num: math.Float64bits(f)} }
 

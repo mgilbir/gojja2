@@ -1071,8 +1071,8 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 			return def, nil
 		}
 		t := math.Trunc(f)
-		if t >= math.MinInt64 && t <= math.MaxInt64 {
-			return value.Int(int64(t)), nil
+		if n, ok := value.FloatToInt64(t); ok {
+			return value.Int(n), nil
 		}
 		b, _ := big.NewFloat(t).Int(nil)
 		return value.BigInt(b), nil

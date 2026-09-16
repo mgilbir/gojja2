@@ -118,7 +118,9 @@ func compare(op string, a, b Value) (int, bool, error) {
 		return 0, false, b.UndefinedError()
 	}
 	// A tuple subclass orders as the tuple it stands for, so |min and |max
-	// over |groupby results compare pair by pair.
+	// over |groupby results compare pair by pair. The originals are kept
+	// for the error, which names the class the template actually has.
+	origA, origB := a, b
 	a, b = asTupleIfPossible(a), asTupleIfPossible(b)
 
 	if a.IsNumber() && b.IsNumber() {
@@ -137,7 +139,7 @@ func compare(op string, a, b Value) (int, bool, error) {
 	}
 	return 0, false, errs.New(errs.TypeError,
 		"'%s' not supported between instances of '%s' and '%s'",
-		op, a.TypeName(), b.TypeName())
+		op, origA.TypeName(), origB.TypeName())
 }
 
 // asTupleIfPossible unwraps an Object that stands for a tuple.
