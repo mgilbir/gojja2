@@ -1,0 +1,827 @@
+// Copyright 2026 The gojja2 Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package gojja2
+
+import (
+	"strings"
+	"unicode"
+
+	"github.com/mgilbir/gojja2/errs"
+	"github.com/mgilbir/gojja2/value"
+)
+
+// jinja2 exposes real Python objects, so templates reach their methods
+// directly: `d.items()`, `s.upper()`, `l.append(x)`. These are the ones
+// templates actually use; anything missing shows up as an undefined attribute
+// rather than as silently wrong output.
+
+// builtinMethod resolves a method on a built-in type, returning it bound.
+func builtinMethod(recv value.Value, name string) (value.Value, bool) {
+	var table map[string]func(value.Value, *value.CallArgs) (value.Value, error)
+	switch recv.Kind() {
+	case value.KindString:
+		table = stringMethods
+	case value.KindDict:
+		table = dictMethods
+	case value.KindList:
+		table = listMethods
+	case value.KindTuple:
+		table = tupleMethods
+	default:
+		return value.Undefined, false
+	}
+	fn, ok := table[name]
+	if !ok {
+		return value.Undefined, false
+	}
+	return Func(name, func(args *value.CallArgs) (value.Value, error) {
+		return fn(recv, args)
+	}), true
+}
+
+// arg reads a positional or named argument.
+func arg(args *value.CallArgs, i int, name string) (value.Value, bool) {
+	if v, ok := args.Arg(i); ok {
+		return v, true
+	}
+	if name != "" {
+		return args.Kwarg(name)
+	}
+	return value.Undefined, false
+}
+
+func strArg(args *value.CallArgs, i int, name, method string) (string, error) {
+	v, ok := arg(args, i, name)
+	if !ok {
+		return "", errs.New(errs.TypeError, "%s() missing required argument", method)
+	}
+	if v.Kind() != value.KindString {
+		return "", errs.New(errs.TypeError,
+			"%s() argument must be str, not %s", method, v.TypeName())
+	}
+	return v.AsString(), nil
+}
+
+func intArg(args *value.CallArgs, i int, name string, def int) (int, error) {
+	v, ok := arg(args, i, name)
+	if !ok || v.IsNone() {
+		return def, nil
+	}
+	n, fits := v.Int64()
+	if !fits {
+		return 0, errs.New(errs.TypeError, "expected an integer, not %s", v.TypeName())
+	}
+	return int(n), nil
+}
+
+// --- string methods ----------------------------------------------------------
+
+var stringMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
+	"upper": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.String(strings.ToUpper(r.AsString())), nil
+	},
+	"lower": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.String(strings.ToLower(r.AsString())), nil
+	},
+	"title": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.String(pythonTitle(r.AsString())), nil
+	},
+	"capitalize": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.String(pythonCapitalize(r.AsString())), nil
+	},
+	"swapcase": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.String(swapCase(r.AsString())), nil
+	},
+	"casefold": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.String(strings.ToLower(r.AsString())), nil
+	},
+
+	"strip":  trimMethod(strings.Trim, strings.TrimFunc),
+	"lstrip": trimMethod(strings.TrimLeft, strings.TrimLeftFunc),
+	"rstrip": trimMethod(strings.TrimRight, strings.TrimRightFunc),
+
+	"split":      splitMethod(false),
+	"rsplit":     splitMethod(true),
+	"splitlines": methodSplitlines,
+	"join":       methodJoin,
+	"replace":    methodReplace,
+	"startswith": affixMethod(strings.HasPrefix),
+	"endswith":   affixMethod(strings.HasSuffix),
+	"count":      methodStrCount,
+	"find":       findMethod(strings.Index),
+	"rfind":      findMethod(strings.LastIndex),
+	"index":      indexMethod(strings.Index, "index"),
+	"rindex":     indexMethod(strings.LastIndex, "rindex"),
+	"format":     methodFormat,
+	"zfill":      methodZfill,
+	"ljust":      padMethod(padLeftAligned),
+	"rjust":      padMethod(padRightAligned),
+	"center":     padMethod(padCentered),
+	"encode": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.Bytes([]byte(r.AsString())), nil
+	},
+
+	"isdigit": classifyMethod(unicode.IsDigit),
+	"isalpha": classifyMethod(unicode.IsLetter),
+	"isalnum": classifyMethod(func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }),
+	"isspace": classifyMethod(unicode.IsSpace),
+	"isupper": caseMethod(unicode.IsUpper, unicode.IsLower),
+	"islower": caseMethod(unicode.IsLower, unicode.IsUpper),
+}
+
+func trimMethod(withCutset func(string, string) string, withFunc func(string, func(rune) bool) string) func(value.Value, *value.CallArgs) (value.Value, error) {
+	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+		if v, ok := arg(args, 0, "chars"); ok && !v.IsNone() {
+			if v.Kind() != value.KindString {
+				return value.Undefined, errs.New(errs.TypeError,
+					"strip argument must be str or None, not %s", v.TypeName())
+			}
+			return value.String(withCutset(r.AsString(), v.AsString())), nil
+		}
+		return value.String(withFunc(r.AsString(), unicode.IsSpace)), nil
+	}
+}
+
+// splitMethod implements str.split and str.rsplit.
+//
+// Splitting on no separator is not splitting on " ": Python collapses runs of
+// whitespace and drops leading and trailing empties, which is why
+// `" a  b ".split()` has two elements and `" a  b ".split(" ")` has five.
+func splitMethod(fromRight bool) func(value.Value, *value.CallArgs) (value.Value, error) {
+	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+		limit, err := intArg(args, 1, "maxsplit", -1)
+		if err != nil {
+			return value.Undefined, err
+		}
+		sep, hasSep := arg(args, 0, "sep")
+
+		var parts []string
+		if !hasSep || sep.IsNone() {
+			parts = strings.FieldsFunc(r.AsString(), unicode.IsSpace)
+			if limit >= 0 && len(parts) > limit+1 {
+				parts = rejoinTail(r.AsString(), parts, limit, fromRight)
+			}
+		} else {
+			if sep.Kind() != value.KindString {
+				return value.Undefined, errs.New(errs.TypeError,
+					"must be str or None, not %s", sep.TypeName())
+			}
+			if sep.AsString() == "" {
+				return value.Undefined, errs.New(errs.ValueError, "empty separator")
+			}
+			n := -1
+			if limit >= 0 {
+				n = limit + 1
+			}
+			if fromRight && n > 0 {
+				parts = splitRightN(r.AsString(), sep.AsString(), n)
+			} else {
+				parts = strings.SplitN(r.AsString(), sep.AsString(), n)
+			}
+		}
+
+		items := make([]value.Value, len(parts))
+		for i, p := range parts {
+			items[i] = value.String(p)
+		}
+		return value.NewList(items...), nil
+	}
+}
+
+// rejoinTail re-merges the parts beyond a whitespace split's maxsplit, keeping
+// the original spacing of the remainder.
+func rejoinTail(src string, parts []string, limit int, fromRight bool) []string {
+	if fromRight {
+		keep := parts[len(parts)-limit:]
+		head := strings.TrimRightFunc(src, unicode.IsSpace)
+		for _, p := range keep {
+			head = head[:strings.LastIndex(head, p)]
+		}
+		return append([]string{strings.TrimRightFunc(head, unicode.IsSpace)}, keep...)
+	}
+	keep := parts[:limit]
+	rest := strings.TrimLeftFunc(src, unicode.IsSpace)
+	for _, p := range keep {
+		rest = rest[strings.Index(rest, p)+len(p):]
+	}
+	return append(keep, strings.TrimLeftFunc(rest, unicode.IsSpace))
+}
+
+func splitRightN(s, sep string, n int) []string {
+	all := strings.Split(s, sep)
+	if len(all) <= n {
+		return all
+	}
+	head := strings.Join(all[:len(all)-n+1], sep)
+	return append([]string{head}, all[len(all)-n+1:]...)
+}
+
+func methodSplitlines(r value.Value, args *value.CallArgs) (value.Value, error) {
+	keepEnds := false
+	if v, ok := arg(args, 0, "keepends"); ok {
+		ok, err := value.IsTrue(v)
+		if err != nil {
+			return value.Undefined, err
+		}
+		keepEnds = ok
+	}
+	s := r.AsString()
+	var items []value.Value
+	for len(s) > 0 {
+		i := strings.IndexAny(s, "\n\r")
+		if i < 0 {
+			items = append(items, value.String(s))
+			break
+		}
+		end := i + 1
+		if s[i] == '\r' && end < len(s) && s[end] == '\n' {
+			end++
+		}
+		if keepEnds {
+			items = append(items, value.String(s[:end]))
+		} else {
+			items = append(items, value.String(s[:i]))
+		}
+		s = s[end:]
+	}
+	return value.NewList(items...), nil
+}
+
+func methodJoin(r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, ok := arg(args, 0, "iterable")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError, "join() takes exactly one argument")
+	}
+	seq, err := value.Iterate(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	var parts []string
+	for item := range seq {
+		if item.Kind() != value.KindString {
+			return value.Undefined, errs.New(errs.TypeError,
+				"sequence item %d: expected str instance, %s found",
+				len(parts), item.TypeName())
+		}
+		parts = append(parts, item.AsString())
+	}
+	return value.String(strings.Join(parts, r.AsString())), nil
+}
+
+func methodReplace(r value.Value, args *value.CallArgs) (value.Value, error) {
+	old, err := strArg(args, 0, "old", "replace")
+	if err != nil {
+		return value.Undefined, err
+	}
+	new, err := strArg(args, 1, "new", "replace")
+	if err != nil {
+		return value.Undefined, err
+	}
+	count, err := intArg(args, 2, "count", -1)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.String(strings.Replace(r.AsString(), old, new, count)), nil
+}
+
+// affixMethod implements startswith and endswith, which accept a tuple of
+// candidates as well as a single string.
+func affixMethod(match func(string, string) bool) func(value.Value, *value.CallArgs) (value.Value, error) {
+	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+		v, ok := arg(args, 0, "prefix")
+		if !ok {
+			return value.Undefined, errs.New(errs.TypeError, "missing required argument")
+		}
+		if s, ok := v.Seq(); ok && v.Kind() == value.KindTuple {
+			for _, cand := range s.Items() {
+				if cand.Kind() == value.KindString && match(r.AsString(), cand.AsString()) {
+					return value.True, nil
+				}
+			}
+			return value.False, nil
+		}
+		if v.Kind() != value.KindString {
+			return value.Undefined, errs.New(errs.TypeError,
+				"argument must be str or a tuple of str, not %s", v.TypeName())
+		}
+		return value.Bool(match(r.AsString(), v.AsString())), nil
+	}
+}
+
+func methodStrCount(r value.Value, args *value.CallArgs) (value.Value, error) {
+	sub, err := strArg(args, 0, "sub", "count")
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.Int(int64(strings.Count(r.AsString(), sub))), nil
+}
+
+// findMethod returns a code-point index, or -1, the way str.find does.
+func findMethod(search func(string, string) int) func(value.Value, *value.CallArgs) (value.Value, error) {
+	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+		sub, err := strArg(args, 0, "sub", "find")
+		if err != nil {
+			return value.Undefined, err
+		}
+		at := search(r.AsString(), sub)
+		if at < 0 {
+			return value.Int(-1), nil
+		}
+		return value.Int(int64(value.StrLen(r.AsString()[:at]))), nil
+	}
+}
+
+func indexMethod(search func(string, string) int, name string) func(value.Value, *value.CallArgs) (value.Value, error) {
+	find := findMethod(search)
+	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+		v, err := find(r, args)
+		if err != nil {
+			return value.Undefined, err
+		}
+		if i, _ := v.Int64(); i < 0 {
+			return value.Undefined, errs.New(errs.ValueError, "substring not found")
+		}
+		return v, nil
+	}
+}
+
+// methodFormat implements str.format for the positional and named forms
+// templates use. Format specs beyond a bare field name are not supported.
+func methodFormat(r value.Value, args *value.CallArgs) (value.Value, error) {
+	var b strings.Builder
+	s := r.AsString()
+	auto := 0
+	for i := 0; i < len(s); {
+		switch {
+		case strings.HasPrefix(s[i:], "{{"):
+			b.WriteByte('{')
+			i += 2
+		case strings.HasPrefix(s[i:], "}}"):
+			b.WriteByte('}')
+			i += 2
+		case s[i] == '{':
+			end := strings.IndexByte(s[i:], '}')
+			if end < 0 {
+				return value.Undefined, errs.New(errs.ValueError,
+					"Single '{' encountered in format string")
+			}
+			field := s[i+1 : i+end]
+			i += end + 1
+			v, err := resolveFormatField(field, args, &auto)
+			if err != nil {
+				return value.Undefined, err
+			}
+			b.WriteString(value.Str(v))
+		case s[i] == '}':
+			return value.Undefined, errs.New(errs.ValueError,
+				"Single '}' encountered in format string")
+		default:
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return value.String(b.String()), nil
+}
+
+func resolveFormatField(field string, args *value.CallArgs, auto *int) (value.Value, error) {
+	name, _, _ := strings.Cut(field, "!")
+	name, _, _ = strings.Cut(name, ":")
+	switch {
+	case name == "":
+		v, ok := args.Arg(*auto)
+		*auto++
+		if !ok {
+			return value.Undefined, errs.New(errs.IndexError,
+				"Replacement index %d out of range for positional args tuple", *auto-1)
+		}
+		return v, nil
+	case isAllDigits(name):
+		i := 0
+		for _, c := range name {
+			i = i*10 + int(c-'0')
+		}
+		v, ok := args.Arg(i)
+		if !ok {
+			return value.Undefined, errs.New(errs.IndexError,
+				"Replacement index %d out of range for positional args tuple", i)
+		}
+		return v, nil
+	default:
+		v, ok := args.Kwarg(name)
+		if !ok {
+			return value.Undefined, errs.New(errs.KeyError,
+				"%s", value.Repr(value.String(name)))
+		}
+		return v, nil
+	}
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func methodZfill(r value.Value, args *value.CallArgs) (value.Value, error) {
+	width, err := intArg(args, 0, "width", 0)
+	if err != nil {
+		return value.Undefined, err
+	}
+	s := r.AsString()
+	n := value.StrLen(s)
+	if n >= width {
+		return value.String(s), nil
+	}
+	sign := ""
+	if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "+") {
+		sign, s = s[:1], s[1:]
+	}
+	return value.String(sign + strings.Repeat("0", width-n) + s), nil
+}
+
+type padAlign int
+
+const (
+	padLeftAligned padAlign = iota
+	padRightAligned
+	padCentered
+)
+
+func padMethod(align padAlign) func(value.Value, *value.CallArgs) (value.Value, error) {
+	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+		width, err := intArg(args, 0, "width", 0)
+		if err != nil {
+			return value.Undefined, err
+		}
+		fill := " "
+		if v, ok := arg(args, 1, "fillchar"); ok && v.Kind() == value.KindString {
+			fill = v.AsString()
+		}
+		return value.String(pad(r.AsString(), width, fill, align)), nil
+	}
+}
+
+func pad(s string, width int, fill string, align padAlign) string {
+	missing := width - value.StrLen(s)
+	if missing <= 0 {
+		return s
+	}
+	switch align {
+	case padLeftAligned:
+		return s + strings.Repeat(fill, missing)
+	case padRightAligned:
+		return strings.Repeat(fill, missing) + s
+	default:
+		left := missing / 2
+		// Python's str.center puts the odd character on the right.
+		return strings.Repeat(fill, left) + s + strings.Repeat(fill, missing-left)
+	}
+}
+
+func classifyMethod(pred func(rune) bool) func(value.Value, *value.CallArgs) (value.Value, error) {
+	return func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		s := r.AsString()
+		if s == "" {
+			return value.False, nil
+		}
+		for _, c := range s {
+			if !pred(c) {
+				return value.False, nil
+			}
+		}
+		return value.True, nil
+	}
+}
+
+// caseMethod implements isupper and islower: at least one cased character, and
+// no character of the opposite case.
+func caseMethod(want, other func(rune) bool) func(value.Value, *value.CallArgs) (value.Value, error) {
+	return func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		seen := false
+		for _, c := range r.AsString() {
+			if other(c) {
+				return value.False, nil
+			}
+			if want(c) {
+				seen = true
+			}
+		}
+		return value.Bool(seen), nil
+	}
+}
+
+// pythonTitle uppercases the first letter of each run of letters, so
+// "hello world's" becomes "Hello World'S" exactly as Python does.
+func pythonTitle(s string) string {
+	var b strings.Builder
+	inWord := false
+	for _, r := range s {
+		isLetter := unicode.IsLetter(r) || unicode.IsDigit(r)
+		switch {
+		case !isLetter:
+			b.WriteRune(r)
+			inWord = false
+		case inWord:
+			b.WriteRune(unicode.ToLower(r))
+		default:
+			b.WriteRune(unicode.ToUpper(r))
+			inWord = true
+		}
+	}
+	return b.String()
+}
+
+func pythonCapitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	runes := []rune(s)
+	out := make([]rune, len(runes))
+	out[0] = unicode.ToUpper(runes[0])
+	for i := 1; i < len(runes); i++ {
+		out[i] = unicode.ToLower(runes[i])
+	}
+	return string(out)
+}
+
+func swapCase(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsUpper(r):
+			return unicode.ToLower(r)
+		case unicode.IsLower(r):
+			return unicode.ToUpper(r)
+		}
+		return r
+	}, s)
+}
+
+// --- dict methods ------------------------------------------------------------
+
+var dictMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
+	"keys": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		d, _ := r.Dict()
+		return value.NewList(d.Keys()...), nil
+	},
+	"values": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		d, _ := r.Dict()
+		return value.NewList(d.Values()...), nil
+	},
+	"items":      methodDictItems,
+	"get":        methodDictGet,
+	"pop":        methodDictPop,
+	"update":     methodDictUpdate,
+	"copy":       func(r value.Value, _ *value.CallArgs) (value.Value, error) { d, _ := r.Dict(); return d.Clone(), nil },
+	"clear":      methodDictClear,
+	"setdefault": methodDictSetdefault,
+}
+
+func methodDictItems(r value.Value, _ *value.CallArgs) (value.Value, error) {
+	d, _ := r.Dict()
+	items := make([]value.Value, 0, d.Len())
+	for _, e := range d.Entries() {
+		items = append(items, value.NewTuple(e.Key, e.Value))
+	}
+	return value.NewList(items...), nil
+}
+
+func methodDictGet(r value.Value, args *value.CallArgs) (value.Value, error) {
+	d, _ := r.Dict()
+	key, ok := arg(args, 0, "key")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError, "get expected at least 1 argument")
+	}
+	v, found, err := d.Get(key)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if found {
+		return v, nil
+	}
+	if def, ok := arg(args, 1, "default"); ok {
+		return def, nil
+	}
+	return value.None, nil
+}
+
+func methodDictPop(r value.Value, args *value.CallArgs) (value.Value, error) {
+	d, _ := r.Dict()
+	key, ok := arg(args, 0, "key")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError, "pop expected at least 1 argument")
+	}
+	v, found, err := d.Get(key)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if found {
+		if _, err := d.Delete(key); err != nil {
+			return value.Undefined, err
+		}
+		return v, nil
+	}
+	if def, ok := arg(args, 1, "default"); ok {
+		return def, nil
+	}
+	return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
+}
+
+func methodDictSetdefault(r value.Value, args *value.CallArgs) (value.Value, error) {
+	d, _ := r.Dict()
+	key, ok := arg(args, 0, "key")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError, "setdefault expected at least 1 argument")
+	}
+	if v, found, err := d.Get(key); err != nil {
+		return value.Undefined, err
+	} else if found {
+		return v, nil
+	}
+	def, _ := arg(args, 1, "default")
+	if !def.IsUndefined() {
+		return def, d.Set(key, def)
+	}
+	return value.None, d.Set(key, value.None)
+}
+
+func methodDictUpdate(r value.Value, args *value.CallArgs) (value.Value, error) {
+	d, _ := r.Dict()
+	if other, ok := arg(args, 0, ""); ok {
+		if od, ok := other.Dict(); ok {
+			for _, e := range od.Entries() {
+				if err := d.Set(e.Key, e.Value); err != nil {
+					return value.Undefined, err
+				}
+			}
+		}
+	}
+	for _, kw := range args.Kwargs {
+		d.SetString(kw.Name, kw.Value)
+	}
+	return value.None, nil
+}
+
+func methodDictClear(r value.Value, _ *value.CallArgs) (value.Value, error) {
+	d, _ := r.Dict()
+	for _, k := range d.Keys() {
+		if _, err := d.Delete(k); err != nil {
+			return value.Undefined, err
+		}
+	}
+	return value.None, nil
+}
+
+// --- list and tuple methods --------------------------------------------------
+
+var listMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
+	"append":  methodListAppend,
+	"extend":  methodListExtend,
+	"insert":  methodListInsert,
+	"pop":     methodListPop,
+	"remove":  methodListRemove,
+	"index":   methodSeqIndex,
+	"count":   methodSeqCount,
+	"reverse": methodListReverse,
+	"copy":    func(r value.Value, _ *value.CallArgs) (value.Value, error) { return r.AsList(), nil },
+}
+
+var tupleMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
+	"index": methodSeqIndex,
+	"count": methodSeqCount,
+}
+
+func methodListAppend(r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, ok := arg(args, 0, "")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError,
+			"append() takes exactly one argument (0 given)")
+	}
+	s, _ := r.Seq()
+	s.Append(v)
+	return value.None, nil
+}
+
+func methodListExtend(r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, ok := arg(args, 0, "")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError, "extend() takes exactly one argument")
+	}
+	seq, err := value.Iterate(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	s, _ := r.Seq()
+	for item := range seq {
+		s.Append(item)
+	}
+	return value.None, nil
+}
+
+func methodListInsert(r value.Value, args *value.CallArgs) (value.Value, error) {
+	at, err := intArg(args, 0, "", 0)
+	if err != nil {
+		return value.Undefined, err
+	}
+	v, ok := arg(args, 1, "")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError, "insert() takes exactly 2 arguments")
+	}
+	s, _ := r.Seq()
+	items := s.Items()
+	if at < 0 {
+		at += len(items)
+	}
+	at = min(max(at, 0), len(items))
+	items = append(items, value.None)
+	copy(items[at+1:], items[at:])
+	items[at] = v
+	*s = *mustSeq(value.NewList(items...))
+	return value.None, nil
+}
+
+func methodListPop(r value.Value, args *value.CallArgs) (value.Value, error) {
+	s, _ := r.Seq()
+	items := s.Items()
+	if len(items) == 0 {
+		return value.Undefined, errs.New(errs.IndexError, "pop from empty list")
+	}
+	at, err := intArg(args, 0, "", len(items)-1)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if at < 0 {
+		at += len(items)
+	}
+	if at < 0 || at >= len(items) {
+		return value.Undefined, errs.New(errs.IndexError, "pop index out of range")
+	}
+	out := items[at]
+	*s = *mustSeq(value.NewList(append(append([]value.Value{}, items[:at]...), items[at+1:]...)...))
+	return out, nil
+}
+
+func methodListRemove(r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, ok := arg(args, 0, "")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError, "remove() takes exactly one argument")
+	}
+	s, _ := r.Seq()
+	for i, item := range s.Items() {
+		if value.Equal(item, v) {
+			items := s.Items()
+			*s = *mustSeq(value.NewList(append(append([]value.Value{}, items[:i]...), items[i+1:]...)...))
+			return value.None, nil
+		}
+	}
+	return value.Undefined, errs.New(errs.ValueError, "list.remove(x): x not in list")
+}
+
+func methodListReverse(r value.Value, _ *value.CallArgs) (value.Value, error) {
+	s, _ := r.Seq()
+	items := s.Items()
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+	}
+	return value.None, nil
+}
+
+func methodSeqIndex(r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, ok := arg(args, 0, "")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError, "index() takes at least one argument")
+	}
+	s, _ := r.Seq()
+	for i, item := range s.Items() {
+		if value.Equal(item, v) {
+			return value.Int(int64(i)), nil
+		}
+	}
+	return value.Undefined, errs.New(errs.ValueError, "%s is not in list", value.Repr(v))
+}
+
+func methodSeqCount(r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, ok := arg(args, 0, "")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError, "count() takes exactly one argument")
+	}
+	s, _ := r.Seq()
+	n := 0
+	for _, item := range s.Items() {
+		if value.Equal(item, v) {
+			n++
+		}
+	}
+	return value.Int(int64(n)), nil
+}
+
+func mustSeq(v value.Value) *value.Seq {
+	s, _ := v.Seq()
+	return s
+}

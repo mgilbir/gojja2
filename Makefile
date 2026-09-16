@@ -66,6 +66,15 @@ oracle: venv ## Regenerate golden files for testdata/corpus from CPython jinja2
 oracle-check: venv ## Verify committed goldens still match CPython jinja2
 	$(PY) tools/oracle/oracle.py --corpus testdata/corpus --golden testdata/golden --check
 
+# --- imported corpora --------------------------------------------------------
+
+.PHONY: import
+import: suites venv ## Import MiniJinja's fixtures and record jinja2's answers
+	$(PY) tools/oracle/import_minijinja.py
+	$(PY) tools/oracle/oracle.py \
+		--corpus testdata/generated/minijinja \
+		--golden testdata/generated/minijinja-golden
+
 # --- tests -------------------------------------------------------------------
 
 .PHONY: test

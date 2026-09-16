@@ -62,3 +62,41 @@ type Booler interface {
 
 // FromObject wraps an Object as a Value.
 func FromObject(o Object) Value { return Value{kind: KindObject, obj: o} }
+
+// Kwarg is one keyword argument, kept in source order because some callables
+// care -- `dict(b=1, a=2)` renders its keys in the order they were written.
+type Kwarg struct {
+	Name  string
+	Value Value
+}
+
+// CallArgs is an argument list at a call site.
+type CallArgs struct {
+	Pos    []Value
+	Kwargs []Kwarg
+}
+
+// Kwarg returns the named keyword argument.
+func (a *CallArgs) Kwarg(name string) (Value, bool) {
+	for _, kw := range a.Kwargs {
+		if kw.Name == name {
+			return kw.Value, true
+		}
+	}
+	return Undefined, false
+}
+
+// Arg returns the i'th positional argument.
+func (a *CallArgs) Arg(i int) (Value, bool) {
+	if i < 0 || i >= len(a.Pos) {
+		return Undefined, false
+	}
+	return a.Pos[i], true
+}
+
+// Caller is an Object that can be called from a template: a macro, a global
+// function, or `caller` inside a call block.
+type Caller interface {
+	Object
+	Call(args *CallArgs) (Value, error)
+}

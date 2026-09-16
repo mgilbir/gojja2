@@ -59,3 +59,34 @@ or `Nl`, and continues with those plus `Nd`, `Mn`, `Mc` and `Pc`. The two agree
 on every identifier anyone writes; they could differ on exotic code points, in
 which case gojja2 reports `unexpected char` where jinja2 reports
 `Invalid character in identifier`.
+
+## Lazy sequence filters
+
+```jinja
+{{ [1,2]|map("string") }}
+```
+
+jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr` and `unique`
+return generators. Printing one without `|list` renders
+`<generator object sync_do_map at 0x7f9c...>` -- a memory address, which differs
+between two runs of CPython itself, so no implementation can reproduce it.
+
+gojja2's sequence filters are eager and render the list. Every use that does
+anything with the result -- iterating it, `|list`, `|join`, `|first` -- behaves
+identically.
+
+## RecursionError wording
+
+A template that includes, extends or calls itself without a base case raises
+`RecursionError` in both. CPython's message names the interpreter operation
+that happened to hit the limit ("maximum recursion depth exceeded while calling
+a Python object", "... in comparison"), which varies with the call shape and
+describes nothing that exists in a Go program.
+
+gojja2 raises `RecursionError` with a message naming the limit and its
+configured value, which `WithMaxRecursion` controls.
+
+## lipsum() and random
+
+`lipsum()` and the `random` filter draw from a random source. Their output
+cannot match CPython's and is excluded from conformance comparison.

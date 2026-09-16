@@ -1,0 +1,23 @@
+# Cases that do not match CPython jinja2, with the reason.
+#
+# This file is an admission, not a waiver. A case listed here that starts
+# passing fails the conformance test, so the list can only shrink deliberately.
+# Anything not listed must match exactly.
+
+# --- CPython-internal wording -------------------------------------------------
+# The exception class matches (RecursionError); only the message differs.
+# CPython's text names where in the interpreter the limit was hit -- "while
+# calling a Python object", "in comparison" -- which varies with the call
+# shape and has no meaning in a Go library. gojja2 says which limit was
+# exceeded and what it was set to instead.
+minijinja/err_self_extends_txt.jj2       # RecursionError message is CPython-internal
+minijinja/err_self_include_txt.jj2       # RecursionError message is CPython-internal
+minijinja/err_self_macro_call_txt.jj2    # RecursionError message is CPython-internal
+minijinja/loop-recursion-error_txt.jj2   # RecursionError message is CPython-internal
+
+# --- lazy filters -------------------------------------------------------------
+# jinja2's map/select/reject return generators, so printing one without |list
+# renders "<generator object sync_do_map at 0x7f...>" -- an address that differs
+# on every run, including between two runs of CPython itself. gojja2's sequence
+# filters are eager and print the list. See docs/divergences.md.
+minijinja/opfilters_txt.jj2              # jinja2 prints a generator's address

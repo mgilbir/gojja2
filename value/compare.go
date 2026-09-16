@@ -96,6 +96,15 @@ func Ordered(op string, a, b Value) (bool, error) {
 // compare returns the ordering of a and b. The second result is false when the
 // two are unordered because of NaN; op is carried only for the error message.
 func compare(op string, a, b Value) (int, bool, error) {
+	// Undefined has no ordering: jinja2's Undefined raises on <, <=, > and
+	// >= even though == is answerable. Report the undefined's own error
+	// rather than a type mismatch, which is what a template author needs.
+	if a.IsUndefined() {
+		return 0, false, a.UndefinedError()
+	}
+	if b.IsUndefined() {
+		return 0, false, b.UndefinedError()
+	}
 	if a.IsNumber() && b.IsNumber() {
 		ord, ok := compareNumbers(a, b)
 		return ord, ok, nil
@@ -263,4 +272,9 @@ func Contains(item, container Value) (bool, error) {
 		}
 	}
 	return false, errs.New(errs.TypeError, "argument of type '%s' is not iterable", container.TypeName())
+}
+
+// errTypeNotIterable is the error Python raises for `for x in <non-iterable>`.
+func errTypeNotIterable(v Value) error {
+	return errs.New(errs.TypeError, "'%s' object is not iterable", v.TypeName())
 }
