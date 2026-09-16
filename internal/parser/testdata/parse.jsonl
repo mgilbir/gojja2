@@ -1,0 +1,100 @@
+{"src": "{{ 1 }}{{ 1.5 }}{{ 'a' }}{{ true }}{{ True }}{{ none }}{{ None }}{{ false }}", "opts": {}, "ast": "(template [(output [(const 1) (const 1.5) (const 'a') (const True) (const True) (const None) (const None) (const False)])])"}
+{"src": "{{ 'a' 'b' 'c' }}", "opts": {}, "ast": "(template [(output [(const 'abc')])])"}
+{"src": "{{ 2 ** 3 ** 2 }}", "opts": {}, "ast": "(template [(output [(binop pow (binop pow (const 2) (const 3)) (const 2))])])"}
+{"src": "{{ -2 ** 2 }}", "opts": {}, "ast": "(template [(output [(binop pow (unaryop neg (const 2)) (const 2))])])"}
+{"src": "{{ 1 + 2 * 3 - 4 / 5 // 6 % 7 }}", "opts": {}, "ast": "(template [(output [(binop sub (binop add (const 1) (binop mul (const 2) (const 3))) (binop mod (binop floordiv (binop div (const 4) (const 5)) (const 6)) (const 7)))])])"}
+{"src": "{{ 'a' ~ 1 + 2 ~ 'b' }}", "opts": {}, "ast": "(template [(output [(binop add (concat [(const 'a') (const 1)]) (concat [(const 2) (const 'b')]))])])"}
+{"src": "{{ a ~ b ~ c }}", "opts": {}, "ast": "(template [(output [(concat [(name 'a' False) (name 'b' False) (name 'c' False)])])])"}
+{"src": "{{ not a and b or c }}", "opts": {}, "ast": "(template [(output [(binop or (binop and (unaryop not (name 'a' False)) (name 'b' False)) (name 'c' False))])])"}
+{"src": "{{ 1 < 2 <= 3 > 4 >= 5 == 6 != 7 }}", "opts": {}, "ast": "(template [(output [(compare (const 1) [(operand 'lt' (const 2)) (operand 'lteq' (const 3)) (operand 'gt' (const 4)) (operand 'gteq' (const 5)) (operand 'eq' (const 6)) (operand 'ne' (const 7))])])])"}
+{"src": "{{ a in b }}{{ a not in b }}", "opts": {}, "ast": "(template [(output [(compare (name 'a' False) [(operand 'in' (name 'b' False))]) (compare (name 'a' False) [(operand 'notin' (name 'b' False))])])])"}
+{"src": "{{ a if b else c }}", "opts": {}, "ast": "(template [(output [(condexpr (name 'b' False) (name 'a' False) (name 'c' False))])])"}
+{"src": "{{ a if b }}", "opts": {}, "ast": "(template [(output [(condexpr (name 'b' False) (name 'a' False) nil)])])"}
+{"src": "{{ a if b else c if d else e }}", "opts": {}, "ast": "(template [(output [(condexpr (name 'b' False) (name 'a' False) (condexpr (name 'd' False) (name 'c' False) (name 'e' False)))])])"}
+{"src": "{{ -x|abs }}", "opts": {}, "ast": "(template [(output [(filter (unaryop neg (name 'x' False)) 'abs' [] [] nil nil)])])"}
+{"src": "{{ (-x)|abs }}", "opts": {}, "ast": "(template [(output [(filter (unaryop neg (name 'x' False)) 'abs' [] [] nil nil)])])"}
+{"src": "{{ +1 }}{{ --1 }}", "opts": {}, "ast": "(template [(output [(unaryop pos (const 1)) (unaryop neg (unaryop neg (const 1)))])])"}
+{"src": "{{ [] }}{{ [1] }}{{ [1,] }}{{ [1, 2,] }}", "opts": {}, "ast": "(template [(output [(list []) (list [(const 1)]) (list [(const 1)]) (list [(const 1) (const 2)])])])"}
+{"src": "{{ {} }}{{ {'a': 1} }}{{ {'a': 1,} }}", "opts": {}, "ast": "(template [(output [(dict []) (dict [(pair (const 'a') (const 1))]) (dict [(pair (const 'a') (const 1))])])])"}
+{"src": "{% set d = {1:\"a\",} %}{{ d[1] }}", "opts": {}, "ast": "(template [(assign (name 'd' True) (dict [(pair (const 1) (const 'a'))])) (output [(getitem (name 'd' False) (const 1))])])"}
+{"src": "{{ () }}{{ (1,) }}{{ (1, 2) }}{{ 1, 2 }}", "opts": {}, "ast": "(template [(output [(tuple []) (tuple [(const 1)]) (tuple [(const 1) (const 2)]) (tuple [(const 1) (const 2)])])])"}
+{"src": "{{ a[1] }}{{ a[1:2] }}{{ a[:2] }}{{ a[1:] }}{{ a[::2] }}{{ a[::-1] }}{{ a[:] }}", "opts": {}, "ast": "(template [(output [(getitem (name 'a' False) (const 1)) (getitem (name 'a' False) (slice (const 1) (const 2) nil)) (getitem (name 'a' False) (slice nil (const 2) nil)) (getitem (name 'a' False) (slice (const 1) nil nil)) (getitem (name 'a' False) (slice nil nil (const 2))) (getitem (name 'a' False) (slice nil nil (unaryop neg (const 1)))) (getitem (name 'a' False) (slice nil nil nil))])])"}
+{"src": "{{ a[1:2:3] }}{{ a[1, 2] }}{{ a[x:y, z:] }}", "opts": {}, "ast": "(template [(output [(getitem (name 'a' False) (slice (const 1) (const 2) (const 3))) (getitem (name 'a' False) (tuple [(const 1) (const 2)])) (getitem (name 'a' False) (tuple [(slice (name 'x' False) (name 'y' False) nil) (slice (name 'z' False) nil nil)]))])])"}
+{"src": "{{ a.b.c }}{{ a.0 }}{{ a['b'] }}", "opts": {}, "ast": "(template [(output [(getattr (getattr (name 'a' False) 'b') 'c') (getitem (name 'a' False) (const 0)) (getitem (name 'a' False) (const 'b'))])])"}
+{"src": "{{ f() }}{{ f(1) }}{{ f(1, b=2) }}{{ f(*a) }}{{ f(**k) }}{{ f(*a, **k) }}", "opts": {}, "ast": "(template [(output [(call (name 'f' False) [] [] nil nil) (call (name 'f' False) [(const 1)] [] nil nil) (call (name 'f' False) [(const 1)] [(keyword 'b' (const 2))] nil nil) (call (name 'f' False) [] [] (name 'a' False) nil) (call (name 'f' False) [] [] nil (name 'k' False)) (call (name 'f' False) [] [] (name 'a' False) (name 'k' False))])])"}
+{"src": "{{ f(1,) }}", "opts": {}, "ast": "(template [(output [(call (name 'f' False) [(const 1)] [] nil nil)])])"}
+{"src": "{{ x|a|b(1)|c(d=2) }}", "opts": {}, "ast": "(template [(output [(filter (filter (filter (name 'x' False) 'a' [] [] nil nil) 'b' [(const 1)] [] nil nil) 'c' [] [(keyword 'd' (const 2))] nil nil)])])"}
+{"src": "{{ x|a.b }}", "opts": {}, "ast": "(template [(output [(filter (name 'x' False) 'a.b' [] [] nil nil)])])"}
+{"src": "{{ x is defined }}{{ x is not defined }}{{ x is divisibleby 3 }}", "opts": {}, "ast": "(template [(output [(test (name 'x' False) 'defined' [] [] nil nil) (unaryop not (test (name 'x' False) 'defined' [] [] nil nil)) (test (name 'x' False) 'divisibleby' [(const 3)] [] nil nil)])])"}
+{"src": "{{ x is sameas y.z }}", "opts": {}, "ast": "(template [(output [(test (name 'x' False) 'sameas' [(getattr (name 'y' False) 'z')] [] nil nil)])])"}
+{"src": "{{ x is eq(1) }}", "opts": {}, "ast": "(template [(output [(test (name 'x' False) 'eq' [(const 1)] [] nil nil)])])"}
+{"src": "{{ f()() }}{{ (x|f)() }}", "opts": {}, "ast": "(template [(output [(call (call (name 'f' False) [] [] nil nil) [] [] nil nil) (call (filter (name 'x' False) 'f' [] [] nil nil) [] [] nil nil)])])"}
+{"src": "{% for x in y %}a{% endfor %}", "opts": {}, "ast": "(template [(for (name 'x' True) (name 'y' False) [(output [(templatedata 'a')])] [] nil False)])"}
+{"src": "{% for x, (y, z) in w %}a{% endfor %}", "opts": {}, "ast": "(template [(for (tuple [(name 'x' True) (tuple [(name 'y' True) (name 'z' True)])]) (name 'w' False) [(output [(templatedata 'a')])] [] nil False)])"}
+{"src": "{% for x in y if x %}a{% else %}b{% endfor %}", "opts": {}, "ast": "(template [(for (name 'x' True) (name 'y' False) [(output [(templatedata 'a')])] [(output [(templatedata 'b')])] (name 'x' False) False)])"}
+{"src": "{% for x in y recursive %}a{% endfor %}", "opts": {}, "ast": "(template [(for (name 'x' True) (name 'y' False) [(output [(templatedata 'a')])] [] nil True)])"}
+{"src": "{% for x in y if x recursive %}a{% endfor %}", "opts": {}, "ast": "(template [(for (name 'x' True) (name 'y' False) [(output [(templatedata 'a')])] [] (name 'x' False) True)])"}
+{"src": "{% if a %}1{% elif b %}2{% elif c %}3{% else %}4{% endif %}", "opts": {}, "ast": "(template [(if (name 'a' False) [(output [(templatedata '1')])] [(if (name 'b' False) [(output [(templatedata '2')])] [] []) (if (name 'c' False) [(output [(templatedata '3')])] [] [])] [(output [(templatedata '4')])])])"}
+{"src": "{% if a %}1{% endif %}", "opts": {}, "ast": "(template [(if (name 'a' False) [(output [(templatedata '1')])] [] [])])"}
+{"src": "{% if a, b %}1{% endif %}", "opts": {}, "ast": "(template [(if (tuple [(name 'a' False) (name 'b' False)]) [(output [(templatedata '1')])] [] [])])"}
+{"src": "{% set x = 1 %}", "opts": {}, "ast": "(template [(assign (name 'x' True) (const 1))])"}
+{"src": "{% set x, y = 1, 2 %}", "opts": {}, "ast": "(template [(assign (tuple [(name 'x' True) (name 'y' True)]) (tuple [(const 1) (const 2)]))])"}
+{"src": "{% set ns.x = 1 %}", "opts": {}, "ast": "(template [(assign (nsref 'ns' 'x') (const 1))])"}
+{"src": "{% set x %}body{% endset %}", "opts": {}, "ast": "(template [(assignblock (name 'x' True) nil [(output [(templatedata 'body')])])])"}
+{"src": "{% set x | upper %}body{% endset %}", "opts": {}, "ast": "(template [(assignblock (name 'x' True) (filter nil 'upper' [] [] nil nil) [(output [(templatedata 'body')])])])"}
+{"src": "{% with a = 1, b = 2 %}x{% endwith %}", "opts": {}, "ast": "(template [(with [(name 'a' True) (name 'b' True)] [(const 1) (const 2)] [(output [(templatedata 'x')])])])"}
+{"src": "{% with %}x{% endwith %}", "opts": {}, "ast": "(template [(with [] [] [(output [(templatedata 'x')])])])"}
+{"src": "{% block b %}x{% endblock %}", "opts": {}, "ast": "(template [(block 'b' [(output [(templatedata 'x')])] False False)])"}
+{"src": "{% block b %}x{% endblock b %}", "opts": {}, "ast": "(template [(block 'b' [(output [(templatedata 'x')])] False False)])"}
+{"src": "{% block b scoped %}x{% endblock %}", "opts": {}, "ast": "(template [(block 'b' [(output [(templatedata 'x')])] True False)])"}
+{"src": "{% block b required %}{% endblock %}", "opts": {}, "ast": "(template [(block 'b' [] False True)])"}
+{"src": "{% block b scoped required %}  {% endblock %}", "opts": {}, "ast": "(template [(block 'b' [(output [(templatedata '  ')])] True True)])"}
+{"src": "{% extends 'a.html' %}", "opts": {}, "ast": "(template [(extends (const 'a.html'))])"}
+{"src": "{% include 'a.html' %}", "opts": {}, "ast": "(template [(include (const 'a.html') True False)])"}
+{"src": "{% include 'a.html' ignore missing %}", "opts": {}, "ast": "(template [(include (const 'a.html') True True)])"}
+{"src": "{% include 'a.html' ignore missing without context %}", "opts": {}, "ast": "(template [(include (const 'a.html') False True)])"}
+{"src": "{% include 'a.html' with context %}", "opts": {}, "ast": "(template [(include (const 'a.html') True False)])"}
+{"src": "{% import 'a.html' as m %}", "opts": {}, "ast": "(template [(import (const 'a.html') 'm' False)])"}
+{"src": "{% import 'a.html' as m with context %}", "opts": {}, "ast": "(template [(import (const 'a.html') 'm' True)])"}
+{"src": "{% from 'a.html' import a %}", "opts": {}, "ast": "(template [(fromimport (const 'a.html') [(alias 'a' 'a')] False)])"}
+{"src": "{% from 'a.html' import a, b as c %}", "opts": {}, "ast": "(template [(fromimport (const 'a.html') [(alias 'a' 'a') (alias 'b' 'c')] False)])"}
+{"src": "{% from 'a.html' import a with context %}", "opts": {}, "ast": "(template [(fromimport (const 'a.html') [(alias 'a' 'a')] True)])"}
+{"src": "{% from 'a.html' import a, b with context %}", "opts": {}, "ast": "(template [(fromimport (const 'a.html') [(alias 'a' 'a') (alias 'b' 'b')] True)])"}
+{"src": "{% macro m(a, b=1, c=2) %}x{% endmacro %}", "opts": {}, "ast": "(template [(macro 'm' [(name 'a' True) (name 'b' True) (name 'c' True)] [(const 1) (const 2)] [(output [(templatedata 'x')])])])"}
+{"src": "{% macro m() %}{% endmacro %}", "opts": {}, "ast": "(template [(macro 'm' [] [] [])])"}
+{"src": "{% call m() %}x{% endcall %}", "opts": {}, "ast": "(template [(callblock (call (name 'm' False) [] [] nil nil) [] [] [(output [(templatedata 'x')])])])"}
+{"src": "{% call(a, b=1) m() %}x{% endcall %}", "opts": {}, "ast": "(template [(callblock (call (name 'm' False) [] [] nil nil) [(name 'a' True) (name 'b' True)] [(const 1)] [(output [(templatedata 'x')])])])"}
+{"src": "{% filter upper %}x{% endfilter %}", "opts": {}, "ast": "(template [(filterblock [(output [(templatedata 'x')])] (filter nil 'upper' [] [] nil nil))])"}
+{"src": "{% filter upper|trim %}x{% endfilter %}", "opts": {}, "ast": "(template [(filterblock [(output [(templatedata 'x')])] (filter (filter nil 'upper' [] [] nil nil) 'trim' [] [] nil nil))])"}
+{"src": "{% print 1 %}{% print 1, 2 %}", "opts": {}, "ast": "(template [(output [(const 1)]) (output [(const 1) (const 2)])])"}
+{"src": "{% autoescape true %}x{% endautoescape %}", "opts": {}, "ast": "(template [(autoescape (const True) [(output [(templatedata 'x')])])])"}
+{"src": "{% raw %}{{ x }}{% endraw %}", "opts": {}, "ast": "(template [(output [(templatedata '{{ x }}')])])"}
+{"src": "{% do x.append(1) %}", "opts": {"do": true}, "ast": "(template [(exprstmt (call (getattr (name 'x' False) 'append') [(const 1)] [] nil nil))])"}
+{"src": "{% for x in y %}{% break %}{% continue %}{% endfor %}", "opts": {"loopcontrols": true}, "ast": "(template [(for (name 'x' True) (name 'y' False) [(break) (continue)] [] nil False)])"}
+{"src": "{%\n  if\n  a\n%}x{%\nendif\n%}", "opts": {}, "ast": "(template [(if (name 'a' False) [(output [(templatedata 'x')])] [] [])])"}
+{"src": "{{\n  a\n  +\n  b\n}}", "opts": {}, "ast": "(template [(output [(binop add (name 'a' False) (name 'b' False))])])"}
+{"src": "{% for\n  x\n  in\n  y\n%}a{% endfor %}", "opts": {}, "ast": "(template [(for (name 'x' True) (name 'y' False) [(output [(templatedata 'a')])] [] nil False)])"}
+{"src": "a{{ b }}c{% if d %}e{% endif %}f", "opts": {}, "ast": "(template [(output [(templatedata 'a') (name 'b' False) (templatedata 'c')]) (if (name 'd' False) [(output [(templatedata 'e')])] [] []) (output [(templatedata 'f')])])"}
+{"src": "{% for a in b %}{% for c in d %}{{ a }}{% endfor %}{% endfor %}", "opts": {}, "ast": "(template [(for (name 'a' True) (name 'b' False) [(for (name 'c' True) (name 'd' False) [(output [(name 'a' False)])] [] nil False)] [] nil False)])"}
+{"src": "{% endfor %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Encountered unknown tag 'endfor'.", "line": 1}
+{"src": "{% for x in y %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Unexpected end of template. Jinja was looking for the following tags: 'endfor' or 'else'. The innermost block that needs to be closed is 'for'.", "line": 1}
+{"src": "{% if a %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Unexpected end of template. Jinja was looking for the following tags: 'elif' or 'else' or 'endif'. The innermost block that needs to be closed is 'if'.", "line": 1}
+{"src": "{% nope %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Encountered unknown tag 'nope'.", "line": 1}
+{"src": "{% for x in y %}{% endif %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Encountered unknown tag 'endif'. Jinja was looking for the following tags: 'endfor' or 'else'. The innermost block that needs to be closed is 'for'.", "line": 1}
+{"src": "{{ }}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Expected an expression, got 'end of print statement'", "line": 1}
+{"src": "{{ 1 + }}", "opts": {}, "err": "TemplateSyntaxError", "msg": "unexpected 'end of print statement'", "line": 1}
+{"src": "{% set 1 = 2 %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "can't assign to 'const'", "line": 1}
+{"src": "{% set a.b = 1 %}", "opts": {}, "ast": "(template [(assign (nsref 'a' 'b') (const 1))])"}
+{"src": "{% set a|b = 1 %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "expected token 'end of statement block', got '='", "line": 1}
+{"src": "{% block b-c %}{% endblock %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Block names in Jinja have to be valid Python identifiers and may not contain hyphens, use an underscore instead.", "line": 1}
+{"src": "{% block b required %}text{% endblock %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Required blocks can only contain comments or whitespace", "line": 1}
+{"src": "{% macro m(a=1, b) %}{% endmacro %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "non-default argument follows default argument", "line": 1}
+{"src": "{% from 'a' import _x %}", "opts": {}, "err": "TemplateAssertionError", "msg": "names starting with an underline can not be imported", "line": 1}
+{"src": "{% call x %}{% endcall %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "expected call", "line": 1}
+{"src": "{{ a is is b }}", "opts": {}, "ast": "(template [(output [(test (name 'a' False) 'is' [(name 'b' False)] [] nil nil)])])"}
+{"src": "{{ f(a=1, 2) }}", "opts": {}, "err": "TemplateSyntaxError", "msg": "invalid syntax for function call expression", "line": 1}
+{"src": "{{ f(**k, 1) }}", "opts": {}, "err": "TemplateSyntaxError", "msg": "invalid syntax for function call expression", "line": 1}
+{"src": "{{ a. }}", "opts": {}, "err": "TemplateSyntaxError", "msg": "expected name or number", "line": 1}
+{"src": "{% do x %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Encountered unknown tag 'do'.", "line": 1}
+{"src": "{% break %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Encountered unknown tag 'break'.", "line": 1}
+{"src": "{% for x in y %}{% break %}{% endfor %}", "opts": {}, "err": "TemplateSyntaxError", "msg": "Encountered unknown tag 'break'. Jinja was looking for the following tags: 'endfor' or 'else'. The innermost block that needs to be closed is 'for'.", "line": 1}

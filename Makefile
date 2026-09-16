@@ -100,8 +100,12 @@ ops-corpus: venv ## Regenerate the CPython operator corpus used by value tests
 lex-corpus: venv ## Regenerate the jinja2 token-stream corpus used by lexer tests
 	$(PY) tools/oracle/gen_lex.py
 
+.PHONY: parse-corpus
+parse-corpus: venv ## Regenerate the jinja2 AST corpus used by parser tests
+	$(PY) tools/oracle/gen_parse.py
+
 .PHONY: corpora
-corpora: repr-corpus ops-corpus lex-corpus oracle ## Regenerate every oracle-derived corpus
+corpora: repr-corpus ops-corpus lex-corpus parse-corpus oracle ## Regenerate every oracle-derived corpus
 
 .PHONY: ask
 ask: venv ## Ask the oracle what CPython jinja2 renders: make ask T='{{ 1/2 }}'
