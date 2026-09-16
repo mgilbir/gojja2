@@ -649,6 +649,10 @@ func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
 	var lines []string
 
 	for len(chunks) > 0 {
+		// Progress is either consuming a chunk or shortening the one
+		// at the front, so both are watched.
+		beforeCount, beforeHead := len(chunks), len(chunks[0])
+
 		// Leading whitespace is dropped on every line but the first.
 		if len(lines) > 0 && strings.TrimSpace(chunks[0]) == "" {
 			chunks = chunks[1:]
@@ -695,11 +699,15 @@ func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
 		if len(cur) > 0 && strings.TrimSpace(cur[len(cur)-1]) == "" {
 			cur = cur[:len(cur)-1]
 		}
-		if len(cur) == 0 {
-			// No progress is possible; stop rather than spin.
+		if len(cur) > 0 {
+			lines = append(lines, strings.Join(cur, ""))
+		}
+		// A pass can legitimately produce no line -- a lone space
+		// consumed and then dropped -- but it must make progress, or
+		// the loop would spin.
+		if len(chunks) == beforeCount && (len(chunks) == 0 || len(chunks[0]) == beforeHead) {
 			break
 		}
-		lines = append(lines, strings.Join(cur, ""))
 	}
 	if len(lines) == 0 {
 		return []string{""}

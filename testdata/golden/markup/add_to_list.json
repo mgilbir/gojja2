@@ -1,0 +1,12 @@
+{
+  "case": "markup/add_to_list.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "can only concatenate list (not \"Markup\") to list"
+  }
+}

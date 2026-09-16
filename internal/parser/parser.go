@@ -18,6 +18,15 @@ import (
 	"github.com/mgilbir/gojja2/value"
 )
 
+// MaxNestingDepth bounds how deeply expressions and statements may nest.
+//
+// This is a safety control, not a tuning knob. Go grows goroutine stacks on
+// demand, so a template of a million nested brackets parses happily and then
+// takes the process down -- where CPython would have raised RecursionError
+// long before. Templates are frequently attacker-supplied; nothing anyone
+// writes on purpose nests a hundred deep, let alone this.
+const MaxNestingDepth = 1000
+
 // Options controls the optional tags an environment enables.
 type Options struct {
 	// Do enables `{% do %}` (jinja2.ext.do).
@@ -64,7 +73,19 @@ type parser struct {
 	// lexErr is a lexing failure that is only reported once the parser
 	// asks for the token where it happened.
 	lexErr error
+	// depth is the current nesting of the recursive descent.
+	depth int
 }
+
+// enter bounds the recursion, failing cleanly instead of exhausting the stack.
+func (p *parser) enter() {
+	p.depth++
+	if p.depth > MaxNestingDepth {
+		p.fail("expression or statement nests deeper than %d levels", MaxNestingDepth)
+	}
+}
+
+func (p *parser) leave() { p.depth-- }
 
 // --- token stream ------------------------------------------------------------
 
@@ -228,6 +249,9 @@ func (p *parser) subparse(end []rule) []ast.Stmt {
 
 // statementParsers maps a tag name to its production.
 func (p *parser) parseStatement() []ast.Stmt {
+	p.enter()
+	defer p.leave()
+
 	tok := p.current()
 	if tok.Kind != lexer.Name {
 		p.failAt(tok.Line, "tag name expected")

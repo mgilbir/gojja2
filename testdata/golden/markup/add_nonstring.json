@@ -1,0 +1,12 @@
+{
+  "case": "markup/add_nonstring.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "unsupported operand type(s) for +: 'int' and 'Markup'"
+  }
+}

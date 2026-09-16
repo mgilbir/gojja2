@@ -61,7 +61,19 @@ func Equal(a, b Value) bool {
 			}
 		}
 		return true
-	case KindObject, KindFunc:
+	case KindObject:
+		if e, ok := a.obj.(Equaler); ok {
+			if equal, known := e.Equals(b); known {
+				return equal
+			}
+		}
+		if e, ok := b.obj.(Equaler); ok {
+			if equal, known := e.Equals(a); known {
+				return equal
+			}
+		}
+		return a.obj == b.obj
+	case KindFunc:
 		return a.obj == b.obj
 	}
 	return false

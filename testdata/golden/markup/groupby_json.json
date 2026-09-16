@@ -1,0 +1,12 @@
+{
+  "case": "markup/groupby_json.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "Object of type Undefined is not JSON serializable"
+  }
+}

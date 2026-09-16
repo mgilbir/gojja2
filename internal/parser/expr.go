@@ -70,6 +70,9 @@ func (p *parser) parseAssignTarget(opts assignOpts) ast.Expr {
 }
 
 func (p *parser) parseExpression(withCondExpr bool) ast.Expr {
+	p.enter()
+	defer p.leave()
+
 	if withCondExpr {
 		return p.parseCondExpr()
 	}
@@ -250,6 +253,9 @@ func (p *parser) parseUnary(withFilter bool) ast.Expr {
 }
 
 func (p *parser) parsePrimary(withNamespace bool) ast.Expr {
+	p.enter()
+	defer p.leave()
+
 	tok := p.current()
 	switch tok.Kind {
 	case lexer.Name:

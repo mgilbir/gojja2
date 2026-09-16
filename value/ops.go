@@ -165,23 +165,23 @@ func Add(a, b Value) (Value, error) {
 		by, _ := b.BigInt()
 		return BigInt(new(big.Int).Add(bx, by)), nil
 
-	case a.kind == KindString || (b.kind == KindString && b.safe):
-		// Markup absorbs the other side: it escapes it and stays
-		// Markup, in either order. That is the point of it -- joining
-		// trusted markup to untrusted text must not untrust the result
-		// or trust the text.
-		if a.safe || b.safe {
-			if b.kind != KindString {
-				// Markup.__add__ returns NotImplemented for a
-				// non-string, which falls through to Python's
-				// generic operand error.
+	case a.kind == KindString:
+		if b.kind != KindString {
+			// Markup.__add__ returns NotImplemented for a
+			// non-string, which falls through to Python's generic
+			// operand error; str.__add__ has a message of its own.
+			if a.safe {
 				return Undefined, binTypeError("+", a, b)
 			}
-			return Safe(markupText(a) + markupText(b)), nil
-		}
-		if b.kind != KindString {
 			return Undefined, errs.New(errs.TypeError,
 				"can only concatenate str (not \"%s\") to str", b.TypeName())
+		}
+		// Markup absorbs the other side: it escapes it and stays
+		// Markup, in either order. That is the point of it -- joining
+		// trusted markup to untrusted text must neither untrust the
+		// result nor trust the text.
+		if a.safe || b.safe {
+			return Safe(markupText(a) + markupText(b)), nil
 		}
 		return String(a.str + b.str), nil
 

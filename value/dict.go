@@ -210,6 +210,11 @@ func hash(v Value) (hashKey, error) {
 		}
 		return hashKey{kind: KindTuple, str: b.String()}, nil
 	case KindObject:
+		if tv, ok := v.obj.(TupleView); ok {
+			// A tuple subclass hashes as its tuple, so one holding
+			// a list is unhashable just as a plain tuple would be.
+			return hash(tv.AsTuple())
+		}
 		if o, ok := v.obj.(interface{ HashKey() (string, bool) }); ok {
 			if s, ok := o.HashKey(); ok {
 				return hashKey{kind: KindObject, str: s}, nil

@@ -298,6 +298,10 @@ case("filters/list_string", "{{ 'abc'|list }}|{{ map|list }}|{{ 1|string }}|{{ n
 # it reports itself as Markup in type errors.
 case("markup/concat", "{{ ('<b>'|safe) + '<i>' }}|{{ 'a<i>' + ('<b>'|safe) }}|{{ ('<b>'|safe) + ('<i>'|safe) }}")
 case("markup/type_name", "{{ ('a'|safe) + 1 }}")
+case("markup/add_nonstring", "{{ 0 + ('a'|safe) }}")
+case("markup/add_to_list", "{{ ['a'] + ('b'|safe) }}")
+case("markup/range_equality", "{{ range(3,0,-1) == range(3,0,-1) }}{{ range(0,3,2) == range(0,4,2) }}{{ range(3) == [0,1,2] }}")
+case("markup/groupby_json", "{{ {'a': 1}|groupby('city')|list|tojson }}")
 case("markup/preserved", "{{ ('<b>'|safe)|upper|pprint }}|{{ ('a b'|safe)|trim|pprint }}|{{ ('ab'|safe)|title|pprint }}")
 case("markup/indexing", "{{ ('ab'|safe)[0]|pprint }}|{{ ('ab'|safe)|last|pprint }}|{{ ('ab'|safe)|first|pprint }}")
 case("markup/tojson_is_markup", "{{ ([1]|tojson)|pprint }}")

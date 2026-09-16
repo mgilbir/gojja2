@@ -48,6 +48,24 @@ type Slicer interface {
 	Slice(start, stop, step *int) (Value, error)
 }
 
+// TupleView is an Object that stands for a Python tuple subclass, so it is
+// serialised and treated as the tuple it represents. A range is a sequence but
+// not a tuple, which is why this is opt-in rather than inferred from Sequence.
+type TupleView interface {
+	Object
+	AsTuple() Value
+}
+
+// Equaler lets an Object decide == for itself. The second result reports
+// whether it has an opinion; without one, objects compare by identity.
+//
+// Python types that compare by value rather than by identity need this: two
+// separately built ranges over the same numbers are equal.
+type Equaler interface {
+	Object
+	Equals(other Value) (equal bool, known bool)
+}
+
 // Reprer overrides how an Object renders. Repr is Python's repr(), used inside
 // containers; Str is Python's str(), used when the value is printed on its own.
 type Reprer interface {

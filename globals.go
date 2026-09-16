@@ -75,6 +75,26 @@ func (r *rangeObject) Slice(start, stop, step *int) (value.Value, error) {
 	}), nil
 }
 
+// Equals compares ranges the way Python does: by the sequence they stand for,
+// so range(0, 3, 2) and range(0, 4, 2) are equal despite differing stops.
+func (r *rangeObject) Equals(other value.Value) (bool, bool) {
+	o, ok := other.Interface().(*rangeObject)
+	if !ok {
+		return false, other.Kind() == value.KindObject || other.Kind() == value.KindList
+	}
+	n := r.Len()
+	if n != o.Len() {
+		return false, true
+	}
+	if n == 0 {
+		return true, true
+	}
+	if r.start != o.start {
+		return false, true
+	}
+	return n == 1 || r.step == o.step, true
+}
+
 func (r *rangeObject) TypeName() string { return "range" }
 
 func (r *rangeObject) Repr() string {

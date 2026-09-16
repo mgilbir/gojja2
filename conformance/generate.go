@@ -209,8 +209,9 @@ func (c *chooser) chance(n int) bool { return c.intn(n) == 0 }
 func (c *chooser) exhausted() bool { return c.i >= len(c.b) }
 
 type generator struct {
-	c *chooser
-	b strings.Builder
+	c     *chooser
+	b     strings.Builder
+	depth int
 }
 
 // GenerateTemplate builds a template from fuzzer input.
@@ -529,6 +530,13 @@ func (g *generator) atom() string {
 	case 4, 5, 6:
 		return g.c.pick(names)
 	case 7:
+		// Bounded: an atom that could contain another atom without a
+		// depth of its own would generate arbitrarily deep literals.
+		if g.depth >= maxExprDepth {
+			return "[]"
+		}
+		g.depth++
+		defer func() { g.depth-- }()
 		return "[" + g.list(2) + "]"
 	case 8:
 		return g.c.pick([]string{

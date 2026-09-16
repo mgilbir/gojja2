@@ -138,3 +138,20 @@ as a single run.
 Above that, CPython splits the list into runs and merges them, and gojja2 uses
 a stable sort of its own. The result is identical; only which pair a failing
 comparison names can differ.
+
+## A bound on nesting depth
+
+```jinja
+{{ [[[[[ ... 100000 levels ... ]]]]] }}
+```
+
+CPython raises `RecursionError` at around a thousand frames. Go grows a
+goroutine's stack on demand, so gojja2 would parse a million levels happily and
+then die on an allocation it cannot recover from.
+
+gojja2 refuses past 1,000 levels of expression or statement nesting with a
+`TemplateSyntaxError`. Templates are frequently attacker-supplied and nothing
+written on purpose nests ten deep, let alone a thousand, so the limit is
+generous and the failure is clean. It is a safety control rather than a
+behavioural choice, and the exception class differs from CPython's for the same
+reason the `RecursionError` wording does.

@@ -432,6 +432,10 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 		}
 		b.WriteString(nl + padEnd + "}")
 	case value.KindObject:
+		// A tuple subclass serialises as the array it is.
+		if tv, ok := v.Interface().(value.TupleView); ok {
+			return writeJSON(b, tv.AsTuple(), indent, depth)
+		}
 		// A Go struct or map reaches a template as a Mapping and is
 		// serialised like the dict it stands for. Everything else --
 		// a range, a cycler, a macro -- is not serialisable, which is
