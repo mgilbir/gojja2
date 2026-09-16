@@ -1,0 +1,3 @@
+{}
+---
+{{ true.__class__ }}{{ 1.__class__ }}{{ 'x'.__class__ }}{{ 1.5.__class__ }}{{ none.__class__ }}

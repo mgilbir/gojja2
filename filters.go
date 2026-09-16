@@ -1294,14 +1294,19 @@ func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 		return value.Undefined, errs.New(errs.FilterArgumentError,
 			"attr() missing required argument 'name'")
 	}
-	// getattr() on an Undefined raises rather than missing.
-	if err := requireDefined(v); err != nil {
-		return value.Undefined, err
-	}
-	if attr, ok := lookupAttr(v, value.Str(name)); ok {
+	attrName := value.Str(name)
+	if attr, ok := lookupAttr(v, attrName); ok {
 		return attr, nil
 	}
-	return s.Undefined(value.UndefinedAttr(v, value.Str(name))), nil
+	// getattr() on an Undefined raises -- except for a dunder name, which
+	// Undefined.__getattr__ reports as an ordinary missing attribute. That
+	// is why `nope|attr("items")` fails immediately while
+	// `nope|attr("__subclasses__")` yields an undefined that only fails
+	// when it is used.
+	if v.IsUndefined() && !strings.HasPrefix(attrName, "__") {
+		return value.Undefined, v.UndefinedError()
+	}
+	return s.Undefined(value.UndefinedAttr(v, attrName)), nil
 }
 
 // wordBeginnings splits on the runs jinja2 treats as starting a new word:

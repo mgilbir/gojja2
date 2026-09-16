@@ -317,6 +317,9 @@ func (ex *exec) evalGetattr(n *ast.Getattr) (value.Value, error) {
 // though `{{ nope }}` prints nothing, because Undefined.__getattr__ raises.
 // Only ChainableUndefined keeps going.
 func (ex *exec) getAttr(base value.Value, name string) (value.Value, error) {
+	if name == "__class__" {
+		return classOf(base), nil
+	}
 	if base.IsUndefined() {
 		if base.UndefinedBehavior() == value.UndefinedChainable {
 			return base, nil
@@ -334,6 +337,11 @@ func (ex *exec) getAttr(base value.Value, name string) (value.Value, error) {
 
 // lookupAttr resolves an attribute without falling back to item access.
 func lookupAttr(base value.Value, name string) (value.Value, bool) {
+	// __class__ is a real attribute of every Python object, found before
+	// any __getattr__ hook, so it resolves even on an undefined.
+	if name == "__class__" {
+		return classOf(base), true
+	}
 	if obj, ok := base.Object(); ok {
 		if v, ok := obj.GetAttr(name); ok {
 			return v, true

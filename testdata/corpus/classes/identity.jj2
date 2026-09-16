@@ -1,0 +1,3 @@
+{}
+---
+{{ true.__class__ == true.__class__ }}{{ true.__class__ == 1.__class__ }}{{ true.__class__ is callable }}

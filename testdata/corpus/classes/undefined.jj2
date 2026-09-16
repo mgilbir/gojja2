@@ -1,0 +1,3 @@
+{}
+---
+{{ nope.__class__ }}|{{ nope.__class__.__name__ }}

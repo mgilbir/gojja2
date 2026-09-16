@@ -352,6 +352,23 @@ case("tests/sameas", "{{ none is sameas none }}{{ true is sameas true }}{{ 1 is 
 case("tests/filter_test", "{{ 'upper' is filter }}{{ 'nope' is filter }}{{ 'odd' is test }}{{ 'nope' is test }}")
 case("tests/escaped", "{{ 'a'|safe is escaped }}{{ 'a' is escaped }}")
 
+# --- type objects -------------------------------------------------------------
+# __class__ is a real attribute of every value, found before any lookup hook,
+# so it resolves even on an undefined.
+case("classes/builtin", "{{ true.__class__ }}{{ 1.__class__ }}{{ 'x'.__class__ }}{{ 1.5.__class__ }}{{ none.__class__ }}")
+case("classes/containers", "{{ [].__class__ }}{{ {}.__class__ }}{{ (1,).__class__ }}{{ range(3).__class__ }}")
+case("classes/markup", "{{ ('x'|safe).__class__ }}|{{ ('x'|safe).__class__.__name__ }}")
+case("classes/undefined", "{{ nope.__class__ }}|{{ nope.__class__.__name__ }}")
+case("classes/identity", "{{ true.__class__ == true.__class__ }}{{ true.__class__ == 1.__class__ }}{{ true.__class__ is callable }}")
+case("classes/via_format", '{{ "a{0.__class__}b".format(42) }}')
+case("classes/via_format_markup", '{{ ("a{0.__class__}b{1}"|safe).format(42, "<foo>") }}')
+# A dunder name misses like any other attribute on an undefined, where a plain
+# name raises straight away.
+case("classes/attr_dunder", "{{ nope|attr('__foo__') is undefined }}|{{ nope|attr('__subclasses__') }}")
+case("classes/attr_dunder_used", "{{ nope|attr('__foo__')() }}")
+case("classes/attr_plain", "{{ nope|attr('items') }}")
+case("classes/dot_dunder", "{{ nope.__subclasses__ }}")
+
 # --- globals ------------------------------------------------------------------
 case("globals/range", "{{ range(3)|list }}|{{ range(1,4)|list }}|{{ range(0,10,3)|list }}|{{ range(3,0,-1)|list }}|{{ range(3) }}")
 case("globals/dict", "{{ dict(a=1, b=2) }}|{{ dict({'a':1}, b=2) }}")

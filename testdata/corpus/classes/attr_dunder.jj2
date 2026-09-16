@@ -1,0 +1,3 @@
+{}
+---
+{{ nope|attr('__foo__') is undefined }}|{{ nope|attr('__subclasses__') }}

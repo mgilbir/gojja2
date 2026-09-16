@@ -23,20 +23,13 @@ minijinja/loop-recursion-error_txt.jj2   # RecursionError message is CPython-int
 minijinja/opfilters_txt.jj2              # jinja2 prints a generator's address
 
 # --- Python object introspection ----------------------------------------------
-# These are jinja2's own sandbox-escape regression tests. They exist because a
-# jinja2 template runs against real Python objects and can therefore reach
-# __class__, __subclasses__, __builtins__ and __import__. gojja2 has no Python
-# object graph: those attributes do not exist rather than being blocked, so the
-# templates cannot be reproduced rather than merely failing to be. See
+# The two that are left of jinja2's sandbox-escape regression tests.
+#
+# __class__ is implemented -- it is a statement about gojja2's own value model,
+# and inert. These two go further, into a Python object graph that has no
+# counterpart in Go: the list of a class's subclasses, and the chain from a
+# bound method to the interpreter's builtins. Matching them would mean building
+# a decoy of the escape route the tests exist to document. See
 # docs/divergences.md.
-jinja-harvest/ext_ff3adf256f.jj2          # __class__.__name__
-jinja-harvest/nativetypes_0de49aa39a.jj2  # true.__class__
-jinja-harvest/nativetypes_37361e19c1.jj2  # undefined.__class__
-jinja-harvest/nativetypes_b7ec26cc77.jj2  # true.__class__|string
-jinja-harvest/security_447948cd51.jj2     # __subclasses__
-jinja-harvest/security_57d24be07e.jj2     # format_map with {x.__class__}
-jinja-harvest/security_6463f94894.jj2     # format with {0.__class__}
-jinja-harvest/security_6d02ad47f1.jj2     # foo.__class__
-jinja-harvest/security_95a4f3be5a.jj2     # format with {0.__class__}
 jinja-harvest/security_ad3b7dd838.jj2     # __class__.__subclasses__()
 jinja-harvest/security_ccdfed5fc2.jj2     # __builtins__[__import__]

@@ -56,28 +56,25 @@ at all -- silently.
 
 | corpus | cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 253 | 253 |
+| gojja2's own (committed, with goldens) | 264 | 264 |
 | MiniJinja fixtures | 161 | 156 |
-| Jinja's own test suite (harvested templates) | 658 | 646 |
-| **total** | **1071** | **1055 (98.5%)** |
+| Jinja's own test suite (harvested templates) | 658 | 655 |
+| **total** | **1083** | **1075 (99.4%)** |
 
 On top of that, roughly a million generated templates have been rendered by
 both implementations and compared (see below).
 
-The 16 that differ are listed, with reasons, in `testdata/known_failures.txt`;
+The 7 that differ are listed, with reasons, in `testdata/known_failures.txt`;
 a case on that list which starts passing fails the test, so the list can only
 shrink deliberately. They are:
 
-- **11** of Jinja's own sandbox-escape regression tests, which reach `__class__`,
-  `__subclasses__`, `__builtins__` and `__import__`. gojja2 has no Python object
-  graph behind its values, so those attributes do not exist rather than being
-  blocked. Matching would mean building the escape surface on purpose.
+- **4** `RecursionError` messages. The exception class matches; only CPython's
+  wording differs, and it names where in *its* interpreter the stack ran out.
 - **1** that renders a generator's memory address, which differs between two
   runs of CPython itself -- nothing can reproduce it, jinja2 included.
-- **4** `RecursionError` messages. The exception class matches; only CPython's
-  wording differs, and it names where in *its* interpreter the stack ran out
-  ("while calling a Python object"). That is a judgement call, not a limit --
-  see [docs/divergences.md](docs/divergences.md).
+- **2** of Jinja's sandbox-escape tests, which walk a Python object graph out
+  to `__subclasses__` and `__import__`. `__class__` *is* implemented; these two
+  go past it -- see [docs/divergences.md](docs/divergences.md).
 
 Underneath, the pieces are graded separately against the real thing: CPython's
 `repr()` over 3,200 floats and strings, every binary operator over a 39-value

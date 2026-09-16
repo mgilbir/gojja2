@@ -1,0 +1,9 @@
+{
+  "case": "classes/containers.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "<class 'list'><class 'dict'><class 'tuple'><class 'range'>"
+}

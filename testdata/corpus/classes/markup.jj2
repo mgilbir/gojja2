@@ -1,0 +1,3 @@
+{}
+---
+{{ ('x'|safe).__class__ }}|{{ ('x'|safe).__class__.__name__ }}

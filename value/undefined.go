@@ -148,6 +148,25 @@ func (v Value) ClassName() string {
 	return undefinedClassNames[v.undef().behavior]
 }
 
+// QualifiedTypeName is a value's Python class name, module-qualified when the
+// class does not live in builtins. It is what `__class__` reports.
+func QualifiedTypeName(v Value) string {
+	switch v.kind {
+	case KindUndefined:
+		return "jinja2.runtime." + v.ClassName()
+	case KindString:
+		if v.safe {
+			return "markupsafe.Markup"
+		}
+		return "str"
+	case KindObject:
+		if q, ok := v.obj.(interface{ QualifiedName() string }); ok {
+			return q.QualifiedName()
+		}
+	}
+	return v.TypeName()
+}
+
 // ObjectTypeRepr describes a value the way jinja2's object_type_repr does,
 // for use in undefined messages: "dict object", "str object", "None". The
 // undefined classes live in jinja2.runtime rather than in builtins, so they

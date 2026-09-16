@@ -106,6 +106,98 @@ cannot match CPython's and is excluded from conformance comparison.
 
 ## Python object introspection
 
+`__class__` is implemented. Every value answers it with a type object that has
+a name, a repr and equality:
+
+```jinja
+{{ true.__class__ }}            <class 'bool'>
+{{ nope.__class__.__name__ }}   Undefined
+{{ ('x'|safe).__class__ }}      <class 'markupsafe.Markup'>
+```
+
+That is a statement about gojja2's own value model, and it is inert: there is
+nothing behind it. Two of Jinja's sandbox-escape tests go further, and those
+are not implemented:
+
+```jinja
+{{ foo.__class__.__subclasses__() }}
+{{ "{0.__call__.__builtins__[__import__]}" | attr("format")(x) }}
+```
+
+The first wants the list of a class's subclasses; the second walks from a bound
+method to the interpreter's builtins and out to `__import__`. Neither has a
+counterpart in Go -- there is no class hierarchy to enumerate and no import
+machinery to reach. Matching them would mean building a decoy of the escape
+route the tests exist to document, which would be worse than not having one:
+the next reader would have to work out that the ladder leads nowhere.
+
+## Limits on allocation
+
+```jinja
+{{ 2 ** 100000000 }}
+{{ "x" * 2147483648 }}
+```
+
+### A width limit on `**`
+
+```jinja
+{{ 2 ** 100000000 }}
+```
+
+CPython will try to materialise the integer. gojja2 refuses with `OverflowError`
+once the result would exceed 2**20 bits (128 KiB), because an exponent in a
+template is frequently attacker-influenced and the honest answer is a
+denial-of-service. Integers below that limit are exact and unbounded by machine
+word size, so `{{ 2 ** 100 }}` still renders all 31 digits.
+
+### A length limit on repetition
+
+Repeating a string or a sequence is refused once the result would exceed
+2**31 elements, for the same reason: the count is often attacker-influenced.
+CPython would attempt the allocation.
+
+## Identifier characters
+
+jinja2 matches names against a table generated from Python's `str.isidentifier`.
+gojja2 approximates it with Unicode categories: a name starts with `_`, a letter
+or `Nl`, and continues with those plus `Nd`, `Mn`, `Mc` and `Pc`. The two agree
+on every identifier anyone writes; they could differ on exotic code points, in
+which case gojja2 reports `unexpected char` where jinja2 reports
+`Invalid character in identifier`.
+
+## Lazy sequence filters
+
+```jinja
+{{ [1,2]|map("string") }}
+```
+
+jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr` and `unique`
+return generators. Printing one without `|list` renders
+`<generator object sync_do_map at 0x7f9c...>` -- a memory address, which differs
+between two runs of CPython itself, so no implementation can reproduce it.
+
+gojja2's sequence filters are eager and render the list. Every use that does
+anything with the result -- iterating it, `|list`, `|join`, `|first` -- behaves
+identically.
+
+## RecursionError wording
+
+A template that includes, extends or calls itself without a base case raises
+`RecursionError` in both. CPython's message names the interpreter operation
+that happened to hit the limit ("maximum recursion depth exceeded while calling
+a Python object", "... in comparison"), which varies with the call shape and
+describes nothing that exists in a Go program.
+
+gojja2 raises `RecursionError` with a message naming the limit and its
+configured value, which `WithMaxRecursion` controls.
+
+## lipsum() and random
+
+`lipsum()` and the `random` filter draw from a random source. Their output
+cannot match CPython's and is excluded from conformance comparison.
+
+## Python object introspection
+
 ```jinja
 {{ true.__class__ }}
 {{ cls|attr("__subclasses__")() }}

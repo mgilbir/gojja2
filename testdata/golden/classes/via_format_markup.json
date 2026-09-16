@@ -1,0 +1,9 @@
+{
+  "case": "classes/via_format_markup.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6"
+  },
+  "ok": true,
+  "output": "a&lt;class &#39;int&#39;&gt;b&lt;foo&gt;"
+}
