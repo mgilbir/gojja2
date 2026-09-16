@@ -39,7 +39,14 @@ own `malformed \N character escape` for a malformed one. Every other escape --
 exact, including CPython's quirk that `"\é"` decodes to the four characters
 `\xe9`.
 
-## A width limit on `**`
+## Limits on allocation
+
+```jinja
+{{ 2 ** 100000000 }}
+{{ "x" * 2147483648 }}
+```
+
+### A width limit on `**`
 
 ```jinja
 {{ 2 ** 100000000 }}
@@ -50,6 +57,12 @@ once the result would exceed 2**20 bits (128 KiB), because an exponent in a
 template is frequently attacker-influenced and the honest answer is a
 denial-of-service. Integers below that limit are exact and unbounded by machine
 word size, so `{{ 2 ** 100 }}` still renders all 31 digits.
+
+### A length limit on repetition
+
+Repeating a string or a sequence is refused once the result would exceed
+2**31 elements, for the same reason: the count is often attacker-influenced.
+CPython would attempt the allocation.
 
 ## Identifier characters
 

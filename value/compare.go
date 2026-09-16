@@ -117,6 +117,10 @@ func compare(op string, a, b Value) (int, bool, error) {
 	if b.IsUndefined() {
 		return 0, false, b.UndefinedError()
 	}
+	// A tuple subclass orders as the tuple it stands for, so |min and |max
+	// over |groupby results compare pair by pair.
+	a, b = asTupleIfPossible(a), asTupleIfPossible(b)
+
 	if a.IsNumber() && b.IsNumber() {
 		ord, ok := compareNumbers(a, b)
 		return ord, ok, nil
@@ -134,6 +138,17 @@ func compare(op string, a, b Value) (int, bool, error) {
 	return 0, false, errs.New(errs.TypeError,
 		"'%s' not supported between instances of '%s' and '%s'",
 		op, a.TypeName(), b.TypeName())
+}
+
+// asTupleIfPossible unwraps an Object that stands for a tuple.
+func asTupleIfPossible(v Value) Value {
+	if v.kind != KindObject {
+		return v
+	}
+	if tv, ok := v.obj.(TupleView); ok {
+		return tv.AsTuple()
+	}
+	return v
 }
 
 // compareSeq is Python's lexicographic sequence ordering: the first differing

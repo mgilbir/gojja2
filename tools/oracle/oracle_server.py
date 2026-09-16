@@ -49,17 +49,28 @@ def apply_limits() -> None:
     signal.signal(signal.SIGALRM, _on_alarm)
 
 
+# Failures that mean "this server ran out of room", not "this template is
+# wrong". A result produced by hitting a sandbox limit says nothing about
+# conformance and must not be graded.
+RESOURCE_ERRORS = {"MemoryError", "RecursionError", "RenderTimeout", "OverflowError"}
+
+
 def handle(request: dict) -> dict:
     name = request.get("name") or "<fuzz>"
     signal.setitimer(signal.ITIMER_REAL, RENDER_TIMEOUT_SECONDS)
     try:
-        return render(
+        result = render(
             name,
             request.get("src", ""),
             request.get("ctx") or {},
             request.get("settings") or {},
             request.get("templates") or {},
         )
+        # render() catches everything, so a limit hit comes back as an
+        # ordinary failure and has to be recognised here.
+        if not result["ok"] and result["error"]["type"] in RESOURCE_ERRORS:
+            result["resource"] = True
+        return result
     except (RenderTimeout, MemoryError, RecursionError, CaseError) as exc:
         # These escape render() because they can fire inside its own except
         # clause; report them rather than letting the server die.
