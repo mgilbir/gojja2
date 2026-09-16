@@ -16,13 +16,15 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           # The toolchain is pinned in go.mod, down to the patch level.
           go-version-file: go.mod
-          cache: true
+          # Nothing to cache: this module has no dependencies, so there is
+          # no go.sum and the cache step only warns about its absence.
+          cache: false
 
       - name: Formatting
         run: |
@@ -54,13 +56,18 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       # go vet does not report unused unexported functions, and three had
       # accumulated unnoticed.
-      - uses: golangci/golangci-lint-action@v6
+      #
+      # The action major must match the golangci-lint major: v6 installs a
+      # 1.x, which cannot read this repository's v2 configuration and refuses
+      # a go.mod newer than the Go it was built with. The version is pinned
+      # rather than "latest" so that what CI runs is what was run locally.
+      - uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.12.2
