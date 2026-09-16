@@ -107,6 +107,11 @@ func TestConformance(t *testing.T) {
 
 	var all []result
 	usedKnown := map[string]bool{}
+	// present records which corpora were actually graded. A known-failure
+	// entry can only be checked for staleness against a corpus that is
+	// there: the generated ones are gitignored, so on a checkout that has
+	// not run `make import` their entries are not stale, merely unreachable.
+	present := map[string]bool{}
 
 	for _, c := range corpora {
 		caseRoot := filepath.Join(root, c.cases)
@@ -124,6 +129,7 @@ func TestConformance(t *testing.T) {
 			t.Errorf("corpus %q is empty at %s", c.name, c.cases)
 			continue
 		}
+		present[c.name] = true
 
 		for _, path := range paths {
 			r := runCase(t, c.name, caseRoot, goldenRoot, path)
@@ -143,9 +149,15 @@ func TestConformance(t *testing.T) {
 	}
 
 	for id := range known {
-		if !usedKnown[id] {
-			t.Errorf("%s lists %q, which is not in any corpus", knownFailuresPath, id)
+		if usedKnown[id] {
+			continue
 		}
+		corpusName, _, _ := strings.Cut(id, "/")
+		if !present[corpusName] {
+			// Its corpus was not built; nothing can be concluded.
+			continue
+		}
+		t.Errorf("%s lists %q, which is not in corpus %q", knownFailuresPath, id, corpusName)
 	}
 
 	// A case marked ungradable has no answer for anyone to match -- jinja2
