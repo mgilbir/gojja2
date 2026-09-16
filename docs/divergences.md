@@ -110,7 +110,7 @@ so the render's budget is charged for what a repetition is about to allocate
 iteration budget. Charging it afterwards would be charging for memory that is
 already gone.
 
-### A size limit on constant folding
+### A budget on constant folding
 
 ```jinja
 {{ "x" * 1000000000 }}
@@ -126,6 +126,23 @@ gojja2 declines to fold a constant above 64 KiB, leaving the expression to be
 evaluated at render time where the budget bounds it. The rendered result is
 identical -- it is just not computed early. Ordinary constants still fold, and
 nothing written on purpose builds a 64 KiB one this way.
+
+### A backstop on panics
+
+A panic anywhere inside gojja2 is turned into a render error wrapping
+[ErrInternal], at both entry points: `FromString`/`GetTemplate` and
+`Render`/`RenderString`.
+
+This is a backstop, not a licence. A template engine renders input its caller
+does not control, so unwinding the caller's goroutine is never the right answer
+to a bad template -- the render failed, so the render should say so. Every panic
+that reaches it is a bug here rather than in the template, and the error says
+so and carries the panic value, so a report can name it.
+
+Constant folding recovers separately and more quietly: an optimisation must
+never fail worse than not optimising, so a fold that panics simply does not
+happen and the expression is left for runtime, where the render's budget
+applies to it.
 
 ## A bound on nesting depth
 

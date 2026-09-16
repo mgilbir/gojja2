@@ -60,20 +60,45 @@ func (t *Template) RenderString(ctx context.Context, vars map[string]any) (strin
 
 // RenderValues renders into w with variables that are already template values,
 // skipping the conversion from Go.
-func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[string]value.Value) error {
+func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[string]value.Value) (err error) {
 	// A bufio.Writer keeps the many small writes a template makes from
 	// becoming many small syscalls, and gives the render one place to
 	// flush from.
 	bw := bufio.NewWriter(w)
-	err := t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env))
-	// Flush either way: a render that failed has still produced whatever
-	// came before the failure, and leaving it in the buffer would make the
-	// amount w receives depend on where the buffer happened to be.
-	if ferr := bw.Flush(); err == nil {
-		err = ferr
-	}
-	return err
+	defer func() {
+		// Flush either way: a render that failed has still produced
+		// whatever came before the failure, and leaving it in the buffer
+		// would make the amount w receives depend on where the buffer
+		// happened to be.
+		if ferr := bw.Flush(); err == nil {
+			err = ferr
+		}
+	}()
+	defer catchPanic(&err)
+	return t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env))
 }
+
+// catchPanic turns a panic into a render error.
+//
+// This is a backstop, not a licence. A template engine renders input its caller
+// does not control, so unwinding the caller's goroutine is never the right
+// answer to a bad template -- the render failed, so the render should say so.
+// Every panic that reaches here is a bug in gojja2, and the message says so,
+// with the panic value kept so a report can name it.
+func catchPanic(err *error) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	e := errs.New(errs.TemplateRuntimeError,
+		"internal error in gojja2 (please report this): %v", r)
+	e.Cause = ErrInternal
+	*err = e
+}
+
+// ErrInternal marks a render that failed because gojja2 panicked. Reaching it
+// always means a bug here rather than in the template.
+var ErrInternal = errors.New("gojja2: internal error")
 
 func (e *Environment) valuesFromGo(vars map[string]any) map[string]value.Value {
 	values := make(map[string]value.Value, len(vars))

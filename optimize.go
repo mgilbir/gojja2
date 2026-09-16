@@ -44,7 +44,7 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			if _, isData := node.(*ast.TemplateData); isData {
 				continue
 			}
-			v, ok := c.constEval(node)
+			v, ok := c.tryConstEval(node)
 			if !ok {
 				continue
 			}
@@ -56,6 +56,13 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			text := value.Str(v)
 			if c.st.autoescape && !v.IsSafe() {
 				text = escapeHTML(text)
+			}
+			// The text becomes part of the compiled template and is
+			// kept for as long as it is cached, so it obeys the same
+			// cap as any other folded constant. Leaving it for runtime
+			// renders the same bytes without retaining them.
+			if len(text) > maxFoldedConst {
+				continue
 			}
 			// The result becomes literal template text, exactly as
 			// jinja2 appends str(as_const()) to its output buffer,
@@ -108,7 +115,7 @@ func (f *constFolder) fold(e ast.Expr) ast.Expr {
 		return nil
 	}
 	if _, isConst := e.(*ast.Const); !isConst {
-		if v, ok := f.c.constEval(e); ok && foldable(v) {
+		if v, ok := f.c.tryConstEval(e); ok && foldable(v) && constSizeOK(v) {
 			return &ast.Const{Pos: ast.At(e.Line()), Value: v}
 		}
 	}
@@ -500,6 +507,21 @@ type constEvaluator struct {
 	st  *State
 }
 
+// Folding runs at compile time, where there is no render and therefore nothing
+// a caller has bounded. It still executes real filters, so it needs a budget of
+// its own or `{{ 1.5|round(2000000000) }}` allocates its way through the
+// machine inside FromString, with WithMaxIterations and WithMaxOutputBytes both
+// set and both powerless because they start later.
+//
+// The allowance is spent per fold *attempt*, not per template. Folding is
+// observable -- a print tag that folds to undefined renders "" where the
+// unfolded form raises -- so whether an expression folds must not depend on how
+// many expressions happened to precede it in the file.
+const (
+	maxFoldSteps = 100_000
+	maxFoldBytes = maxFoldedConst
+)
+
 // newConstEvaluator builds an evaluator for a template being compiled.
 func newConstEvaluator(env *Environment, name string, fromString bool) *constEvaluator {
 	placeholder := &Template{env: env, name: name, fromString: fromString}
@@ -512,8 +534,30 @@ func newConstEvaluator(env *Environment, name string, fromString bool) *constEva
 		ctx:        newScope(globals),
 		blocks:     map[string][]blockEntry{},
 		autoescape: env.escapes(name, fromString),
+		budget: &budget{
+			maxSteps:  maxFoldSteps,
+			maxOutput: maxFoldBytes,
+		},
 	}
 	return &constEvaluator{env: env, st: st}
+}
+
+// tryConstEval is the only way a fold may begin.
+//
+// It resets the fold allowance, and it recovers: an optimisation must never
+// fail worse than not optimising. A filter that panics on its arguments took
+// FromString down with it, before any render existed to bound -- now the
+// expression is simply left for runtime, where the render's budget applies.
+func (c *constEvaluator) tryConstEval(e ast.Expr) (v value.Value, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			v, ok = value.Undefined, false
+		}
+	}()
+	c.st.budget.steps = 0
+	c.st.budget.written = 0
+	c.st.budget.sinceCheck = 0
+	return c.constEval(e)
 }
 
 // evalContextFilters read the autoescape setting, so jinja2 refuses to fold

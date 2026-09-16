@@ -145,7 +145,7 @@ func (r *rangeObject) Repr() string {
 	return b.String()
 }
 
-func globalRange(args *value.CallArgs) (value.Value, error) {
+func globalRange(s *State, args *value.CallArgs) (value.Value, error) {
 	nums := make([]int64, 0, 3)
 	for _, v := range args.Pos {
 		n, ok := v.Int64()
@@ -175,7 +175,7 @@ func globalRange(args *value.CallArgs) (value.Value, error) {
 
 // globalDict builds a dict from an optional mapping plus keyword arguments,
 // which keep the order they were written in.
-func globalDict(args *value.CallArgs) (value.Value, error) {
+func globalDict(s *State, args *value.CallArgs) (value.Value, error) {
 	out := value.NewDict()
 	d, _ := out.Dict()
 	if len(args.Pos) > 1 {
@@ -195,10 +195,10 @@ func globalDict(args *value.CallArgs) (value.Value, error) {
 	return out, nil
 }
 
-func globalNamespace(args *value.CallArgs) (value.Value, error) {
+func globalNamespace(s *State, args *value.CallArgs) (value.Value, error) {
 	// Namespace(*args, **kwargs) is dict(*args, **kwargs) underneath, so a
 	// non-mapping argument fails as an iterable rather than as a mapping.
-	built, err := globalDict(args)
+	built, err := globalDict(s, args)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -228,9 +228,9 @@ func (c *cyclerObject) GetAttr(name string) (value.Value, bool) {
 		}
 		return c.items[c.pos], true
 	case "next":
-		return Func("next", func(*value.CallArgs) (value.Value, error) { return c.next() }), true
+		return Func("next", func(*State, *value.CallArgs) (value.Value, error) { return c.next() }), true
 	case "reset":
-		return Func("reset", func(*value.CallArgs) (value.Value, error) {
+		return Func("reset", func(*State, *value.CallArgs) (value.Value, error) {
 			c.pos = 0
 			return value.None, nil
 		}), true
@@ -252,7 +252,7 @@ func (c *cyclerObject) TypeName() string                          { return "Cycl
 func (c *cyclerObject) QualifiedName() string                     { return "jinja2.utils.Cycler" }
 func (c *cyclerObject) Repr() string                              { return "<Cycler>" }
 
-func globalCycler(args *value.CallArgs) (value.Value, error) {
+func globalCycler(s *State, args *value.CallArgs) (value.Value, error) {
 	if len(args.Pos) == 0 {
 		return value.Undefined, errs.New(errs.TypeError, "at least one item has to be provided")
 	}
@@ -279,7 +279,7 @@ func (j *joinerObject) Call(*value.CallArgs) (value.Value, error) {
 	return value.String(j.sep), nil
 }
 
-func globalJoiner(args *value.CallArgs) (value.Value, error) {
+func globalJoiner(s *State, args *value.CallArgs) (value.Value, error) {
 	sep := ", "
 	if v, ok := arg(args, 0, "sep"); ok && v.Kind() == value.KindString {
 		sep = v.AsString()
@@ -309,7 +309,7 @@ vivamus viverra volutpat vulputate`)
 //
 // jinja2 draws from a random source, so this cannot render the same bytes as
 // CPython and is excluded from conformance comparison. See docs/divergences.md.
-func globalLipsum(args *value.CallArgs) (value.Value, error) {
+func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 	n, err := intArg(args, 0, "n", 5)
 	if err != nil {
 		return value.Undefined, err

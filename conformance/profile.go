@@ -45,12 +45,12 @@ func applyProfile(env *gojja2.Environment, name string) {
 	case ProfileTransformers:
 		env.AddFilter("tojson", filterTransformersToJSON)
 		env.AddGlobal("raise_exception", gojja2.Func("raise_exception",
-			func(args *value.CallArgs) (value.Value, error) {
+			func(_ *gojja2.State, args *value.CallArgs) (value.Value, error) {
 				msg, _ := args.Arg(0)
 				return value.Undefined, errs.New(errs.TemplateError, "%s", value.Str(msg))
 			}))
 		env.AddGlobal("strftime_now", gojja2.Func("strftime_now",
-			func(args *value.CallArgs) (value.Value, error) {
+			func(_ *gojja2.State, args *value.CallArgs) (value.Value, error) {
 				format, _ := args.Arg(0)
 				return value.String(strftime(FrozenNow, value.Str(format))), nil
 			}))

@@ -30,7 +30,7 @@ var statefulMethods = map[value.Kind]map[string]func(*State, value.Value, *value
 // builtinMethod resolves a method on a built-in type, returning it bound.
 func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) {
 	if fn, ok := statefulMethods[recv.Kind()][name]; ok {
-		return Func(name, func(args *value.CallArgs) (value.Value, error) {
+		return Func(name, func(_ *State, args *value.CallArgs) (value.Value, error) {
 			return fn(s, recv, args)
 		}), true
 	}
@@ -51,7 +51,7 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 	if !ok {
 		return value.Undefined, false
 	}
-	return Func(name, func(args *value.CallArgs) (value.Value, error) {
+	return Func(name, func(_ *State, args *value.CallArgs) (value.Value, error) {
 		return fn(recv, args)
 	}), true
 }

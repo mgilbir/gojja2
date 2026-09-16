@@ -87,6 +87,11 @@ func (ex *exec) invoke(callee value.Value, args *value.CallArgs, at ast.Expr) (v
 	if m, ok := callee.Interface().(*macroObject); ok {
 		return ex.callMacro(m, args)
 	}
+	// A stateful callable is handed the render, so it can charge the budget
+	// for whatever it is about to do.
+	if fn, ok := callee.Interface().(statefulCaller); ok {
+		return fn.callWith(ex.st, args)
+	}
 	if fn, ok := callee.Interface().(value.Caller); ok {
 		return fn.Call(args)
 	}
