@@ -1,17 +1,25 @@
 # gojja2 — adversarial codebase audit
 
 **Date:** 2026-09-16
-**Commit:** b7c96ca "Escape what |format substitutes into Markup, and pprint Markup on one line"
-**Scope:** the whole repository — ~9,500 lines of root package, ~4,000 of `value/`,
-~2,700 of `internal/`, ~1,800 of `conformance/`, plus `Makefile`, `README.md`,
-`docs/`, and the committed corpora.
-**Method:** every file read; critical paths traced end to end; every claim below
-that says MEASURED was reproduced in an isolated harness outside the repository,
-under `systemd-run --scope -p MemoryMax=… -p MemorySwapMax=0`, so that an
-allocation bomb reports as exit 137 instead of taking the machine down.
-Behavioural divergences were adjudicated against the pinned oracle
-(`.venv`, CPython 3.11.15 / jinja2 3.1.6 / markupsafe 3.0.3), which this project
-defines as the specification.
+**Commit:** fa584a9 "Run CI on every commit that reaches main, and gate fork pull requests"
+**Scope:** the whole repository — every `.go` file read in full (~22,500 lines across the
+root package, `value/`, `internal/`, `conformance/`), plus `Makefile`, `README.md`,
+`docs/`, `.golangci.yml`, both GitHub workflows, `tools/oracle/`, and the committed
+corpora.
+
+**Supersedes** the audit recorded at commit `dd44811`, which described commit `b7c96ca`
+and whose findings have since been largely fixed. That report is still retrievable with
+`git show dd44811:docs/audits/codebase-audit-2026-09-16.md`. This is a fresh read, not a
+re-check of that list; where a finding here resembles an old one it was rediscovered from
+the code, and the old IDs are not carried over.
+
+**Method.** Every claim marked CONFIRMED was reproduced. Behavioural claims were
+adjudicated against the pinned oracle (`.venv`, CPython 3.11.15 / jinja2 3.1.6 /
+markupsafe 3.0.3), which this project defines as the specification. Resource claims were
+reproduced in a throwaway module outside the repository, each run under
+`systemd-run --user --scope -p MemoryMax=… -p MemorySwapMax=0`, so that an allocation bomb
+reports as exit 137 and a stack overflow as exit 2 rather than taking the machine down.
+Hypotheses that did not survive are recorded in §7 rather than promoted.
 
 ---
 
@@ -19,1100 +27,995 @@ defines as the specification.
 
 | ID | Severity | Area | Issue | Site | Status |
 |---|---|---|---|---|---|
-| C1 | Critical | limits / optimizer | Templates panic and OOM at **compile** time, where no budget, context or bound exists | optimize.go:562 | CONFIRMED |
-| C2 | Critical | autoescape | `SelectAutoescape` leaves **string templates unescaped**; jinja2 escapes them | environment.go:172 | CONFIRMED |
-| C3 | Critical | autoescape | `SelectAutoescape` is case-sensitive on extensions; jinja2 calls this a security property | environment.go:177 | CONFIRMED |
-| C4 | Critical | Go bridge | Cyclic caller data OOMs **before** the budget is constructed | convert.go:71,126 + template.go:41 | CONFIRMED |
-| C5 | High | filters | Template-chosen sizes allocate before anything is charged → OOM | filters_web.go:353, filters.go:1249, filters_seq.go:380,351 | CONFIRMED |
-| C6 | High | filters / methods | Six one-line templates panic out of `Render`/`FromString` | methods.go:628,660-666; filters.go:477,1116 | CONFIRMED |
-| C7 | High | globals | `lipsum`, a default global, panics four distinct ways | globals.go:344,346,352 | CONFIRMED |
-| C8 | High | filters | Individually-sound guards do not compose → 3.6 GB from two legal repeats | methods.go:309 | CONFIRMED |
-| C9 | High | methods | `dict.update` silently discards every non-dict argument — **data loss** | methods.go:840-855 | CONFIRMED |
-| C10 | High | limits | A context deadline cannot interrupt a filter: 1 s deadline returned after 17.44 s | limits.go:527-548 | CONFIRMED |
-| C11 | High | filters | `urlencode` is O(n²) on bytes below 0x10, incl. `\n` and `\t` | filters_web.go:60-80 | CONFIRMED |
-| C12 | High | inheritance | `{{ self.block }}` swallows the block's error and renders `""` | runtime.go:407-413 | CONFIRMED |
-| C13 | Medium | globals | `range` length overflows int64 → `|length` reports `-1` where CPython raises | globals.go:29-40 | CONFIRMED |
-| C14 | Medium | methods | `center`/`ljust`/`rjust` accept a fill CPython rejects → silent wrong output | methods.go:646 | CONFIRMED |
-| C15 | Medium | Go bridge | Every exported method is callable **with arguments**; docs say "nullary" | convert.go:188-191,256 | CONFIRMED |
-| C16 | Medium | Go bridge | Pointer-receiver methods are silently invisible to templates | convert.go:99-103 | CONFIRMED |
-| C17 | Medium | Go bridge | A panicking Go method panics the render | convert.go:271 | CONFIRMED |
-| C18 | Medium | environment | Template cache is unbounded, never evicted, and cannot be invalidated | environment.go:63,281-305 | CONFIRMED |
-| C19 | Medium | optimizer | A folded *filter* result is never size-checked and is retained forever | optimize.go:110-114,407 | CONFIRMED |
-| C20 | Medium | rendering | `{% include %}` fully buffers, contradicting the streaming promise | exec.go:531 | CONFIRMED |
-| C21 | Low | docs | README conformance table is stale: 2589/2585 documented, 2591/2587 actual | README.md:§Conformance | CONFIRMED |
-| C22 | Low | hygiene | Three dead functions and one dead parameter, none caught by `make check` | call.go:83,233; tests.go:265,268 | CONFIRMED |
-| C23 | Low | docs | The same comment written twice, back to back, in two wordings | filters.go:489-497 | CONFIRMED |
-| C24 | Low | DX | No CI exists, though `make check` is labelled "Everything CI should run" | Makefile:§check | CONFIRMED |
-| C25 | Low | API | `WithMaxRecursion(0)` means *default*; `WithMaxIterations(0)` means *unbounded* | environment.go:214,230,241 | CONFIRMED |
-| C26 | Low | autoescape | No `disabled_extensions`/`default`; divergent default extension list | environment.go:170-185 | CONFIRMED |
+| C1 | Critical | limits / inheritance | `{% import %}` renders with **no budget and no context** — a nested render with *no* allowance, not a fresh one | exec.go:636 | CONFIRMED |
+| C2 | Critical | inheritance | `{% block x %}{{ self.x }}{% endblock %}` kills the process with a Go stack overflow | runtime.go:403,445 | CONFIRMED |
+| C3 | Critical | value / compare | Ordered comparison of cyclic values kills the process; `==` is bounded, `<` is not | value/compare.go:160,208 | CONFIRMED |
+| C4 | Critical | optimizer | `%` formatting at **compile** time is unbudgeted: a 42-byte template OOM-kills `FromString` at a 4 GB cap | optimize.go:404 | CONFIRMED |
+| C5 | High | filters | `\|tojson` of `-inf` calls `Builder.Reset()` and destroys the document produced so far | filters_web.go:452 | CONFIRMED |
+| C6 | High | lexer / DX | Lexing is quadratic in tag count when a delimiter is absent — 1.6 MB compiles in 34 s | internal/lexer/lexer.go:146 | CONFIRMED |
+| C7 | High | value / limits | `StrSlice`/`StrIndex` allocate 8 bytes per input byte, uncharged — 8× past the output budget | value/str.go:30,40,62 | CONFIRMED |
+| C8 | High | parser | The 1,000-level nesting bound does not apply to `not`, unary `-` or filter chains | internal/parser/expr.go:117,233 | CONFIRMED |
+| C9 | High | globals / limits | `x in range(...)` is an uninterruptible linear scan; CPython's is O(1) | value/compare.go:336 | CONFIRMED |
+| C10 | High | filters | `\|unique` is O(n²) and never polls the context | filters_seq.go:246 | CONFIRMED |
+| C11 | High | filters | **No filter checks arity**; extra arguments are silently accepted or reinterpreted | filters.go:22 | CONFIRMED |
+| C12 | High | CI | The "Test under a memory cap" job runs nothing: every package replays from the test cache | .github/workflows/ci.yml:111 | CONFIRMED |
+| C13 | Medium | pyformat | `%*s` and `%.*f` are broken — the value is consumed before the star width | value/pyformat.go:102 | CONFIRMED |
+| C14 | Medium | pyformat | A large width emits Go's `%!(NOVERB)%!(EXTRA string=x)` into the document | value/pyformat.go:314 | CONFIRMED |
+| C15 | Medium | pyformat / limits | `%` allocation is uncharged at render time too: 4 KiB budget, 10 MB built, success reported | eval.go:211 | CONFIRMED |
+| C16 | Medium | lexer | A float literal that overflows to `inf` is a syntax error; CPython renders `inf` | internal/lexer/number.go:182 | CONFIRMED |
+| C17 | Medium | filters | `\|sum(start='')` concatenates where CPython raises `TypeError` | filters.go:1360 | CONFIRMED |
+| C18 | Medium | autoescape | `"%c"\|safe % 60` emits an unescaped `<`; markupsafe raises | value/pyformat.go:344 | CONFIRMED |
+| C19 | Medium | loader | `FSLoader` silently **remaps** `../x` to `x` instead of refusing it; the rejection loop is dead code | loader.go:75 | CONFIRMED |
+| C20 | Medium | Go bridge | A method whose only result is `error` renders the error object and reports success | value/convert.go:459 | CONFIRMED |
+| C21 | Medium | hygiene | `State.exported` / `State.export()` are write-only; the doc says imports read them | exec.go:647, template.go:203 | CONFIRMED |
+| C22 | Low | errs | `Error.Stack []Frame` and `Frame` are never written or read — dead exported API | errs/errs.go:125,141 | CONFIRMED |
+| C23 | Low | errs | `At` says "returns a copy of err" and mutates in place | errs/errs.go:190 | CONFIRMED |
+| C24 | Low | DX | `make check` claims "Everything CI runs"; there is no `make lint`, and CI runs two more jobs | Makefile:241 | CONFIRMED |
+| C25 | Low | docs | divergences.md says known_failures.txt has "only two entries"; it has four | docs/divergences.md:344 | CONFIRMED |
+| C26 | Low | lexer | `"\Uffffffff"` renders U+FFFD; CPython raises "illegal Unicode character" | internal/lexer/strlit.go:142 | CONFIRMED |
+| C27 | Low | hygiene | Four dead or write-only fragments the linter cannot see | see §3.7 | CONFIRMED |
+| C28 | Low | autoescape | `SelectAutoescape("")` selects nothing; jinja2 builds the pattern `"."` | environment.go:260 | CONFIRMED |
+| C29 | Low | API | `Globals()` hands out the live map; a caller can clobber `range` | environment.go:392 | CONFIRMED |
+| C30 | Low | value | `SliceBounds` and `SliceIndices` duplicate the clamp logic verbatim | value/str.go:87,139 | CONFIRMED |
 
-**Counts:** 4 Critical, 8 High, 8 Medium, 6 Low — 26 findings, all CONFIRMED by
-execution or by direct comparison against the pinned oracle. No finding in this
-report is speculative; the handful of hypotheses that did not survive testing are
-recorded in §7 rather than promoted.
+**Counts:** 4 Critical, 8 High, 9 Medium, 9 Low — 30 findings, all CONFIRMED by execution
+or by direct comparison against the pinned oracle.
 
 ### What is genuinely sound
 
-Said once, as instructed, because it is substantial and it shapes the diagnosis:
+Said once, because it is substantial and it shapes the diagnosis.
 
-- **The value layer is exemplary.** `saturatingMul` (ops.go:364), `repeat`'s
-  `MaxInt32` cap (ops.go:380,394) and `estimatePowBits`/`maxPowBits`
-  (ops.go:592) bound every template-chosen size *before* allocating, and each
-  carries a comment explaining the attack it stops. `{{ 10 ** 2000000000 }}`
-  returns a clean `OverflowError`.
-- **Dict hashing is correct and carefully argued** — `hashFloat` folds `1`,
-  `1.0` and `True` onto one slot, and `encodeKey` length-prefixes so tuple keys
-  cannot collide by concatenation (dict.go:233-259).
-- **The parser is depth-bounded.** MEASURED: 1,000,000 nested parens and 100,000
-  nested lists both return `expression or statement nests deeper than 1000
-  levels` rather than overflowing the stack — which in Go would be unrecoverable.
-- **The error model works exactly as documented.** MEASURED:
-  `errors.Is(err, errs.UndefinedError)` → true, and so is
-  `errors.Is(err, errs.TemplateRuntimeError)` through the modelled Python class
-  hierarchy; `errors.Is(err, ErrTooManyIterations)` and
-  `errors.Is(err, context.Canceled)` likewise.
-- **`__class__` is inert by design** (classes.go) — no `__subclasses__`,
-  `__globals__` or `__builtins__` behind it, and the reasoning is written down.
-- **The conformance apparatus is unusually honest**: goldens regenerated from
-  CPython, a known-failures list that fails the build if an entry starts
-  passing, and ungradable cases excluded with a stated reason. `go test ./...`
-  passes on a clean tree.
+- **Conformance is real and it is measured.** `TestConformance` reports 2587/2591 (99.8%),
+  exactly the README's table, and the table is asserted rather than transcribed. A 30,000-template
+  differential soak against the live CPython oracle (seed 7) passed with zero divergences
+  in 38 s. The corpus-plus-oracle machinery is the best part of this project.
+- **The value layer's arithmetic is exemplary.** `saturatingMul` (value/ops.go:393),
+  `estimatePowBits` (value/ops.go:650), exact int/float ordering through `big.Rat`
+  (value/compare.go:240), CPython's `float_divmod` (value/ops.go:458) and the
+  `maxInt64AsFloat` boundary note (value/value.go:130) are all correct for the right
+  reasons, and each carries the reason.
+- **Concurrency is clean.** 8 goroutines × 200 renders across inheritance, include, import,
+  macros and mutating list methods, and 8 × 500 renders of one shared `*Template`, are
+  race-free under `-race`. The template cache is properly locked and folded constants are
+  copied per evaluation, so nothing is shared that should not be.
+- **The comments are load-bearing.** Almost every non-obvious decision in this codebase
+  says *why*, and the reasons are specific and checkable. That is rare, and it is what made
+  this audit possible at this depth.
 
-The defects below are overwhelmingly *not* in the parts this project treats as
-its subject matter. They cluster in the layer above it.
+The findings below are concentrated in exactly the places that story does *not* cover:
+compile time, recursion depth, and anything a hand-written corpus would not think to write.
 
 ---
 
 ## 2. System map
 
+### Packages
+
+```
+gojja2            public API: Environment, Template, State, Loader, filters, tests, globals
+ ├── errs         Python exception classes + hierarchy (Kind, *Error)
+ ├── value        the value model: Value, Seq, Dict, Undefined, ops, repr, Go bridge
+ └── internal
+     ├── lexer    source -> []Token   (syntax config, whitespace control, string literals)
+     ├── parser   []Token -> ast.Template (recursive descent, jinja2 precedence)
+     └── ast      node set mirroring jinja2's `nodes`
+conformance       oracle-backed corpus grading, generator, differential fuzzer, shrinker
+tools/oracle      CPython jinja2 harness (untracked by Go; driven from the Makefile)
+```
+
 ### Real execution paths
 
-```
-                       ┌──────────────── COMPILE (no budget, no context) ───────────────┐
-Environment.FromString │ parser.Parse → foldConstantExpressions → foldConstantPrints    │
-Environment.GetTemplate│        ↓ (cache, unbounded)      ↑ RUNS REAL FILTERS ← C1      │
-                       │ checkDependencies → collectBlocks → *Template                  │
-                       └───────────────────────────────────────────────────────────────┘
-                                             ↓
-                       ┌──────────────── RENDER ───────────────────────────────────────┐
-Template.Render        │ valuesFromGo(vars)  ← C4: runs BEFORE the budget exists        │
-Template.RenderValues  │ newBudget(ctx, env) ← every documented bound starts HERE       │
-                       │ renderInto → newState → exec.execBody                          │
-                       │   exec.write → budget.account → tick → checkContext ← C10      │
-                       │   runLoop    → budget.step    → tick → checkContext            │
-                       └───────────────────────────────────────────────────────────────┘
-```
+**Compile** — `Environment.FromString` / `FromNamedString` / `GetTemplate`
+→ `compile` (environment.go:502), which is `defer catchPanic` then:
 
-The single most important structural fact in this codebase is the position of
-that middle line. `newBudget` is called in `Template.RenderValues`
-(template.go:63). Everything above it — template compilation, constant folding,
-and the conversion of the caller's own Go values — runs with **no budget, no
-context and no bound of any kind**. C1 and C4 are both consequences of that one
-placement, and they are the two findings a reader should take away.
+1. `parser.Parse` → `lexer.Tokenize` (whole source, all tokens up front) → recursive descent.
+2. `foldConstantExpressions` — the general fold, over every expression in the tree.
+3. `foldConstantPrints` — a second, print-tag-only fold that also accepts undefined results.
+4. `checkDependencies` — unknown filter/test names, with `{% if %}` softening the check.
+5. `collectBlocks` — index blocks by name, refusing duplicates.
 
-### Key invariants, and where they actually hold
+`GetTemplate` consults a bounded LRU first (cache.go), and stores on success only.
 
-| Invariant | Claimed | Enforced |
+**Render** — `Template.Render` / `RenderString` → `RenderValues` → `renderInto`
+(template.go:128), which builds a `State`, wraps the writer in a `bufio.Writer`, and walks
+the tree with `exec` (exec.go). `{% extends %}` does not recurse: it parks the parent on
+`st.parent` and `renderInto` loops.
+
+**Nested renders** take three different routes, and they are not equivalent:
+
+| construct | new State | budget threaded | depth counted | output |
+|---|---|---|---|---|
+| `{% include %}` | yes, via `renderInto` | **yes** | yes (`st.enter`) | fully buffered, then written on |
+| `{% extends %}` | no — same State | yes | yes (`enterExtends`) | parent body replaces child's |
+| `{% import %}` / `{% from %}` | yes, **hand-built** | **no** (C1) | yes | discarded |
+| `{% macro %}` call | no — same State | yes | yes | captured |
+| `{% block %}` / `self.x` | no — same State | yes | **no** (C2) | captured |
+
+That table is the shape of C1 and C2: three routes, each written separately, and the two
+that were written by hand rather than through `renderInto` are the two that are missing a
+guard.
+
+### Key invariants, and where they are enforced
+
+| invariant | enforced at | holes |
 |---|---|---|
-| A render cannot exceed `maxIterations` | environment.go:223 | Only in `budget.step`, reached from `runLoop`, `materialize`, `evalArgs`, `unpack`, `list.extend`. Not from any global, most filters, or compile time. |
-| A render cannot exceed `maxOutputBytes` | environment.go:234 | Only in `exec.writeTo`. The allocation that produces the text is never bounded (C5, C8). |
-| A render stops when the context is cancelled | README, template.go:37 | Only at `budget.tick`, every 4096 units. A filter that neither iterates nor writes is uninterruptible (C10). |
-| Recursion is bounded | environment.go:50 | `State.enter`, correctly threaded through include/extends/macro. **Holds.** |
-| Template names cannot escape the loader root | loader.go:341 | `safeJoin`, rejecting `..` after `path.Clean` and backslash normalisation. **Holds.** |
-| Autoescaping follows the configured policy | environment.go:164 | Holds for *named* templates only (C2, C3). |
+| A render costs ≤ `maxIterations` steps | `budget.step` / `chargeSteps`, called from `runLoop`, `materialize`, `evalArgs`, `unpack`, `extend` | C1 (import), C9 (`in range`), C10 (`unique`) |
+| A render writes ≤ `maxOutputBytes` | `budget.account`, from `exec.writeTo` and `State.ChargeBytes` | C7 (`StrSlice`), C15 (`%`) |
+| A template-chosen size is charged **before** allocation | `State.ChargeBytes`/`ChargeItems`, `repeatStringN` | C4, C7, C15 |
+| Recursion cannot exhaust the stack | parser `MaxNestingDepth`, `State.maxRecursion`, `maxCompareDepth`, `maxToGoDepth` | C2, C3, C8 |
+| A panic never escapes | `catchPanic` at both entry points, `tryConstEval`, `methodObject.call` | C2, C3 — a *stack overflow* is fatal, not a panic |
+| Compile time is bounded | `maxFoldedConst`, `maxFoldBytes`, the fold-attempt budget | C4 (`%`), C6 (lexer) — neither is covered |
+| Output is escaped under autoescape | `renderValue`, `evalConcat`, per-filter | C18 |
+| CPython is the specification | corpus + oracle + differential fuzzer | C11 (arity is structurally unreachable by both) |
 
 ---
 
 ## 3. Findings
 
-### C1 — Critical — Templates panic and OOM at compile time
-**`optimize.go:562`**, with `template.go:179` and `environment.go:347`.
-
-`constFilter` invokes real filters at compile time on constant arguments:
-
-```go
-out, err := fn(c.st, input, args)          // optimize.go:562
-```
-
-`c.st` is a `*State` with a nil budget — `State.Step` documents this explicitly:
-*"A nil State reaches here from constant folding, which runs without a render and
-so has no budget to charge."* The filter therefore runs with every safety control
-switched off, and the results of §C5–C8 all become reachable from
-`Environment.FromString` alone.
-
-**Failure scenario.** A service accepts a user-supplied template and validates it
-by compiling it — a natural and recommended thing to do, since `FromString`
-returns a `TemplateSyntaxError` for bad input. No rendering, no context, no
-variables:
-
-MEASURED, `env.FromString(src)` and nothing else:
-
-| `src` | result |
-|---|---|
-| `{{ "a"\|indent(-1) }}` | **COMPILE PANIC** `strings: negative Repeat count` |
-| `{{ "a"\|center(4611686018427387904) }}` | **COMPILE PANIC** `makeslice: len out of range` |
-| `{{ "10"\|int(0, 99999) }}` | **COMPILE PANIC** `invalid number base 99999` |
-| `{{ 1.5\|round(2000000000) }}` | **OOM KILL**, exit 137 at `MemoryMax=512M` |
-
-The environment was `New(WithMaxOutputBytes(4096), WithMaxIterations(10000))` —
-the bounds were configured, and configured tightly. They are simply on the other
-side of the failure. The README's claim that *"an attacker-supplied template
-cannot spend the process"* is defeated before the render it describes begins.
-
-**Recommended direction.** Constant folding is an optimisation; it must not be
-able to fail worse than not folding. Give the fold a real budget (a small, fixed
-one is fine — it is compile time, not render time) and recover panics from
-`constFilter`/`constTest`, abandoning the fold on either. Both are ~10 lines and
-strictly reduce behaviour to "compute it later, under the render's budget",
-which is exactly what `maxFoldedConst` already does for `*` (optimize.go:413-425).
+### 3.1 Critical
 
 ---
 
-### C2 — Critical — `SelectAutoescape` leaves string templates unescaped
-**`environment.go:172-185`.**
+**C1 — `{% import %}` renders with no budget and no context.**
+`exec.go:636`
 
-The pinned specification, `jinja2/utils.py`:
+`importModule` builds its sub-render's `State` by hand:
 
-```python
-def select_autoescape(enabled_extensions=("html","htm","xml"),
-                      disabled_extensions=(), default_for_string=True, default=False):
-    def autoescape(template_name):
-        if template_name is None:
-            return default_for_string          # ← True
+```go
+st := tmpl.newState(vars)
+st.depth = ex.st.depth
+var discard strings.Builder
+sub := &exec{st: st, sc: st.ctx, out: &discard, stream: &discard, autoescape: st.autoescape}
 ```
 
-gojja2 has no `default_for_string`. A template compiled with `FromString` has
-name `""`, matches no suffix, and is therefore **not escaped**.
+`newState` does not set `budget`; only `renderInto` does (`template.go:131`). So `st.budget`
+is nil for the whole imported render, and every guard degrades to a no-op — `budget.step`,
+`budget.account` and `budget.tick` all begin `if b == nil { return nil }`. `State.Context()`
+likewise falls back to `context.Background()` when the budget is nil.
 
-**Failure scenario.** The README's own quickstart configures
-`WithAutoescapeFunc(SelectAutoescape(".html"))`. A developer later renders a
-fragment from a string — an email body, a preview, a snippet — and every
-user-controlled value in it is emitted raw.
+This is worse than the "fresh allowance" the code was written to avoid. docs/divergences.md
+says the budget "is shared across `{% include %}` and `{% extends %}`, so a nested render
+cannot start a fresh allowance" — it does not mention import, which is the one place it is
+not shared at all.
 
-MEASURED, `env = New(WithAutoescapeFunc(SelectAutoescape(".html")))`,
-`vars = {"evil": "<script>alert(1)</script>"}`:
+**Scenario (CONFIRMED).** `bomb.txt` is `{% for i in range(100000000) %}{% endfor %}`,
+default environment (10,000,000 iteration budget):
 
 ```
-FromString(`{{ evil }}`)              -> "<script>alert(1)</script>"      UNESCAPED
-FromNamedString("page.html", `{{ evil }}`) -> "&lt;script&gt;alert(1)&lt;/script&gt;"
+{% include "bomb.txt" %}        -> 4.2 s, error "render exceeded 10000000 loop iterations"
+{% import "bomb.txt" as m %}ok  -> 42.1 s, output "ok", err=<nil>
 ```
 
-Under CPython jinja2 the first case escapes. This is a cross-site-scripting
-divergence from the project's own stated specification, in its own recommended
-configuration.
+All 100,000,000 iterations ran and the render reported success. With
+`WithoutLimits()` and a 2-second `context.WithTimeout`, the same import over `range(1e9)`
+was still running when the harness was killed at 90 s: the deadline is never consulted.
 
-**Recommended direction.** Add `default_for_string` (defaulting to `true`, as
-jinja2 does) and have `escapes("")` consult it. Because gojja2 models an unnamed
-template as `""` rather than `nil`, the distinction between "no name" and "a name
-that matches nothing" needs to be made explicit rather than inferred from
-emptiness.
+**Direction.** Route `importModule` through `renderInto`, or at minimum set
+`st.budget = ex.st.budget` beside `st.depth = ex.st.depth`. Better: make `newState`
+require the budget so the omission cannot recur — a nil budget should be reachable only
+from constant folding, which builds its own.
 
 ---
 
-### C3 — Critical — `SelectAutoescape` is case-sensitive on extensions
-**`environment.go:177-181`.**
+**C2 — a self-referential block kills the process.**
+`runtime.go:403` (`blockReference.render`), `runtime.go:445` (`Str`), `exec.go:459`
 
-```go
-lower := strings.ToLower(name)
-for _, ext := range extensions {
-        if strings.HasSuffix(lower, ext) {     // ext is NOT lowered
-```
+`blockReference.Str()` renders the block so that `{{ self.body }}` works. Nothing bounds
+that: `render()` never calls `State.enter()`, unlike `execInclude`, `callMacro` and
+`execExtends`. A block that prints itself therefore recurses through
+`execBody → execOutput → eval → getAttr → renderValue → value.Str → Str → render` forever.
 
-jinja2 lowers both sides — `tuple(f".{x.lstrip('.').lower()}" for x in …)` — and
-its docstring states the reason outright: *"For security reasons this function
-operates case insensitive."*
+A Go stack overflow is a `fatal error`, not a panic: `catchPanic` cannot see it, and
+docs/divergences.md's "A backstop on panics" promise does not hold.
 
-**Failure scenario.** A developer writes `SelectAutoescape(".HTML")`, or
-`SelectAutoescape(".Html")`, or reads extensions from a config file that happens
-to carry them uppercase. Escaping is silently off for every template. There is no
-error and no warning; the only symptom is unescaped output.
-
-MEASURED:
+**Scenario (CONFIRMED).** `{% block x %}{{ self.x }}{% endblock %}` under
+`MemoryMax=2G`:
 
 ```
-SelectAutoescape(".HTML") on "page.HTML" -> "<script>alert(1)</script>"   UNESCAPED
-SelectAutoescape("html")  on "page.html" -> "&lt;script&gt;…"             escaped
+runtime: goroutine stack exceeds 1000000000-byte limit
+fatal error: stack overflow
+exit status 2
 ```
 
-jinja2 escapes in both cases. Note also that gojja2's bare `HasSuffix` matches
-without a dot boundary, so `SelectAutoescape("tml")` matches `page.html` here and
-would not there — over-matching, the safer direction, but still a divergence.
+`{% block x %}{{ self.x() }}{% endblock %}` (the explicit call) does the same.
 
-**Recommended direction.** Lower-case and dot-normalise the extensions once when
-building the closure, as jinja2 does.
+CPython jinja2 renders the first as
+`<jinja2.runtime.BlockReference object at 0x…>` — its `BlockReference` has no `__str__`, so
+printing it gives the repr and no recursion happens. Giving it one is a divergence that is
+not recorded in docs/divergences.md, and it is the vehicle for this bug.
+
+**Direction.** Bracket `blockReference.render()` with `st.enter()`/`st.leave()`, exactly as
+`callMacro` does. Separately, decide whether `{{ self.x }}` should render at all, and if it
+should, say so in docs/divergences.md — it is a real behavioural difference either way.
 
 ---
 
-### C4 — Critical — Cyclic caller data OOMs before the budget exists
-**`value/convert.go:71-83,126-141`, reached from `template.go:41`.**
+**C3 — ordered comparison of cyclic values kills the process.**
+`value/compare.go:160` (`compare`), `value/compare.go:208` (`compareSeq`)
 
-`FromGo` converts maps and slices **eagerly** and has no cycle detection. Structs
-are wrapped lazily, which is why this is easy to miss.
+`equalDepth` is depth-bounded, and the comment above `maxCompareDepth` explains precisely
+why: "a Go stack overflow cannot be recovered". Its sibling `compare`/`compareSeq` pair,
+which implements `<`, `<=`, `>`, `>=` and every sort, carries no depth parameter and no
+bound. Two *distinct* cyclic structures have no fixed point, so the mutual recursion never
+terminates.
 
-```go
-func (t *Template) Render(ctx context.Context, w io.Writer, vars map[string]any) error {
-        return t.RenderValues(ctx, w, valuesFromGo(vars))     // template.go:41
-}
+A cyclic value is reachable from a **default** environment — no extension needed, because
+`{% set _ = a.append(b) %}` is an ordinary assignment.
+
+**Scenario (CONFIRMED).** Each run under `MemoryMax=2G`:
+
+```
+{% set a=[] %}{% set b=[] %}{% set _=a.append(b) %}{% set _=b.append(a) %}{{ a == b }}
+    -> err "maximum recursion depth exceeded in comparison"      (correct)
+{% set a=[] %}{% set b=[] %}{% set _=a.append(b) %}{% set _=b.append(a) %}{{ a < b }}
+    -> fatal error: stack overflow, exit status 2
+{% set a=[] %}{% set b=[] %}{% set _=a.append(b) %}{% set _=b.append(a) %}{{ [a,b]|sort }}
+    -> fatal error: stack overflow, exit status 2
 ```
 
-`valuesFromGo` is evaluated as an *argument*, so it completes before
-`RenderValues` builds the budget (template.go:63). Cancellation, `WithMaxIterations`
-and `WithMaxOutputBytes` are all structurally downstream.
+CPython raises `RecursionError: maximum recursion depth exceeded in comparison` for both of
+the failing cases — the same message gojja2 already produces for `==`. The expected
+behaviour is unambiguous and the fix is mechanical.
 
-**Failure scenario.** Any self-referential structure in the context — a graph, a
-parent-pointer tree, a node that links back to its container, a config map that
-references itself:
-
-```go
-m := map[string]any{"k": "v"}
-m["self"] = m
-tmpl.RenderString(ctx, map[string]any{"m": m})   // template is just {{ m.k }}
-```
-
-MEASURED: **OOM KILL, exit 137** at `MemoryMax=1G`. The template is one attribute
-access; the data killed the process before the template was looked at.
-
-**Recommended direction.** Convert containers lazily, as structs already are —
-this also removes an eager deep copy of every map and slice on every render, which
-is a performance win independent of the bug. If eager conversion is kept, carry a
-`map[uintptr]Value` of visited containers and a depth cap. Separately, move
-`valuesFromGo` inside `RenderValues` after `newBudget`, so conversion is charged
-like everything else.
+**Direction.** Thread a depth through `compare`/`compareSeq` the way `equalDepth` does, and
+raise `RecursionMessageComparison` at the same wall. Note that `value.Copy`
+(value/convert.go:635) and `writeRepr` (value/repr.go:68) are unbounded in the same way;
+`Copy` is currently only reached from constant folding, where a cycle cannot occur, but
+nothing in its signature says so.
 
 ---
 
-### C5 — High — Template-chosen sizes allocate before anything is charged
-**`filters_web.go:353-354`, `filters.go:1249`, `filters_seq.go:380`, `filters_seq.go:351`.**
+**C4 — `%` formatting at compile time is unbudgeted, and OOM-kills `FromString`.**
+`optimize.go:404` (`constBinOp`, `case ast.OpMod`), `value/pyformat.go`
 
-Four filters size an allocation directly from an integer the template chooses,
-with no charge against the budget:
+`constBinOp` guards exactly one operator against building something enormous at compile
+time:
 
 ```go
-pad    = strings.Repeat(" ", indent*(depth+1))          // filters_web.go:353  tojson
-rounded = strconv.FormatFloat(f, 'f', precision, 64)     // filters.go:1249     round
-for i := range count { … }                               // filters_seq.go:380  slice
-for len(batch) < size { batch = append(batch, fill) }    // filters_seq.go:351  batch
+case ast.OpMul:
+    if size, _, isRepeat := value.RepeatSize(left, right); isRepeat && size > maxFoldedConst {
+        return value.Undefined, false
+    }
+...
+case ast.OpMod:
+    out, err = value.Mod(left, right)          // no guard
 ```
 
-MEASURED, each in its own capped scope, env =
-`New(WithMaxOutputBytes(4096), WithMaxIterations(10000))`:
+`value.Mod` on a string is `FormatPercent`, which lives in `value/` and therefore has no
+`*State`, no budget and no ceiling. It builds the whole result and only then is
+`constSizeOK(out)` consulted — by which time the memory is committed. The fold-attempt
+budget (`maxFoldSteps`, `maxFoldBytes`, optimize.go:520) exists for exactly this class and
+`FormatPercent` never consults it.
 
-| template | result | CPython |
-|---|---|---|
-| `{{ [1]\|tojson(2000000000) }}` | **OOM KILL** 137 | renders |
-| `{{ 1.5\|round(2000000000) }}` | **OOM KILL** 137 | `'1.5'` |
-| `{{ []\|slice(100000000)\|length }}` | **OOM KILL** 137 | renders |
-| `{{ [1]\|batch(100000000, 0)\|length }}` | **OOM KILL** 137 | renders |
+**Scenario (CONFIRMED).** A 42-byte template, compiled by an environment configured with
+`WithMaxOutputBytes(4096)` and `WithMaxIterations(1000)`:
 
-`round` is the sharpest of these: CPython returns `1.5` instantly, and gojja2
-formats a two-billion-digit decimal. `tojson`'s `indent*(depth+1)` can also
-overflow `int` and reach `strings.Repeat` with a negative count, which panics.
+```go
+env.FromString(`{{ ("%(a)10000000s" * 200) % {"a": "x"} }}`)
+```
 
-**Recommended direction.** These are the same bug four times, and the codebase
-already contains its fix in `eval.go:231` (`chargeRepeat`). Charge
-`s.Step(n)`/`budget.account(n)` on the computed size *before* the allocation, and
-clamp as `clampToInt` does. See design tension §4.2 for why patching four sites is
-not sufficient.
+Killed (exit 137) under `MemoryMax=256M`, and killed again under `MemoryMax=4G`. The `*`
+is folded first (800 bytes, well under the cap), then the `%` expands 200 directives at
+10 MB each. `FromString` never returns.
+
+This is the precise failure the `maxFoldedConst` comment describes —
+"`{{ "x" * 1000000000 }}` allocated a gigabyte before anything asked for the template to be
+rendered" — with `%` in place of `*`.
+
+**Direction.** Two possible shapes, and the second is the one worth having:
+(a) gate `case ast.OpMod` on a computed output size the way `OpMul` is gated; (b) give
+`FormatPercent` a charge callback (or move it behind a `State`-aware wrapper in the root
+package) so that both the fold budget and the render budget reach it. (b) also fixes C15.
+
+### 3.2 High
 
 ---
 
-### C6 — High — Six one-line templates panic out of the public API
-**`methods.go:628,660-666`; `filters.go:477,1116`.**
-
-`value/ops.go` guards `strings.Repeat`-shaped hazards rigorously; `methods.go`
-and `filters.go` call the same primitives with unvalidated widths:
+**C5 — `|tojson` of `-inf` destroys the document.**
+`filters_web.go:447-456`
 
 ```go
-return value.String(sign + strings.Repeat("0", width-n) + s)   // methods.go:628  zfill
-return s + strings.Repeat(fill, missing)                       // methods.go:660  ljust
-return strings.Repeat(fill, left) + s + …                      // methods.go:666  center
-prefix = strings.Repeat(" ", width)                            // filters.go:477  indent
-strconv.ParseInt(s, base, 64)                                  // filters.go:1116 int
-```
-
-MEASURED — a panic, not an error, escaping `FromString`/`Render`:
-
-| template | gojja2 | CPython |
-|---|---|---|
-| `{{ "a".center(9223372036854775807) }}` | PANIC `makeslice: len out of range` | `MemoryError` |
-| `{{ "a".ljust(4611686018427387904) }}` | PANIC `makeslice` | `MemoryError` |
-| `{{ "1".zfill(4611686018427387904) }}` | PANIC `makeslice` | `MemoryError` |
-| `{{ "a"\|center(4611686018427387904) }}` | PANIC `makeslice` | `MemoryError` |
-| `{{ "a"\|indent(4611686018427387904) }}` | PANIC `makeslice` | `MemoryError` |
-| `{{ "a"\|indent(-1) }}` | PANIC `strings: negative Repeat count` | **`'a'`** |
-| `{{ "10"\|int(0, 99999) }}` | PANIC `invalid number base 99999` | **`'10'`** |
-
-The last two matter most: CPython renders them successfully. A template that works
-in production under jinja2 crashes the Go process that replaces it — which is
-precisely the migration this project exists to support.
-
-Note that `filterCenter` routes through `pad()`, which *does* guard the negative
-case (`missing <= 0`), while `filterIndent` calls `strings.Repeat` directly and
-does not. The guard exists; it is just not everywhere.
-
-**Failure scenario.** A panic crosses `Render` and unwinds the caller's
-goroutine. In an HTTP server whose handler has no `recover`, the process dies; in
-one that does, a single template kills one request and leaves `bufio` state
-half-flushed (`template.go:67` flushes only on the normal return path).
-
-**Recommended direction.** Validate width/base arguments against CPython's own
-behaviour — clamp negatives to zero (`indent`), return `ValueError` for a bad
-base, and return `OverflowError`/`MemoryError` for a width past the budget. A
-`recover` at the `Render` boundary is worth adding as a backstop, but it is not a
-substitute: it would convert C1's compile-time OOM into nothing at all.
-
----
-
-### C7 — High — `lipsum`, a default global, panics four ways
-**`globals.go:319-357`.**
-
-```go
-paragraphs := make([]string, 0, n)                   // :344  n < 0 → panic
-count := lo + rand.IntN(hi-lo)                       // :346  hi-lo overflow → panic
-words := make([]string, 0, count)                    // :347  count < 0 → panic
-text = strings.ToUpper(text[:1]) + text[1:] + "."    // :352  text == "" → panic
-```
-
-MEASURED, against the oracle:
-
-| template | CPython | gojja2 |
-|---|---|---|
-| `{{ lipsum(1, true, 0, 1) }}` | `<p>.</p>` | **PANIC** `slice bounds out of range [:1] with length 0` |
-| `{{ lipsum(1, true, 0, 0) }}` | `ValueError: empty range for randrange()` | **PANIC** same |
-| `{{ lipsum(1, true, -5, -1) }}` | `<p>.</p>` | **PANIC** `makeslice: cap out of range` |
-| `{{ lipsum(1, true, MIN_INT, MAX_INT) }}` | renders | **PANIC** `invalid argument to IntN` |
-| `{{ lipsum(-1) }}` | `''` | **PANIC** `makeslice: cap out of range` |
-| `{{ lipsum(100000000) }}` | renders (large) | **OOM KILL** 137 |
-
-`{{ lipsum(1, true, 0, 1) }}` is not a hostile template. It reads as "one
-paragraph of at most one word" and it crashes the process.
-
-There is a causal chain worth naming: line 340 "repairs" an argument CPython
-rejects —
-
-```go
-if hi <= lo { hi = lo + 1 }
-```
-
-— and that repair is exactly what manufactures the `count == 0` case that then
-panics at line 352. Silently fixing up an invalid argument turned a clean
-`ValueError` into a crash.
-
-**Recommended direction.** Reject `hi <= lo` with `ValueError` as CPython does
-(removing the panic's cause), clamp `n`/`lo`/`hi` to non-negative, use
-`saturatingSub` for `hi-lo`, and guard `text == ""`. See design tension §4.1 for
-why `lipsum` cannot charge the budget for the `n = 100000000` case.
-
----
-
-### C8 — High — Individually-sound guards do not compose
-**`methods.go:296-310`.**
-
-```go
-return value.String(strings.Replace(r.AsString(), old, new, count))
-```
-
-MEASURED, **default environment** (256 MiB output budget, 10M iterations):
-
-```
-{{ ("a" * 60000)|replace("a", "b" * 60000) }}   ->  OOM KILL, exit 137 at MemoryMax=1G
-```
-
-Every existing guard passes. Each `*` is charged by `chargeRepeat`. Each result is
-60,000 bytes — under `maxFoldedConst` (65,536), so both fold. And their product,
-3.6 GB, is charged by nothing, because no guard is looking at the *combination*.
-
-This is the most instructive finding in the report: it shows that the
-site-by-site approach to bounding (§4.2) fails even when every site it covers is
-individually correct.
-
-**Recommended direction.** Charge `len(s)/len(old) * len(new)` before the call.
-More generally, see §4.2 — the durable fix is a budget-aware string builder that
-every filter writes through, so size is charged at the point of growth rather than
-at each author's discretion.
-
----
-
-### C9 — High — `dict.update` silently discards non-dict arguments
-**`methods.go:840-855`.**
-
-```go
-if other, ok := arg(args, 0, ""); ok {
-        if od, ok := other.Dict(); ok {      // ← anything else falls through
-                …
+case value.KindFloat:
+    f := v.AsFloat()
+    if f != f || f > 1e308 || f < -1e308 {
+        b.WriteString(map[bool]string{true: "NaN", false: "Infinity"}[f != f])
+        if f < 0 {
+            b.Reset()                        // <- the whole builder, not this element
+            b.WriteString("-Infinity")
         }
-}                                            // ← and is discarded, with no error
+        return nil
+    }
 ```
 
-MEASURED against the oracle:
+`b` is the accumulator for the *entire* JSON document, not for this element. `Reset()`
+discards everything written before it.
 
-| template | CPython | gojja2 |
-|---|---|---|
-| `{% set d={} %}{{ d.update([("a",1)]) }}{{ d }}` | `None{'a': 1}` | **`None{}`** |
-| `{% set d={} %}{{ d.update(5) }}{{ d }}` | `TypeError: 'int' object is not iterable` | `None{}` |
-| `{% set d={} %}{{ d.update("ab") }}{{ d }}` | `ValueError: dictionary update sequence element #0 has length 1; 2 is required` | `None{}` |
+**Scenario (CONFIRMED).**
 
-The first row is **silent data loss** — the worst outcome for a project whose
-thesis is byte-identical output. A template that builds a dict from a list of
-pairs produces an empty dict, renders successfully, and reports nothing.
+```
+{{ [1, -1e308*10, 2]|tojson }}      CPython: [1, -Infinity, 2]      gojja2: -Infinity, 2]
+{{ {"a": 1, "z": -1e308*10}|tojson }}                               gojja2: -Infinity}
+```
 
-There is an internal inconsistency here too: `globalDict` (globals.go:171-189)
-handles the iterable-of-pairs form correctly, with a comment explaining it. Two
-places in this codebase build a dict from pairs; only one of them works.
+Silent wrong output, and the shape that matters: `|tojson` is what a template uses to embed
+data in a `<script>` block, so this emits a truncated, syntactically broken payload with no
+error.
 
-**Recommended direction.** Reuse `globalDict`'s pair-walking path in
-`methodDictUpdate` — the correct implementation already exists twenty lines away.
+**Direction.** Write `"-Infinity"` directly rather than writing `"Infinity"` and then
+retracting it. The whole branch collapses to a three-way switch on NaN / +Inf / -Inf.
 
 ---
 
-### C10 — High — A context deadline cannot interrupt a filter
-**`limits.go:527-548`.**
+**C6 — lexing is quadratic in tag count when a delimiter is absent.**
+`internal/lexer/lexer.go:146` (`findTag`)
 
-The context is consulted only from `budget.tick`, which is reached only from
-`step()` and `account()`. A filter that neither iterates nor writes never reaches
-it, and nothing else polls.
+`findTag` runs `strings.Index(l.src[from:], c.delim)` for each of `{#`, `{%` and `{{` at
+every tag. A delimiter that does not occur in the template makes its `Index` scan to the
+end of the source *on every call*, so a template with k tags and no comments costs O(n·k).
 
-MEASURED, deadline = **1 second** in both cases:
+**Scenario (CONFIRMED), and the cause isolated:**
 
-| template | returned after | error |
+| source | bytes | compile |
 |---|---|---|
-| `{% for i in range(100000000) %}{% endfor %}` | 0.00 s | `render exceeded 1000 loop iterations` |
-| `{{ ("\n" * 300000)\|urlencode }}` | **17.44 s** | `render wrote more than 1048576 bytes of output` |
+| `{{1}}` × 20,000 | 100 KB | 0.16 s |
+| `{{1}}` × 40,000 | 200 KB | 0.57 s |
+| `{{1}}` × 80,000 | 400 KB | 2.17 s |
+| `{{1}}` × 160,000 | 800 KB | 8.66 s |
+| `{{1}}{#c#}{% if 1 %}{% endif %}` × 160,000 | **4.96 MB** | **0.48 s** |
 
-The second overran its deadline by more than 17×, and the error it eventually
-returned was the *output* budget — evaluated after the filter had already
-finished — not the deadline. The deadline never fired at all.
+Doubling the input quadruples the time in the first group; the second group, where all
+three delimiters occur every few bytes, is linear and 6× larger for 1/18th the time. A
+1.6 MB template of print tags takes 34.5 s to compile.
 
-The README states: *"Every render takes a `context.Context` and stops when it is
-cancelled."* `Template.Render`'s doc is more precise — *"stops at the next loop
-iteration or output write"* — and is technically accurate, but neither conveys
-that a single filter call is an unbounded, uninterruptible region.
+This compounds with the fact that **compilation takes no `context.Context` and has no
+budget of any kind**: `Environment.FromString` on attacker-supplied source cannot be
+bounded or cancelled by the caller at all.
 
-**Recommended direction.** Document the granularity honestly in the README, and
-give long-running filters a way to yield — `State.Step` already exists and is the
-natural hook; `quoteURL` and its peers should call it per chunk. A caller who
-needs a hard deadline currently has no way to get one, which is worth saying in
-`docs/divergences.md`.
+**Direction.** Find the next occurrence of each delimiter once and cache it, invalidating
+only when the cursor passes it — or scan for the shared `{` prefix and dispatch. Separately,
+consider whether `compile` should take a context; the README's cancellation story stops at
+`Render`, and the lexer is where an unbounded input is first touched.
 
 ---
 
-### C11 — High — `urlencode` is quadratic on bytes below 0x10
-**`filters_web.go:60-80`.**
+**C7 — `StrSlice`/`StrIndex` allocate 8 bytes per input byte, uncharged.**
+`value/str.go:30` (`runeOffsets`), `:40` (`StrIndex`), `:62` (`StrSlice`)
+
+`runeOffsets` builds `make([]int, 0, len(s)+1)` — an `int` per *byte* — and `StrSlice`
+calls it unconditionally, with no ASCII fast path. `SliceIndices` then materialises the
+selected index list as well. None of it is charged: `alloc.go`'s doctrine covers sizes the
+template *names*, and this one is derived from the input string's length.
+
+**Scenario (CONFIRMED).** Default environment (256 MiB output budget). Under
+`MemoryMax=700M`:
+
+```
+{% set s = "x" * 100000000 %}{{ s[0] }}ok     -> 277 ms, 200 MB allocated, succeeds
+{% set s = "x" * 100000000 %}{{ s[0:1] }}     -> OOM-killed, exit 137
+{% set s = "é" * 50000000 %}{{ s[1] }}   -> 1,000 MB allocated for a 100 MB string
+```
+
+The repetition itself is charged correctly (100 MB of a 256 MiB budget). Taking a
+**one-character slice** of the result then allocates 800 MB that the budget never sees — an
+8× amplification of whatever the budget did allow.
+
+**Direction.** Give `StrSlice` the ASCII fast path `StrIndex` already has, and for the
+multi-byte case walk the string rather than materialising every offset (a forward unit-step
+slice needs two positions, not n). Where an offset table is genuinely needed, charge it.
+
+---
+
+**C8 — the nesting bound does not apply to non-bracket nesting.**
+`internal/parser/expr.go:117` (`parseNot`), `:233` (`parseUnary`), `:82` (`parseCondExpr`), `:435` (`parseFilterExpr`)
+
+`p.enter()` is called from `parseStatement`, `parseExpression` and `parsePrimary`. Chains
+that recurse *without* passing through any of them are uncounted: `parseNot` calls itself,
+`parseUnary` calls itself, `parseCondExpr` calls itself for the `else` branch. Left-deep
+chains built by `parsePostfix`/`parseFilterExpr` are not recursive in the parser but produce
+an AST of depth n that every later walker — `constFolder.descend`, `frameVisitor.expr`,
+`depChecker.expr`, and `exec.eval` at render time — descends recursively.
+
+**Scenario (CONFIRMED).**
+
+```
+{{ [[[…2000 deep…]]] }}          -> "expression or statement nests deeper than 1000 levels"
+{{ not not not … ×50000 … 1 }}   -> accepted
+{{ 1|abs|abs|abs … ×50000 }}     -> accepted
+{{ -------- … ×50000 … 1 }}      -> accepted
+```
+
+MaxNestingDepth's own comment says it exists because "a template of a million nested
+brackets parses happily and then takes the process down — where CPython would have raised
+RecursionError long before" and that "templates are frequently attacker-supplied". The
+bound is 50× exceeded by three spellings that cost 1–4 bytes each.
+
+**Direction.** Move `enter`/`leave` down to the productions that actually recurse
+(`parseNot`, `parseUnary`, `parseCondExpr`), and bound the *chain length* in
+`parsePostfix`/`parseFilterExpr`/`parseConcat` against the same limit, since chain length is
+tree depth for every consumer.
+
+---
+
+**C9 — `x in range(...)` is an uninterruptible linear scan.**
+`value/compare.go:336` (`Contains`, `case Sequence`), `globals.go:68` (`rangeObject.Len`)
 
 ```go
-b.WriteByte('%')
-b.WriteString(strings.ToUpper(strconv.FormatUint(uint64(c), 16)))
-if c < 0x10 {
-        text := b.String()        // ← copies the ENTIRE buffer …
-        b.Reset()
-        b.WriteString(text[:len(text)-1] + "0" + text[len(text)-1:])   // … and again
+case Sequence:
+    for i := range o.Len() {
+        v, ok := o.GetIndex(i)
+        if ok && Equal(item, v) { return true, nil }
+    }
+```
+
+`rangeObject.Len()` saturates at `math.MaxInt` for a range longer than an int, and this loop
+walks it one element at a time. There is no `State` in `value.Contains`, so no budget
+charge and no context check — `Contains` is not reachable from `State.Poll`.
+
+CPython's `range.__contains__` is O(1) for an integer argument.
+
+**Scenario (CONFIRMED).** `{{ -1 in range(9223372036854775807) }}` with a **3-second**
+`context.WithTimeout` was still running when the harness was killed at 90 s. `{% if x in
+range(n) %}` over a caller-supplied `n` is an ordinary-looking template.
+
+**Direction.** Give `rangeObject` a `Contains`-like fast path (arithmetic membership), and
+give `value.Contains` a charge/poll hook for the general `Sequence`/`Iterable` arms — the
+same treatment `materialize` already has.
+
+---
+
+**C10 — `|unique` is quadratic and never polls.**
+`filters_seq.go:246`
+
+`seen` is a `[]value.Value` scanned linearly for every item, so n distinct items cost
+n²/2 `value.Equal` calls. jinja2 uses a set. `materialize` charges n steps; the n²
+comparisons that follow are charged nothing and call neither `Step` nor `Poll`.
+
+**Scenario (CONFIRMED).** `{{ range(60000)|list|unique|length }}` with a 3-second deadline
+was still running at 90 s. 60,000 items is a small list.
+
+docs/divergences.md promises that "the built-in filters that do sustained work without
+writing output poll as they go, so a cancelled render stops within microseconds". `urlencode`
+and `urlize` do; `unique`, `sort`, `groupby`, `min` and `max` do not.
+
+**Direction.** Key `seen` by `hashKey` (the machinery already exists — `CheckHashable` is
+called on every key anyway, so the hash is computed and thrown away). Add `Poll` to the
+sustained-work filters, and add a linearity guard beside `TestURLEncodeIsLinear`, which is
+the right shape of test and currently guards one filter.
+
+---
+
+**C11 — no filter checks its arity.**
+`filters.go:22` (`registerDefaultFilters`), contrast `tests.go:75` (`addTest`)
+
+Every default filter reads the arguments it wants through `arg(args, i, name)` and ignores
+everything else. Extra positional arguments are not merely dropped — several filters
+*reinterpret* them, because position `i` means something different than the template author
+intended.
+
+The asymmetry is striking: `tests.go` has a purpose-built `addTest(env, name, pyName,
+maxArgs, fn)` wrapper that reproduces CPython's arity message verbatim, including the C
+builtin's special phrasing for `callable`. Nothing equivalent exists for filters.
+
+**Scenario (CONFIRMED).** 96 probes (48 filters × {5 extra positional args, one unknown
+keyword}), graded against the pinned oracle; 85 diverge. A sample:
+
+```
+{{ ["a","b"]|upper(1,2,3,4,5) }}   CPython TypeError: do_upper() takes 1 positional argument but 6 were given
+                                   gojja2  ['A', 'B']
+{{ ["a","b"]|upper(zzz=1) }}       CPython TypeError: unexpected keyword argument 'zzz'
+                                   gojja2  ['A', 'B']
+{{ ["a","b"]|min(1,2,3,4,5) }}     CPython TypeError: do_min() takes from 2 to 4 …
+                                   gojja2  UndefinedError: str object has no element 2
+{{ ["a","b"]|slice(1,2,3,4,5) }}   CPython TypeError: sync_do_slice() takes from 2 to 3 …
+                                   gojja2  [['a', 'b', 2]]
+{{ "x"|center(5, "ab") }}          CPython TypeError: do_center() takes from 1 to 2 …
+                                   gojja2  '  x  '
+```
+
+The last is the most instructive: `str.center`'s *method* form correctly refuses a
+two-character fill (`fillCharArg`, methods.go:700, with a comment explaining why silently
+returning the wrong length is worse than refusing) while the *filter* form silently accepts
+a fill argument jinja2 does not have at all.
+
+**Why the corpus and the fuzzer both miss this** is in §4.4.
+
+**Direction.** A `filters.go` counterpart to `addTest`: one table of
+`{name, pyName, maxPositional, allowedKwargs}` and a wrapper that raises CPython's message.
+The signatures can be generated from jinja2's own `inspect.signature` in `tools/oracle/`,
+which removes the transcription risk entirely.
+
+---
+
+**C12 — CI's "Test under a memory cap" step runs nothing.**
+`.github/workflows/ci.yml:111-114`
+
+```yaml
+- name: Test under a memory cap
+  run: go test ./...
+  env:
+    GOMEMLIMIT: 1GiB
+```
+
+`GOMEMLIMIT` is read by the Go runtime at startup, not through `os.Getenv`, so it does not
+participate in the `go test` cache key. The step replays the previous step's results.
+
+**Scenario (CONFIRMED).**
+
+```
+$ go clean -testcache && go test ./...
+ok github.com/mgilbir/gojja2 4.522s   … real 0m6.441s
+$ GOMEMLIMIT=1GiB go test ./...
+ok github.com/mgilbir/gojja2 (cached) … real 0m0.134s
+```
+
+Every package reports `(cached)`. Zero test code executes.
+
+There is a second problem behind the first: `GOMEMLIMIT` is a **soft** limit. The Go runtime
+responds to it by collecting more aggressively, not by failing an allocation. The step's
+comment says "without a memory cap a regression would look like a slow job rather than a
+failure, so the runner is given one it can actually hit" — a soft limit produces exactly the
+slow job the comment is trying to avoid.
+
+**Direction.** Add `-count=1` so the step runs, and make the cap hard — `ulimit -v`, a
+`systemd-run --scope -p MemoryMax=`, or a container memory limit — so an allocation
+regression reports as a kill rather than as a slow job. The probes in this audit are all
+run that way and it works well.
+
+### 3.3 Medium — `%` formatting
+
+---
+
+**C13 — `%*s` and `%.*f` are broken.** `value/pyformat.go:82-121`
+
+The value is taken from the argument stream *before* the star width:
+
+```go
+default:
+    if arg, err = takeArg(); err != nil { … }     // consumes positional[0]
+}
+if conv.starWidth {
+    w, err := takeStarInt(&positional, &next)     // consumes positional[1]
+```
+
+Python consumes the width first, then the value.
+
+**Scenario (CONFIRMED).**
+
+```
+{{ "%*s" % (5, "x") }}    CPython '    x'     gojja2 TypeError: * wants int
+{{ "%.*f" % (3, 1.5) }}   CPython '1.500'     gojja2 TypeError: * wants int
+```
+
+Both spellings are unusable. **Direction:** resolve `starWidth`/`starPrec` before the
+`arg` switch, and drop the duplicated `takeArg()` calls inside the star blocks.
+
+---
+
+**C14 — a large width emits Go's formatter diagnostics into the document.**
+`value/pyformat.go:314` (`apply`, via `goVerb`)
+
+`conversion.goVerb` reassembles the directive as a Go format string and hands it to
+`fmt.Sprintf`. Go's `parsenum` refuses a width whose running value passes 10⁶ and swallows
+the rest of the directive, producing `%!(NOVERB)`.
+
+**Scenario (CONFIRMED).**
+
+```
+{{ "%200000000s" % "x" }}   CPython 200,000,000 spaces + 'x'
+                            gojja2  "%!(NOVERB)%!(EXTRA string=x)"
+```
+
+Rendered into the document, with no error. `{{ "%1500000000s" % "x" }}` is worse: it is
+constant, so the 28-byte junk is **folded into the compiled template** and every render
+emits it.
+
+Below that threshold (up to ~10⁷) the width is honoured and the allocation is real; see C15.
+
+**Direction.** Implement the padding directly rather than delegating the whole directive to
+`fmt` — the width/precision/flag handling is a dozen lines and removes both the ceiling and
+the leak of Go-specific diagnostics into rendered output.
+
+---
+
+**C15 — `%` allocation is uncharged at render time.** `eval.go:211`
+
+`evalBinOp` charges `OpMul` through `chargeRepeat` and charges nothing for `OpMod`.
+
+**Scenario (CONFIRMED).** Environment with `WithMaxOutputBytes(4096)`:
+
+```
+{% set z = fmtstr % "a" %}{{ z|length }}   with fmtstr = "%9999999s"
+-> renders "9999999", err=<nil>
+```
+
+A 10 MB string was built inside a render whose entire output allowance is 4 KiB, and the
+render reported success. Same root cause as C4; one fix covers both.
+
+### 3.4 Medium — conformance
+
+---
+
+**C16 — a float literal that overflows to `inf` is a syntax error.**
+`internal/lexer/number.go:182`
+
+```go
+f, err := strconv.ParseFloat(strings.ReplaceAll(text, "_", ""), 64)
+if err != nil { return …, TemplateSyntaxError("invalid float literal %q", text) }
+```
+
+`strconv.ParseFloat` returns `±Inf` *together with* `ErrRange` for an out-of-range literal.
+Discarding the value on error turns Python's `inf` into a compile failure.
+
+**Scenario (CONFIRMED).** `{{ 1e999 }}` → CPython `inf`, gojja2
+`TemplateSyntaxError: invalid float literal "1e999"`. Same for `1e400` and
+`1.7976931348623157e309`. The whole template fails to compile.
+
+**Direction.** Accept the value when `errors.Is(err, strconv.ErrRange)`; reject only a
+genuine syntax failure. (Note the mirror case for integers is already handled: `ParseInteger`
+uses `big.Int`.)
+
+---
+
+**C17 — `|sum(start='')` concatenates where CPython raises.** `filters.go:1360`
+
+`filterSum` folds with `value.Add`, which concatenates strings. Python's builtin `sum`
+refuses a `str` start specifically.
+
+**Scenario (CONFIRMED).** `{{ ['a','b']|sum(start='') }}` → CPython
+`TypeError: sum() can't sum strings [use ''.join(seq) instead]`, gojja2 `ab`.
+(`sum(start=[])` over lists matches: both render `[1, 2]`.)
+
+**Direction.** Refuse a `str` start with CPython's wording. Worth noting the quadratic
+shape too: repeated `Add` over n strings is O(total²) and uncharged.
+
+---
+
+**C18 — `"%c"|safe % 60` emits an unescaped `<`.** `value/pyformat.go:344`
+
+The `'c'` arm returns `string(rune(n))` directly, bypassing the `text()` closure that
+escapes every other conversion in a Markup format string.
+
+**Scenario (CONFIRMED).** With autoescape on, `{{ "%c"|safe % 60 }}` renders `<`.
+markupsafe raises `TypeError: %c requires int or char`, because its escape helper does not
+satisfy `%c`'s integer protocol.
+
+A single `<` is not an exploit by itself, but it is a raw control character crossing an
+escaping boundary in the one filter chain whose entire purpose is to mark a *template* safe
+without marking its *arguments* safe (the comment at methods.go:408 makes exactly that
+point). **Direction:** match CPython and refuse `%c` in a Markup format.
+
+### 3.5 Medium — boundaries and the Go bridge
+
+---
+
+**C19 — `FSLoader` remaps traversal instead of refusing it, and the guard is dead code.**
+`loader.go:75` (`safeJoin`)
+
+```go
+name = strings.TrimPrefix(path.Clean("/"+strings.ReplaceAll(name, "\\", "/")), "/")
+if name == "" || name == "." { return "", false }
+for _, part := range strings.Split(name, "/") {
+    if part == ".." { return "", false }          // unreachable
 }
 ```
 
-To insert one leading zero, the whole accumulated string is copied twice. `\n`
-(0x0A) and `\t` (0x09) are below 0x10, so ordinary text triggers it.
+`path.Clean` on a rooted path resolves away *every* `..`, so no element of `name` can be
+`".."` by the time the loop runs. The loop has never executed and cannot. The function's own
+doc says it works by "refusing any name that would escape it"; it works by rewriting.
 
-MEASURED, `{{ ("\n" * N)|urlencode }}`:
+**Scenario (CONFIRMED).** `FSLoader{FS: fs, Root: "tpl"}` over a MapFS containing
+`secret.html` and `tpl/secret.html`:
 
-| N | time |
-|---|---|
-| 5,000 | 0.009 s |
-| 10,000 | 0.021 s |
-| 20,000 | 0.072 s |
-| 40,000 | 0.256 s |
+```
+{% include "../secret.html" %}          -> renders tpl/secret.html
+{% include "x/../../secret.html" %}     -> renders tpl/secret.html
+{% include "..\\secret.html" %}         -> renders tpl/secret.html
+```
 
-Time quadruples as N doubles — clean O(n²). Control, identical output length but
-a byte at or above 0x10: `{{ (" " * 40000)|urlencode }}` → **0.001 s**, 256×
-faster.
+The confinement itself holds — nothing outside `Root` is reachable — so this is not a
+traversal vulnerability. It is an affordance defect and a maintenance hazard: a template
+that asks for a file it should not get is silently served a *different* file, and the line
+a reader would point at as "the security control" is not one.
 
-**Failure scenario.** A template urlencoding a multi-line user field. At N = 10⁶
-this is ~160 s of CPU for 3 MB of output — far under the 256 MiB output budget,
-touching the iteration budget not at all, and (per C10) uninterruptible.
-
-**Recommended direction.** One line: `fmt.Fprintf(&b, "%%%02X", c)`, or write the
-two hex digits directly. No buffer rewriting.
+**Direction.** Either refuse a name containing a `..` element **before** cleaning (so the
+guard is real and the failure is honest), or delete the loop and rewrite the comment to say
+that names are normalised into `Root`. The first is better: "not found" is the right answer
+to `../secret.html`.
 
 ---
 
-### C12 — High — `{{ self.block }}` swallows the block's error
-**`runtime.go:407-413`.**
+**C20 — a Go method returning only `error` renders the error and reports success.**
+`value/convert.go:456-466`
 
 ```go
-func (b *blockReference) Str() string {
-        v, err := b.render()
-        if err != nil {
-                return ""          // ← the error is discarded
-        }
-        return value.Str(v)
+switch len(out) {
+case 0:  return None, nil
+case 1:  return FromGoWith(out[0].Interface(), m.expose), nil     // an error lands here
 }
+// two or more: the last result is checked for error
 ```
 
-MEASURED:
+A `func (T) Fail() error` has `NumOut == 1`, so its non-nil error is converted like any
+other value.
+
+**Scenario (CONFIRMED).**
 
 ```
-[{{ self.b }}]{% if false %}{% block b %}{{ 1/0 }}{% endblock %}{% endif %}
-  gojja2 -> out="[]"  err=<nil>
+{{ h.Fail() }}   -> "<errors.errorString object>", err=<nil>     // error swallowed
+{{ h.Pair() }}   -> "", err=kaboom                                // (string, error): correct
+{{ h.Panics() }} -> "", err=Panics() panicked: host blew up       // correct
 ```
 
-A `ZeroDivisionError` vanished, the render reported success, and the output is
-silently short. jinja2's `BlockReference.__str__` propagates the exception.
+The single-result case is the odd one out, and it is the shape a host writes for a
+validating accessor.
 
-This is the only swallowed error of its kind in the tree — a sweep for
-`if err != nil { return "" }` across all packages returns this one site — so it
-is an isolated defect rather than a pattern, and correspondingly cheap to fix.
-
-**Recommended direction.** `Str()` cannot return an error, which is the root of
-the problem. Either render the block eagerly where an error can still propagate,
-or carry the failure on the `blockReference` and surface it at the next point that
-can return an error. The interface constraint is the real finding; the `return ""`
-is its symptom.
+**Direction.** Check the last result for `error` regardless of arity; a lone `error` result
+should fail the render (or render nothing) rather than be reflected into an object.
 
 ---
 
-### C13 — Medium — `range` length overflows int64
-**`globals.go:29-40`.**
-
-```go
-return int((r.stop - r.start + r.step - 1) / r.step)
-```
-
-For `range(-9223372036854775808, 9223372036854775807)` the numerator overflows and
-wraps negative.
-
-MEASURED:
-
-| expression | gojja2 | CPython |
-|---|---|---|
-| `range(MIN, MAX)\|length` | **`-1`** | `OverflowError: Python int too large to convert to C ssize_t` |
-| `range(MIN, MAX)\|list\|length` | `0` | (huge) |
-| `{% for i in range(MIN, MAX) %}x{% endfor %}` | 0 iterations | (huge) |
-
-**Correction.** An earlier draft of this entry recorded CPython's answer as
-`18446744073709551615`. That is the arithmetic length, but not what `len()`
-returns: CPython narrows it to a `Py_ssize_t` and raises `OverflowError` past
-that bound. `range(0, 2**63-1)|length` succeeds and `range(-2**63, 0)|length`
-raises. The defect is the same either way -- gojja2 rendered `-1` -- but the
-correct behaviour is to raise, not to report the bignum.
-
-A negative `Len()` is worse than a wrong number: it reaches
-`make([]T, 0, n)`-shaped call sites in `objectSource` consumers. Nothing found
-reaches one today, but the invariant "`Len()` is non-negative" is assumed
-throughout `runtime.go` and is not guaranteed here.
-
-**Recommended direction.** Compute the length in `big.Int`, or detect overflow and
-saturate at `math.MaxInt`. Given the iteration budget bounds the loop anyway,
-saturating is sufficient and keeps `loop.length` monotone.
-
----
-
-### C14 — Medium — `center`/`ljust`/`rjust` accept a fill CPython rejects
-**`methods.go:646`.**
-
-```go
-if v, ok := arg(args, 1, "fillchar"); ok && v.Kind() == value.KindString {
-        fill = v.AsString()          // any length accepted; non-strings ignored
-}
-```
-
-MEASURED against the oracle:
-
-| template | CPython | gojja2 |
-|---|---|---|
-| `{{ "a".center(10, "ab") }}` | `TypeError: The fill character must be exactly one character long` | **`"ababababaababababab"`** (19 chars) |
-| `{{ "a".center(10, 5) }}` | `TypeError: The fill character must be a unicode character, not int` | **`"    a     "`** |
-
-The first is silently wrong output at the wrong *length* — a `center(10)` that
-returns 19 characters. A template laying out fixed-width text produces corrupt
-output with no error.
-
-**Recommended direction.** Raise `TypeError` with CPython's wording for a
-non-string fill and for a fill whose length in code points is not 1. Note that
-`pad` measures with `value.StrLen` (code points) already, so the check should too.
-
----
-
-### C15 — Medium — Every exported method is callable, with arguments
-**`value/convert.go:188-191`, `256-283`.**
-
-```go
-// Methods with no arguments and one result read as attributes.
-if m := o.rv.MethodByName(name); m.IsValid() {          // ← filters on neither
-```
-
-The comment describes a restriction the code does not implement, and the README
-repeats it: *"structs expose their exported fields … and their nullary methods."*
-`methodObject.Call` accepts any arity (`t.NumIn() != len(args.Pos)` is an arity
-*match*, not a limit of zero).
-
-MEASURED, value-receiver struct in the context:
-
-```
-{{ user.Secret() }}    -> "s3cr3t-token"
-{{ user.Wipe(true) }}  -> "wiped=true"        ← arguments accepted, method mutates
-{{ user.Secret }}      -> "<bound method Secret>"
-```
-
-**Failure scenario.** A host passes a domain object to a template — the ordinary
-use of this library. Every exported method on it is template-callable, including
-ones with side effects, with arguments the template chooses. If template authors
-are less trusted than Go authors (the usual arrangement, and the reason jinja2
-ships `SandboxedEnvironment`), this is a privilege boundary that neither the docs
-nor `docs/scope.md` acknowledges. See design tension §4.4.
-
-**Recommended direction.** Decide the intended contract and make code and docs
-agree. If "nullary, one result" is the intent, enforce `t.NumIn() == 0 &&
-t.NumOut() >= 1` at lookup. If arbitrary methods are intended, say so prominently
-and provide an opt-in allow-list.
-
----
-
-### C16 — Medium — Pointer-receiver methods are silently invisible
-**`value/convert.go:99-103`.**
-
-```go
-case reflect.Pointer, reflect.Interface:
-        return fromReflect(rv.Elem())     // ← the pointer's method set is dropped
-```
-
-The pointer is dereferenced before the struct is wrapped, so `*T`'s method set —
-which in Go is where methods usually live — never reaches `structObject`.
-
-MEASURED, identical templates:
-
-| receiver | context value | `{{ user.Secret() }}` |
-|---|---|---|
-| `func (a *Account) Secret()` | `&Account{}` | `'Account object' has no attribute 'Secret'` |
-| `func (a ValAccount) Secret()` | `ValAccount{}` | `"s3cr3t-token"` |
-
-So the documented feature is absent exactly where Go programmers will expect it,
-and present where they may not want it (C15). Which methods a template can call
-depends on receiver style — a detail invisible from the template and undocumented.
-
-**Recommended direction.** Retain the original `reflect.Value` (or its address)
-when wrapping a struct, so `MethodByName` sees the pointer's method set. This
-interacts with C15: fixing C16 *widens* the exposure C15 describes, so the two
-should be resolved together and in that order.
-
----
-
-### C17 — Medium — A panicking Go method panics the render
-**`value/convert.go:271`.** `out := m.fn.Call(in)` has no `recover`.
-
-MEASURED: a context method whose body panics → `{{ user.Boom() }}` propagates
-`method exploded` out of `RenderString`.
-
-A method reached from a template is being called with template-chosen arguments
-(C15), so it can be driven into states its author never tested — a nil map write,
-an index out of range, a failed type assertion.
-
-**Recommended direction.** Recover around `m.fn.Call` and convert the panic into a
-template error naming the method.
-
----
-
-### C18 — Medium — The template cache is unbounded and cannot be invalidated
-**`environment.go:63`, `281-305`.**
-
-```go
-cache map[string]*Template          // no bound, no eviction, no API to clear
-```
-
-The pinned jinja2 defaults, read from `.venv`: `cache_size = 400` (a bounded LRU)
-and `auto_reload = True`. gojja2 has neither, and exposes no `ClearCache`,
-`Invalidate` or `Reload` — the full method set on `*Environment` is `Policies`,
-`AddFilter`, `AddTest`, `AddGlobal`, `Globals`, `FromString`, `FromNamedString`,
-`GetTemplate`, `SelectTemplate`.
-
-Two consequences:
-
-1. **Growth.** Every distinct name ever loaded is retained for the life of the
-   process. With `{% include %}` over an attacker-influenced name and a loader
-   that can serve many, memory grows without bound. This compounds C19: folded
-   constants live in the cached tree.
-2. **Staleness.** The README's own example — `FSLoader{FS: os.DirFS("templates")}`
-   — will never observe an edit to a template file. There is no supported way to
-   make it, short of discarding the whole `Environment`.
-
-**Recommended direction.** A bounded LRU with a `WithCacheSize` option, plus a
-`ClearCache()`. Auto-reload needs a loader-level modification time, which is a
-larger change; documenting the absence is the minimum.
-
-A related but benign observation: two goroutines calling `GetTemplate` for the
-same uncached name will both compile it, and the second overwrites the first. The
-work is wasted but the result is correct, and the locking is otherwise sound.
-
----
-
-### C19 — Medium — A folded filter result is never size-checked
-**`optimize.go:110-114`, `407`.**
-
-`constSizeOK` is applied only inside `constBinOp` (optimize.go:407). The general
-fold path checks `foldable(v)` — kind only, not size:
-
-```go
-if v, ok := f.c.constEval(e); ok && foldable(v) {
-        return &ast.Const{Pos: ast.At(e.Line()), Value: v}
-}
-```
-
-So `{{ "x"|center(10000000) }}` bakes a 10 MB constant into the compiled
-`*Template` at compile time, where no budget exists (C1), and — because the
-template is cached forever (C18) — retains it for the life of the process.
-
-`maxFoldedConst` exists and its comment explains precisely this hazard for `*`.
-It simply is not consulted on the filter path.
-
-**Recommended direction.** Apply `constSizeOK` in `fold()` rather than only in
-`constBinOp`, so it covers every folded result regardless of which evaluator
-produced it.
-
----
-
-### C20 — Medium — `{% include %}` fully buffers, contradicting the streaming promise
-**`exec.go:531-541`.**
-
-```go
-var buf strings.Builder
-if err := tmpl.renderInto(&buf, vars, ex.st.depth, ex.st.budget); err != nil {
-```
-
-README: *"Output is streamed to `w` as the template produces it."*
-`Template.Render`'s doc repeats it. An `{% include %}` materialises the entire
-included render in memory first.
-
-The buffering is deliberate — a context-free include must write into the enclosing
-function's stream (exec.go:535-540), which requires having the text in hand — and
-the double-charging against the budget is documented at limits.go:506-512. The
-finding is the **documentation**, which promises streaming without qualification:
-a page built from a dozen includes holds each one whole, and peak memory tracks
-the largest include rather than the write buffer.
-
-**Recommended direction.** Qualify the README sentence. The `with context` case
-could stream directly into `ex.out` without changing semantics, if the memory
-matters.
-
----
-
-### C21 — Low — The README conformance table is stale
-**`README.md`, §Conformance.**
-
-MEASURED — `go test ./conformance/... -run TestConformance -v` on this checkout:
-
-```
-conformance: 2587/2591 gradable cases match CPython jinja2 (99.8%);
-             4 known divergence(s), 4 ungradable
-```
-
-The README's table totals **2589 gradable / 2585 matching**. Reconciling row by
-row against the case files on disk and the 4 ungradable entries in
-`known_failures.txt` (1 minijinja, 3 minja):
-
-| corpus | README | on disk | gradable | agrees? |
-|---|---|---|---|---|
-| gojja2's own (committed) | 269 | 271 | 271 | **no, −2** |
-| MiniJinja fixtures | 159 | 160 | 159 | yes |
-| Jinja's own suite | 658 | 658 | 658 | yes |
-| minja | 162 | 165 | 162 | yes |
-| llama.cpp | 281 | 281 | 281 | yes |
-| chat templates | 810 | 810 | 810 | yes |
-| theme | 84 | 84 | 84 | yes |
-| cookiecutter | 166 | 166 | 166 | yes |
-
-The drift is confined to the first row: two cases were added to the committed
-corpus without updating the table. Both pass, so the matching column moved with
-it. The percentage is unchanged at 99.8%.
-
-This is minor in itself, but the first row is the one a reader can verify on a
-fresh checkout with no network and no Python — the row the README singles out for
-exactly that reason — which makes it the one most worth keeping exact.
-
-**Recommended direction.** Have the conformance test emit the table, or add a
-`make` target that regenerates it, so the numbers cannot drift silently.
-
----
-
-### C22 — Low — Dead code and a dead parameter
-- `call.go:233` `isDeclared` — defined, **zero** callers.
-- `tests.go:265` `stringOf` — zero callers.
-- `tests.go:268` `joinStrings` — zero callers, and its comment asserts
-  *"is used by filters that assemble output from parts."*
-- `call.go:83` `invoke(callee, args, at ast.Expr)` — `at` is never read, and the
-  doc comment says *"The node is only used to name the callee in an error."*
-
-`stringOf` and `joinStrings` also sit in `tests.go`, which implements jinja2
-*tests*; they are string helpers that belong elsewhere if they belong anywhere.
-
-**Recommended direction.** Delete all four. See C24 — a linter would have.
-
----
-
-### C23 — Low — The same comment written twice
-**`filters.go:489-497`.** Two consecutive comment blocks explain jinja2's
-`s += newline` / `splitlines()` behaviour in two different wordings, the second
-apparently a revision of the first that was added rather than substituted. Nine
-lines where four were intended.
-
----
-
-### C24 — Low — No CI exists
-`make check` is defined as `fmt-check vet test` and its help text reads
-*"Everything CI should run"* — but there is no `.github/`, no workflow file, and
-no linter configuration anywhere in the tree.
-
-Consequences: the conformance guarantee the README relies on (*"a case on that
-list which starts passing fails the test, so the list can only shrink
-deliberately"*) holds only if a human remembers to run it; C21 is the observable
-result. `go vet` alone catches none of C22.
-
-**Recommended direction.** A workflow running `make check` plus
-`go test ./conformance/...`, and `staticcheck` or `golangci-lint` with the
-`unused` pass enabled.
-
----
-
-### C25 — Low — `0` means opposite things across one option family
-- `WithMaxRecursion(0)` → **restores the default** of 100 (environment.go:214-221).
-- `WithMaxIterations(0)` → **removes the bound** (environment.go:230).
-- `WithMaxOutputBytes(0)` → **removes the bound** (environment.go:241).
-
-Each is documented at its own definition, so a reader who consults the right
-doc-comment is not misled. But the three read as a family, and the value that
-means "be safe, use the default" in one means "disable the safety control" in the
-other two. A zero-valued config struct — the ordinary way this gets wired from
-YAML or flags — silently disables two of three bounds.
-
-**Recommended direction.** Make `0` mean "default" for all three and require an
-explicit negative (or a `WithNoLimits()`) to disable, so the quiet path is the
-safe one.
-
----
-
-### C26 — Low — `SelectAutoescape` is missing half its specification
-Beyond C2 and C3, gojja2's `SelectAutoescape` has no `disabled_extensions` and no
-`default` parameter. jinja2's docstring documents a configuration that is
-therefore inexpressible here:
-
-```python
-select_autoescape(disabled_extensions=('txt',), default_for_string=True, default=True)
-```
-
-— "escape everything except `.txt`", the safe-by-default posture. In gojja2 a
-caller wanting it must hand-write the closure, at which point `SelectAutoescape`
-offers nothing.
-
-The default extension list also differs: gojja2 uses `.html, .htm, .xml, .xhtml`,
-jinja2 uses `html, htm, xml`. gojja2's is the safer set, but it is still a
-divergence from the stated specification and is not recorded in
-`docs/divergences.md`.
+**C21 — `State.exported` and `State.export()` are write-only.**
+`exec.go:647`, `template.go:201-203`
+
+The field's doc comment says: "exported lists the names a top-level `{% set %}` bound, in
+order, so `{% import %}` can expose them." Nothing reads it. `moduleObject.GetAttr`
+(exec.go:666) resolves against `st.ctx.vars` directly, and re-implements the underscore
+filter that `export()` also applies.
+
+`export()` is called from four places and does a linear scan of the slice on every top-level
+assignment, so it is not free. `unused` cannot see it because the field *is* written.
+
+**Direction.** Delete both, or make `moduleObject` read `exported` — which is the better
+answer, because "the names this module exports, in order" is a real concept and having it
+defined in exactly one place is the point.
+
+### 3.6 Low — documentation
+
+**C22 — dead exported API described as a feature.** `errs/errs.go:125,141`
+`Error.Stack []Frame` and the `Frame` type ("one entry of a template traceback") are never
+written and never read. There is no template traceback. Delete, or build it — `errs.At`
+already sees every frame boundary.
+
+**C23 — `errs.At` says "returns a copy" and mutates.** `errs/errs.go:190`
+"At returns a copy of err located at name:line, filling in only the fields that are still
+unset" — it type-asserts to `*Error`, assigns `e.Line`/`e.Name` in place and returns the
+same pointer. The `if == 0` guards make it idempotent, so no bug follows today, but the
+comment tells a reader it is safe to share an `*Error` across renders and it is not.
+
+**C24 — `make check` is no longer what CI runs.** `Makefile:241`
+`check: fmt-check vet test race ## Everything CI runs`. CI also runs a `lint` job
+(golangci-lint v2.12.2) and the memory-cap step, and there is no `make lint` target at all
+even though `.golangci.yml` is committed and a lint failure has already been fixed once
+(commit 9e51626). README:223 repeats the claim. A contributor cannot run CI locally.
+
+**C25 — divergences.md contradicts itself and the README.** `docs/divergences.md:344`
+"These are the only two entries in `testdata/known_failures.txt`" — the file has four
+failure entries (two sandbox-escape, two DeepSeek `map|tojson`) plus four ungradable ones,
+and line 77 of the same document says the DeepSeek pair is listed there. README:110 says
+four. The sentence was not updated when the DeepSeek entries were added.
+
+**C26 — `\Uffffffff` renders U+FFFD.** `internal/lexer/strlit.go:142`
+`readHexEscape` accumulates into an `int` and returns `rune(v)`; eight hex digits overflow
+`int32`, so the `r > 0x10FFFF` check sees a negative number and passes. CPython raises
+`TemplateSyntaxError: illegal Unicode character`; gojja2 renders the replacement character.
+Range-check `v` before the conversion.
+
+**C27 — four fragments no linter can see.**
+- `value.Hashable` (value/dict.go:262) is exported and called only by tests; `CheckHashable`
+  is the real entry point.
+- `methodJoin`'s `total` accumulator (methods.go:286,300) is incremented and never read —
+  a leftover from before `ChargeBytes` was introduced two lines later.
+- `depChecker.checkCallerDefault`'s first branch (depcheck.go:131) is a `continue` that
+  changes nothing; the function is two lines of logic wearing six.
+- `writeStringRepr`'s `utf8.RuneError` arm (value/repr.go:256) says "show it as a byte" and
+  writes the replacement character instead.
+
+`.golangci.yml`'s own preamble says `unused` was enabled because "three had accumulated" —
+it cannot catch a write-only field (C21, C22) or an exported-but-unused symbol in a library
+package. Worth knowing the limit of the guard that was just installed.
+
+**C28 — `SelectAutoescape("")` and `(".")` select nothing.** `environment.go:260`
+`normalizeExtensions` skips an extension that is empty after `TrimLeft(".")`. jinja2's
+`f".{x.lstrip('.').lower()}"` produces the pattern `"."`, which matches a name ending in a
+dot. Escaping *less* than jinja2 is the direction this codebase treats as a security
+property everywhere else (environment.go:193, docs/divergences.md §default extension set).
+
+**C29 — `Globals()` hands out the live map.** `environment.go:392`
+Documented as "must not be mutated", and a caller who does can replace `range` for every
+template in the environment (CONFIRMED: `env.Globals()["range"] = …` makes `{{ range }}`
+render the substitute). The doc discharges the obligation; a copy, or no accessor at all,
+would remove it.
+
+**C30 — `SliceBounds` and `SliceIndices` duplicate the clamp.** `value/str.go:87,139`
+The `lower`/`upper`/`clamp` block is written twice, character for character. Two sources of
+truth for Python slice semantics, one of which is used by `range` and the other by
+everything else.
 
 ---
 
 ## 4. Design tensions
 
-### 4.1 — The extension point for globals cannot be made safe
+### 4.1 The budget is a render concept living above a value layer that cannot see it
 
-```go
-func Func(name string, fn func(args *value.CallArgs) (value.Value, error)) value.Value
-type Filter func(s *State, v value.Value, args *value.CallArgs) (value.Value, error)
-```
+`value/` holds every primitive that allocates from a template-chosen size — `repeat`,
+`FormatPercent`, `StrSlice`, `SliceIndices`, `Dict.Set` — and it cannot import the root
+package, so it cannot reach a `*State`. The chosen answer is that each *caller* charges
+before calling: `evalBinOp` → `chargeRepeat` → `value.Mul`, `pad` → `ChargeBytes` →
+`repeatString`. That works exactly as far as someone enumerated the call sites, which is why
+C4, C7 and C15 are all the same bug wearing different hats — `%` was never enumerated, and
+`StrSlice`'s cost is not derived from a number the template names, so it did not look like a
+member of the category.
 
-A `Filter` receives `*State` and can call `s.Step(n)`. A global receives only
-`*CallArgs`. **A global therefore cannot charge the budget — not by oversight, but
-by signature.** Every global is structurally exempt from `WithMaxIterations` and
-`WithMaxOutputBytes`, and so is every global a *user* registers with `AddGlobal`.
-C7's `{{ lipsum(100000000) }}` cannot be fixed without changing this type.
+The comment at the top of `alloc.go` states the rule beautifully and then leaves its
+enforcement to vigilance: "Nearly every resource defect in this engine has had one shape."
+It still does.
 
-*The alternative I would weigh:* give globals the same `*State`-first signature as
-filters. It is a breaking change to a pre-1.0 API, and the cost is real — every
-`AddGlobal` caller updates. The version to do it in is this one. A non-breaking
-half-measure (a parallel `StatefulFunc`) leaves the unsafe spelling as the obvious
-one, which is how the current situation arose.
+**The alternative I would weigh:** make the charge a property of the *allocation* rather
+than of the call site. Give `value` a small `Budget` interface (one method, `Charge(n
+int64) error`) with a nil-safe no-op implementation, and pass it into the handful of
+primitives that size from data. The root package's `*State` satisfies it; constant folding
+passes its fold budget; tests pass nil. The compile-time and render-time holes close
+together, and "did anyone remember to charge this?" becomes a signature question instead of
+a review question.
 
-### 4.2 — Bounding is a site-by-site habit, not a rule
+### 4.2 Compile time has a budget that does not cover what compile time does
 
-`eval.go:219-240` is worth reading in full. `chargeRepeat` exists, and its comment
-records the incident that produced it:
+`newConstEvaluator` builds a `budget` with `maxFoldSteps`/`maxFoldBytes` and resets it per
+fold attempt — careful, well-reasoned work (optimize.go:510-523). But that budget is only
+consulted by code that goes through `State.Step`/`ChargeBytes`, and the two most expensive
+things `compile` does go through neither: the lexer (C6, quadratic and unbounded) and
+`FormatPercent` (C4, OOM). Meanwhile `compile` takes no `context.Context` at all, so a
+caller who has a deadline for `Render` has none for `GetTemplate`.
 
-> *"`{{ "x" * 1000000000 }}` took the process down with an output budget of four
-> kilobytes in force."*
+The README's safety story is entirely about renders: "Every render takes a
+`context.Context` and stops when it is cancelled". A service that compiles user-supplied
+templates — which the sandbox discussion in docs/scope.md assumes is a real use — has no
+control over the phase where the input is first touched.
 
-The lesson was learned, written down, and applied **to one operator**. Meanwhile
-`tojson`, `round`, `slice`, `batch`, `lipsum`, `indent`, `center`, `ljust`,
-`zfill` and `replace` all still allocate from a template-chosen size and charge
-nothing (C5–C8). The same is true of `materialize`, `evalArgs` and `unpack`, which
-*are* charged — each after its own incident, each in its own idiom.
+**The alternative:** `compile(ctx, source, name)` with the same budget type, charged by the
+lexer per token and by the folder as it already is. It is a breaking API change, which is
+the argument against; `GetTemplateContext`/`FromStringContext` beside the existing pair is
+the compromise.
 
-C8 is the proof that this cannot converge: `("a"*60000)|replace("a","b"*60000)`
-passes *every* guard that exists and still allocates 3.6 GB, because the guards
-bound individual operations and the hazard is in their composition.
+### 4.3 Recursion is bounded in four places and unbounded in six
 
-*The alternative I would weigh:* stop charging at call sites and make the budget
-structural. A `budget.Builder` — a `strings.Builder` that charges on every write
-and returns an error past the bound — handed to every filter through `*State`,
-turns "remember to charge" into "you cannot allocate output without charging". The
-cost is touching every filter once; the benefit is that the next filter someone
-adds is bounded by construction. The present design requires every future
-contributor to independently rediscover the comment at eval.go:219.
+Today: `parser.MaxNestingDepth` (statements and primaries only — C8),
+`State.maxRecursion` (include/extends/macro/recursive-loop), `value.maxCompareDepth`
+(`==` only — C3), `value.maxToGoDepth` (the Go bridge). Unbounded: `compare`/`compareSeq`,
+`blockReference.render`, `writeRepr`, `hash` over nested tuples, `value.Copy`, and the four
+AST walkers that descend a left-deep chain.
 
-### 4.3 — The budget is a render concept, but compile time does real work
+Four counters with four different limits, four different failure modes (TemplateSyntaxError,
+RecursionError, RecursionError-in-comparison, silent nil) and no shared notion of "how deep
+are we". Each was added when a specific overflow was found, which is why the coverage looks
+like a list of past incidents rather than a policy — and why C2 and C3 sit right next to
+guards that would have caught them.
 
-`newBudget` lives in `RenderValues`. Yet `Environment.compile` runs the optimizer,
-which runs **real filters** (C1), and `Template.Render` runs `valuesFromGo`, which
-walks **the caller's whole object graph** (C4). Both are unbounded, and both are
-positioned so that no option or context the caller sets can reach them.
+**The alternative:** one depth counter on the render state that every recursive descent
+enters through, with the *class* of error decided at the entry point rather than the depth.
+The cost is threading it into `value/`, which §4.1 argues for anyway.
 
-The architecture treats "render" as the unit of work to be bounded. The actual
-units of attacker-influenced work are three: *compile a template*, *convert a
-context*, *render*. Only the last has a budget.
+### 4.4 "CPython is the specification" is enforced only where the corpus can reach
 
-*The alternative I would weigh:* make the budget an `Environment`-level facility
-with a compile-time allowance and a per-conversion allowance alongside the render
-allowance. The narrower fix — a fixed internal budget for folding, a cycle check
-in `FromGo` — closes C1 and C4 and is what I would do first; but it leaves the
-conceptual gap, and the next thing added at compile time will fall into it again.
+The conformance machinery is excellent and it measures a real thing — 2,591 cases from eight
+independent sources, regenerated goldens, a differential fuzzer, a shrinker. A 30,000-template
+soak against the live oracle passed clean while this audit was running.
 
-### 4.4 — The sandbox is declined for a reason the bridge contradicts
+And nine of my fifty hand-written probes diverged.
 
-`docs/scope.md` excludes the sandbox, and argues it well:
+They diverge because the generator emits only *well-formed* calls. `conformance/generate.go`
+carries a hand-curated `filterArgs` table of plausible argument lists — `"center": {`12`}`,
+`"batch": {`2`, `2, 'X'`}` — so it never produces `|center(12, '*')` or `|upper(1,2,3)`. The
+imported corpora are real templates written by people who got the arity right. So the entire
+argument-validation surface (C11: 85 of 96 probes diverge) is structurally invisible to both
+gates, and so are the edges nobody writes on purpose: `1e999` (C16), `%*s` (C13),
+`-Infinity` in JSON (C5), `sum(start='')` (C17).
 
-> *"`SandboxedEnvironment`, attribute allow-lists, and the unsafe-callable
-> machinery are about restricting access to *Python* objects. Go's own type system
-> draws that line differently, so a faithful port would be a false reassurance."*
+The measurement is honest about what it measures. The risk is reading 99.8% as coverage when
+it is *agreement on the cases that exist*.
 
-The premise is that Go's type system already draws the line. It does not.
-`structObject.GetAttr` reaches `MethodByName` on any exported method, and
-`methodObject.Call` invokes it with template-chosen arguments (C15). Reflection
-erases exactly the boundary the argument leans on.
+**The alternative I would weigh:** derive the negative space from the oracle rather than
+inventing it. `tools/oracle/` already imports jinja2; `inspect.signature` over
+`jinja2.filters.FILTERS` and `TESTS` yields every arity and keyword name, from which a
+corpus of *wrong* calls generates mechanically. The same trick covers value-shape edges:
+sweep each filter over the existing 39-value pool (the operator corpus already does this)
+rather than over hand-picked inputs. Both are cheap and both would have found C11, C13 and
+C17 before I did.
 
-The conclusion may still be right — a Python-shaped sandbox would indeed be a
-false reassurance in Go. But the stated reason is not the true one, and a reader
-making a trust decision from `scope.md` will conclude that passing a struct to a
-template is as safe as passing it to `encoding/json`. It is not: `json` reads
-fields, templates call methods.
+### 4.5 Streaming is promised, buffering is what happens
 
-*The alternative I would weigh:* an opt-in allow-list at the bridge —
-`WithExposedMethods(...)`, or honouring a `gojja2:"expose"` tag — which is a small,
-Go-shaped mechanism rather than a port of jinja2's. Failing that, `scope.md`
-should say plainly that template authors are trusted to the same level as Go
-authors, and the README should carry that where people configuring a loader will
-see it.
+`Render`'s doc says output is streamed and names `{% include %}` as "the exception". It is
+not the exception: `{% filter %}`, block `{% set %}`, every macro body, every block render
+and `self.x` all capture into a `strings.Builder`. The budget compensates by counting
+captured bytes twice — a deliberate and well-argued choice (limits.go:104-110) — but nothing
+bounds the *number* of live buffers, only the total bytes through them. A template nesting
+`{% filter %}` inside a macro inside a block holds three copies of overlapping text, and the
+depth that allows is `maxRecursion` = 100.
 
-### 4.5 — Two layers, two standards
-
-Everything in §1's "genuinely sound" list is in `value/` and `internal/`.
-Everything in §3's Critical and High rows is in the root package's filter, method
-and global layer.
-
-`value/ops.go` bounds `repeat` at `MaxInt32`, saturates its multiplication, and
-estimates `**`'s bit width before computing it. `methods.go`, forty lines of call
-stack away, hands an unvalidated `int64` straight to `strings.Repeat`.
-
-The difference is not competence — it is the same author — it is that the value
-layer was built as a model, with invariants, while the filter layer was built as a
-catalogue, one entry at a time, each mapped to its CPython counterpart. The
-catalogue is graded rigorously for *output* by the conformance corpus, and not at
-all for *resource behaviour*, because CPython's answer to
-`{{ 1.5|round(2000000000) }}` is `1.5` and gojja2's is a dead process — which no
-output-comparison harness can see.
-
-*The alternative I would weigh:* extend the differential harness to compare
-*resource outcomes*, not just bytes. The soak infrastructure already runs the
-oracle "under a memory cap and a per-render timeout" (README); applying the same
-cap to the gojja2 side and flagging any case where CPython returns and gojja2 does
-not would have found C5, C6, C7 and C8 automatically. That is the highest-leverage
-single change in this report: it converts an entire defect class from "found by
-audit" to "found by CI".
+This is the tension with the least evidence of harm behind it — I could not build a case
+where it bites that the byte budget did not already stop. It is here because the
+documentation and the implementation disagree about what the engine's memory profile is, and
+that disagreement is what a caller sizes a container from.
 
 ---
 
 ## 5. Expectation gaps
 
-| # | Expected | Found |
-|---|---|---|
-| 1 | `FromString` parses and returns an error for bad input | It executes filters, and can panic or exhaust memory (C1) |
-| 2 | Configured limits bound the work a template can cause | They bound only the render, which is the third of three unbounded phases (C1, C4, §4.3) |
-| 3 | `SelectAutoescape` is the safe default, as the README implies | It silently disables escaping for string templates and uppercase extensions (C2, C3) |
-| 4 | Passing data to a template is inert, like `json.Marshal` | A cyclic map kills the process before the template runs (C4) |
-| 5 | Structs expose "their nullary methods" (README) | Every exported method, with arguments — but only value receivers (C15, C16) |
-| 6 | A cancelled context stops the render | It stops at the next loop iteration or write; a filter is uninterruptible (C10) |
-| 7 | Output is streamed to `w` (README) | Except `{% include %}`, which buffers each included render whole (C20) |
-| 8 | A render either succeeds or returns an error | It may panic, from seven distinct sites (C6, C7, C17) |
-| 9 | `dict.update` behaves like Python's | Non-dict arguments are silently discarded (C9) |
-| 10 | `{{ self.block }}` renders the block or fails | It renders `""` and reports success (C12) |
-| 11 | The conformance table reflects the suite | Stale by two cases, in the one row verifiable offline (C21) |
-| 12 | `make check` is what CI runs | There is no CI (C24) |
-| 13 | A newcomer can build and test from the docs | True — `make venv`, `make test` work as written. The undocumented requirement is Go **1.26.5** exactly, from `go.mod`'s patch-level directive; the README's Development section does not mention a toolchain version. |
+| I expected | I found |
+|---|---|
+| The nesting bound protects against stack exhaustion, as its comment says. | Two one-line templates kill the process by stack overflow (C2, C3), and the bound itself does not apply to `not`/unary/filter chains (C8). |
+| `{% import %}` shares the render's budget, like `{% include %}` and `{% extends %}`. | It has *no* budget and no context (C1). divergences.md lists the two that work and is silent on the one that does not. |
+| A panic anywhere becomes a render error — divergences.md, "A backstop on panics". | True for panics. A Go stack overflow is a `fatal error`, not a panic; `recover` cannot see it, and two templates reach it. |
+| `make check` runs what CI runs, as both the Makefile and README say. | No `make lint` target exists; CI runs golangci-lint and a memory-cap job that `make check` does not (C24). |
+| The "Test under a memory cap" CI step tests under a memory cap. | It replays the test cache and executes nothing (C12). |
+| `SelectAutoescape` escaping *less* than jinja2 is treated as a bug — the code says so twice. | `SelectAutoescape("")` escapes nothing where jinja2 escapes names ending in a dot (C28). |
+| `safeJoin` refuses names that escape the root, as its doc says. | It rewrites them, and the refusal loop is unreachable (C19). |
+| README: structs "expose … their methods that take no arguments". | They are exposed as bound-method objects: `{{ h.Greet }}` renders `<bound method Greet>` and you must write `{{ h.Greet() }}`. This matches Python, but the sentence invites the first spelling and nothing says so. |
+| A host method's error reaches the template author. | Only if the method returns two or more results (C20). |
+| Built-in filters poll so a cancelled render stops promptly — divergences.md says so. | `urlencode` and `urlize` do. `unique`, `sort`, `min`, `max`, `groupby` and `value.Contains` do not (C9, C10). |
+| `|tojson` produces valid JSON or an error. | A negative infinity silently truncates the document to a fragment (C5). |
+| A caller-registered filter has the same duties as a built-in one. | `State.ChargeBytes` and `ChargeItems` are exported, load-bearing, and mentioned in neither the README nor `docs/`. Only `Poll` is documented. |
+| Compiling a template is cheap and bounded. | A 1.6 MB template takes 34.5 s (C6); a 42-byte one OOM-kills the process (C4). `compile` takes no context. |
 
 ---
 
 ## 6. Open questions
 
-These cannot be settled from the code alone:
+Things the code alone cannot settle:
 
-1. **Who writes the templates?** Nearly every Critical and High finding is
-   severity-weighted by the answer. If templates are trusted first-party assets,
-   C1/C5–C8 are robustness bugs. If they are user-supplied — which the README's
-   *"an attacker-supplied template cannot spend the process"* promises support for
-   — they are remote denial-of-service, and C15 is privilege escalation.
-2. **Is the budget a safety boundary or a backstop?** limits.go:427-433 calls the
-   defaults "backstops … for a caller who passes `context.Background()`", but
-   environment.go:50-59 and the README call them safety controls against attacker
-   templates. Those imply different fixes: a backstop tolerates the gaps in §4.3;
-   a safety boundary does not.
-3. **Is the `Environment`/`Func` API frozen?** §4.1's fix is breaking. Whether
-   that is acceptable determines whether globals can ever be bounded.
-4. **Was the pointer-receiver behaviour (C16) a decision or an accident?** Nothing
-   in the code or docs indicates intent, and the answer changes whether the fix is
-   "expose pointer methods" or "document that only value receivers are exposed".
-5. **Why is there no CI** when the Makefile anticipates it? A deliberate choice
-   pending a public repository is different from an oversight, and only the latter
-   is a finding worth acting on urgently.
+1. **Is `{{ self.x }}` rendering the block a deliberate divergence?** CPython prints
+   `<jinja2.runtime.BlockReference object at 0x…>`. runtime.go:438 argues for rendering, and
+   the argument is good, but it is not in docs/divergences.md and it is what makes C2
+   reachable. Which behaviour is intended decides whether the fix is a depth guard or a
+   removal.
+2. **What is a caller-registered filter's contract?** `Step`, `Poll`, `ChargeBytes` and
+   `ChargeItems` are all exported and all load-bearing. Is a third-party filter that ignores
+   them a bug in the filter or a gap in this package? The answer belongs in the README either
+   way.
+3. **Should `FSLoader` refuse traversal or normalise it?** Both are defensible. The current
+   code does one and documents the other.
+4. **Was `%` deliberately left out of the fold budget**, or was `*` simply the operator that
+   got reported first? `constBinOp` guards `OpMul` with a specific, commented check and
+   `OpMod` with nothing; the shape suggests the latter, but the choice may have been made.
+5. **Is the lazy-sequence divergence still the right trade** now that `|unique` turns out to
+   be quadratic (C10)? The argument in divergences.md is about *semantics* and is
+   convincing; the performance half of "anything that consumes the result behaves
+   identically" is not true for `unique`, and a generator-shaped implementation would not
+   have that problem.
+6. **How much does compile-time cost matter for the intended deployment?** If templates are
+   always trusted and compiled once at startup, C4 and C6 are hygiene. If `FromString` ever
+   sees user input — which docs/scope.md's sandbox discussion implies it might — they are the
+   two most serious findings in this report after C1.
+7. **Is `errs.Frame` a feature someone started?** Building a real template traceback would be
+   valuable and `errs.At` already stands at every frame boundary; leaving a dead exported type
+   in place is the worst of the options.
 
 ---
 
 ## 7. Hypotheses that did not survive
 
-Recorded so they are not re-investigated, and because two of them are where the
-codebase is stronger than it first appears:
+Recorded so the next reader does not spend the time again.
 
-- **Parser stack overflow from deep nesting** — refuted. Bounded at 1000 levels;
-  1,000,000 nested parens returns a clean error.
-- **`errors.Is(err, errs.UndefinedError)` cannot compile**, since `Kind` is a
-  `uint8` constant — refuted. `errs.go:162` gives `Kind` an `Error()` method;
-  the README idiom compiles and returns `true`, including through the modelled
-  class hierarchy.
-- **`{{ 10 ** 2000000000 }}` OOMs** — refuted. `estimatePowBits` rejects it with
-  `OverflowError` before computing.
-- **Path traversal via `{% include %}`** — refuted. `safeJoin` normalises
-  backslashes, `path.Clean`s, and rejects any remaining `..` segment.
-- **`__class__` opens a sandbox escape** — refuted. `classObject` exposes only
-  `__name__`, `__qualname__` and `__module__`; there is no route onward.
-- **Comparing `value.Value` with `==` panics on uncomparable payloads**
-  (exec.go:665, tests.go:211) — not reachable today: every `obj` payload a
-  template can construct is a pointer. It remains a latent hazard for a
-  user-supplied `Object` implemented on an uncomparable type, but no repro
-  exists, so it is not filed as a finding.
-- **`{{ "x" * 1000000000 }}` OOMs** — refuted, and worth noting as the one place
-  this exact hazard *is* handled: `chargeRepeat` catches it. That it is handled
-  here and nowhere else is finding §4.2.
-
----
-
-## 8. Suggested order of work
-
-Grouped by what each change costs, not by severity alone:
-
-1. **C2, C3** — autoescaping. Two small, self-contained fixes to a security
-   property, with the specification already written down in `.venv`.
-2. **C1** — recover panics and add a fixed budget in `constFilter`/`constTest`.
-   Small, and it closes the compile-time exposure for the whole filter catalogue
-   at once rather than filter by filter.
-3. **C4** — move `valuesFromGo` inside `RenderValues`, add cycle detection.
-4. **C9, C12, C14** — silent wrong output. Cheap, and they are the failures this
-   project's own thesis says matter most.
-5. **C6, C7, C11** — the individual panics and the quadratic. Mechanical.
-6. **§4.5** — extend the differential harness to compare resource outcomes. This
-   is the change that stops the class from recurring; everything above it is
-   cleanup that the harness would have found on its own.
-7. **C5, C8, §4.1, §4.2** — the structural budget work, once the harness can tell
-   you whether it worked.
+- **Constant folding and `~` lose Markup.** `value.Concat` stringifies both sides and drops
+  the safe flag, where `evalConcat` escapes each operand and returns Markup — so I expected
+  `{{ ("<b>"|safe) ~ "x" }}` to fold to an escaped result. It does, and **so does jinja2**:
+  `Concat.as_const` joins with `str()` and loses Markup identically. Verified against the
+  oracle with autoescape on and off; no divergence.
+- **`value.repeat`'s `int64(len(v.str))*n > MaxInt32` check overflows.** It does — `"xx" *
+  2**62` wraps negative and would reach `make` with a negative capacity. It is unreachable:
+  every caller pre-charges through `RepeatSize`, whose `saturatingMul` is correct (I checked
+  the `a > MaxInt64/n` boundary algebraically and it never admits an overflowing product).
+  `{{ "xx" * 4611686018427387904 }}` returns a clean budget error. Latent, not a defect.
+- **Concurrent rendering races.** 8 goroutines × 200 renders over inheritance, include,
+  import, macros and list mutation, plus 8 × 500 renders of one shared `*Template` that
+  mutates a list and sorts: clean under `-race`.
+- **The README's conformance table has drifted.** It has not: `TestConformance` reports
+  2587/2591, exactly the table, and asserts it.
+- **`moduleObject.GetAttr` compares `value.Value` with `==` and could panic on an
+  uncomparable payload.** Every `obj` a `Value` can hold is a pointer or a comparable struct;
+  I found no `FromObject` call with an uncomparable value. Fragile, not broken.
+- **`{% for x in l %}{% set _ = l.append(1) %}{% endfor %}` loops forever**, as it does in
+  Python. It does not: `runLoop` snapshots the slice header, so an append is invisible to the
+  running loop. A divergence, but in the safe direction and not one I could make produce
+  wrong output.
+- **`tojson` of `+inf` is also broken.** Only the negative branch calls `Reset`.
