@@ -330,19 +330,51 @@ func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
+	// jinja2 calls randrange(min, max), which raises on an empty range.
+	// Quietly repairing it to lo+1 instead is what used to manufacture the
+	// count==0 case that then panicked on text[:1] below: a silently fixed
+	// argument turned a clean ValueError into a crash.
 	if hi <= lo {
-		hi = lo + 1
+		return value.Undefined, errs.New(errs.ValueError,
+			"empty range for randrange() (%d, %d, %d)", lo, hi, hi-lo)
+	}
+	if n < 0 {
+		n = 0
+	}
+	// randrange(lo, hi) may legitimately be negative -- lipsum(1, true, -5, -1)
+	// is a real call, and jinja2 then loops over range(negative), which runs
+	// no times and yields an empty paragraph. The span is computed in int64
+	// because hi-lo overflows for a wide enough range, and a wrapped negative
+	// reaches rand.IntN, which panics on one.
+	span := int64(hi) - int64(lo)
+	if span > math.MaxInt32 {
+		span = math.MaxInt32
+	}
+
+	// n paragraphs of at most hi words each, charged before any of them is
+	// built. lipsum is a global, and until globals were handed the render
+	// state there was no way for one to do this at all.
+	if err := s.ChargeItems(saturatingMulInt(int64(n), int64(max(hi, 0)))); err != nil {
+		return value.Undefined, err
 	}
 
 	paragraphs := make([]string, 0, n)
 	for range n {
-		count := lo + rand.IntN(hi-lo)
+		count := lo + rand.IntN(int(span))
+		if count < 0 {
+			count = 0
+		}
 		words := make([]string, 0, count)
 		for range count {
 			words = append(words, lipsumWords[rand.IntN(len(lipsumWords))])
 		}
 		text := strings.Join(words, " ")
-		text = strings.ToUpper(text[:1]) + text[1:] + "."
+		// A zero-word paragraph is a real outcome -- lipsum(1, true, 0, 1)
+		// asks for it -- and jinja2 renders it as just the full stop.
+		if text != "" {
+			text = strings.ToUpper(text[:1]) + text[1:]
+		}
+		text += "."
 		if html {
 			text = "<p>" + text + "</p>"
 		}

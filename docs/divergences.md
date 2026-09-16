@@ -127,6 +127,24 @@ evaluated at render time where the budget bounds it. The rendered result is
 identical -- it is just not computed early. Ordinary constants still fold, and
 nothing written on purpose builds a 64 KiB one this way.
 
+### A charge before every sized allocation
+
+Anything a template sizes from a number it chose -- a pad width, an indent, a
+rounding precision, a slice or batch count, `lipsum`'s paragraph count, the
+result of a `replace` -- is charged against the render budget *before* it is
+allocated, and refused outright past a hard ceiling of 2**31 bytes or elements.
+
+The ceiling exists because a zero or negative budget means "unbounded", and
+unbounded must still not mean "allocate 2**63 bytes". It is the same ceiling
+`value.repeat` has always applied to `*`, so both halves of the engine refuse
+the same sizes.
+
+Where CPython raises `MemoryError` for these, gojja2 raises its own
+`OverflowError` or fails the render with [ErrOutputTooLarge] /
+[ErrTooManyIterations], depending on which bound was reached. CPython has no
+budget to exceed, so there is nothing to match here; the divergence is the
+bound itself, which this file already records above.
+
 ### A backstop on panics
 
 A panic anywhere inside gojja2 is turned into a render error wrapping

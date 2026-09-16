@@ -324,7 +324,7 @@ func filterToJSON(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, err
 	}
 	var b strings.Builder
-	if err := writeJSON(&b, v, indent, 0, nil); err != nil {
+	if err := writeJSON(s, &b, v, indent, 0, nil); err != nil {
 		return value.Undefined, err
 	}
 	// htmlsafe_json_dumps returns Markup whatever the autoescape setting,
@@ -362,14 +362,27 @@ func (p jsonPath) enter(key any) (jsonPath, bool) {
 
 func (p jsonPath) leave(key any) { delete(p, key) }
 
-func writeJSON(b *strings.Builder, v value.Value, indent, depth int, path jsonPath) error {
+func writeJSON(st *State, b *strings.Builder, v value.Value, indent, depth int, path jsonPath) error {
 	// json.dumps separates with ", " until an indent is given, at which
 	// point the space moves onto the next line.
 	nl, pad, padEnd, comma := "", "", "", ", "
 	if indent > 0 {
+		// The indent is repeated once per level and once per element, so
+		// a template-chosen one sizes the whole document: tojson(2000000000)
+		// asked for a two-gigabyte prefix. indent*(depth+1) can also
+		// overflow an int and reach strings.Repeat as a negative count,
+		// which panics -- so the multiplication saturates rather than
+		// wrapping, and the result is charged before it is built.
+		var err error
+		pad, err = st.repeatString(" ", clampToInt(saturatingMulInt(int64(indent), int64(depth+1))))
+		if err != nil {
+			return err
+		}
+		padEnd, err = st.repeatString(" ", clampToInt(saturatingMulInt(int64(indent), int64(depth))))
+		if err != nil {
+			return err
+		}
 		nl = "\n"
-		pad = strings.Repeat(" ", indent*(depth+1))
-		padEnd = strings.Repeat(" ", indent*depth)
 		comma = ","
 	}
 
@@ -420,7 +433,7 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int, path jsonPa
 				b.WriteString(comma + nl)
 			}
 			b.WriteString(pad)
-			if err := writeJSON(b, item, indent, depth+1, path); err != nil {
+			if err := writeJSON(st, b, item, indent, depth+1, path); err != nil {
 				return err
 			}
 		}
@@ -456,7 +469,7 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int, path jsonPa
 			}
 			writeJSONString(b, value.Str(e.Key))
 			b.WriteString(": ")
-			if err := writeJSON(b, e.Value, indent, depth+1, path); err != nil {
+			if err := writeJSON(st, b, e.Value, indent, depth+1, path); err != nil {
 				return err
 			}
 		}
@@ -464,7 +477,7 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int, path jsonPa
 	case value.KindObject:
 		// A tuple subclass serialises as the array it is.
 		if tv, ok := v.Interface().(value.TupleView); ok {
-			return writeJSON(b, tv.AsTuple(), indent, depth, path)
+			return writeJSON(st, b, tv.AsTuple(), indent, depth, path)
 		}
 		// A Go struct or map reaches a template as a Mapping and is
 		// serialised like the dict it stands for. Everything else --
@@ -477,7 +490,7 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int, path jsonPa
 				val, _ := m.GetItem(k)
 				_ = target.Set(k, val)
 			}
-			return writeJSON(b, out, indent, depth, path)
+			return writeJSON(st, b, out, indent, depth, path)
 		}
 		return errs.New(errs.TypeError,
 			"Object of type %s is not JSON serializable", v.TypeName())

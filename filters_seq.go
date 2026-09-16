@@ -341,6 +341,19 @@ func filterBatch(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 	if err != nil {
 		return value.Undefined, err
 	}
+	// With a fill, every row is padded out to size, so the result holds
+	// ceil(len/size)*size elements however few items there are:
+	// `[1]|batch(100000000, 0)` is one row of a hundred million. Charged
+	// before the rows are built, not after.
+	total := int64(len(items))
+	if hasFill && !fill.IsNone() && len(items) > 0 {
+		rows := int64((len(items) + size - 1) / size)
+		total = saturatingMulInt(rows, int64(size))
+	}
+	if err := s.ChargeItems(total); err != nil {
+		return value.Undefined, err
+	}
+
 	var rows []value.Value
 	for i := 0; i < len(items); i += size {
 		row := items[i:min(i+size, len(items))]
@@ -369,6 +382,14 @@ func filterSlice(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 
 	items, err := materialize(s, v)
 	if err != nil {
+		return value.Undefined, err
+	}
+	// count is the number of lists about to be built, whether or not there
+	// are any items to put in them: `[]|slice(100000000)` allocates a
+	// hundred million empty lists. The loop below runs count times before
+	// the render sees a single iteration, so the per-pass charge in runLoop
+	// would never be reached.
+	if err := s.ChargeItems(saturatingMulInt(int64(count), 1)); err != nil {
 		return value.Undefined, err
 	}
 	perSlice, remainder := len(items)/count, len(items)%count

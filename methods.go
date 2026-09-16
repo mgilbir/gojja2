@@ -17,24 +17,19 @@ import (
 // templates actually use; anything missing shows up as an undefined attribute
 // rather than as silently wrong output.
 
-// statefulMethods are the methods that walk an iterable the caller supplies,
-// rather than working from the receiver alone. They need the render's budget
-// to bound that walk, so they are looked up before the ordinary tables.
+// Every method takes the render state.
 //
-// s is nil when the lookup comes from constant folding, which has no render to
-// charge; State.Step handles that.
-var statefulMethods = map[value.Kind]map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
-	value.KindList: {"extend": methodListExtend},
-}
+// It used to be only the handful that walk a caller-supplied iterable, looked
+// up from a table of their own -- which meant the question "can this method be
+// bounded?" was answered per method, by whoever added it. A method that sizes
+// an allocation from one of its arguments needs the budget just as much as one
+// that walks a sequence, and several of them were not getting it. s is nil when
+// the lookup comes from constant folding, which State.Step and State.Charge
+// both handle.
 
 // builtinMethod resolves a method on a built-in type, returning it bound.
 func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) {
-	if fn, ok := statefulMethods[recv.Kind()][name]; ok {
-		return Func(name, func(_ *State, args *value.CallArgs) (value.Value, error) {
-			return fn(s, recv, args)
-		}), true
-	}
-	var table map[string]func(value.Value, *value.CallArgs) (value.Value, error)
+	var table map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error)
 	switch recv.Kind() {
 	case value.KindString:
 		table = stringMethods
@@ -51,8 +46,14 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 	if !ok {
 		return value.Undefined, false
 	}
-	return Func(name, func(_ *State, args *value.CallArgs) (value.Value, error) {
-		return fn(recv, args)
+	return Func(name, func(callState *State, args *value.CallArgs) (value.Value, error) {
+		// Prefer the state of the call over the state of the lookup:
+		// they are the same render, but a bound method can outlive the
+		// expression that produced it.
+		if callState == nil {
+			callState = s
+		}
+		return fn(callState, recv, args)
 	}), true
 }
 
@@ -96,26 +97,26 @@ func intArg(args *value.CallArgs, i int, name string, def int) (int, error) {
 // stringMethods is populated in init rather than in its declaration: format
 // reaches back into attribute lookup, which reads this table, and Go rejects
 // the initialisation cycle that would create.
-var stringMethods map[string]func(value.Value, *value.CallArgs) (value.Value, error)
+var stringMethods map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error)
 
 func init() {
-	stringMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
-		"upper": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+	stringMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+		"upper": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 			return value.String(strings.ToUpper(r.AsString())), nil
 		},
-		"lower": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		"lower": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 			return value.String(strings.ToLower(r.AsString())), nil
 		},
-		"title": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		"title": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 			return value.String(pythonTitle(r.AsString())), nil
 		},
-		"capitalize": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		"capitalize": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 			return value.String(pythonCapitalize(r.AsString())), nil
 		},
-		"swapcase": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		"swapcase": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 			return value.String(swapCase(r.AsString())), nil
 		},
-		"casefold": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		"casefold": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 			return value.String(strings.ToLower(r.AsString())), nil
 		},
 
@@ -141,7 +142,7 @@ func init() {
 		"ljust":      padMethod(padLeftAligned),
 		"rjust":      padMethod(padRightAligned),
 		"center":     padMethod(padCentered),
-		"encode": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+		"encode": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 			return value.Bytes([]byte(r.AsString())), nil
 		},
 
@@ -154,8 +155,8 @@ func init() {
 	}
 }
 
-func trimMethod(withCutset func(string, string) string, withFunc func(string, func(rune) bool) string) func(value.Value, *value.CallArgs) (value.Value, error) {
-	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+func trimMethod(withCutset func(string, string) string, withFunc func(string, func(rune) bool) string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		if v, ok := arg(args, 0, "chars"); ok && !v.IsNone() {
 			if v.Kind() != value.KindString {
 				return value.Undefined, errs.New(errs.TypeError,
@@ -172,8 +173,8 @@ func trimMethod(withCutset func(string, string) string, withFunc func(string, fu
 // Splitting on no separator is not splitting on " ": Python collapses runs of
 // whitespace and drops leading and trailing empties, which is why
 // `" a  b ".split()` has two elements and `" a  b ".split(" ")` has five.
-func splitMethod(fromRight bool) func(value.Value, *value.CallArgs) (value.Value, error) {
-	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+func splitMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		limit, err := intArg(args, 1, "maxsplit", -1)
 		if err != nil {
 			return value.Undefined, err
@@ -241,7 +242,7 @@ func splitRightN(s, sep string, n int) []string {
 	return append([]string{head}, all[len(all)-n+1:]...)
 }
 
-func methodSplitlines(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodSplitlines(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	keepEnds := false
 	if v, ok := arg(args, 0, "keepends"); ok {
 		ok, err := value.IsTrue(v)
@@ -272,7 +273,7 @@ func methodSplitlines(r value.Value, args *value.CallArgs) (value.Value, error) 
 	return value.NewList(items...), nil
 }
 
-func methodJoin(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodJoin(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	v, ok := arg(args, 0, "iterable")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError, "join() takes exactly one argument")
@@ -282,18 +283,30 @@ func methodJoin(r value.Value, args *value.CallArgs) (value.Value, error) {
 		return value.Undefined, err
 	}
 	var parts []string
+	total := int64(0)
+	sep := r.AsString()
 	for item := range seq {
 		if item.Kind() != value.KindString {
 			return value.Undefined, errs.New(errs.TypeError,
 				"sequence item %d: expected str instance, %s found",
 				len(parts), item.TypeName())
 		}
+		// Charged as the walk goes: the whole sequence is materialised
+		// before the join happens, so a bound checked afterwards would
+		// never be reached.
+		if err := st.Step(1); err != nil {
+			return value.Undefined, err
+		}
+		total += int64(len(item.AsString())) + int64(len(sep))
+		if err := st.ChargeBytes(int64(len(item.AsString())) + int64(len(sep))); err != nil {
+			return value.Undefined, err
+		}
 		parts = append(parts, item.AsString())
 	}
-	return value.String(strings.Join(parts, r.AsString())), nil
+	return value.String(strings.Join(parts, sep)), nil
 }
 
-func methodReplace(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodReplace(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	old, err := strArg(args, 0, "old", "replace")
 	if err != nil {
 		return value.Undefined, err
@@ -306,13 +319,35 @@ func methodReplace(r value.Value, args *value.CallArgs) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
-	return value.String(strings.Replace(r.AsString(), old, new, count)), nil
+	src := r.AsString()
+	if err := chargeReplace(st, src, old, new, count); err != nil {
+		return value.Undefined, err
+	}
+	return value.String(strings.Replace(src, old, new, count)), nil
+}
+
+// chargeReplace charges what a replacement is about to produce.
+//
+// Each operand may be individually legal and individually charged, and their
+// product still enormous: `("a" * 60000)|replace("a", "b" * 60000)` is two
+// sixty-kilobyte strings and a three-and-a-half gigabyte result. Every guard
+// that existed looked at one operand at a time, so nothing looked at this.
+func chargeReplace(st *State, src, old, new string, count int) error {
+	if len(new) <= len(old) {
+		return nil
+	}
+	hits := int64(strings.Count(src, old))
+	if count >= 0 && int64(count) < hits {
+		hits = int64(count)
+	}
+	growth := saturatingMulInt(hits, int64(len(new)-len(old)))
+	return st.ChargeBytes(int64(len(src)) + growth)
 }
 
 // affixMethod implements startswith and endswith, which accept a tuple of
 // candidates as well as a single string.
-func affixMethod(match func(string, string) bool) func(value.Value, *value.CallArgs) (value.Value, error) {
-	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+func affixMethod(match func(string, string) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		v, ok := arg(args, 0, "prefix")
 		if !ok {
 			return value.Undefined, errs.New(errs.TypeError, "missing required argument")
@@ -333,7 +368,7 @@ func affixMethod(match func(string, string) bool) func(value.Value, *value.CallA
 	}
 }
 
-func methodStrCount(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	sub, err := strArg(args, 0, "sub", "count")
 	if err != nil {
 		return value.Undefined, err
@@ -342,8 +377,8 @@ func methodStrCount(r value.Value, args *value.CallArgs) (value.Value, error) {
 }
 
 // findMethod returns a code-point index, or -1, the way str.find does.
-func findMethod(search func(string, string) int) func(value.Value, *value.CallArgs) (value.Value, error) {
-	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+func findMethod(search func(string, string) int) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		sub, err := strArg(args, 0, "sub", "find")
 		if err != nil {
 			return value.Undefined, err
@@ -356,10 +391,10 @@ func findMethod(search func(string, string) int) func(value.Value, *value.CallAr
 	}
 }
 
-func indexMethod(search func(string, string) int, name string) func(value.Value, *value.CallArgs) (value.Value, error) {
+func indexMethod(search func(string, string) int, name string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	find := findMethod(search)
-	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
-		v, err := find(r, args)
+	return func(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+		v, err := find(s, r, args)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -377,7 +412,7 @@ func indexMethod(search func(string, string) int, name string) func(value.Value,
 // Markup, which is markupsafe's whole point: `("a{}"|safe).format("<x>")`
 // renders the escaped "<x>" rather than raw markup, so marking a *template*
 // safe does not mark its arguments safe.
-func methodFormat(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodFormat(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	var b strings.Builder
 	s := r.AsString()
 	safe := r.IsSafe()
@@ -423,7 +458,7 @@ func methodFormat(r value.Value, args *value.CallArgs) (value.Value, error) {
 
 // methodFormatMap is str.format_map: the same substitution, with the fields
 // looked up in a single mapping argument rather than in keyword arguments.
-func methodFormatMap(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodFormatMap(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	mapping, ok := arg(args, 0, "mapping")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError,
@@ -438,7 +473,7 @@ func methodFormatMap(r value.Value, args *value.CallArgs) (value.Value, error) {
 	for _, e := range d.Entries() {
 		kwargs = append(kwargs, value.Kwarg{Name: value.Str(e.Key), Value: e.Value})
 	}
-	return methodFormat(r, &value.CallArgs{Kwargs: kwargs})
+	return methodFormat(s, r, &value.CallArgs{Kwargs: kwargs})
 }
 
 // resolveFormatField resolves one replacement field.
@@ -611,7 +646,7 @@ func isAllDigits(s string) bool {
 	return true
 }
 
-func methodZfill(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodZfill(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	width, err := intArg(args, 0, "width", 0)
 	if err != nil {
 		return value.Undefined, err
@@ -625,7 +660,11 @@ func methodZfill(r value.Value, args *value.CallArgs) (value.Value, error) {
 	if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "+") {
 		sign, s = s[:1], s[1:]
 	}
-	return value.String(sign + strings.Repeat("0", width-n) + s), nil
+	zeros, err := st.repeatString("0", width-n)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.String(sign + zeros + s), nil
 }
 
 type padAlign int
@@ -636,8 +675,8 @@ const (
 	padCentered
 )
 
-func padMethod(align padAlign) func(value.Value, *value.CallArgs) (value.Value, error) {
-	return func(r value.Value, args *value.CallArgs) (value.Value, error) {
+func padMethod(align padAlign) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		width, err := intArg(args, 0, "width", 0)
 		if err != nil {
 			return value.Undefined, err
@@ -646,7 +685,7 @@ func padMethod(align padAlign) func(value.Value, *value.CallArgs) (value.Value, 
 		if err != nil {
 			return value.Undefined, err
 		}
-		return value.String(pad(r.AsString(), width, fill, align)), nil
+		return pad(st, r.AsString(), width, fill, align)
 	}
 }
 
@@ -675,25 +714,40 @@ func fillCharArg(args *value.CallArgs, i int, name string) (string, error) {
 	return fill, nil
 }
 
-func pad(s string, width int, fill string, align padAlign) string {
+func pad(st *State, s string, width int, fill string, align padAlign) (value.Value, error) {
 	missing := width - value.StrLen(s)
 	if missing <= 0 {
-		return s
+		return value.String(s), nil
 	}
 	switch align {
 	case padLeftAligned:
-		return s + strings.Repeat(fill, missing)
+		tail, err := st.repeatString(fill, missing)
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.String(s + tail), nil
 	case padRightAligned:
-		return strings.Repeat(fill, missing) + s
+		head, err := st.repeatString(fill, missing)
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.String(head + s), nil
 	default:
-		left := missing / 2
 		// Python's str.center puts the odd character on the right.
-		return strings.Repeat(fill, left) + s + strings.Repeat(fill, missing-left)
+		left, err := st.repeatString(fill, missing/2)
+		if err != nil {
+			return value.Undefined, err
+		}
+		right, err := st.repeatString(fill, missing-missing/2)
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.String(left + s + right), nil
 	}
 }
 
-func classifyMethod(pred func(rune) bool) func(value.Value, *value.CallArgs) (value.Value, error) {
-	return func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+func classifyMethod(pred func(rune) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 		s := r.AsString()
 		if s == "" {
 			return value.False, nil
@@ -709,8 +763,8 @@ func classifyMethod(pred func(rune) bool) func(value.Value, *value.CallArgs) (va
 
 // caseMethod implements isupper and islower: at least one cased character, and
 // no character of the opposite case.
-func caseMethod(want, other func(rune) bool) func(value.Value, *value.CallArgs) (value.Value, error) {
-	return func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+func caseMethod(want, other func(rune) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 		seen := false
 		for _, c := range r.AsString() {
 			if other(c) {
@@ -772,25 +826,28 @@ func swapCase(s string) string {
 
 // --- dict methods ------------------------------------------------------------
 
-var dictMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
-	"keys": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+var dictMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+	"keys": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 		d, _ := r.Dict()
 		return value.NewList(d.Keys()...), nil
 	},
-	"values": func(r value.Value, _ *value.CallArgs) (value.Value, error) {
+	"values": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 		d, _ := r.Dict()
 		return value.NewList(d.Values()...), nil
 	},
-	"items":      methodDictItems,
-	"get":        methodDictGet,
-	"pop":        methodDictPop,
-	"update":     methodDictUpdate,
-	"copy":       func(r value.Value, _ *value.CallArgs) (value.Value, error) { d, _ := r.Dict(); return d.Clone(), nil },
+	"items":  methodDictItems,
+	"get":    methodDictGet,
+	"pop":    methodDictPop,
+	"update": methodDictUpdate,
+	"copy": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+		d, _ := r.Dict()
+		return d.Clone(), nil
+	},
 	"clear":      methodDictClear,
 	"setdefault": methodDictSetdefault,
 }
 
-func methodDictItems(r value.Value, _ *value.CallArgs) (value.Value, error) {
+func methodDictItems(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	items := make([]value.Value, 0, d.Len())
 	for _, e := range d.Entries() {
@@ -799,7 +856,7 @@ func methodDictItems(r value.Value, _ *value.CallArgs) (value.Value, error) {
 	return value.NewList(items...), nil
 }
 
-func methodDictGet(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodDictGet(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	key, ok := arg(args, 0, "key")
 	if !ok {
@@ -818,7 +875,7 @@ func methodDictGet(r value.Value, args *value.CallArgs) (value.Value, error) {
 	return value.None, nil
 }
 
-func methodDictPop(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodDictPop(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	key, ok := arg(args, 0, "key")
 	if !ok {
@@ -844,7 +901,7 @@ func methodDictPop(r value.Value, args *value.CallArgs) (value.Value, error) {
 	return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
 }
 
-func methodDictSetdefault(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodDictSetdefault(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	key, ok := arg(args, 0, "key")
 	if !ok {
@@ -862,7 +919,7 @@ func methodDictSetdefault(r value.Value, args *value.CallArgs) (value.Value, err
 	return value.None, d.Set(key, value.None)
 }
 
-func methodDictUpdate(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodDictUpdate(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	if other, ok := arg(args, 0, ""); ok {
 		// Anything dict() accepts, update() accepts, and anything dict()
@@ -958,7 +1015,7 @@ func unpackDictPair(pair value.Value, index int) (value.Value, value.Value, erro
 	return first, second, nil
 }
 
-func methodDictClear(r value.Value, _ *value.CallArgs) (value.Value, error) {
+func methodDictClear(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	for _, k := range d.Keys() {
 		if _, err := d.Delete(k); err != nil {
@@ -970,7 +1027,7 @@ func methodDictClear(r value.Value, _ *value.CallArgs) (value.Value, error) {
 
 // --- list and tuple methods --------------------------------------------------
 
-var listMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
+var listMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
 	"append":  methodListAppend,
 	"insert":  methodListInsert,
 	"pop":     methodListPop,
@@ -978,22 +1035,23 @@ var listMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, er
 	"index":   methodSeqIndex,
 	"count":   methodSeqCount,
 	"reverse": methodListReverse,
-	"copy":    func(r value.Value, _ *value.CallArgs) (value.Value, error) { return r.AsList(), nil },
+	"extend":  methodListExtend,
+	"copy":    func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) { return r.AsList(), nil },
 	"clear":   methodListClear,
 }
 
-func methodListClear(r value.Value, _ *value.CallArgs) (value.Value, error) {
+func methodListClear(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 	s, _ := r.Seq()
 	*s = *mustSeq(value.NewList())
 	return value.None, nil
 }
 
-var tupleMethods = map[string]func(value.Value, *value.CallArgs) (value.Value, error){
+var tupleMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
 	"index": methodSeqIndex,
 	"count": methodSeqCount,
 }
 
-func methodListAppend(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodListAppend(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	v, ok := arg(args, 0, "")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError,
@@ -1025,7 +1083,7 @@ func methodListExtend(st *State, r value.Value, args *value.CallArgs) (value.Val
 	return value.None, nil
 }
 
-func methodListInsert(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodListInsert(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	at, err := intArg(args, 0, "", 0)
 	if err != nil {
 		return value.Undefined, err
@@ -1047,7 +1105,7 @@ func methodListInsert(r value.Value, args *value.CallArgs) (value.Value, error) 
 	return value.None, nil
 }
 
-func methodListPop(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodListPop(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	s, _ := r.Seq()
 	items := s.Items()
 	if len(items) == 0 {
@@ -1068,7 +1126,7 @@ func methodListPop(r value.Value, args *value.CallArgs) (value.Value, error) {
 	return out, nil
 }
 
-func methodListRemove(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodListRemove(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	v, ok := arg(args, 0, "")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError, "remove() takes exactly one argument")
@@ -1084,7 +1142,7 @@ func methodListRemove(r value.Value, args *value.CallArgs) (value.Value, error) 
 	return value.Undefined, errs.New(errs.ValueError, "list.remove(x): x not in list")
 }
 
-func methodListReverse(r value.Value, _ *value.CallArgs) (value.Value, error) {
+func methodListReverse(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 	s, _ := r.Seq()
 	items := s.Items()
 	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
@@ -1093,7 +1151,7 @@ func methodListReverse(r value.Value, _ *value.CallArgs) (value.Value, error) {
 	return value.None, nil
 }
 
-func methodSeqIndex(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodSeqIndex(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	v, ok := arg(args, 0, "")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError, "index() takes at least one argument")
@@ -1107,7 +1165,7 @@ func methodSeqIndex(r value.Value, args *value.CallArgs) (value.Value, error) {
 	return value.Undefined, errs.New(errs.ValueError, "%s is not in list", value.Repr(v))
 }
 
-func methodSeqCount(r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodSeqCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	v, ok := arg(args, 0, "")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError, "count() takes exactly one argument")
