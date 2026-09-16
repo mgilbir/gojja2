@@ -11,72 +11,122 @@ import (
 	"github.com/mgilbir/gojja2/errs"
 )
 
+// maxCompareDepth bounds how deeply == descends.
+//
+// A value graph can now contain a cycle, because a cyclic Go context converts
+// into a cyclic Value rather than expanding forever. Two *distinct* cyclic
+// structures have no fixed point, so the descent has to be bounded or it takes
+// the stack out -- and a Go stack overflow cannot be recovered. CPython raises
+// RecursionError at the same wall, which is what EqualErr reports.
+const maxCompareDepth = 1000
+
+// RecursionMessageComparison is what CPython reports when the stack runs out
+// inside a comparison.
+const RecursionMessageComparison = "maximum recursion depth exceeded in comparison"
+
 // Equal is Python's ==.
 //
 // It never fails: comparing values of unrelated types is False, not an error.
 // Numbers compare across int, float and bool because bool is an int subclass
 // and Python's numeric tower makes 1 == 1.0 == True.
+//
+// Two structures too deeply nested to compare are reported as unequal here,
+// because there is no error to return. Use [EqualErr] where the caller can
+// raise, which is what the `==` operator in a template does.
 func Equal(a, b Value) bool {
+	equal, _ := equalDepth(a, b, 0)
+	return equal
+}
+
+// EqualErr is [Equal], reporting the RecursionError CPython raises rather than
+// answering a question it cannot decide.
+func EqualErr(a, b Value) (bool, error) {
+	return equalDepth(a, b, 0)
+}
+
+func equalDepth(a, b Value, depth int) (bool, error) {
+	if depth > maxCompareDepth {
+		return false, errs.New(errs.RecursionError, "%s", RecursionMessageComparison)
+	}
+	// Identity first, as Python's == does: a structure always equals
+	// itself, cyclic or not, and this is what makes `a == a` terminate.
+	if a.kind == b.kind && a.obj != nil && a.obj == b.obj {
+		switch a.kind {
+		case KindList, KindTuple, KindDict, KindObject, KindFunc:
+			return true, nil
+		}
+	}
 	if a.IsNumber() && b.IsNumber() {
 		ord, ok := compareNumbers(a, b)
-		return ok && ord == 0
+		return ok && ord == 0, nil
 	}
 	if a.kind != b.kind {
 		// str and bytes never compare equal, and neither do list and
 		// tuple -- Python keeps those distinct.
-		return false
+		return false, nil
 	}
 	switch a.kind {
 	case KindNone:
-		return true
+		return true, nil
 	case KindUndefined:
 		// jinja2's Undefined.__eq__ compares only the class, so any two
 		// undefined values of the same flavour are equal.
-		return a.undef().behavior == b.undef().behavior
+		return a.undef().behavior == b.undef().behavior, nil
 	case KindString, KindBytes:
-		return a.str == b.str
+		return a.str == b.str, nil
 	case KindList, KindTuple:
 		as, _ := a.Seq()
 		bs, _ := b.Seq()
 		if as.Len() != bs.Len() {
-			return false
+			return false, nil
 		}
 		for i := range as.items {
-			if !Equal(as.items[i], bs.items[i]) {
-				return false
+			equal, err := equalDepth(as.items[i], bs.items[i], depth+1)
+			if err != nil {
+				return false, err
+			}
+			if !equal {
+				return false, nil
 			}
 		}
-		return true
+		return true, nil
 	case KindDict:
 		ad, _ := a.Dict()
 		bd, _ := b.Dict()
 		if ad.Len() != bd.Len() {
-			return false
+			return false, nil
 		}
 		// Order is irrelevant to dict equality, only content.
 		for _, e := range ad.entries {
 			other, ok, err := bd.Get(e.Key)
-			if err != nil || !ok || !Equal(e.Value, other) {
-				return false
+			if err != nil || !ok {
+				return false, nil
+			}
+			equal, rerr := equalDepth(e.Value, other, depth+1)
+			if rerr != nil {
+				return false, rerr
+			}
+			if !equal {
+				return false, nil
 			}
 		}
-		return true
+		return true, nil
 	case KindObject:
 		if e, ok := a.obj.(Equaler); ok {
 			if equal, known := e.Equals(b); known {
-				return equal
+				return equal, nil
 			}
 		}
 		if e, ok := b.obj.(Equaler); ok {
 			if equal, known := e.Equals(a); known {
-				return equal
+				return equal, nil
 			}
 		}
-		return a.obj == b.obj
+		return a.obj == b.obj, nil
 	case KindFunc:
-		return a.obj == b.obj
+		return a.obj == b.obj, nil
 	}
-	return false
+	return false, nil
 }
 
 // Ordered evaluates `a op b` for op in "<", "<=", ">", ">=".

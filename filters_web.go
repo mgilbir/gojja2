@@ -324,7 +324,7 @@ func filterToJSON(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, err
 	}
 	var b strings.Builder
-	if err := writeJSON(&b, v, indent, 0); err != nil {
+	if err := writeJSON(&b, v, indent, 0, nil); err != nil {
 		return value.Undefined, err
 	}
 	// htmlsafe_json_dumps returns Markup whatever the autoescape setting,
@@ -344,7 +344,25 @@ var jsonHTMLEscaper = strings.NewReplacer(
 
 func htmlSafeJSON(s string) string { return jsonHTMLEscaper.Replace(s) }
 
-func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
+// jsonPath tracks the containers currently being serialised. A value graph can
+// contain a cycle -- a Go context that refers to itself converts into one --
+// and json.dumps refuses those rather than recursing forever.
+type jsonPath map[any]bool
+
+func (p jsonPath) enter(key any) (jsonPath, bool) {
+	if p[key] {
+		return p, false
+	}
+	if p == nil {
+		p = make(jsonPath, 4)
+	}
+	p[key] = true
+	return p, true
+}
+
+func (p jsonPath) leave(key any) { delete(p, key) }
+
+func writeJSON(b *strings.Builder, v value.Value, indent, depth int, path jsonPath) error {
 	// json.dumps separates with ", " until an indent is given, at which
 	// point the space moves onto the next line.
 	nl, pad, padEnd, comma := "", "", "", ", "
@@ -390,13 +408,19 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 			b.WriteString("[]")
 			return nil
 		}
+		next, ok := path.enter(v.Interface())
+		if !ok {
+			return errs.New(errs.ValueError, "Circular reference detected")
+		}
+		defer next.leave(v.Interface())
+		path = next
 		b.WriteString("[" + nl)
 		for i, item := range s.Items() {
 			if i > 0 {
 				b.WriteString(comma + nl)
 			}
 			b.WriteString(pad)
-			if err := writeJSON(b, item, indent, depth+1); err != nil {
+			if err := writeJSON(b, item, indent, depth+1, path); err != nil {
 				return err
 			}
 		}
@@ -407,6 +431,12 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 			b.WriteString("{}")
 			return nil
 		}
+		next, ok := path.enter(v.Interface())
+		if !ok {
+			return errs.New(errs.ValueError, "Circular reference detected")
+		}
+		defer next.leave(v.Interface())
+		path = next
 		b.WriteString("{" + nl)
 		// jinja2's tojson policy sets sort_keys, so a dict serialises in
 		// key order rather than insertion order.
@@ -426,7 +456,7 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 			}
 			writeJSONString(b, value.Str(e.Key))
 			b.WriteString(": ")
-			if err := writeJSON(b, e.Value, indent, depth+1); err != nil {
+			if err := writeJSON(b, e.Value, indent, depth+1, path); err != nil {
 				return err
 			}
 		}
@@ -434,7 +464,7 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 	case value.KindObject:
 		// A tuple subclass serialises as the array it is.
 		if tv, ok := v.Interface().(value.TupleView); ok {
-			return writeJSON(b, tv.AsTuple(), indent, depth)
+			return writeJSON(b, tv.AsTuple(), indent, depth, path)
 		}
 		// A Go struct or map reaches a template as a Mapping and is
 		// serialised like the dict it stands for. Everything else --
@@ -447,7 +477,7 @@ func writeJSON(b *strings.Builder, v value.Value, indent, depth int) error {
 				val, _ := m.GetItem(k)
 				_ = target.Set(k, val)
 			}
-			return writeJSON(b, out, indent, depth)
+			return writeJSON(b, out, indent, depth, path)
 		}
 		return errs.New(errs.TypeError,
 			"Object of type %s is not JSON serializable", v.TypeName())

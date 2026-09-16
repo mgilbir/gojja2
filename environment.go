@@ -38,6 +38,9 @@ type Environment struct {
 	autoescape AutoescapeFunc
 	// finalize post-processes every printed value.
 	finalize func(value.Value) value.Value
+	// methods decides which Go methods a template may reach. nil means
+	// value.NullaryMethods.
+	methods value.MethodPolicy
 
 	filters map[string]Filter
 	tests   map[string]Test
@@ -279,6 +282,18 @@ func hasAnySuffix(name string, patterns []string) bool {
 // WithUndefined selects the Undefined behaviour for missing values.
 func WithUndefined(b value.UndefinedBehavior) Option {
 	return func(e *Environment) { e.undefined = b }
+}
+
+// WithMethodPolicy decides which methods of a Go value in the render context a
+// template may call.
+//
+// The default exposes only methods that take no arguments, which is what a
+// template reaches as a plain attribute. Widening it -- with
+// [value.AllMethods], or a policy of your own -- lets a template choose the
+// arguments a host method is called with, so it is worth doing only where
+// template authors are as trusted as the Go code they call into.
+func WithMethodPolicy(p value.MethodPolicy) Option {
+	return func(e *Environment) { e.methods = p }
 }
 
 // WithFinalize post-processes every value before it is printed.
