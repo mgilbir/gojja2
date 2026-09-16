@@ -123,9 +123,9 @@ func (l *loopObject) GetAttr(name string) (value.Value, bool) {
 		}
 		return l.src.At(l.index + 1), true
 	case "cycle":
-		return value.FromObject(&builtinFunc{name: "cycle", fn: l.cycle}), true
+		return value.FromObject(&builtinFunc{name: "cycle", fn: stateless(l.cycle)}), true
 	case "changed":
-		return value.FromObject(&builtinFunc{name: "changed", fn: l.changed}), true
+		return value.FromObject(&builtinFunc{name: "changed", fn: stateless(l.changed)}), true
 	}
 	return value.Undefined, false
 }
@@ -183,7 +183,7 @@ func (l *loopObject) Repr() string {
 // builtinFunc adapts a Go closure to a template callable.
 type builtinFunc struct {
 	name string
-	fn   func(args *value.CallArgs) (value.Value, error)
+	fn   func(s *State, args *value.CallArgs) (value.Value, error)
 }
 
 func (f *builtinFunc) GetAttr(name string) (value.Value, bool) {
@@ -193,12 +193,45 @@ func (f *builtinFunc) GetAttr(name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
-func (f *builtinFunc) Call(args *value.CallArgs) (value.Value, error) { return f.fn(args) }
-func (f *builtinFunc) TypeName() string                               { return "function" }
-func (f *builtinFunc) Repr() string                                   { return "<function " + f.name + ">" }
+// Call satisfies value.Caller for a caller that has no render to offer, which
+// is what constant folding is. The budget on a nil State is nil, and State.Step
+// treats that as "nothing to charge".
+func (f *builtinFunc) Call(args *value.CallArgs) (value.Value, error) { return f.fn(nil, args) }
+
+// callWith is the path the evaluator uses, so a global is handed the render it
+// is running inside.
+func (f *builtinFunc) callWith(s *State, args *value.CallArgs) (value.Value, error) {
+	return f.fn(s, args)
+}
+
+func (f *builtinFunc) TypeName() string { return "function" }
+func (f *builtinFunc) Repr() string     { return "<function " + f.name + ">" }
+
+// stateless adapts a closure that has no use for the render state to the
+// signature every template callable now carries.
+func stateless(fn func(*value.CallArgs) (value.Value, error)) func(*State, *value.CallArgs) (value.Value, error) {
+	return func(_ *State, args *value.CallArgs) (value.Value, error) { return fn(args) }
+}
+
+// statefulCaller is a callable that wants the render it is being called from.
+//
+// value.Caller cannot carry a *State, because the value package cannot import
+// this one. Globals need it: without the render's budget a global has no way to
+// charge for the work it is about to do, which left the whole global namespace
+// exempt from WithMaxIterations and WithMaxOutputBytes by construction rather
+// than by oversight.
+type statefulCaller interface {
+	callWith(s *State, args *value.CallArgs) (value.Value, error)
+}
 
 // Func wraps a Go function as a template global.
-func Func(name string, fn func(args *value.CallArgs) (value.Value, error)) value.Value {
+//
+// The *State is the render the call belongs to. A global that walks a
+// caller-controlled sequence, or allocates a result whose size a template
+// chooses, must charge it with State.Step before doing so -- charging
+// afterwards is useless, because by then the memory is already committed. It is
+// nil during constant folding, which State.Step handles.
+func Func(name string, fn func(s *State, args *value.CallArgs) (value.Value, error)) value.Value {
 	return value.FromObject(&builtinFunc{name: name, fn: fn})
 }
 

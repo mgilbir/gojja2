@@ -452,10 +452,14 @@ func (e *Environment) selectTemplateValues(names []value.Value) (*Template, erro
 		"none of the templates given were found: %s", strings.Join(parts, ", "))
 }
 
-func (e *Environment) compile(source, name string, fromString bool) (*Template, error) {
-	tree, err := parser.Parse(e.syntax, e.parseOpts, source, name)
-	if err != nil {
-		return nil, err
+func (e *Environment) compile(source, name string, fromString bool) (tmpl *Template, err error) {
+	// Compilation runs the optimizer, which runs real filters. A panic
+	// there is a bug here, and it must not escape a function whose job is
+	// to report whether a template is valid.
+	defer catchPanic(&err)
+	tree, terr := parser.Parse(e.syntax, e.parseOpts, source, name)
+	if terr != nil {
+		return nil, terr
 	}
 	// Order matters: the general fold runs first, as jinja2's optimizer
 	// does, and the print-specific one then catches the undefined results
@@ -463,12 +467,12 @@ func (e *Environment) compile(source, name string, fromString bool) (*Template, 
 	folder := newConstEvaluator(e, name, fromString)
 	foldConstantExpressions(folder, tree.Body)
 	foldConstantPrints(folder, tree.Body)
-	if err := e.checkDependencies(tree.Body, name, source); err != nil {
-		return nil, err
+	if derr := e.checkDependencies(tree.Body, name, source); derr != nil {
+		return nil, derr
 	}
-	blocks, err := collectBlocks(tree.Body, name, source)
-	if err != nil {
-		return nil, err
+	blocks, berr := collectBlocks(tree.Body, name, source)
+	if berr != nil {
+		return nil, berr
 	}
 	return &Template{
 		env:        e,
