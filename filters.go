@@ -443,7 +443,11 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	}
 
 	if !s.autoescape {
-		return value.String(strings.Replace(value.Str(v), value.Str(old), value.Str(new), count)), nil
+		src, from, to := value.Str(v), value.Str(old), value.Str(new)
+		if err := chargeReplace(s, src, from, to, count); err != nil {
+			return value.Undefined, err
+		}
+		return value.String(strings.Replace(src, from, to, count)), nil
 	}
 	// Under autoescape everything is escaped first, so the replacement
 	// operates on escaped text and the result is safe.
@@ -453,18 +457,26 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		}
 		return escapeHTML(value.Str(x))
 	}
-	return value.Safe(strings.Replace(esc(v), esc(old), esc(new), count)), nil
+	src, from, to := esc(v), esc(old), esc(new)
+	if err := chargeReplace(s, src, from, to, count); err != nil {
+		return value.Undefined, err
+	}
+	return value.Safe(strings.Replace(src, from, to, count)), nil
 }
 
-func filterCenter(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterCenter(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	width, err := intArg(args, 0, "width", 80)
 	if err != nil {
 		return value.Undefined, err
 	}
-	return keepSafe(v, pad(value.Str(v), width, " ", padCentered)), nil
+	padded, err := pad(s, value.Str(v), width, " ", padCentered)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return keepSafe(v, value.Str(padded)), nil
 }
 
-func filterIndent(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	// The width may be given as the indent string itself.
 	prefix := "    "
 	if w, ok := arg(args, 0, "width"); ok {
@@ -475,7 +487,12 @@ func filterIndent(_ *State, v value.Value, args *value.CallArgs) (value.Value, e
 			if err != nil {
 				return value.Undefined, err
 			}
-			prefix = strings.Repeat(" ", width)
+			// A negative width repeats nothing, as Python's
+			// `" " * -1` does. strings.Repeat panics on one.
+			prefix, err = s.repeatString(" ", width)
+			if err != nil {
+				return value.Undefined, err
+			}
 		}
 	}
 	first, err := boolArg(args, 1, "first", false)
@@ -1025,13 +1042,29 @@ func pformatString(b *strings.Builder, text, rep string, indent, allowance, leve
 	}
 	for i, chunk := range chunks {
 		if i > 0 {
-			b.WriteString("\n" + strings.Repeat(" ", indent))
+			b.WriteString("\n" + pprintIndent(indent))
 		}
 		b.WriteString(chunk)
 	}
 	if level == 1 {
 		b.WriteString(")")
 	}
+}
+
+// pprintIndent is the leading space for one pprint line.
+//
+// The indent grows with the depth of the value being printed, and that depth
+// is the caller's -- a deeply nested structure handed in from Go would
+// otherwise size an allocation per line from it. Indenting past the line width
+// carries no information, so it is capped there.
+func pprintIndent(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n > pprintWidth {
+		n = pprintWidth
+	}
+	return strings.Repeat(" ", n)
 }
 
 // splitLinesKeepingEnds is Python's str.splitlines(True).
@@ -1059,7 +1092,7 @@ func pformatItems[T any](b *strings.Builder, items []T, indent, allowance int,
 	write func(*strings.Builder, T, int, int),
 ) {
 	inner := indent + 1
-	separator := ",\n" + strings.Repeat(" ", inner)
+	separator := ",\n" + pprintIndent(inner)
 	for i, item := range items {
 		if i > 0 {
 			b.WriteString(separator)
@@ -1197,8 +1230,15 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 				2: "b", 8: "o", 16: "x",
 			}[base])
 		}
-		if n, ok := new(big.Int).SetString(text, base); ok {
-			return value.BigInt(n), nil
+		// Python accepts base 0 or 2..36 and raises ValueError otherwise;
+		// jinja2's filter catches that and falls through to the float
+		// path, so `"10"|int(0, 99999)` is 10. big.Int.SetString panics
+		// on a base outside its own range rather than reporting it, so
+		// the check has to happen here.
+		if validIntBase(base) {
+			if n, ok := new(big.Int).SetString(text, base); ok {
+				return value.BigInt(n), nil
+			}
 		}
 		// jinja2 accepts "3.5" here by falling back to float then int.
 		if f, err := strconv.ParseFloat(text, 64); err == nil {
@@ -1207,6 +1247,9 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 	}
 	return def, nil
 }
+
+// validIntBase reports whether Python's int() would accept this base.
+func validIntBase(base int) bool { return base == 0 || (base >= 2 && base <= 36) }
 
 func filterFloat(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	def, hasDef := arg(args, 0, "default")
@@ -1224,7 +1267,7 @@ func filterFloat(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 	return def, nil
 }
 
-func filterRound(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	precision, err := intArg(args, 0, "precision", 0)
 	if err != nil {
 		return value.Undefined, err
@@ -1300,6 +1343,15 @@ func filterRound(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 	// requested precision rounds correctly against the true value, ties to
 	// even included.
 	if precision >= 0 {
+		// precision is the number of digits FormatFloat is about to
+		// write, so it sizes the allocation directly: round(2000000000)
+		// formats a two-billion-digit decimal. A float64 carries no
+		// information past ~17 significant digits, so anything past the
+		// charge is padding zeroes -- but they still have to be paid for
+		// before they are written.
+		if err := s.ChargeBytes(int64(precision)); err != nil {
+			return value.Undefined, err
+		}
 		rounded, err := strconv.ParseFloat(strconv.FormatFloat(f, 'f', precision, 64), 64)
 		if err != nil {
 			return value.Undefined, err

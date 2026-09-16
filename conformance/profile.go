@@ -5,6 +5,7 @@ package conformance
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -129,15 +130,45 @@ type jsonOptions struct {
 	explicitSep bool
 }
 
+// maxProfileIndent bounds the indent this profile's tojson will build.
+const maxProfileIndent = 1 << 20
+
+// profileIndent builds indent*levels spaces, refusing a size that a template
+// chose and no one bounded.
+func profileIndent(indent, levels int) (string, error) {
+	total := int64(indent) * int64(levels)
+	if indent != 0 && total/int64(indent) != int64(levels) {
+		total = math.MaxInt64 // the multiplication wrapped
+	}
+	if total > maxProfileIndent {
+		return "", errs.New(errs.OverflowError,
+			"indent of %d is too wide", total)
+	}
+	if total <= 0 {
+		return "", nil
+	}
+	return strings.Repeat(" ", int(total)), nil
+}
+
 func writePlainJSON(b *strings.Builder, v value.Value, indent, depth int, opts jsonOptions) error {
 	// An indent moves the separator onto the next line; without one the
 	// items run together with json.dumps' default ", ".
 	nl, pad, padEnd := "", "", ""
 	comma := opts.itemSep
 	if indent > 0 {
+		// Bounded for the same reason the engine's own tojson is: the
+		// indent is template-chosen and is repeated once per level and
+		// per element, and indent*(depth+1) overflows before that.
+		width, err := profileIndent(indent, depth+1)
+		if err != nil {
+			return err
+		}
+		endWidth, err := profileIndent(indent, depth)
+		if err != nil {
+			return err
+		}
 		nl = "\n"
-		pad = strings.Repeat(" ", indent*(depth+1))
-		padEnd = strings.Repeat(" ", indent*depth)
+		pad, padEnd = width, endWidth
 		if !opts.explicitSep {
 			comma = ","
 		}
