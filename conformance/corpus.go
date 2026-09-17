@@ -334,6 +334,34 @@ func (c *Case) Render() (string, error) {
 	return out.String(), nil
 }
 
+// RenderViaGo runs the case through Template.Render, the entry point that
+// takes the caller's own Go map.
+//
+// It is a different path from Render above: RenderValues is handed values that
+// are already converted, while Render carries the map unconverted and lets the
+// argument scope convert one name at a time. The whole corpus grades the first
+// path, so without this the second -- the one every caller actually uses --
+// would be exercised only by the unit tests.
+//
+// A value.Value passes through the conversion unchanged, so the two paths are
+// being given the same context and must agree on every case.
+func (c *Case) RenderViaGo() (string, error) {
+	env := c.Environment()
+	tmpl, err := env.GetTemplate(c.Rel)
+	if err != nil {
+		return "", err
+	}
+	vars := make(map[string]any, len(c.Context))
+	for k, v := range c.Context {
+		vars[k] = v
+	}
+	var out strings.Builder
+	if err := tmpl.Render(context.Background(), &out, vars); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
 // LoadGolden reads the oracle's answer for a case.
 func LoadGolden(goldenRoot, rel string) (*Golden, error) {
 	path := filepath.Join(goldenRoot, strings.TrimSuffix(rel, ".jj2")+".json")

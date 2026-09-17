@@ -80,6 +80,36 @@ func TestRenderDoesNotMutateCallerData(t *testing.T) {
 	}
 }
 
+// TestContextVariableIsOneValuePerRender: a render argument is converted on
+// first use, so it has to be remembered. Converting it again on the second
+// mention would hand out a second copy, and a change made through the first --
+// which is legal, the copy is the render's own -- would vanish.
+func TestContextVariableIsOneValuePerRender(t *testing.T) {
+	env := gojja2.New(gojja2.WithExtensions("do"))
+	for _, tc := range []struct{ name, src, want string }{
+		{"append is visible later in the render",
+			`{% do xs.append(9) %}{{ xs }}`, "[1, 9]"},
+		{"through a nested container",
+			`{% do d.inner.append(9) %}{{ d.inner }}`, "[1, 9]"},
+		{"two mentions are the same object",
+			`{% do xs.append(9) %}{{ xs|length }}{{ xs|length }}`, "22"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpl, err := env.FromString(tc.src)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			got := renderStr(t, tmpl, map[string]any{
+				"xs": []any{1},
+				"d":  map[string]any{"inner": []any{1}},
+			})
+			if got != tc.want {
+				t.Errorf("%s = %q, want %q", tc.src, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestHostObjectIsShared is the other half: a pointer the caller exposed on
 // purpose really is the caller's object, and a template calling its methods
 // changes it. Copying that away would break every host object with state.

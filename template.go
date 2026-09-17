@@ -54,7 +54,7 @@ func (t *Template) Name() string { return t.name }
 // that loops without writing output should do the same, or it is a region
 // nothing can interrupt.
 func (t *Template) Render(ctx context.Context, w io.Writer, vars map[string]any) error {
-	return t.RenderValues(ctx, w, t.env.valuesFromGo(vars))
+	return t.renderGo(ctx, w, vars)
 }
 
 // RenderString renders the template and returns the result.
@@ -63,7 +63,7 @@ func (t *Template) Render(ctx context.Context, w io.Writer, vars map[string]any)
 // an empty string rather than the text produced before the failure.
 func (t *Template) RenderString(ctx context.Context, vars map[string]any) (string, error) {
 	var out strings.Builder
-	if err := t.RenderValues(ctx, &out, t.env.valuesFromGo(vars)); err != nil {
+	if err := t.renderGo(ctx, &out, vars); err != nil {
 		return "", err
 	}
 	return out.String(), nil
@@ -89,6 +89,23 @@ func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[strin
 	return t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env))
 }
 
+// renderGo is Render and RenderString's shared path.
+//
+// It carries the caller's map unconverted so the argument scope can convert one
+// name at a time; see the comment on scope.raw for why that is worth doing.
+func (t *Template) renderGo(ctx context.Context, w io.Writer, vars map[string]any) (err error) {
+	bw := bufio.NewWriter(w)
+	defer func() {
+		if ferr := bw.Flush(); err == nil {
+			err = ferr
+		}
+	}()
+	defer catchPanic(&err)
+	st := t.newState(nil, 0, newBudget(ctx, t.env))
+	st.contextVars.raw, st.contextVars.expose = vars, t.env.methods
+	return t.renderState(st, &stringWriter{w: bw})
+}
+
 // catchPanic turns a panic into a render error.
 //
 // This is a backstop, not a licence. A template engine renders input its caller
@@ -111,14 +128,6 @@ func catchPanic(err *error) {
 // always means a bug here rather than in the template.
 var ErrInternal = errors.New("gojja2: internal error")
 
-func (e *Environment) valuesFromGo(vars map[string]any) map[string]value.Value {
-	values := make(map[string]value.Value, len(vars))
-	for k, v := range vars {
-		values[k] = value.FromGoWith(v, e.methods)
-	}
-	return values
-}
-
 // renderInto is the render every entry point funnels through.
 //
 // The depth and the budget both have to cross the template boundary: an
@@ -126,7 +135,11 @@ func (e *Environment) valuesFromGo(vars map[string]any) map[string]value.Value {
 // zero each time would never fire and a self-including template would take the
 // stack out instead.
 func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int, b *budget) error {
-	st := t.newState(vars, depth, b)
+	return t.renderState(t.newState(vars, depth, b), out)
+}
+
+// renderState runs a prepared state, which is where the two entry points meet.
+func (t *Template) renderState(st *State, out writer) error {
 	ex := &exec{st: st, sc: st.ctx, out: out, stream: out, autoescape: st.autoescape}
 
 	if err := ex.execBody(t.tree.Body); err != nil {
