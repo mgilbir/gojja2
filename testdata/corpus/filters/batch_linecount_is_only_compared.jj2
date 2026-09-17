@@ -1,0 +1,11 @@
+{
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{{ seq|batch('x')|list }}|{{ seq|batch(none)|list }}|{{ seq|batch(-1)|list }}|{{ seq|batch(2.5)|list }}

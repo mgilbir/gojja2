@@ -1,0 +1,3 @@
+{}
+---
+{{ [9]|batch(3, none)|list }}|{{ [9]|batch(3)|list }}|{{ [9]|batch('x', none)|list }}

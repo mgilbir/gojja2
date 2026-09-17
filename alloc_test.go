@@ -221,3 +221,88 @@ func TestIndentAcceptsANegativeWidth(t *testing.T) {
 		}
 	}
 }
+
+// TestBatchOnlyComparesItsLinecount: do_batch never converts linecount. It
+// compares it while a row fills (`len(tmp) == linecount`), orders it when the
+// last row is padded (`len(tmp) < linecount`), and multiplies by it to build
+// that padding. So a linecount of the wrong type is not an error in itself --
+// no length ever equals it, and everything lands in one row -- and it is the
+// padding that raises, and only when there is a short last row to pad.
+//
+// gojja2 required a positive integer up front, so every one of these was a
+// ValueError or a TypeError of its own invention.
+func TestBatchOnlyComparesItsLinecount(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// Nothing equals these, so nothing is ever cut.
+		{`{{ [1,2,3]|batch("x")|list }}`, "[[1, 2, 3]]"},
+		{`{{ [1,2,3]|batch(none)|list }}`, "[[1, 2, 3]]"},
+		{`{{ [1,2,3]|batch(-1)|list }}`, "[[1, 2, 3]]"},
+		{`{{ [1,2,3]|batch(2.5)|list }}`, "[[1, 2, 3]]"},
+		{`{{ [1,2,3]|batch([1])|list }}`, "[[1, 2, 3]]"},
+		// 0 equals the length of the empty row the generator starts
+		// with, so that row is yielded once and never matches again.
+		{`{{ [1,2,3]|batch(0)|list }}`, "[[], [1, 2, 3]]"},
+		{`{{ [1,2,3]|batch(false)|list }}`, "[[], [1, 2, 3]]"},
+		// true is 1 in Python's numeric tower.
+		{`{{ [1,2,3]|batch(true)|list }}`, "[[1], [2], [3]]"},
+		// Only the last row is padded; the rest were already full.
+		{`{{ [1,2,3]|batch(2, "X")|list }}`, "[[1, 2], [3, 'X']]"},
+		{`{{ [1,2,3]|batch(5, "X")|list }}`, "[[1, 2, 3, 'X', 'X']]"},
+		// An empty input yields no row at all, so no linecount of any
+		// type is ever consulted.
+		{`{{ []|batch("x", "X")|list }}`, "[]"},
+		{`{{ []|batch(0, "X")|list }}`, "[]"},
+		// A fill of None is what "no fill" means, so it never pads --
+		// and an absent fill must reach that same test as None rather
+		// than as an undefined, which is not None and would pad.
+		{`{{ [9]|batch(3, none)|list }}`, "[[9]]"},
+		{`{{ [9]|batch(3)|list }}`, "[[9]]"},
+		{`{{ [9]|batch("x", none)|list }}`, "[[9]]"},
+		// A last row that is already long enough is not padded, so the
+		// linecount is never ordered against and a float is harmless.
+		{`{{ [1,2,3]|batch(2.5, "X")|list }}`, "[[1, 2, 3]]"},
+		{`{{ [1,2,3]|batch(-1, "X")|list }}`, "[[1, 2, 3]]"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %s, want %s", tc.src, got, tc.want)
+		}
+	}
+
+	// Padding a short last row is the one place the linecount has to be
+	// more than comparable, and each step raises Python's own error.
+	for _, tc := range []struct{ src, want string }{
+		{`{{ [1,2,3]|batch("x", "X")|list }}`,
+			"'<' not supported between instances of 'int' and 'str'"},
+		{`{{ [1,2,3]|batch(none, "X")|list }}`,
+			"'<' not supported between instances of 'int' and 'NoneType'"},
+		{`{{ [1,2,3]|batch([1], "X")|list }}`,
+			"'<' not supported between instances of 'int' and 'list'"},
+		// Ordered fine, then multiplied a sequence by a non-int.
+		{`{{ [1,2,3]|batch(4.0, "X")|list }}`,
+			"can't multiply sequence by non-int of type 'float'"},
+		// Ordered fine, then overflowed the index.
+		{`{{ [1,2,3]|batch(10000000000000000000000, "X")|list }}`,
+			"cannot fit 'int' into an index-sized integer"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		_, err = tmpl.RenderString(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
+		}
+	}
+}

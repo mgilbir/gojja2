@@ -485,6 +485,22 @@ case("filters/unique", "{{ [1,2,1,3]|unique|list }}|{{ ['a','A','b']|unique|list
 case("filters/min_max", "{{ seq|min }}|{{ seq|max }}|{{ users|min(attribute='age') }}|{{ []|min }}", **SEQ, **USERS)
 case("filters/sum", "{{ seq|sum }}|{{ users|sum(attribute='age') }}|{{ []|sum }}|{{ seq|sum(start=10) }}", **SEQ, **USERS)
 case("filters/batch", "{{ seq|batch(2)|list }}|{{ seq|batch(2, 'X')|list }}", **SEQ)
+# do_batch never converts linecount: it only compares it. A linecount no length
+# can equal puts everything in one row rather than raising, and 0 equals the
+# length of the empty row the generator starts with, so that row is yielded once.
+case("filters/batch_linecount_is_only_compared",
+     "{{ seq|batch('x')|list }}|{{ seq|batch(none)|list }}|{{ seq|batch(-1)|list }}|{{ seq|batch(2.5)|list }}", **SEQ)
+case("filters/batch_linecount_zero_yields_an_empty_row",
+     "{{ seq|batch(0)|list }}|{{ seq|batch(false)|list }}|{{ seq|batch(true)|list }}", **SEQ)
+# The padding is the one place linecount has to be more than comparable:
+# `len(tmp) < linecount` orders it, and `[fill] * (linecount - len(tmp))`
+# multiplies by it. Only the last row is ever padded.
+case("filters/batch_fill_orders_the_linecount",
+     "{{ seq|batch('x', 'X')|list }}", **SEQ)
+case("filters/batch_fill_pads_only_the_last_row",
+     "{{ seq|batch(4, 'X')|list }}|{{ [9]|batch(3, 'X')|list }}|{{ []|batch(2, 'X')|list }}|{{ seq|batch(9, 'X')|list }}", **SEQ)
+case("filters/batch_fill_of_none_does_not_pad",
+     "{{ [9]|batch(3, none)|list }}|{{ [9]|batch(3)|list }}|{{ [9]|batch('x', none)|list }}")
 case("filters/slice", "{{ seq|slice(3)|list }}|{{ seq|slice(3, 'X')|list }}|{{ []|slice(2, 'X')|list }}", **SEQ)
 case("filters/groupby", "{{ users|groupby('city') }}", **USERS)
 case("filters/map", "{{ seq|map('string')|list }}|{{ users|map(attribute='name')|list }}|{{ users|map(attribute='nope', default='?')|list }}", **SEQ, **USERS)

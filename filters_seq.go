@@ -425,42 +425,77 @@ func filterMinMax(wantMax bool) Filter {
 }
 
 func filterBatch(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	size, err := intArg(args, 0, "linecount", 0)
-	if err != nil {
-		return value.Undefined, err
+	// do_batch never converts linecount. It only ever compares it --
+	// `len(tmp) == linecount` while a row fills, and `len(tmp) < linecount`
+	// when the last row is padded -- so a linecount that is not an integer
+	// is not an error here: no length ever equals it and everything lands
+	// in one row. A linecount of 0 equals the length of the empty row the
+	// generator starts with, so it yields that empty row once and then
+	// never matches again.
+	size, ok := arg(args, 0, "linecount")
+	if !ok {
+		size = value.None
 	}
-	if size <= 0 {
-		return value.Undefined, errs.New(errs.ValueError, "linecount must be positive")
+	// An absent fill_with defaults to None, which is the value do_batch
+	// tests for -- an absent argument arrives here as Undefined, and that
+	// is not None, so it would pad with undefineds.
+	fill, ok := arg(args, 1, "fill_with")
+	if !ok {
+		fill = value.None
 	}
-	fill, hasFill := arg(args, 1, "fill_with")
 
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
-	// With a fill, every row is padded out to size, so the result holds
-	// ceil(len/size)*size elements however few items there are:
-	// `[1]|batch(100000000, 0)` is one row of a hundred million. Charged
-	// before the rows are built, not after.
-	total := int64(len(items))
-	if hasFill && !fill.IsNone() && len(items) > 0 {
-		rows := int64((len(items) + size - 1) / size)
-		total = saturatingMulInt(rows, int64(size))
-	}
-	if err := s.ChargeItems(total); err != nil {
+	// The rows hold every item once; what padding adds on top is charged
+	// by the Mul that builds it, below.
+	if err := s.ChargeItems(int64(len(items))); err != nil {
 		return value.Undefined, err
 	}
 
 	var rows []value.Value
-	for i := 0; i < len(items); i += size {
-		row := items[i:min(i+size, len(items))]
-		batch := append([]value.Value(nil), row...)
-		if hasFill && !fill.IsNone() {
-			for len(batch) < size {
-				batch = append(batch, fill)
+	var row []value.Value
+	for _, item := range items {
+		if value.Equal(value.Int(int64(len(row))), size) {
+			rows = append(rows, value.NewList(row...))
+			row = nil
+		}
+		row = append(row, item)
+	}
+	// Only the final partial row is padded; every row yielded inside the
+	// loop was already full.
+	if len(row) > 0 {
+		if !fill.IsNone() {
+			have := value.Int(int64(len(row)))
+			// `len(tmp) < linecount` is where a linecount that only
+			// had to be comparable has to be ordered, and a str,
+			// list, dict or None raises instead.
+			short, err := value.Ordered("<", have, size)
+			if err != nil {
+				return value.Undefined, err
+			}
+			if short {
+				// And `[fill_with] * (linecount - len(tmp))` is
+				// where it finally has to be arithmetic: a float
+				// multiplies a sequence by a non-int, and one
+				// too wide for an index overflows. Mul charges
+				// the padding before building it.
+				n, err := value.Sub(size, have)
+				if err != nil {
+					return value.Undefined, err
+				}
+				pad, err := value.Mul(value.NewList(fill), n, s)
+				if err != nil {
+					return value.Undefined, err
+				}
+				seq, _ := pad.Seq()
+				for i := range seq.Len() {
+					row = append(row, seq.At(i))
+				}
 			}
 		}
-		rows = append(rows, value.NewList(batch...))
+		rows = append(rows, value.NewList(row...))
 	}
 	return value.NewList(rows...), nil
 }
