@@ -296,8 +296,17 @@ func Sub(a, b Value) (Value, error) {
 // callers -- the evaluator and the constant folder -- obey the same rule
 // without each having to remember it.
 func Mul(a, b Value, budget Budget) (Value, error) {
-	if err := undefinedOperand(a, b); err != nil {
-		return Undefined, err
+	// A Markup on the left settles the operation before an undefined on
+	// the right can raise its own error. markupsafe's Markup.__mul__ asks
+	// the other operand for __index__ and lets that TypeError out, where
+	// str.__mul__ returns NotImplemented and hands the undefined a turn to
+	// raise instead -- so `{{ x|safe * nope }}` reports the index and
+	// `{{ x * nope }}` reports the undefined.
+	markupIndexes := a.safe && a.kind == KindString && b.kind == KindUndefined
+	if !markupIndexes {
+		if err := undefinedOperand(a, b); err != nil {
+			return Undefined, err
+		}
 	}
 	if bothNumbers(a, b) {
 		if eitherFloat(a, b) {
