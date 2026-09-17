@@ -479,3 +479,74 @@ func TestAutoescapeIsAScope(t *testing.T) {
 		}
 	}
 }
+
+// TestVolatileConcatNeverEscapes pins an upstream quirk that a template can
+// see.
+//
+// jinja2 picks the join for `~` with
+//
+//	(markup_join if context.eval_ctx.volatile else str_join)
+//
+// inside a volatile context -- and an eval context is only ever volatile at
+// *compile* time, so the attribute the generated code reads is always False.
+// `~` there concatenates str()s, escaping nothing and returning a plain
+// string, which the output then escapes as a whole. One line further out, the
+// same expression answers Markup.
+//
+// Volatility is lexical and never resets, so a nested constant block, a loop
+// body and a macro written inside are all still inside it.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestVolatileConcatNeverEscapes(t *testing.T) {
+	vars := map[string]any{"yes": true, "mk": "<i>", "s": "a&b"}
+	for _, tc := range []struct{ src, want string }{
+		{`{% autoescape yes %}{{ (mk|safe) ~ s }}{% endautoescape %}`, "&lt;i&gt;a&amp;b"},
+		{`{% autoescape yes %}{{ ((mk|safe) ~ s) is escaped }}{% endautoescape %}`, "False"},
+		{`{% autoescape yes %}{{ ((mk|safe) ~ s)|length }}{% endautoescape %}`, "6"},
+		// A literal argument is not volatile: Markup, as everywhere
+		// else.
+		{`{% autoescape true %}{{ (mk|safe) ~ s }}{% endautoescape %}`, "<i>a&amp;b"},
+		// Nesting a constant block inside a volatile one does not
+		// clear it.
+		{`{% autoescape yes %}{% autoescape true %}{{ (mk|safe) ~ s }}{% endautoescape %}{% endautoescape %}`,
+			"&lt;i&gt;a&amp;b"},
+		// Nor does a loop body or a macro written inside.
+		{`{% autoescape yes %}{% for i in [1] %}{{ (mk|safe) ~ s }}{% endfor %}{% endautoescape %}`,
+			"&lt;i&gt;a&amp;b"},
+		{`{% autoescape yes %}{% macro q() %}{{ (mk|safe) ~ s }}{% endmacro %}{{ q() }}{% endautoescape %}`,
+			"&lt;i&gt;a&amp;b"},
+	} {
+		got, err := renderVars(t, New(), tc.src, vars)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// TestMarkupTimesUndefined pins which of two errors comes out.
+//
+// markupsafe's Markup.__mul__ asks the other operand for __index__ and lets
+// that TypeError out. str.__mul__ returns NotImplemented instead, which hands
+// the undefined its turn to raise. So the same expression reports two
+// different things depending on whether the left side is safe.
+func TestMarkupTimesUndefined(t *testing.T) {
+	for _, tc := range []struct{ expr, want string }{
+		{`(s|safe) * nope`, "'Undefined' object cannot be interpreted as an integer"},
+		{`s * nope`, "'nope' is undefined"},
+		{`nope * (s|safe)`, "'nope' is undefined"},
+		{`(s|safe) * (0|attr('q'))`, "'Undefined' object cannot be interpreted as an integer"},
+	} {
+		_, err := renderVars(t, New(), "{{ "+tc.expr+" }}", map[string]any{"s": "a"})
+		if err == nil {
+			t.Errorf("%s: no error, want %q", tc.expr, tc.want)
+			continue
+		}
+		if got := err.Error(); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.expr, got, tc.want)
+		}
+	}
+}

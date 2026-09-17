@@ -36,6 +36,12 @@ type exec struct {
 	// autoescape is per-frame so `{% autoescape %}` can change it for a
 	// span without disturbing the rest of the render.
 	autoescape bool
+	// volatileEscape marks the span of an {% autoescape %} whose argument
+	// is not a literal. jinja2 calls that a volatile eval context, and one
+	// operator behaves differently inside it; see evalConcat. It is
+	// lexical and never resets: a nested block, a loop body and a macro
+	// defined in here are all still inside it.
+	volatileEscape bool
 
 	// blockName and blockIndex locate the block being rendered, for super().
 	blockName  string
@@ -395,6 +401,9 @@ func (ex *exec) execAutoescape(n *ast.AutoescapeBlock) error {
 	}
 	sub := ex.child(newScope(ex.sc))
 	sub.autoescape = on
+	if _, constant := n.Value.(*ast.Const); !constant {
+		sub.volatileEscape = true
+	}
 	// The setting moves on the state as well as on the exec, and for the
 	// *dynamic* extent of the body rather than its lexical one. The two
 	// are not the same thing and jinja2 uses both: text escapes by the
@@ -430,16 +439,19 @@ func (ex *exec) execMacro(n *ast.Macro) error {
 func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaults []ast.Expr) (*macroObject, error) {
 	undeclared := findUndeclared(node.Body, "varargs", "kwargs", "caller")
 	m := &macroObject{
-		name:         name,
-		node:         node,
-		defaults:     defaults,
-		defScope:     ex.sc,
-		st:           ex.st,
-		tmpl:         ex.st.tmpl,
-		autoescape:   ex.autoescape,
-		catchVarargs: undeclared["varargs"],
-		catchKwargs:  undeclared["kwargs"],
-		caller:       undeclared["caller"],
+		name:       name,
+		node:       node,
+		defaults:   defaults,
+		defScope:   ex.sc,
+		st:         ex.st,
+		tmpl:       ex.st.tmpl,
+		autoescape: ex.autoescape,
+		// Volatility is lexical too, so a macro written inside a
+		// volatile block keeps it wherever it is called from.
+		volatileEscape: ex.volatileEscape,
+		catchVarargs:   undeclared["varargs"],
+		catchKwargs:    undeclared["kwargs"],
+		caller:         undeclared["caller"],
 	}
 	for _, p := range args {
 		if p.Name == "caller" {
