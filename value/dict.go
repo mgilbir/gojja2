@@ -127,6 +127,26 @@ func (d *Dict) Set(key, val Value) error {
 	return nil
 }
 
+// Reserve makes room for n entries.
+//
+// Filling a dict of known size otherwise pays twice for growing: the entries
+// slice doubles its way up from nothing, and the index map rehashes as it
+// fills. Converting a caller's map[string]any is the common case -- a page
+// with fifty rows of four fields was doing it two hundred times.
+func (d *Dict) Reserve(n int) {
+	if n <= 0 {
+		return
+	}
+	if cap(d.entries)-len(d.entries) < n {
+		grown := make([]DictEntry, len(d.entries), len(d.entries)+n)
+		copy(grown, d.entries)
+		d.entries = grown
+	}
+	if d.index == nil {
+		d.index = make(map[hashKey]int, n)
+	}
+}
+
 // SetString inserts or replaces a str key.
 func (d *Dict) SetString(key string, val Value) { _ = d.Set(String(key), val) }
 

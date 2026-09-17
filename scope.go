@@ -28,8 +28,13 @@ type scope struct {
 	expose value.MethodPolicy
 }
 
+// newScope leaves vars nil. A scope is created for every loop iteration, every
+// `{% with %}` and every macro call, and most of them bind one or two names or
+// none at all -- a 50-iteration loop was allocating 50 maps before anything was
+// put in them. set builds the map when there is something to put in it, and
+// reading from a nil map is already legal.
 func newScope(parent *scope) *scope {
-	return &scope{vars: make(map[string]value.Value), parent: parent}
+	return &scope{parent: parent}
 }
 
 func (s *scope) lookup(name string) (value.Value, bool) {
@@ -56,7 +61,7 @@ func (s *scope) convert(name string) (value.Value, bool) {
 	// deleting from it would empty the caller's context as the first render
 	// walked it, and the second render would find nothing there.
 	v := value.FromGoWith(raw, s.expose)
-	s.vars[name] = v
+	s.set(name, v)
 	return v, true
 }
 

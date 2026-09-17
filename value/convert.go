@@ -199,6 +199,7 @@ func (c *converter) fillStringMap(d Value, m map[string]any) {
 	}
 	slices.Sort(keys)
 	dict, _ := d.Dict()
+	dict.Reserve(len(keys))
 	for _, k := range keys {
 		dict.SetString(k, c.fromAny(m[k]))
 	}
@@ -271,6 +272,7 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 			return compareReflectKeys(a, b)
 		})
 		dict, _ := d.Dict()
+		dict.Reserve(len(keys))
 		for _, k := range keys {
 			if err := dict.Set(c.fromAny(k.Interface()), c.fromAny(rv.MapIndex(k).Interface())); err != nil {
 				// An unhashable key cannot occur: Go map keys are
