@@ -122,3 +122,20 @@ func TestFilteredLoopWalksTuples(t *testing.T) {
 		}
 	}
 }
+
+// TestURLEncodeRendersAsItWalks pins that |urlencode builds each pair as it
+// takes it, which is what `"&".join(f"..." for k, v in items)` does.
+//
+// Collecting the pairs first is the same answer for an ordinary sequence and a
+// different one for an iterator something else is also walking: every pair
+// then reports the position the walk ended at rather than the one it was at.
+func TestURLEncodeRendersAsItWalks(t *testing.T) {
+	got, err := renderVars(t, New(), `{% for i in [1,2,3] %}[{{ loop|urlencode }}]{% endfor %}`, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := "[2=%3CLoopContext+2%2F3%3E&3=%3CLoopContext+3%2F3%3E]"
+	if got != want {
+		t.Errorf("= %q\n want %q", got, want)
+	}
+}

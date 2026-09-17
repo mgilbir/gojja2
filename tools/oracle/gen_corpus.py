@@ -329,6 +329,11 @@ case("loops/loop_join_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|join
 case("loops/loop_map_applies_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|map('string')|list }}]{% endfor %}")
 case("loops/loop_in_dict", "{% for i in [1,2,3] %}[{{ dict(loop, extra=2) }}]{% endfor %}")
 
+# |urlencode builds each pair as it takes it -- `"&".join(f"..." for k, v in
+# items)` -- which shows when the input is an iterator something else is also
+# walking.
+case("filters/urlencode_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|urlencode }}]{% endfor %}")
+
 # A constant that folds to an infinity is written into jinja2's generated
 # Python as the bare word `inf`, which is not a literal -- so the template
 # raises NameError where it renders here. Listed in known_failures.txt.
