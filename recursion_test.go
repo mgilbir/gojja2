@@ -391,3 +391,64 @@ func TestShallowValueGraphsStillRender(t *testing.T) {
 		})
 	}
 }
+
+// TestRecursionWordingIsOnlyPinnedForTwo: CPython has three recursion messages
+// and picks between them by where its *own* stack ran out, so for most
+// constructs the wording is not a property of the template at all. The same
+// macro recursion, rendered from one extra frame, reports a different message:
+//
+//	N=0  maximum recursion depth exceeded
+//	N=1  maximum recursion depth exceeded while calling a Python object
+//	N=2  maximum recursion depth exceeded
+//
+// {% include %} and an {% extends %} cycle were stable at every depth tried, so
+// those two are held to CPython's wording here. The rest are checked only for
+// being a RecursionError, because pinning a wording for them would encode the
+// stack depth of whichever harness recorded it -- which is exactly what the two
+// imported MiniJinja fixtures do. docs/divergences.md records why.
+func TestRecursionWordingIsOnlyPinnedForTwo(t *testing.T) {
+	const (
+		plain   = "maximum recursion depth exceeded"
+		calling = "maximum recursion depth exceeded while calling a Python object"
+		compare = "maximum recursion depth exceeded in comparison"
+	)
+	loader := gojja2.DictLoader{
+		"self.txt":    `{% include "self.txt" %}`,
+		"selfimp.txt": `{% import "selfimp.txt" as m %}{% set x = 1 %}`,
+		"selfext.txt": `{% extends "selfext.txt" %}`,
+	}
+	for _, tc := range []struct{ name, src, want string }{
+		// The two CPython pins down.
+		{"include", `{% include "self.txt" %}`, calling},
+		{"extends", `{% extends "selfext.txt" %}`, compare},
+		// The rest: a RecursionError, wording unasserted beyond the
+		// prefix every one of the three shares.
+		{"macro", `{% macro m() %}{{ m() }}{% endmacro %}{{ m() }}`, plain},
+		{"import", `{% import "selfimp.txt" as m %}{{ m.x }}`, plain},
+		{"block reference", `{% block a %}{{ self.a() }}{% endblock %}`, plain},
+		{"recursive loop", `{% for i in [1] recursive %}{{ loop([1]) }}{% endfor %}`, plain},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpl, err := gojja2.New(gojja2.WithLoader(loader)).FromString(tc.src)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			_, err = tmpl.RenderString(context.Background(), nil)
+			if err == nil {
+				t.Fatal("rendered; want a RecursionError")
+			}
+			if kind := errs.KindOf(err); kind != errs.RecursionError {
+				t.Fatalf("got %v (%v), want RecursionError", kind, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("got %q, want it to contain %q", err, tc.want)
+			}
+			// The bound is the point, whatever the wording: it has to
+			// carry the configured limit rather than bury it in text.
+			var e *errs.Error
+			if errors.As(err, &e) && e.Limit == 0 {
+				t.Errorf("got %q with no Limit recorded", err)
+			}
+		})
+	}
+}

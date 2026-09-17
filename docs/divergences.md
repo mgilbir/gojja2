@@ -225,6 +225,41 @@ a base case -- is bounded separately at 100 levels, controlled by
 `WithMaxRecursion`, and *does* raise `RecursionError` with CPython's wording.
 The configured limit is on the error's `Limit` field rather than in the message.
 
+CPython has three wordings for that error, and for most constructs which one
+you get is not a property of the template. It records where *CPython's own*
+stack ran out, so the identical recursion reports different messages depending
+only on how many frames the caller was already using:
+
+```python
+# the same template, rendered from N frames deep
+N=0   maximum recursion depth exceeded
+N=1   maximum recursion depth exceeded while calling a Python object
+N=2   maximum recursion depth exceeded
+```
+
+A macro calling itself, a recursive loop, a block reference and `{% import %}`
+all move like that. Only two were stable at every depth tried:
+
+| construct | message |
+|---|---|
+| `{% include %}` | `maximum recursion depth exceeded while calling a Python object` |
+| an `{% extends %}` cycle | `maximum recursion depth exceeded in comparison` |
+
+gojja2 reports CPython's wording for those two, and the C-level wording for
+everything else. That last choice is arbitrary, and deliberately so: any
+wording picked for the unstable constructs encodes the stack depth of whichever
+harness recorded it. Two of the imported MiniJinja fixtures were captured with
+`while calling a Python object` for exactly that reason, and a plain
+`maximum recursion depth exceeded` -- which is what a shallow stack gives --
+would make them fail. There is no answer here that is right in both harnesses,
+so nothing is gained by changing it.
+
+Autoescaping and `loop.previtem` move the wording too: the first because
+markupsafe's escape is a C function, the second because reaching the previous
+item compares against a sentinel. Neither is a thing a Go program does, and
+neither changes what the template did wrong. The error kind is `RecursionError`
+throughout, and the configured limit is on the error's `Limit` field.
+
 ## How deep a value may be before printing it fails
 
 ```jinja

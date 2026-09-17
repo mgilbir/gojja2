@@ -536,6 +536,16 @@ case("filters/urlencode", "{{ 'a b/c?d'|urlencode }}|{{ {'a':'1 2'}|urlencode }}
 # bytes.__repr__ escapes one byte at a time and has no \u or \U form, so a
 # character outside ASCII is one escape per UTF-8 byte -- not the single escape
 # the str repr writes for the rune those bytes decode to.
+# CPython picks between three recursion wordings by where its own stack ran
+# out, which for most constructs is not a property of the template: the same
+# macro recursion reports two different messages one frame apart. Only these
+# two were stable at every depth tried, so only these two are graded; the rest
+# is in docs/divergences.md.
+case("errors/recursion_include", '{% include "self.txt" %}',
+     __templates__={"self.txt": '{% include "self.txt" %}'})
+case("errors/recursion_extends", '{% extends "selfext.txt" %}',
+     __templates__={"selfext.txt": '{% extends "selfext.txt" %}'})
+
 # str.format's replacement field is a name, then an optional !conversion, then
 # an optional :format_spec -- a different mini-language from the one `%` uses.
 case("methods/format_conversions",

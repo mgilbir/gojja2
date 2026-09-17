@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "selfext.txt": "{% extends \"selfext.txt\" %}"
+  }
+}
+---
+{% extends "selfext.txt" %}

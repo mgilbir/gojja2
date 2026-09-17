@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "self.txt": "{% include \"self.txt\" %}"
+  }
+}
+---
+{% include "self.txt" %}
