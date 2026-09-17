@@ -1,0 +1,8 @@
+{
+  "m": 10,
+  "__templates__": {
+    "mod.html": "{% set a = 1 %}"
+  }
+}
+---
+{% autoescape false %}{% for i in [1] %}[{{ mod }}]{% endfor %}{% import 'mod.html' as mod %}{% endautoescape %}

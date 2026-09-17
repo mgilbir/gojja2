@@ -1,0 +1,5 @@
+{
+  "m": 10
+}
+---
+{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}

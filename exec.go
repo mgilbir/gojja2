@@ -157,7 +157,9 @@ func (ex *exec) execStmtInner(stmt ast.Stmt) error {
 		_, err := ex.eval(n.Node)
 		return err
 	case *ast.Scope:
-		return ex.child(newScope(ex.sc)).execBody(n.Body)
+		inner := newScope(ex.sc)
+		declareFrameLocals(inner, ex.st, n, n.Body, inner.parent)
+		return ex.child(inner).execBody(n.Body)
 	case *ast.AutoescapeBlock:
 		return ex.execAutoescape(n)
 	case *ast.Break:
@@ -438,7 +440,15 @@ func (ex *exec) execAutoescape(n *ast.AutoescapeBlock) error {
 	if err != nil {
 		return err
 	}
-	sub := ex.child(newScope(ex.sc))
+	inner := newScope(ex.sc)
+	// The body is a frame of its own -- jinja2 compiles {% autoescape %} as
+	// a Scope -- so the names it assigns are its locals, and a read of one
+	// *before* the assignment runs is undefined rather than a fall-through
+	// to the context. Without this, `{% autoescape x %}{% for a in xs if m %}
+	// {% endfor %}{% from "t" import m %}{% endautoescape %}` read the
+	// context's m in the loop and ran it, where jinja2 reads nothing.
+	declareFrameLocals(inner, ex.st, n, n.Body, inner.parent)
+	sub := ex.child(inner)
 	sub.autoescape = on
 	if _, constant := n.Value.(*ast.Const); !constant {
 		sub.volatileEscape = true

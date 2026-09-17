@@ -1,0 +1,5 @@
+{
+  "m": 10
+}
+---
+[{{ m }}]{% autoescape false %}{% set m = 1 %}{% endautoescape %}[{{ m }}]
