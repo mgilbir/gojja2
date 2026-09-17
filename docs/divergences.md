@@ -393,8 +393,9 @@ machinery to reach. Matching them would mean building a decoy of the escape
 route the tests exist to document, which would be worse than not having one:
 the next reader would have to work out that the ladder leads nowhere.
 
-These are the only two entries in `testdata/known_failures.txt`, and this is
-the one place where not matching CPython is the point.
+These two are in `testdata/known_failures.txt`, alongside the two DeepSeek-R1
+chat templates recorded above under "Lazy sequence filters", and this is the
+one place where not matching CPython is the point.
 
 Note what is *not* in this category. `str.format`'s replacement fields take
 attribute and index accessors -- `"{0.foo}"`, `"{user[id]}"` -- and that is an

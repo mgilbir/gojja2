@@ -196,9 +196,9 @@ type State struct {
 	autoescape bool
 	parent     *Template
 
-	// exported lists the names a top-level `{% set %}` bound, in order, so
-	// `{% import %}` can expose them.
-	exported []string
+	// exports holds the names a top-level binding made visible, which is
+	// what `{% import %}` exposes and what `{% from %}` looks in.
+	exports map[string]bool
 	// depth bounds include/extends/macro nesting.
 	depth int
 	// deferred holds an error raised somewhere that could not return one.

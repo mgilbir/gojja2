@@ -417,8 +417,19 @@ func (e *Environment) AddTest(name string, t Test) {
 // AddGlobal registers a global, replacing any global of the same name.
 func (e *Environment) AddGlobal(name string, v value.Value) { e.globals[name] = v }
 
-// Globals returns the registered globals. The map must not be mutated.
-func (e *Environment) Globals() map[string]value.Value { return e.globals }
+// Globals returns a copy of the registered globals.
+//
+// A copy, because the map it used to hand back was the environment's own: a
+// caller who wrote to it replaced a built-in for every template compiled from
+// that environment, and `range` is as easy to clobber as anything else. Use
+// [Environment.AddGlobal] to change one on purpose.
+func (e *Environment) Globals() map[string]value.Value {
+	out := make(map[string]value.Value, len(e.globals))
+	for k, v := range e.globals {
+		out[k] = v
+	}
+	return out
+}
 
 // escapes reports whether a template is autoescaped. fromString marks one
 // compiled by FromString, which has no name for the policy to decide by.

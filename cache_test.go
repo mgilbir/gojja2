@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mgilbir/gojja2/value"
 )
 
 // countingLoader records how often each name was read, so a test can tell a
@@ -223,5 +225,29 @@ func TestWithoutLimitsIsExplicit(t *testing.T) {
 	}
 	if got := strings.Count(out, "x"); got != 20000 {
 		t.Errorf("got %d xs, want 20000", got)
+	}
+}
+
+// TestGlobalsIsACopy pins that reading the globals cannot change them.
+//
+// The map handed back used to be the environment's own, so a caller who wrote
+// to it replaced a built-in for every template compiled from that environment.
+// `range` is as easy to clobber as anything else, and the doc comment saying
+// "must not be mutated" is not a mechanism.
+func TestGlobalsIsACopy(t *testing.T) {
+	env := New()
+	g := env.Globals()
+	if _, ok := g["range"]; !ok {
+		t.Fatal("range is not among the globals")
+	}
+	g["range"] = value.String("clobbered")
+	delete(g, "dict")
+
+	out := mustRenderVars(t, env, `{{ range(3)|list }}{{ dict(a=1) }}`, nil)
+	if want := "[0, 1, 2]{'a': 1}"; out != want {
+		t.Errorf("writing to the returned map changed the environment: got %q, want %q", out, want)
+	}
+	if again := env.Globals(); value.Str(again["range"]) == "clobbered" {
+		t.Error("the environment kept the caller's write")
 	}
 }
