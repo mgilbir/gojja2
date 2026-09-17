@@ -116,3 +116,53 @@ func difference(a, b []string) []string {
 	}
 	return out
 }
+
+// TestBuiltinArityMessagesAreCPythonsOwn pins the wordings a C function uses,
+// which cannot be read off its signature.
+//
+// jinja2 registers Python's own functions for several names, and they do not
+// all speak alike: abs, len and callable word a wrong count as "takes exactly
+// one argument (N given)", while the operator.* comparisons behind eq, lt and
+// their aliases say "eq expected 2 arguments, got N" -- and name themselves
+// "_operator.eq" when refusing a keyword. Assuming the first wording for all of
+// them was wrong for 12 test names.
+//
+// A C function also reports too few the same way it reports too many, where a
+// Python function has a "missing required positional argument" of its own --
+// which is why `{{ 1 is eq }}` is in the table next to `test_sameas`.
+//
+// Every expectation is CPython jinja2 3.1.6's, and the wordings in arity.go are
+// probed out of the same place rather than written here twice.
+func TestBuiltinArityMessagesAreCPythonsOwn(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		{"{{ 1 is eq(1,2) }}", "eq expected 2 arguments, got 3"},
+		{"{{ 1 is eq }}", "eq expected 2 arguments, got 1"},
+		{"{{ 1 is lt(1,2) }}", "lt expected 2 arguments, got 3"},
+		{"{{ 1 is equalto(1,2) }}", "eq expected 2 arguments, got 3"},
+		{"{{ 1 is eq(zz=1) }}", "_operator.eq() takes no keyword arguments"},
+		{"{{ 1 is callable(1) }}", "callable() takes exactly one argument (2 given)"},
+		{"{{ 1 is callable(zz=1) }}", "callable() takes no keyword arguments"},
+		{"{{ [1]|abs(1) }}", "abs() takes exactly one argument (2 given)"},
+		{"{{ [1]|length(1) }}", "len() takes exactly one argument (2 given)"},
+		{"{{ [1]|count(1) }}", "len() takes exactly one argument (2 given)"},
+		// The Python-function wordings, for contrast: these are the
+		// ones derived from the signature.
+		{"{{ 1 is sameas(1,2) }}", "test_sameas() takes 2 positional arguments but 3 were given"},
+		{"{{ 1 is divisibleby(1,2) }}", "test_divisibleby() takes 2 positional arguments but 3 were given"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: compile: %v", tc.src, err)
+			continue
+		}
+		err = tmpl.Render(context.Background(), io.Discard, nil)
+		if err == nil {
+			t.Errorf("%s: no error, want %q", tc.src, tc.want)
+			continue
+		}
+		if got := err.Error(); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.src, got, tc.want)
+		}
+	}
+}
