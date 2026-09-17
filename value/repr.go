@@ -239,7 +239,12 @@ func writeScalarRepr(b *strings.Builder, v Value, ascii bool) {
 		writeStringRepr(b, v.str, true)
 	case KindObject:
 		if r, ok := v.obj.(Reprer); ok {
-			b.WriteString(r.Repr())
+			// ascii() is repr() with what it produced escaped
+			// afterwards, so an object that renders itself has no
+			// say in it: `{{ "%a" % [g] }}` over a |groupby pair
+			// escaped the list around it and left the group's own
+			// text alone.
+			writeEscapedNonASCII(b, r.Repr(), ascii)
 			return
 		}
 		b.WriteString("<object>")
@@ -359,6 +364,33 @@ func writeStringRepr(b *strings.Builder, s string, asciiOnly bool) {
 		}
 	}
 	b.WriteByte(quote)
+}
+
+// writeEscapedNonASCII writes text already in repr form, escaping the code
+// points ascii() would. Everything ASCII is passed through untouched --
+// backslashes included, because they are already the escapes repr wrote.
+func writeEscapedNonASCII(b *strings.Builder, text string, ascii bool) {
+	if !ascii {
+		b.WriteString(text)
+		return
+	}
+	for _, r := range text {
+		switch {
+		case r < utf8.RuneSelf:
+			b.WriteRune(r)
+		case r == utf8.RuneError:
+			b.WriteString(`\ufffd`)
+		case r < 0x100:
+			b.WriteString(`\x`)
+			writeHex(b, uint32(r), 2)
+		case r < 0x10000:
+			b.WriteString(`\u`)
+			writeHex(b, uint32(r), 4)
+		default:
+			b.WriteString(`\U`)
+			writeHex(b, uint32(r), 8)
+		}
+	}
 }
 
 func writeHex(b *strings.Builder, v uint32, width int) {

@@ -376,6 +376,9 @@ case("markup/type_name", "{{ ('a'|safe) + 1 }}")
 case("markup/add_nonstring", "{{ 0 + ('a'|safe) }}")
 case("markup/add_to_list", "{{ ['a'] + ('b'|safe) }}")
 case("markup/range_equality", "{{ range(3,0,-1) == range(3,0,-1) }}{{ range(0,3,2) == range(0,4,2) }}{{ range(3) == [0,1,2] }}")
+# ascii() is repr() with what it produced escaped afterwards, so an object that
+# renders itself -- a |groupby pair -- is escaped along with everything else.
+case("markup/ascii_nested_repr", "{{ '[%a]' % ([{'c':'\u00e9'}]|groupby('c')|list) }}|{{ '[%a]' % ['\u00e9', ('\u4e2d',)] }}")
 case("markup/groupby_json", "{{ {'a': 1}|groupby('city')|list|tojson }}")
 case("markup/preserved", "{{ ('<b>'|safe)|upper|pprint }}|{{ ('a b'|safe)|trim|pprint }}|{{ ('ab'|safe)|title|pprint }}")
 case("markup/indexing", "{{ ('ab'|safe)[0]|pprint }}|{{ ('ab'|safe)|last|pprint }}|{{ ('ab'|safe)|first|pprint }}")
