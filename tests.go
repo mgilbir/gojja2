@@ -208,20 +208,36 @@ func testIn(s *State, v value.Value, args *value.CallArgs) (bool, error) {
 	return value.Contains(v, container, s)
 }
 
+// testHasFilter and testHasTest are jinja2's `value in env.filters` and
+// `value in env.tests`.
+//
+// That is a dict membership test, so the value is hashed before anything looks
+// at whether it is a name: `{{ [1] is filter }}` is "unhashable type: 'list'"
+// and not False. Answering False for everything that is not a string made a
+// template asking an unanswerable question look like it had an answer.
 func testHasFilter(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
-	if !v.IsString() {
-		return false, nil
-	}
-	_, ok := s.env.filters[v.AsString()]
-	return ok, nil
+	return hasRegistered(v, func(name string) bool {
+		_, ok := s.env.filters[name]
+		return ok
+	})
 }
 
 func testHasTest(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
+	return hasRegistered(v, func(name string) bool {
+		_, ok := s.env.tests[name]
+		return ok
+	})
+}
+
+func hasRegistered(v value.Value, lookup func(string) bool) (bool, error) {
+	if err := value.Hashable(v); err != nil {
+		return false, err
+	}
 	if !v.IsString() {
+		// Hashable, but no name can equal it.
 		return false, nil
 	}
-	_, ok := s.env.tests[v.AsString()]
-	return ok, nil
+	return lookup(v.AsString()), nil
 }
 
 func comparisonTest(op string) Test {

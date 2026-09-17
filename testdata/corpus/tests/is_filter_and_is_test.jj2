@@ -1,0 +1,3 @@
+{}
+---
+{{ 'upper' is filter }}{{ 'bogus' is filter }}|{{ 'odd' is test }}{{ 'odd' is filter }}|{{ 1 is filter }}{{ none is test }}{{ (1,2) is filter }}{{ nope is filter }}
