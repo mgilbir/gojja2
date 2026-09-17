@@ -419,6 +419,13 @@ case("errshape/grouptuple_order_reflected", GROUP + "{{ (1,) < g }}", **USERS)
 case("errshape/grouptuple_percent_extra", GROUP + '{{ "%s" % g }}', **USERS)
 case("errshape/grouptuple_indent", GROUP + "{{ g|indent(2) }}", **USERS)
 case("errshape/range_slice", "{{ range(3)[::2] }}|{{ range(10)[2:8:3] }}|{{ range(0,10,2)[1:4] }}")
+# A literal percent is the two characters "%%" and nothing else: once flags, a
+# width, a precision or a mapping key intervene, the '%' is a conversion
+# character with no meaning, and it takes an argument before saying so.
+case("errshape/format_percent_width", "{{ '%5%' % 1 }}")
+case("errshape/format_percent_starved", "{{ '%5%' % () }}")
+case("errshape/format_percent_urlencoded", "{{ ({(1,2): 'x'}|urlencode) % 2 }}")
+case("markup/format_percent_literal", "{{ '100%% sure, %s' % 'really' }}|{{ '%s%%' % 5 }}")
 case("errshape/format_char", "{{ '%S' % 'a' }}")
 # The C functions jinja2 registers do not all word an argument error alike:
 # abs, len and callable say "takes exactly one argument", the operator.*
