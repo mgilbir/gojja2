@@ -122,10 +122,6 @@ func FormatPercent(format, args Value, budget Budget) (Value, error) {
 				return Undefined, err
 			}
 			arg = v
-		case conv.verb == '%':
-			// A bare %% is handled above; this is one that carried
-			// flags or a width, which Python still lays out.
-			arg = Undefined
 		default:
 			if arg, err = takeArg(); err != nil {
 				return Undefined, err
@@ -415,8 +411,14 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 	}
 
 	switch c.verb {
-	case '%':
-		return formatted{body: "%"}, nil
+	// '%' is deliberately absent. CPython writes a literal percent only
+	// for the two characters "%%", tested before a conversion is parsed at
+	// all; once flags, a width, a precision or a mapping key intervene,
+	// the '%' is a conversion character like any other, and there is no
+	// case for it -- so `"%5%"` takes an argument and then reports an
+	// unsupported format character. Laying out a padded "%" instead let
+	// `{{ "%281%2C+2%29=x" % 2 }}`, which is what a urlencoded tuple key
+	// looks like, format quietly where CPython refuses.
 	case 's':
 		return formatted{body: c.truncate(text(Str(v)))}, nil
 	case 'r':
