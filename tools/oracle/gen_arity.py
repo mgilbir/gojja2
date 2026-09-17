@@ -45,6 +45,10 @@ package gojja2
 type signature struct{{
 	// pyName is the function CPython names in the error.
 	pyName string
+	// pyCallName is what CPython prints for this function at a *call
+	// site* rather than inside it -- module and qualified name, with
+	// builtins left off -- which is the form an unpacking error uses.
+	pyCallName string
 	// params are the parameters a template can reach, the filtered value
 	// or tested value first. A keyword may name any of them -- including
 	// the first, which is how `x|upper(s=1)` becomes "multiple values".
@@ -167,6 +171,23 @@ def go_string(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def call_name(fn) -> str:
+    """Spell the callable the way CPython's _PyObject_FunctionStr does.
+
+    An error raised while *binding* a call names the code object that is being
+    bound -- `sync_do_join()` -- while one raised at the call site, unpacking
+    `**` into it, names the object being called: module and qualified name,
+    with `builtins` left off. jinja2's generated code calls the filter
+    directly, so both wordings are reachable from a template and they are not
+    the same string.
+    """
+    module = getattr(fn, "__module__", None)
+    qualname = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", "?")
+    if module in (None, "builtins"):
+        return f"{qualname}()"
+    return f"{module}.{qualname}()"
+
+
 def describe(fn) -> dict | None:
     """Read one callable's signature, or None when it cannot be introspected."""
     target = inspect.unwrap(fn)
@@ -204,6 +225,7 @@ def describe(fn) -> dict | None:
         count_msg, kw_msg = builtin_messages(target, total, getattr(target, "__name__", "?"))
     return {
         "pyName": getattr(target, "__name__", "?"),
+        "pyCallName": call_name(fn),
         "params": params,
         "injected": injected,
         "required": required,
@@ -225,6 +247,7 @@ def rows_for(kind: str, table: dict) -> tuple[str, int]:
         names = ", ".join(f'"{p}"' for p in d["params"])
         rows.append(
             f'\t"{name}": {{pyName: "{d["pyName"]}", '
+            f'pyCallName: {go_string(d["pyCallName"])}, '
             f"params: []string{{{names}}}, "
             f'injected: {d["injected"]}, required: {d["required"]}, '
             f'total: {d["total"]}, varKw: {str(d["varKw"]).lower()}, '
