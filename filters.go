@@ -1429,6 +1429,18 @@ func filterSum(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 	if !hasStart {
 		total = value.Int(0)
 	}
+	// Python's sum refuses a str start outright, before it looks at the
+	// sequence -- adding strings one at a time is quadratic, and it points
+	// at join instead. Concatenating them silently was the wrong answer to
+	// a question CPython declines to answer at all.
+	if total.Kind() == value.KindString {
+		return value.Undefined, errs.New(errs.TypeError,
+			"sum() can't sum strings [use ''.join(seq) instead]")
+	}
+	if total.Kind() == value.KindBytes {
+		return value.Undefined, errs.New(errs.TypeError,
+			"sum() can't sum bytes [use b''.join(seq) instead]")
+	}
 	for _, item := range items {
 		if !attribute.IsUndefined() && !attribute.IsNone() {
 			item, err = attrPath(s, item, value.Str(attribute))

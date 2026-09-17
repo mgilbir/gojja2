@@ -144,7 +144,10 @@ func unicodeEscapeDecode(s string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			if r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF) {
+			// readHexEscape returns a rune, which is int32: eight hex
+			// digits overflow it, so `\Uffffffff` arrived as -1 and
+			// passed a check written for values above 0x10FFFF.
+			if r < 0 || r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF) {
 				return "", errs.New(errs.TemplateSyntaxError, "illegal Unicode character")
 			}
 			b.WriteRune(r)
