@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/internal/ast"
@@ -27,6 +28,10 @@ type Template struct {
 	source     string
 	tree       *ast.Template
 	blocks     map[string]*ast.Block
+
+	// frameLocals caches, per AST node that owns a frame body, the names
+	// that body assigns. See Template.frameLocalsOf.
+	frameLocals sync.Map
 }
 
 // Name returns the template's name, empty for one compiled from a string.
@@ -332,7 +337,7 @@ func (t *Template) newState(vars map[string]value.Value, depth int, b *budget) *
 	}
 	st.escapeDefault = t.env.escapes(t.name, t.fromString)
 	st.autoescape = st.escapeDefault
-	declareFrameLocals(ctx, st, t.tree.Body, nil)
+	declareFrameLocals(ctx, st, t.tree, t.tree.Body, nil)
 	return st
 }
 

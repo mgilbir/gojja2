@@ -282,3 +282,67 @@ func renderOK(t *gojja2.Template) string {
 	}
 	return out
 }
+
+// TestFrameLocalsCacheIsStableAndConcurrent: the names a frame owns are
+// computed once per AST node and cached on the template, so the answer must not
+// depend on which render populated the entry or how many have run.
+//
+// What the cache could get wrong -- handing one frame another's locals -- is
+// already caught by TestFrameLocalsAliasTheEnclosingFrame and the corpus, which
+// both fail if every frame is made to share one entry. What is new here is that
+// the entry is written by whichever render reaches the frame first, and read by
+// every render after it, including ones on other goroutines.
+func TestFrameLocalsCacheIsStableAndConcurrent(t *testing.T) {
+	env := gojja2.New()
+	const src = `` +
+		`{% macro a() %}[{{ x }}{% set x = "A" %}{{ x }}]{% endmacro %}` +
+		`{% macro b() %}[{{ x }}]{% endmacro %}` +
+		`{% for i in [1] %}[{{ y }}{% set y = "L" %}{{ y }}]{% endfor %}` +
+		`{% for i in [1] %}[{{ y }}]{% endfor %}` +
+		`{{ a() }}{{ b() }}{{ a() }}{{ b() }}`
+	tmpl, err := env.FromString(src)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	// A frame that owns a name is still handed the enclosing binding at
+	// entry, so each reads the context's value before its own assignment
+	// and the frame that does not assign reads it unchanged. Confirmed
+	// against CPython jinja2, which renders exactly this.
+	const want = `[ctxYL][ctxY][ctxXA][ctxX][ctxXA][ctxX]`
+	vars := map[string]any{"x": "ctxX", "y": "ctxY"}
+
+	// Repeated, because the first render populates the cache and every
+	// render after it reads one.
+	for i := range 4 {
+		if got := renderStr(t, tmpl, vars); got != want {
+			t.Fatalf("render %d = %q, want %q", i+1, got, want)
+		}
+	}
+
+	// And concurrently, since the cache is written by whichever render
+	// reaches the frame first.
+	var wg sync.WaitGroup
+	errCh := make(chan string, 64)
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 25 {
+				out, err := tmpl.RenderString(context.Background(), vars)
+				if err != nil {
+					errCh <- err.Error()
+					return
+				}
+				if out != want {
+					errCh <- fmt.Sprintf("got %q want %q", out, want)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for msg := range errCh {
+		t.Error(msg)
+	}
+}

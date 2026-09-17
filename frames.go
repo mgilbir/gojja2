@@ -26,6 +26,34 @@ import (
 // block-set and scope, which are frames of their own. It descends into if,
 // where a name assigned in only some branches keeps resolving from the
 // context, because the branch that assigns it may not run.
+// frameLocalsOf is frameLocals with the answer remembered.
+//
+// The names a body owns are a property of the tree, which does not change after
+// it is compiled -- but this was walking the whole body again on every entry to
+// the frame. A macro called fifty times walked its body fifty times, and a loop
+// walked its body once per iteration, which is where 15% of the allocations in
+// BenchmarkRenderMacro came from.
+//
+// The key is the node that owns the body, so two frames never share an entry.
+// A sync.Map because one compiled template is rendered from many goroutines.
+//
+// It hangs off the template being rendered rather than off the Environment: a
+// long-lived Environment compiles new templates, each with new nodes, so a
+// cache there would grow without bound -- the same reason the template cache
+// itself is bounded. Here it is reachable only while the template is, and holds
+// at most one entry per frame in the templates that render reaches.
+func (t *Template) frameLocalsOf(key any, body []ast.Stmt) []string {
+	if key == nil || t == nil {
+		return frameLocals(body)
+	}
+	if v, ok := t.frameLocals.Load(key); ok {
+		return v.([]string)
+	}
+	locals := frameLocals(body)
+	t.frameLocals.Store(key, locals)
+	return locals
+}
+
 func frameLocals(body []ast.Stmt) []string {
 	v := &frameVisitor{seen: map[string]bool{}}
 	v.stmts(body)
@@ -253,8 +281,8 @@ func (v *frameVisitor) args(a ast.Args) {
 // context is not an enclosing frame, so a value passed in does *not* survive
 // the block owning the name, and a block that assigns `x` late reads nothing
 // for it early even when `x` was an argument.
-func declareFrameLocals(sc *scope, st *State, body []ast.Stmt, enclosing *scope) {
-	for _, name := range frameLocals(body) {
+func declareFrameLocals(sc *scope, st *State, key any, body []ast.Stmt, enclosing *scope) {
+	for _, name := range st.root.frameLocalsOf(key, body) {
 		if enclosing != nil {
 			if v, found := enclosing.lookupUntil(name, st.ctx); found {
 				// Aliased at entry, as jinja2 does it, so a
