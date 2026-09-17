@@ -54,3 +54,34 @@ func TestLoopIsTheIterator(t *testing.T) {
 		}
 	}
 }
+
+// TestLastNeedsSomethingReversible pins that |last goes through reversed(),
+// which asks for indexing and not merely for iteration.
+//
+// A LoopContext knows its length and nothing else, so it is refused rather
+// than walked to the end -- which is what jinja2 does, and what tells the two
+// filters apart: |first iterates and takes one, |last reverses.
+func TestLastNeedsSomethingReversible(t *testing.T) {
+	env := New()
+	if _, err := renderVars(t, env, `{% for i in [1,2,3] %}{{ loop|last }}{% endfor %}`, nil); err == nil {
+		t.Error("loop|last answered; want the TypeError CPython raises")
+	} else if got, want := err.Error(), "'LoopContext' object is not reversible"; got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+	// What does reverse still answers.
+	for _, tc := range []struct{ expr, want string }{
+		{`[1,2]|last`, "2"},
+		{`'ab'|last`, "b"},
+		{`range(3)|last`, "2"},
+		{`{1:2,3:4}|last`, "3"},
+	} {
+		got, err := renderVars(t, env, "{{ "+tc.expr+" }}", nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.expr, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.expr, got, tc.want)
+		}
+	}
+}

@@ -46,22 +46,23 @@ exact, including CPython's quirk that `"\é"` decodes to the four characters
 ```
 
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
-`items` return generators. gojja2's return lists. Anything that *consumes* the result
--- iterating it, `|list`, `|join`, `|first`, `|sort` -- behaves identically.
-Three things do not:
+`items` return generators. gojja2's return lists. Anything that *walks* the
+result forwards -- iterating it, `|list`, `|join`, `|first`, `|sort` -- behaves
+identically. Five things do not:
 
 | template | jinja2 | gojja2 |
 |---|---|---|
 | `{{ [1,2]\|map("string") }}` | `<generator object ... at 0x7f9c...>` | `['1', '2']` |
 | `{% if items\|selectattr("active") %}` | always taken | taken when non-empty |
 | `{{ items\|selectattr("active")\|length }}` | `TypeError: object of type 'generator' has no len()` | the count |
+| `{{ items\|map("string")\|last }}` | `TypeError: 'generator' object is not reversible` | the last item |
 | `{{ tools\|map(attribute="f")\|tojson }}` | `TypeError: Object of type generator is not JSON serializable` | the JSON |
 
 The first cannot be matched by anyone: the address differs between two runs of
 CPython itself, which is why the corpus case that prints one is marked
 *ungradable* rather than failing.
 
-The second and third could be matched, and are not. A generator is always
+The second, third and fourth could be matched, and are not. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
 when nothing was selected -- a long-standing footgun that the documentation
 tells you to spell `|selectattr("active")|list` around. Reproducing it would
@@ -71,7 +72,7 @@ template asked. This is the one divergence here that can change what a working
 template renders, and it changes it toward what the author meant; if you are
 porting templates, `|list` before `|length` or a truth test is exact in both.
 
-The fourth is not hypothetical: DeepSeek-R1's own chat template, as vendored by
+The fifth is not hypothetical: DeepSeek-R1's own chat template, as vendored by
 llama.cpp, writes `{{ tools | map(attribute='function') | tojson(indent=2) }}`,
 which raises under CPython jinja2 and renders under gojja2. Both cases are in
 the chat-templates corpus, listed in testdata/known_failures.txt.
