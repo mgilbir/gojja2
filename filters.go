@@ -903,19 +903,87 @@ func wrapChunks(text string, breakOnHyphens bool) []string {
 	return chunks
 }
 
-// splitOnHyphens breaks a word after a hyphen that joins two letters, which is
-// where textwrap allows a line to end.
+// splitOnHyphens breaks a word where textwrap's wordsep_re allows a line to
+// end. "After a hyphen between two letters" is close, and close is wrong often
+// enough to see: the pattern asks for more on both sides.
+//
+// A single hyphen splits when what precedes it is two letters, or a letter, a
+// hyphen and a letter -- and when what follows is a letter, then optionally one
+// hyphen, then another letter. `well-known` splits and `a-b` does not, because
+// one letter is not two; `a-b-c-d` splits once, after `a-b-`, because `c-d` has
+// nothing to follow it. A letter here is Python's [^\d\W]: a digit does not
+// count, which is why `a-1-b` is one chunk, and an underscore does.
+//
+// Two or more hyphens are an em-dash instead, and become a chunk of their own
+// when they sit between a word character and a word character: `a--b` is three
+// chunks where `a-b` is one.
 func splitOnHyphens(word string) []string {
 	runes := []rune(word)
 	var out []string
 	start := 0
-	for i := 1; i < len(runes)-1; i++ {
-		if runes[i] == '-' && unicode.IsLetter(runes[i-1]) && unicode.IsLetter(runes[i+1]) {
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '-' {
+			continue
+		}
+		if run := dashRun(runes, i); run >= 2 {
+			if i > 0 && isWordPunct(runes[i-1]) && i+run < len(runes) && isWordChar(runes[i+run]) {
+				if i > start {
+					out = append(out, string(runes[start:i]))
+				}
+				out = append(out, string(runes[i:i+run]))
+				start = i + run
+			}
+			i += run - 1
+			continue
+		}
+		if splitsAfterHyphen(runes, i) {
 			out = append(out, string(runes[start:i+1]))
 			start = i + 1
 		}
 	}
 	return append(out, string(runes[start:]))
+}
+
+// dashRun counts the hyphens starting at i.
+func dashRun(runes []rune, i int) int {
+	n := 0
+	for i+n < len(runes) && runes[i+n] == '-' {
+		n++
+	}
+	return n
+}
+
+// isWordLetter is Python's [^\d\W]: a word character that is not a digit.
+func isWordLetter(r rune) bool { return r == '_' || unicode.IsLetter(r) }
+
+// isWordChar is Python's \w.
+func isWordChar(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// isWordPunct is textwrap's word_punct, the class an em-dash must follow.
+func isWordPunct(r rune) bool {
+	return isWordChar(r) || strings.ContainsRune(`!"'&.,?`, r)
+}
+
+// splitsAfterHyphen reports whether the single hyphen at i is one a line may
+// end after: (?<=LL-|L-L-) at the hyphen, and (?=L-?L) past it.
+func splitsAfterHyphen(runes []rune, i int) bool {
+	twoLetters := i >= 2 && isWordLetter(runes[i-1]) && isWordLetter(runes[i-2])
+	letterHyphenLetter := i >= 3 && isWordLetter(runes[i-1]) &&
+		runes[i-2] == '-' && isWordLetter(runes[i-3])
+	if !twoLetters && !letterHyphenLetter {
+		return false
+	}
+	j := i + 1
+	if j >= len(runes) || !isWordLetter(runes[j]) {
+		return false
+	}
+	j++
+	if j < len(runes) && runes[j] == '-' {
+		j++
+	}
+	return j < len(runes) && isWordLetter(runes[j])
 }
 
 // wordRe matches what jinja2's wordcount counts: runs of word characters. It

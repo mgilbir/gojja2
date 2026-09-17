@@ -403,6 +403,14 @@ case("errshape/sort_mixed_reverse", "{{ mix|sort(true) }}", mix=[1, "a", 2.5, Tr
 # join is resolved before the value is read at all, and the indent is sized
 # before the value is touched. A bad argument beside an undefined value
 # therefore decides which error comes out.
+# textwrap breaks a word after a hyphen only when what surrounds it says so:
+# two letters before, or a letter-hyphen-letter; and a letter, an optional
+# hyphen and a letter after. Two or more hyphens are an em-dash instead, and
+# become a chunk of their own.
+case("filters/wordwrap_hyphens", "{{ 'well-known a-b ab-cd a-b-c-d co-op-er-ate'|wordwrap(6) }}")
+case("filters/wordwrap_hyphen_runs", "{{ 'a--b ab--cd x--y--z a-1-b _a-_b'|wordwrap(5) }}")
+case("filters/wordwrap_hyphen_chain", "{{ joined|wordwrap(12, false) }}|{{ joined|wordwrap(12) }}",
+     joined="-".join("  the quick brown fox jumps over the lazy dog  "))
 case("filters/wordwrap_lines", "{{ text|wordwrap(12) }}|{{ 'a\rb\r\nc'|wordwrap(9) }}|{{ ''|wordwrap('z') }}", **TEXT)
 case("filters/wordwrap_float_width", "{{ 'ab cd ef'|wordwrap(2.5) }}|{{ 'abcd'|wordwrap(0.5) }}|{{ 'abcd'|wordwrap(2.5, false) }}")
 case("filters/indent_carriage_return", "{{ 'a\rb\r\nc'|indent(2, true) }}")

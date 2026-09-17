@@ -125,3 +125,39 @@ func TestNegativeConstantPowerFollowsTheGeneratedSource(t *testing.T) {
 		t.Error("(-8) ** 1.5 rendered; want the documented ValueError")
 	}
 }
+
+// TestHyphenChunksFollowTextwrap pins where a line may end inside a hyphenated
+// word.
+//
+// "After a hyphen between two letters" is close, and close is wrong often
+// enough to see. textwrap asks for more on both sides: two letters before the
+// hyphen, or a letter-hyphen-letter; and after it a letter, an optional hyphen
+// and another letter. Two or more hyphens are an em-dash instead, a chunk of
+// its own. A digit is not a letter here and an underscore is.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestHyphenChunksFollowTextwrap(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ expr, want string }{
+		// One letter before the hyphen is not two, so a-b holds.
+		{`'well-known a-b ab-cd a-b-c-d co-op-er-ate'|wordwrap(6)`,
+			"well-\nknown\na-b\nab-cd\na-b-\nc-d\nco-op-\ner-ate"},
+		// c-d has nothing to follow it, so a-b-c-d splits once.
+		{`'a-b-c-d'|wordwrap(4)`, "a-b-\nc-d"},
+		// An em-dash stands alone; a digit does not count as a letter.
+		{`'a--b ab--cd x--y--z a-1-b _a-_b'|wordwrap(5)`,
+			"a--b\nab--\ncd x\n--y--\nz\na-1-b\n_a-_b"},
+		// The case the fuzzer found: with break_long_words off, a word
+		// that was split too eagerly filled a line it should not have.
+		{`'-j-u-'|wordwrap(3, false)`, "-j-u-"},
+	} {
+		got, err := renderVars(t, env, "{{ "+tc.expr+" }}", nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.expr, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s =\n %q\nwant\n %q", tc.expr, got, tc.want)
+		}
+	}
+}
