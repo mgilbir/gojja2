@@ -1,0 +1,25 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "sep": "&",
+  "users": [
+    {
+      "name": "ana",
+      "age": 30,
+      "city": "Lisbon"
+    },
+    {
+      "name": "bo",
+      "age": 25,
+      "city": "Porto"
+    },
+    {
+      "name": "cy",
+      "age": 30,
+      "city": "Lisbon"
+    }
+  ]
+}
+---
+{{ (users|join(sep, attribute='city'))|pprint }}

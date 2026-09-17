@@ -1,0 +1,12 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "xs": [
+    "a'",
+    "<i>"
+  ],
+  "sep": "&"
+}
+---
+{{ (xs|join(sep))|pprint }}|{{ (xs|join(sep)) is escaped }}|{{ xs|join(sep)|length }}|{{ xs|join(sep) }}
