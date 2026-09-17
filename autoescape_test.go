@@ -309,3 +309,68 @@ func TestReplaceEscapesWhatJinja2Escapes(t *testing.T) {
 		}
 	}
 }
+
+// TestAutoescapeScope pins which escaping applies where, which is not one
+// setting per template.
+//
+// jinja2 keeps two. Text escapes by the setting where it was *written*: a
+// macro body by where the macro was defined, and a {% block %} body by the
+// template's own setting, because each block is compiled against a fresh eval
+// context and does not see an {% autoescape %} it sits inside. A filter
+// escapes by where it is *called*, because it is handed the context's eval
+// context, which {% autoescape %} moves for the dynamic extent of its body --
+// so a filter inside a macro or a block follows the caller. Whether a macro's
+// or a block's result is trusted is decided at the call for the same reason.
+//
+// Constant folding follows the writing side, and stops entirely where the
+// setting is not known until the render -- `{% autoescape x %}` with a
+// variable -- which jinja2 calls a volatile eval context.
+//
+// Every expectation is CPython jinja2 3.1.6's, rendered against the same
+// template. |pprint|safe reports the value's type without the repr itself
+// being escaped on the way out.
+func TestAutoescapeScope(t *testing.T) {
+	vars := map[string]any{"s": "a", "mk": "&", "sep": "&", "v": false, "v2": true}
+
+	for _, tc := range []struct {
+		env  bool
+		src  string
+		want string
+	}{
+		// The block reaches the filter, in both directions.
+		{true, `{% autoescape false %}{{ ([s, mk|safe]|join(sep))|pprint|safe }}{% endautoescape %}`, `'a&&'`},
+		{true, `{% autoescape false %}{{ ([s, mk|safe]|join(sep)) is escaped }}{% endautoescape %}`, "False"},
+		{false, `{% autoescape true %}{{ ([s, mk|safe]|join(sep))|pprint|safe }}{% endautoescape %}`, `Markup('a&amp;&')`},
+		// A setting that is not known until the render reaches it too,
+		// and nothing inside is folded.
+		{true, `{% autoescape v %}{{ ([s, mk|safe]|join(sep))|pprint|safe }}{% endautoescape %}`, `'a&&'`},
+		{false, `{% autoescape v2 %}{{ ([s, mk|safe]|join(sep))|pprint|safe }}{% endautoescape %}`, `Markup('a&amp;&')`},
+		// A constant folded inside the block folds under the block.
+		{true, `{% autoescape false %}{{ (['a', '&'|safe]|join('&'))|pprint|safe }}{% endautoescape %}`, `'a&&'`},
+		// A {% block %} body does not: it is compiled against the
+		// environment's setting, so the folded half and the run-time
+		// half of the same block disagree, in jinja2 as here.
+		{false, `{% autoescape true %}{% block b %}{{ (['a','&'|safe]|join('&'))|pprint|safe }}{% endblock %}{% endautoescape %}`, `'a&&'`},
+		{false, `{% autoescape true %}{% block c %}{{ ([s, mk|safe]|join(sep))|pprint|safe }}{% endblock %}{% endautoescape %}`, `Markup('a&amp;&')`},
+		// And the text it prints escapes by the template's setting, not
+		// by the block it sits in -- which is why this stays raw.
+		{false, `{% autoescape true %}{% block d %}{{ mk }}{% endblock %}{% endautoescape %}`, "&"},
+		// A macro prints by where it was written...
+		{true, `{% macro m(x) %}{{ [x, mk|safe]|join(sep) }}{% endmacro %}{% autoescape false %}{{ m(s) }}{% endautoescape %}`, "a&amp;&amp;"},
+		// ... while its filters follow the call, so one call can use
+		// both settings: the join below is unescaped and the text
+		// printing it is escaped.
+		{true, `{% macro m(x) %}{{ ([x, mk|safe]|join(sep))|pprint|safe }}{% endmacro %}{% autoescape false %}{{ m(s) }}{% endautoescape %}`, `'a&&'`},
+		// Whether the result is trusted is the call's decision.
+		{false, `{% macro m(x) %}{{ [x, mk|safe]|join(sep) }}{% endmacro %}{% autoescape true %}[{{ m(s) is escaped }}][{{ m(s) }}]{% endautoescape %}`, "[True][a&amp;&]"},
+	} {
+		got, err := renderVars(t, New(WithAutoescape(tc.env)), tc.src, vars)
+		if err != nil {
+			t.Errorf("env=%v %s: %v", tc.env, tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("env=%v %s\n  = %q\n want %q", tc.env, tc.src, got, tc.want)
+		}
+	}
+}

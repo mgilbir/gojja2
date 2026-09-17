@@ -1,0 +1,7 @@
+{
+  "s": "a",
+  "mk": "&",
+  "sep": "&"
+}
+---
+{% macro m(x) %}{{ [x, mk|safe]|join(sep) }}{% endmacro %}{% autoescape true %}[{{ m(s) is escaped }}][{{ m(s) }}]{% endautoescape %}

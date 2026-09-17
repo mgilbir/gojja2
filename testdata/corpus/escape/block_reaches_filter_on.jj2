@@ -1,0 +1,7 @@
+{
+  "s": "a",
+  "mk": "&",
+  "sep": "&"
+}
+---
+{% autoescape true %}{{ ([s, mk|safe]|join(sep))|pprint }}|{{ [s, mk|safe]|join(sep) }}{% endautoescape %}

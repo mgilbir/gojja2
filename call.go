@@ -216,9 +216,24 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 
 	declareFrameLocals(sc, ex.st, m.node.Body)
 
-	// Escaping follows the call site, not the definition site: jinja2
-	// passes the caller's eval context into the macro.
-	autoescape := ex.autoescape
+	// The two halves of a macro's escaping come from different places, and
+	// jinja2 says why in Macro.__call__: "whether a macro is safe depends
+	// not on the escape mode when it was defined, but rather when it was
+	// used".
+	//
+	//   - The text the body prints escapes by the setting where the macro
+	//     was *written*. jinja2 compiles that in: the body of a macro
+	//     defined outside {% autoescape %} emits str(...), not escape(...),
+	//     whatever the call site does.
+	//   - Whether the result is Markup is decided at the *call*, because
+	//     Macro.__call__ takes the caller's eval context and wraps on that.
+	//
+	// The filters inside the body follow the call too, through the render
+	// state that {% autoescape %} moves for the dynamic extent of its body.
+	// So a macro written outside the block and called inside it prints by
+	// its own escaping and is trusted by the block's, and the two settings
+	// can differ within one call -- which is the pair CPython produces.
+	autoescape := m.autoescape
 	prevTmpl := ex.st.tmpl
 	ex.st.tmpl = m.tmpl
 	text, err := ex.captureFunction(sc, func(sub *exec) error {
@@ -232,7 +247,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 	if err != nil {
 		return value.Undefined, err
 	}
-	return markup(text, autoescape), nil
+	return markup(text, ex.autoescape), nil
 }
 
 // execCallBlock runs `{% call %}`: the block body becomes a `caller` macro the

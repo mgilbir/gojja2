@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "s": "a",
+  "mk": "&",
+  "sep": "&"
+}
+---
+{% macro m(x) %}{{ ([x, mk|safe]|join(sep))|pprint }}/{{ [x, mk|safe]|join(sep) }}{% endmacro %}{% autoescape false %}{{ m(s) }}{% endautoescape %}

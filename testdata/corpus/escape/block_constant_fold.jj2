@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "autoescape": true
+  }
+}
+---
+{% autoescape false %}{{ (['a', '&'|safe]|join('&'))|pprint }}{% endautoescape %}

@@ -1,0 +1,7 @@
+{
+  "s": "a",
+  "mk": "&",
+  "sep": "&"
+}
+---
+{% autoescape true %}{% block b %}{{ (['a', '&'|safe]|join('&'))|pprint }}|{{ ([s, mk|safe]|join(sep))|pprint }}{% endblock %}{% endautoescape %}
