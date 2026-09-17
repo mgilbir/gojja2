@@ -808,12 +808,17 @@ func (c *constEvaluator) constTest(n *ast.Test) (value.Value, bool) {
 }
 
 // constArgs evaluates a call's arguments, reporting false if any depends on
-// the context. The * and ** forms are not folded, as jinja2 does not fold them
-// either.
+// the context.
+//
+// jinja2's args_as_const folds `*` and `**` too, and it folds them the way
+// Python builds an argument list rather than the way a call site checks one:
+// the star form is `list.extend` and the double-star form is `dict.update`.
+// That is visible. `{{ [1,2]|join(**["db"]) }}` renders `1b2`, because
+// dict.update takes an iterable of pairs, while the same expression over a
+// name raises -- there the call really happens, and `**` there demands a
+// mapping. Refusing to fold these left a subscript beside one raising at run
+// time where jinja2 had already resolved it away.
 func (c *constEvaluator) constArgs(a ast.Args) (*value.CallArgs, bool) {
-	if a.DynArgs != nil || a.DynKwargs != nil {
-		return nil, false
-	}
 	out := &value.CallArgs{}
 	for _, arg := range a.Args {
 		v, ok := c.constEval(arg)
@@ -829,7 +834,94 @@ func (c *constEvaluator) constArgs(a ast.Args) (*value.CallArgs, bool) {
 		}
 		out.Kwargs = append(out.Kwargs, value.Kwarg{Name: kw.Key, Value: v})
 	}
+	if a.DynArgs != nil {
+		v, ok := c.constEval(a.DynArgs)
+		if !ok || !c.extendPos(out, v) {
+			return nil, false
+		}
+	}
+	if a.DynKwargs != nil {
+		v, ok := c.constEval(a.DynKwargs)
+		if !ok || !c.updateKwargs(out, v) {
+			return nil, false
+		}
+	}
 	return out, true
+}
+
+// extendPos is `args.extend(value)`: anything that does not iterate abandons
+// the fold, as the exception jinja2 catches there does.
+func (c *constEvaluator) extendPos(out *value.CallArgs, v value.Value) bool {
+	seq, err := value.Iterate(v)
+	if err != nil {
+		return false
+	}
+	for item := range seq {
+		// `f(*range(1000000000))` builds the list before the call, so the
+		// walk is charged -- folding has a budget of its own precisely
+		// because there is no render here to bound it.
+		if c.st.Step(1) != nil {
+			return false
+		}
+		out.Pos = append(out.Pos, item)
+	}
+	return true
+}
+
+// updateKwargs is `kwargs.update(value)`.
+//
+// dict.update takes a mapping or an iterable of pairs, and a repeated name
+// replaces the earlier value in place rather than being a second binding --
+// so `join(d="-", **{"d": "+"})` folds to "+" where the unfolded call raises
+// "got multiple values". A key that is not a string is left to the call, which
+// is where CPython refuses it.
+func (c *constEvaluator) updateKwargs(out *value.CallArgs, v value.Value) bool {
+	set := func(k, item value.Value) bool {
+		if k.Kind() != value.KindString {
+			return false
+		}
+		name := k.AsString()
+		for i := range out.Kwargs {
+			if out.Kwargs[i].Name == name {
+				out.Kwargs[i].Value = item
+				return true
+			}
+		}
+		out.Kwargs = append(out.Kwargs, value.Kwarg{Name: name, Value: item})
+		return true
+	}
+	if d, ok := v.Dict(); ok {
+		for _, e := range d.Entries() {
+			if !set(e.Key, e.Value) {
+				return false
+			}
+		}
+		return true
+	}
+	seq, err := value.Iterate(v)
+	if err != nil {
+		return false
+	}
+	for item := range seq {
+		if c.st.Step(1) != nil {
+			return false
+		}
+		pair, err := value.Iterate(item)
+		if err != nil {
+			return false
+		}
+		var kv []value.Value
+		for got := range pair {
+			if len(kv) == 2 {
+				return false // length 3 or more; 2 is required
+			}
+			kv = append(kv, got)
+		}
+		if len(kv) != 2 || !set(kv[0], kv[1]) {
+			return false
+		}
+	}
+	return true
 }
 
 // constGetAttr mirrors Environment.getattr, which never raises.

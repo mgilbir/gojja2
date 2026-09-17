@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mgilbir/gojja2/value"
@@ -107,6 +108,71 @@ func TestFrameLocalsAliasTheEnclosingFrame(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// TestDynamicArgsFold pins that `*` and `**` fold with everything else.
+//
+// jinja2's args_as_const builds the argument list the way Python builds one --
+// list.extend and dict.update -- rather than the way a call site checks one,
+// and the difference shows. dict.update takes an iterable of pairs and lets a
+// later name replace an earlier one; a call in the same shape refuses both. So
+// a constant expression folds where the same expression over a name raises,
+// and a subscript standing beside it is resolved away instead of running.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestDynamicArgsFold(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		// The whole print folds, so the unsubscriptable receiver is
+		// never subscripted for real.
+		{`{{ (false)[1:]|join(*["-"]) }}`, ""},
+		{`{{ (0o17)[1:]|center(*[4]) }}`, "    "},
+		{`{{ ({})[1:]|default(*[1]) }}`, "1"},
+		{`{{ (0o17)[1:] is eq(*[2]) }}`, "False"},
+		// ... including inside a tag, which has no output folder of
+		// its own to fall back on.
+		{`{% if (0o17)[1:]|join(*["-"]) %}Y{% endif %}`, ""},
+		// dict.update, not a call: pairs are accepted and a repeat
+		// replaces rather than colliding.
+		{`{{ [1,2]|join(**{"d": "-"}) }}`, "1-2"},
+		{`{{ [1,2]|join(**["db"]) }}`, "1b2"},
+		{`{{ [1,2]|join(d="-", **{"d": "+"}) }}`, "1+2"},
+		// A star form that is not constant is left alone, and the call
+		// then happens for real.
+		{`{% set l = [1,2] %}{{ l|join(*["-"]) }}`, "1-2"},
+	} {
+		got, err := renderVars(t, New(), tc.src, nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// TestDynamicArgsThatCannotFold pins the other side: when building the list
+// would raise, jinja2 abandons the fold and the call happens at run time,
+// where the star form is checked as a call site checks it.
+func TestDynamicArgsThatCannotFold(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`{{ [1,2]|join(*5) }}`, "Value after * must be an iterable, not int"},
+		// The same pair-shaped update, over a name: folding it would
+		// answer where a real call raises. CPython names the callee in
+		// this message and gojja2 names Context.call, which is a
+		// separate divergence -- the suffix is what this test is for.
+		{`{% set l = [1,2] %}{{ l|join(**["db"]) }}`,
+			"argument after ** must be a mapping, not list"},
+	} {
+		_, err := renderVars(t, New(), tc.src, nil)
+		if err == nil {
+			t.Errorf("%s: rendered; want %q", tc.src, tc.want)
+			continue
+		}
+		if got := err.Error(); !strings.HasSuffix(got, tc.want) {
+			t.Errorf("%s\n  = %q\n want suffix %q", tc.src, got, tc.want)
 		}
 	}
 }

@@ -355,6 +355,16 @@ func (g *generator) stmt(depth int) {
 			"{% include 'nope.txt' ignore missing %}",
 			"{% import 'mac.txt' as mm %}{{ mm.m(1) }}{{ mm.ex }}",
 			"{% from 'mac.txt' import m %}{{ m(1, 3) }}",
+			// `with context` decides whether the loaded template
+			// sees the caller's variables, which is visible in what
+			// inc.txt prints for `n`. The `without context` form of
+			// an *include* stays out for the reason given above:
+			// inside a macro it turns the macro into a generator
+			// nobody consumes, which is the divergence
+			// docs/divergences.md records rather than matches.
+			"{% include 'inc.txt' with context %}",
+			"{% import 'mac.txt' as mm without context %}{{ mm.m(1) }}",
+			"{% from 'mac.txt' import m with context %}{{ m(1) }}",
 		}))
 	case 13:
 		g.autoescapeStmt(depth)
@@ -477,7 +487,13 @@ func (g *generator) macroStmt(depth int) {
 			"{% endcall %}")
 		return
 	}
-	g.b.WriteString("{{ mm(" + g.c.pick([]string{"1", "'a'", "lst", "1, 2"}) + ") }}")
+	// *args and **kwargs reach jinja2's dyn_args and dyn_kwargs, a binding
+	// path of their own: they are unpacked after the positional arguments
+	// are counted, so what they collide with is decided there.
+	g.b.WriteString("{{ mm(" + g.c.pick([]string{
+		"1", "'a'", "lst", "1, 2",
+		"*lst", "*[1]", "**d", "**{'x': 1}", "1, **{'y': 2}", "*[1], **{'y': 2}",
+	}) + ") }}")
 }
 
 func (g *generator) filterStmt(depth int) {
@@ -641,9 +657,20 @@ func (g *generator) comparison(depth int) string {
 	return out
 }
 
+// dynFilterArgs are the *args and **kwargs forms a filter call can take, which
+// bind through jinja2's own path rather than the positional one.
+var dynFilterArgs = []string{
+	"join(*['-'])", "join(**{'d': '-'})", "default(*['x'])", "default(**{'boolean': true})",
+	"round(*[1])", "replace(*['a', 'b'])", "indent(**{'width': 2})",
+}
+
 func (g *generator) filtered(depth int) string {
 	out := g.expr(depth - 1)
 	for range 1 + g.c.intn(2) {
+		if g.c.chance(12) {
+			out += "|" + g.c.pick(dynFilterArgs)
+			continue
+		}
 		name := g.c.pick(deterministicFilters)
 		out += "|" + name
 		if args, ok := filterArgs[name]; ok && len(args) > 0 {
