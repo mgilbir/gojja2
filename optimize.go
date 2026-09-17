@@ -33,13 +33,7 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 		// run it at compile time, and it may not be pure.
 		return
 	}
-	walkOutputs(body, func(out *ast.Output, insideAutoescape bool) {
-		if insideAutoescape {
-			// Inside {% autoescape %} the escaping in force is not
-			// known until the block runs, so the text this would
-			// bake in could be wrong.
-			return
-		}
+	walkOutputs(c, body, func(out *ast.Output, escaping bool) {
 		for i, node := range out.Nodes {
 			if _, isData := node.(*ast.TemplateData); isData {
 				continue
@@ -54,7 +48,7 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 				continue
 			}
 			text := value.Str(v)
-			if c.st.autoescape && !v.IsSafe() {
+			if escaping && !v.IsSafe() {
 				text = escapeHTML(text)
 			}
 			// The text becomes part of the compiled template and is
@@ -102,10 +96,6 @@ func foldConstantExpressions(c *constEvaluator, body []ast.Stmt) {
 // bakes the wrong text into the template.
 type constFolder struct {
 	c *constEvaluator
-	// volatile means the escaping at this point is not known until the
-	// template runs, which is what `{% autoescape x %}` produces. Nothing
-	// is folded there, exactly as jinja2 skips its optimizer.
-	volatile bool
 	// envAutoescape is the template's own setting, which a {% block %}
 	// body returns to; see stmt.
 	envAutoescape bool
@@ -132,7 +122,9 @@ func (f *constFolder) fold(e ast.Expr) ast.Expr {
 	if e == nil {
 		return nil
 	}
-	if f.volatile {
+	if f.c.volatile {
+		// Nothing is folded where the escaping is not yet known,
+		// exactly as jinja2 skips its optimizer there.
 		return e
 	}
 	if _, isConst := e.(*ast.Const); !isConst {
@@ -297,10 +289,10 @@ func (f *constFolder) stmt(stmt ast.Stmt) {
 		// even though the same expression left unfolded sees it at run
 		// time. That split is jinja2's, and the two halves are
 		// observable against each other, so both are reproduced.
-		savedEsc, savedVol := f.c.st.autoescape, f.volatile
-		f.c.st.autoescape, f.volatile = f.envAutoescape, false
+		savedEsc, savedVol := f.c.st.autoescape, f.c.volatile
+		f.c.st.autoescape, f.c.volatile = f.envAutoescape, false
 		f.stmts(n.Body)
-		f.c.st.autoescape, f.volatile = savedEsc, savedVol
+		f.c.st.autoescape, f.c.volatile = savedEsc, savedVol
 	case *ast.ExprStmt:
 		n.Node = f.fold(n.Node)
 	case *ast.Include:
@@ -330,18 +322,18 @@ func (f *constFolder) stmt(stmt ast.Stmt) {
 func (f *constFolder) autoescapeBody(n *ast.AutoescapeBlock) {
 	on, ok := f.c.tryConstEval(n.Value)
 	if !ok {
-		saved := f.volatile
-		f.volatile = true
+		saved := f.c.volatile
+		f.c.volatile = true
 		f.stmts(n.Body)
-		f.volatile = saved
+		f.c.volatile = saved
 		return
 	}
 	truth, err := value.IsTrue(on)
 	if err != nil {
-		saved := f.volatile
-		f.volatile = true
+		saved := f.c.volatile
+		f.c.volatile = true
 		f.stmts(n.Body)
-		f.volatile = saved
+		f.c.volatile = saved
 		return
 	}
 	saved := f.c.st.autoescape
@@ -610,6 +602,11 @@ func (c *constEvaluator) constEvalAll(items []ast.Expr) ([]value.Value, bool) {
 type constEvaluator struct {
 	env *Environment
 	st  *State
+	// volatile means the escaping where this fold sits is not known until
+	// the render, which is what `{% autoescape x %}` produces. jinja2
+	// refuses to fold a filter or a test in such a context -- see
+	// constFilter -- and skips its optimizer there entirely.
+	volatile bool
 }
 
 // Folding runs at compile time, where there is no render and therefore nothing
@@ -683,6 +680,14 @@ func (c *constEvaluator) constFilter(n *ast.Filter) (value.Value, bool) {
 	if n.Node == nil {
 		return value.Undefined, false
 	}
+	// jinja2's Filter.as_const opens with `if eval_ctx.volatile: raise
+	// Impossible()`. Five filters read the escaping, and in a volatile
+	// context there is no value to read -- so none of them fold, and an
+	// expression containing one is left for the render even where the rest
+	// of it is constant.
+	if c.volatile {
+		return value.Undefined, false
+	}
 	if contextFilters[n.Name] {
 		return value.Undefined, false
 	}
@@ -715,6 +720,10 @@ func (c *constEvaluator) constFilter(n *ast.Filter) (value.Value, bool) {
 
 // constTest folds `x is name(...)` when every operand is constant.
 func (c *constEvaluator) constTest(n *ast.Test) (value.Value, bool) {
+	// A test folds under the same rule as a filter; see constFilter.
+	if c.volatile {
+		return value.Undefined, false
+	}
 	fn, ok := c.env.tests[n.Name]
 	if !ok {
 		return value.Undefined, false
@@ -885,42 +894,75 @@ func (c *constEvaluator) constGetSlice(base value.Value, slice *ast.Slice) (valu
 	return value.UndefinedHint("%s is not subscriptable", value.ObjectTypeRepr(base)), true
 }
 
-// walkOutputs visits every print tag in a template body, reporting whether it
-// sits inside an {% autoescape %} block.
-func walkOutputs(body []ast.Stmt, fn func(*ast.Output, bool)) {
-	walkOutputsIn(body, false, fn)
-}
-
-func walkOutputsIn(body []ast.Stmt, insideAutoescape bool, fn func(*ast.Output, bool)) {
-	for _, stmt := range body {
-		switch n := stmt.(type) {
-		case *ast.Output:
-			fn(n, insideAutoescape)
-		case *ast.For:
-			walkOutputsIn(n.Body, insideAutoescape, fn)
-			walkOutputsIn(n.Else, insideAutoescape, fn)
-		case *ast.If:
-			walkOutputsIn(n.Body, insideAutoescape, fn)
-			for _, elif := range n.Elif {
-				walkOutputsIn(elif.Body, insideAutoescape, fn)
+// walkOutputs visits every print tag in a template body, reporting the
+// escaping that applies where it sits.
+//
+// jinja2 settles that at compile time, from the frame's eval context, and the
+// two ways it can differ from the template's own setting are both reproduced.
+// A {% autoescape %} with a constant argument sets it for the body. One with
+// an expression does *not*: it only marks the context volatile, leaving the
+// enclosing setting in place for anything folded inside -- so a constant print
+// there is baked with the setting the block was supposed to replace, and the
+// block's own value never reaches it. A {% block %} body is compiled against a
+// fresh context and so returns to the environment's setting.
+func walkOutputs(c *constEvaluator, body []ast.Stmt, fn func(*ast.Output, bool)) {
+	env := c.st.autoescape
+	var walk func([]ast.Stmt, bool)
+	walk = func(body []ast.Stmt, escaping bool) {
+		for _, stmt := range body {
+			switch n := stmt.(type) {
+			case *ast.Output:
+				fn(n, escaping)
+			case *ast.For:
+				walk(n.Body, escaping)
+				walk(n.Else, escaping)
+			case *ast.If:
+				walk(n.Body, escaping)
+				for _, elif := range n.Elif {
+					walk(elif.Body, escaping)
+				}
+				walk(n.Else, escaping)
+			case *ast.AssignBlock:
+				walk(n.Body, escaping)
+			case *ast.With:
+				walk(n.Body, escaping)
+			case *ast.Macro:
+				walk(n.Body, escaping)
+			case *ast.CallBlock:
+				walk(n.Body, escaping)
+			case *ast.FilterBlock:
+				walk(n.Body, escaping)
+			case *ast.Block:
+				walk(n.Body, env)
+			case *ast.Scope:
+				walk(n.Body, escaping)
+			case *ast.AutoescapeBlock:
+				inner, volatile := blockEscaping(c, n, escaping)
+				saved := c.volatile
+				c.volatile = c.volatile || volatile
+				walk(n.Body, inner)
+				c.volatile = saved
 			}
-			walkOutputsIn(n.Else, insideAutoescape, fn)
-		case *ast.AssignBlock:
-			walkOutputsIn(n.Body, insideAutoescape, fn)
-		case *ast.With:
-			walkOutputsIn(n.Body, insideAutoescape, fn)
-		case *ast.Macro:
-			walkOutputsIn(n.Body, insideAutoescape, fn)
-		case *ast.CallBlock:
-			walkOutputsIn(n.Body, insideAutoescape, fn)
-		case *ast.FilterBlock:
-			walkOutputsIn(n.Body, insideAutoescape, fn)
-		case *ast.Block:
-			walkOutputsIn(n.Body, insideAutoescape, fn)
-		case *ast.Scope:
-			walkOutputsIn(n.Body, insideAutoescape, fn)
-		case *ast.AutoescapeBlock:
-			walkOutputsIn(n.Body, true, fn)
 		}
 	}
+	walk(body, env)
+}
+
+// blockEscaping is the setting an {% autoescape %} establishes at compile
+// time, and whether it leaves the context volatile.
+//
+// A constant argument sets the escaping for the body. Anything else sets
+// nothing: the enclosing value stays in place for whatever is still folded
+// inside, and the context becomes volatile, which stops a filter folding
+// there at all.
+func blockEscaping(c *constEvaluator, n *ast.AutoescapeBlock, enclosing bool) (escaping, volatile bool) {
+	v, ok := c.tryConstEval(n.Value)
+	if !ok {
+		return enclosing, true
+	}
+	truth, err := value.IsTrue(v)
+	if err != nil {
+		return enclosing, true
+	}
+	return truth, false
 }
