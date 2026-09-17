@@ -178,6 +178,21 @@ written on purpose nests ten deep, let alone a thousand, so the limit is
 generous and the failure is clean. It is a safety control rather than a
 behavioural choice, which is why the exception class differs from CPython's.
 
+What is counted is the depth of the parsed *tree*, one level per node on a
+root-to-leaf path, and not how deeply the parser happened to recurse. That
+matters because a template can nest without any bracket at all:
+
+```jinja
+{{ not not not ... }}      {{ ------- ... 1 }}      {{ x|f|f|f|f ... }}
+```
+
+Each of those is built by a loop, and each produces a tree as deep as it is
+long -- which the constant folder, the frame-local visitor, the dependency
+checker and the evaluator all then descend once per level. `~` and a
+comparison chain are the exception in the other direction: like jinja2's own
+`Concat` and `Compare` they are one node over a flat list of operands, so
+`a ~ b ~ c ~ ...` is one level however long it runs.
+
 Runtime recursion -- a template that includes, extends or calls itself without
 a base case -- is bounded separately at 100 levels, controlled by
 `WithMaxRecursion`, and *does* raise `RecursionError` with CPython's wording.

@@ -69,10 +69,11 @@ func (p *parser) parseAssignTarget(opts assignOpts) ast.Expr {
 	return target
 }
 
+// parseExpression opens no level of its own: it builds no node, and charging
+// for the grammar layers an expression passes through rather than for the
+// nodes it produces is what made the bound mean 500 brackets where it says
+// 1000 levels.
 func (p *parser) parseExpression(withCondExpr bool) ast.Expr {
-	p.enter()
-	defer p.leave()
-
 	if withCondExpr {
 		return p.parseCondExpr()
 	}
@@ -80,9 +81,13 @@ func (p *parser) parseExpression(withCondExpr bool) ast.Expr {
 }
 
 func (p *parser) parseCondExpr() ast.Expr {
+	c := p.chain()
+	defer c.done()
+
 	line := p.current().Line
 	expr := p.parseOr()
 	for p.skipIf(nameRule("if")) {
+		c.level()
 		test := p.parseOr()
 		var orElse ast.Expr
 		if p.skipIf(nameRule("else")) {
@@ -95,9 +100,13 @@ func (p *parser) parseCondExpr() ast.Expr {
 }
 
 func (p *parser) parseOr() ast.Expr {
+	c := p.chain()
+	defer c.done()
+
 	line := p.current().Line
 	left := p.parseAnd()
 	for p.skipIf(nameRule("or")) {
+		c.level()
 		left = &ast.BinOp{Pos: ast.At(line), Op: ast.OpOr, Left: left, Right: p.parseAnd()}
 		line = p.current().Line
 	}
@@ -105,9 +114,13 @@ func (p *parser) parseOr() ast.Expr {
 }
 
 func (p *parser) parseAnd() ast.Expr {
+	c := p.chain()
+	defer c.done()
+
 	line := p.current().Line
 	left := p.parseNot()
 	for p.skipIf(nameRule("and")) {
+		c.level()
 		left = &ast.BinOp{Pos: ast.At(line), Op: ast.OpAnd, Left: left, Right: p.parseNot()}
 		line = p.current().Line
 	}
@@ -116,6 +129,8 @@ func (p *parser) parseAnd() ast.Expr {
 
 func (p *parser) parseNot() ast.Expr {
 	if p.test(nameRule("not")) {
+		p.enter()
+		defer p.leave()
 		line := p.next().Line
 		return &ast.UnaryOp{Pos: ast.At(line), Op: ast.OpNot, Node: p.parseNot()}
 	}
@@ -133,6 +148,11 @@ var compareOps = map[lexer.Kind]string{
 }
 
 func (p *parser) parseCompare() ast.Expr {
+	// A comparison chain is one node holding a flat list of operands, so it
+	// deepens the tree by one however many operators it carries.
+	c := p.chain()
+	defer c.done()
+
 	line := p.current().Line
 	expr := p.parseMath1()
 	var ops []*ast.Operand
@@ -153,6 +173,7 @@ func (p *parser) parseCompare() ast.Expr {
 			if len(ops) == 0 {
 				return expr
 			}
+			c.level()
 			return &ast.Compare{Pos: ast.At(line), Expr: expr, Ops: ops}
 		}
 		line = p.current().Line
@@ -171,6 +192,9 @@ var (
 )
 
 func (p *parser) parseMath1() ast.Expr {
+	c := p.chain()
+	defer c.done()
+
 	line := p.current().Line
 	left := p.parseConcat()
 	for {
@@ -178,6 +202,7 @@ func (p *parser) parseMath1() ast.Expr {
 		if !ok {
 			return left
 		}
+		c.level()
 		p.next()
 		left = &ast.BinOp{Pos: ast.At(line), Op: op, Left: left, Right: p.parseConcat()}
 		line = p.current().Line
@@ -185,6 +210,10 @@ func (p *parser) parseMath1() ast.Expr {
 }
 
 func (p *parser) parseConcat() ast.Expr {
+	// Like a comparison, `~` builds one node over a flat list of operands.
+	c := p.chain()
+	defer c.done()
+
 	line := p.current().Line
 	nodes := []ast.Expr{p.parseMath2()}
 	for p.current().Kind == lexer.Tilde {
@@ -194,10 +223,14 @@ func (p *parser) parseConcat() ast.Expr {
 	if len(nodes) == 1 {
 		return nodes[0]
 	}
+	c.level()
 	return &ast.Concat{Pos: ast.At(line), Nodes: nodes}
 }
 
 func (p *parser) parseMath2() ast.Expr {
+	c := p.chain()
+	defer c.done()
+
 	line := p.current().Line
 	left := p.parsePow()
 	for {
@@ -205,6 +238,7 @@ func (p *parser) parseMath2() ast.Expr {
 		if !ok {
 			return left
 		}
+		c.level()
 		p.next()
 		left = &ast.BinOp{Pos: ast.At(line), Op: op, Left: left, Right: p.parsePow()}
 		line = p.current().Line
@@ -218,9 +252,13 @@ func (p *parser) parseMath2() ast.Expr {
 // left operand as it loops, and matching that matters more than matching the
 // language it is named after.
 func (p *parser) parsePow() ast.Expr {
+	c := p.chain()
+	defer c.done()
+
 	line := p.current().Line
 	left := p.parseUnary(true)
 	for p.current().Kind == lexer.Pow {
+		c.level()
 		p.next()
 		left = &ast.BinOp{Pos: ast.At(line), Op: ast.OpPow, Left: left, Right: p.parseUnary(true)}
 		line = p.current().Line
@@ -236,9 +274,13 @@ func (p *parser) parseUnary(withFilter bool) ast.Expr {
 
 	switch p.current().Kind {
 	case lexer.Sub:
+		p.enter()
+		defer p.leave()
 		p.next()
 		node = &ast.UnaryOp{Pos: ast.At(line), Op: ast.OpNeg, Node: p.parseUnary(false)}
 	case lexer.Add:
+		p.enter()
+		defer p.leave()
 		p.next()
 		node = &ast.UnaryOp{Pos: ast.At(line), Op: ast.OpPos, Node: p.parseUnary(false)}
 	default:
@@ -418,11 +460,16 @@ func (p *parser) parseDict() *ast.Dict {
 
 // parsePostfix consumes attribute access, subscripts and calls.
 func (p *parser) parsePostfix(node ast.Expr) ast.Expr {
+	c := p.chain()
+	defer c.done()
+
 	for {
 		switch p.current().Kind {
 		case lexer.Dot, lexer.LBracket:
+			c.level()
 			node = p.parseSubscript(node)
 		case lexer.LParen:
+			c.level()
 			node = p.parseCall(node)
 		default:
 			return node
@@ -433,14 +480,19 @@ func (p *parser) parsePostfix(node ast.Expr) ast.Expr {
 // parseFilterExpr consumes the filter and test suffixes, which bind looser
 // than postfix but tighter than arithmetic.
 func (p *parser) parseFilterExpr(node ast.Expr) ast.Expr {
+	c := p.chain()
+	defer c.done()
+
 	for {
 		switch {
 		case p.current().Kind == lexer.Pipe:
 			node = p.parseFilter(node, false)
 		case p.test(nameRule("is")):
+			c.level()
 			node = p.parseTest(node)
 		case p.current().Kind == lexer.LParen:
 			// A filter or test may itself be called.
+			c.level()
 			node = p.parseCall(node)
 		default:
 			return node
@@ -583,7 +635,11 @@ func (p *parser) parseCall(node ast.Expr) *ast.Call {
 // without a leading pipe, for `{% filter %}` and block `set`, where the input
 // is the captured body rather than an expression.
 func (p *parser) parseFilter(node ast.Expr, startInline bool) ast.Expr {
+	c := p.chain()
+	defer c.done()
+
 	for p.current().Kind == lexer.Pipe || startInline {
+		c.level()
 		if !startInline {
 			p.next()
 		}
