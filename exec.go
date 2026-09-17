@@ -633,8 +633,10 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 	if withContext {
 		vars = ex.sc.flatten()
 	}
-	st := tmpl.newState(vars)
-	st.depth = ex.st.depth
+	// The budget crosses this boundary exactly as it does an include's:
+	// share it, or the imported template renders with no bound and no
+	// context at all.
+	st := tmpl.newState(vars, ex.st.depth, ex.st.budget)
 	var discard strings.Builder
 	sub := &exec{st: st, sc: st.ctx, out: &discard, stream: &discard, autoescape: st.autoescape}
 	if err := sub.execBody(tmpl.tree.Body); err != nil {
