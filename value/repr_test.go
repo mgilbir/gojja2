@@ -139,3 +139,37 @@ func TestAsciiEscapesInsideContainers(t *testing.T) {
 		t.Errorf("Repr(['é']) = %q, want %q", got, `['é']`)
 	}
 }
+
+// TestAsciiEscapesAnObjectsOwnRepr pins that ascii() reaches inside an object
+// that renders itself.
+//
+// Python's ascii() is repr() with what it produced escaped afterwards, so the
+// object has no say in it. gojja2 threads the flag through the walk instead,
+// which is faster and equivalent -- except that it used to stop at a value
+// with a Repr of its own, leaving `{{ "%a" % [g] }}` over a |groupby pair
+// escaping the list around it and not the pair inside.
+func TestAsciiEscapesAnObjectsOwnRepr(t *testing.T) {
+	pair := value.FromObject(reprOnly{"('é', ['ü'])"})
+	for _, tc := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"ascii of the object", value.Ascii(pair), `('\xe9', ['\xfc'])`},
+		{"ascii inside a list", value.Ascii(value.NewList(pair)), `[('\xe9', ['\xfc'])]`},
+		{"repr is left alone", value.Repr(pair), "('é', ['ü'])"},
+		{"repr inside a list", value.Repr(value.NewList(pair)), "[('é', ['ü'])]"},
+		{"a backslash repr wrote is not escaped again", value.Ascii(value.FromObject(reprOnly{`'a\nb é'`})), `'a\nb \xe9'`},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
+// reprOnly is an Object that renders itself and nothing else.
+type reprOnly struct{ text string }
+
+func (r reprOnly) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
+func (r reprOnly) Repr() string                       { return r.text }
+func (r reprOnly) Str() string                        { return r.text }
