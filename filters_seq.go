@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"math"
 	"math/rand/v2"
 	"strings"
 
@@ -503,32 +504,78 @@ func filterBatch(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 // filterSlice splits into a fixed number of columns, distributing the
 // remainder across the leading ones -- the transpose of batch.
 func filterSlice(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	count, err := intArg(args, 0, "slices", 0)
-	if err != nil {
-		return value.Undefined, err
+	// do_slice does not convert slices either. It divides by it twice and
+	// then hands it to range(), and each of those refuses differently, so
+	// the errors are theirs rather than a check of our own: `//` reports an
+	// unsupported operand for a str, list, dict or None, and divides by
+	// zero for 0 or false, while range() is what refuses a float.
+	slices, ok := arg(args, 0, "slices")
+	if !ok {
+		slices = value.None
 	}
-	if count <= 0 {
-		return value.Undefined, errs.New(errs.ValueError, "slices must be positive")
+	// An absent fill_with is None, which is what do_slice tests for; an
+	// absent argument is Undefined, and that is not None.
+	fill, ok := arg(args, 1, "fill_with")
+	if !ok {
+		fill = value.None
 	}
-	fill, hasFill := arg(args, 1, "fill_with")
 
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
+	}
+	// `length // slices` and `length % slices`, in that order, before the
+	// loop -- and before range(), so a zero divisor is reported ahead of
+	// anything range() would have said about the same value.
+	length := value.Int(int64(len(items)))
+	perSliceV, err := value.FloorDiv(length, slices)
+	if err != nil {
+		return value.Undefined, err
+	}
+	remainderV, err := value.Mod(length, slices, s)
+	if err != nil {
+		return value.Undefined, err
+	}
+	// range() is where a count that divided happily is finally required to
+	// be an integer: `5 // 2.5` is 2.0, and range(2.5) is what raises.
+	count, fits := slices.Int64()
+	if !slices.IsInteger() {
+		return value.Undefined, errs.New(errs.TypeError,
+			"'%s' object cannot be interpreted as an integer", slices.TypeName())
+	}
+	if !fits {
+		// An integer too wide for an int64 is still a legal range() in
+		// CPython, which then iterates it until the process dies. A
+		// negative one is simply empty, so only a positive one has to
+		// be refused, and it is refused by being charged: saturate
+		// first, so the ceiling sees the size it really is.
+		b, _ := slices.BigInt()
+		if b.Sign() > 0 {
+			if err := s.ChargeItems(math.MaxInt64); err != nil {
+				return value.Undefined, err
+			}
+		}
+		return value.NewList(), nil
+	}
+	// range() of a negative count is empty, and yields no slice at all.
+	if count <= 0 {
+		return value.NewList(), nil
 	}
 	// count is the number of lists about to be built, whether or not there
 	// are any items to put in them: `[]|slice(100000000)` allocates a
 	// hundred million empty lists. The loop below runs count times before
 	// the render sees a single iteration, so the per-pass charge in runLoop
 	// would never be reached.
-	if err := s.ChargeItems(saturatingMulInt(int64(count), 1)); err != nil {
+	if err := s.ChargeItems(saturatingMulInt(count, 1)); err != nil {
 		return value.Undefined, err
 	}
-	perSlice, remainder := len(items)/count, len(items)%count
+	perSlice64, _ := perSliceV.Int64()
+	remainder64, _ := remainderV.Int64()
+	perSlice, remainder := int(perSlice64), int(remainder64)
 
 	var out []value.Value
 	offset := 0
-	for i := range count {
+	for i := range int(count) {
 		size := perSlice
 		if i < remainder {
 			size++
@@ -537,7 +584,7 @@ func filterSlice(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		offset += size
 		// Every slice that did not get one of the extra items is padded,
 		// including when there are no items at all.
-		if hasFill && !fill.IsNone() && i >= remainder {
+		if !fill.IsNone() && i >= remainder {
 			row = append(row, fill)
 		}
 		out = append(out, value.NewList(row...))

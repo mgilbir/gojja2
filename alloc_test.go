@@ -7,6 +7,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/mgilbir/gojja2/errs"
 )
 
 // hostileTemplates is every template the audit found that could panic the
@@ -304,5 +306,93 @@ func TestBatchOnlyComparesItsLinecount(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
 		}
+	}
+}
+
+// TestSliceDividesAndRangesItsCount: do_slice does not convert slices either.
+// It computes `length // slices` and `length % slices`, then walks
+// `range(slices)`, and each of those refuses a different set of values -- so
+// the order they run in decides which error a template sees. `//` reports an
+// unsupported operand for a str, list, dict or None and divides by zero for 0
+// or false; range() is what refuses a float, after `//` accepted it.
+//
+// gojja2 demanded a positive integer up front and answered one ValueError for
+// all of them.
+func TestSliceDividesAndRangesItsCount(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		{`{{ [1,2,3]|slice("x")|list }}`,
+			"unsupported operand type(s) for //: 'int' and 'str'"},
+		{`{{ [1,2,3]|slice(none)|list }}`,
+			"unsupported operand type(s) for //: 'int' and 'NoneType'"},
+		{`{{ [1,2,3]|slice([1])|list }}`,
+			"unsupported operand type(s) for //: 'int' and 'list'"},
+		{`{{ [1,2,3]|slice({})|list }}`,
+			"unsupported operand type(s) for //: 'int' and 'dict'"},
+		// Dividing comes first, so zero is reported as a division by
+		// zero rather than as anything about range().
+		{`{{ [1,2,3]|slice(0)|list }}`, "integer division or modulo by zero"},
+		{`{{ [1,2,3]|slice(false)|list }}`, "integer division or modulo by zero"},
+		// A float divides happily -- 3 // 2.5 is 1.0 -- and reaches
+		// range(), which is what refuses it.
+		{`{{ [1,2,3]|slice(2.5)|list }}`,
+			"'float' object cannot be interpreted as an integer"},
+		{`{{ [1,2,3]|slice(4.0)|list }}`,
+			"'float' object cannot be interpreted as an integer"},
+		// An empty input still divides, so the count is refused just the
+		// same -- there is no short-circuit for having nothing to slice.
+		{`{{ []|slice("x")|list }}`,
+			"unsupported operand type(s) for //: 'int' and 'str'"},
+		{`{{ []|slice(0)|list }}`, "integer division or modulo by zero"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		_, err = tmpl.RenderString(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
+		}
+	}
+
+	for _, tc := range []struct{ src, want string }{
+		// range() of a negative count is empty, so no slice is built --
+		// a fill has nothing to be put in, and this is not an error.
+		{`{{ [1,2,3]|slice(-1)|list }}`, "[]"},
+		{`{{ [1,2,3]|slice(-1, "X")|list }}`, "[]"},
+		{`{{ []|slice(-1)|list }}`, "[]"},
+		// true is 1, and still divides.
+		{`{{ [1,2,3]|slice(true)|list }}`, "[[1, 2, 3]]"},
+		// The ordinary shapes, unchanged.
+		{`{{ [1,2,3]|slice(2)|list }}`, "[[1, 2], [3]]"},
+		{`{{ [1,2,3]|slice(2, "X")|list }}`, "[[1, 2], [3, 'X']]"},
+		{`{{ []|slice(2, "X")|list }}`, "[['X'], ['X']]"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %s, want %s", tc.src, got, tc.want)
+		}
+	}
+
+	// A count wider than an int64 is a legal range() in CPython, which then
+	// iterates it until the process dies -- this is the template that has
+	// actually taken a machine down. It is bounded here, and a negative one
+	// is still simply empty rather than refused.
+	_, err := render(t, `{{ [1,2,3]|slice(10000000000000000000000)|list }}`)
+	if kind := errs.KindOf(err); kind != errs.OverflowError {
+		t.Errorf("huge slice count: got %v (%v), want OverflowError", kind, err)
+	}
+	if got := mustRender(t, `{{ [1,2,3]|slice(-10000000000000000000000)|list }}`); got != "[]" {
+		t.Errorf("negative huge slice count = %s, want []", got)
 	}
 }
