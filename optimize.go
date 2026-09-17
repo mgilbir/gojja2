@@ -474,7 +474,7 @@ func (c *constEvaluator) constCompare(n *ast.Compare) (value.Value, bool) {
 		if !ok {
 			return value.Undefined, false
 		}
-		holds, err := compareStep(op.Op, left, right)
+		holds, err := compareStep(op.Op, left, right, c.st)
 		if err != nil {
 			return value.Undefined, false
 		}

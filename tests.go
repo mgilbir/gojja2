@@ -218,12 +218,12 @@ func testSameAs(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
 	return value.Equal(v, other), nil
 }
 
-func testIn(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
+func testIn(s *State, v value.Value, args *value.CallArgs) (bool, error) {
 	container, ok := args.Arg(0)
 	if !ok {
 		return false, errs.New(errs.TypeError, "in requires an argument")
 	}
-	return value.Contains(v, container)
+	return value.Contains(v, container, s)
 }
 
 func testHasFilter(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
@@ -243,12 +243,12 @@ func testHasTest(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
 }
 
 func comparisonTest(op string) Test {
-	return func(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
+	return func(s *State, v value.Value, args *value.CallArgs) (bool, error) {
 		other, ok := args.Arg(0)
 		if !ok {
 			return false, errs.New(errs.TypeError, "%s requires an argument", op)
 		}
-		return compareStep(op, v, other)
+		return compareStep(op, v, other, s)
 	}
 }
 

@@ -230,3 +230,69 @@ func TestLexingIsLinearInTheSource(t *testing.T) {
 	}
 	t.Logf("%d tags (%d bytes) compiled in %v", tags, len(src), elapsed)
 }
+
+// TestRangeMembershipIsConstantTime pins that `x in range(...)` is arithmetic
+// rather than a search, as it is in Python.
+//
+// Falling through to the generic scan made membership cost the length of the
+// range. `{{ -1 in range(9223372036854775807) }}` walked toward nine quintillion
+// elements, consulting neither the budget nor the context, and a three-second
+// deadline was still running ninety seconds later.
+func TestRangeMembershipIsConstantTime(t *testing.T) {
+	env := New()
+	for _, tc := range []struct {
+		src  string
+		want string
+	}{
+		{`{{ -1 in range(9223372036854775807) }}`, "False"},
+		{`{{ 9223372036854775806 in range(9223372036854775807) }}`, "True"},
+		{`{{ 4611686018427387904 in range(0, 9223372036854775807, 2) }}`, "True"},
+		{`{{ 4611686018427387903 in range(0, 9223372036854775807, 2) }}`, "False"},
+		{`{{ "x" in range(9223372036854775807) }}`, "False"},
+		{`{{ 1.5 in range(9223372036854775807) }}`, "False"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		start := time.Now()
+		got, err := tmpl.RenderString(ctx, nil)
+		cancel()
+		if err != nil {
+			t.Fatalf("%s did not finish in 10s (%v): %v", tc.src, time.Since(start), err)
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// TestUniqueIsLinear pins that |unique costs the length of its input rather
+// than its square.
+//
+// jinja2 tracks what it has seen in a set. Scanning the keys seen so far
+// instead is quadratic, and it consulted neither the budget nor the context
+// between comparisons: 60,000 distinct items under a three-second deadline
+// were still being compared ninety seconds later.
+func TestUniqueIsLinear(t *testing.T) {
+	const n = 200_000
+	env := New(WithoutLimits())
+	tmpl, err := env.FromString(`{{ range(N)|list|unique|length }}`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	out, err := tmpl.RenderString(ctx, map[string]any{"N": n})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("unique over %d items did not finish in 30s (%v): %v", n, elapsed, err)
+	}
+	if want := "200000"; out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+	t.Logf("%d distinct items deduplicated in %v", n, elapsed)
+}
