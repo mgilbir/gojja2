@@ -1,0 +1,5 @@
+{
+  "m": 10
+}
+---
+{% block a %}{% for i in [1] %}[{{ m }}]{% endfor %}{% endblock %}

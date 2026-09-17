@@ -68,3 +68,45 @@ func TestFoldingDoesNotSwallowAnError(t *testing.T) {
 		t.Errorf("error = %q, want %q", got, want)
 	}
 }
+
+// TestFrameLocalsAliasTheEnclosingFrame pins where a frame's own names start
+// from.
+//
+// A name an enclosing *frame* owns is aliased in at entry, so a macro body
+// sees what the template had assigned when it was called. A name nothing above
+// owns starts undefined, which is what makes a loop inside the frame read
+// nothing until the assignment runs.
+//
+// A {% block %} body nests inside no frame at all: jinja2 compiles it as a
+// standalone function resolving against the context, so a value passed in does
+// not survive the block owning the name.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestFrameLocalsAliasTheEnclosingFrame(t *testing.T) {
+	vars := map[string]any{"m": 10}
+	for _, tc := range []struct{ src, want string }{
+		// The block owns m, so the loop inside it reads nothing --
+		// even though m was passed in as 10.
+		{`{% block a %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}[{{ m }}]{% endblock %}`, "[][1]"},
+		// It only owns it if it assigns it.
+		{`{% block a %}{% for i in [1] %}[{{ m }}]{% endfor %}{% endblock %}`, "[10]"},
+		// A macro nests inside the frame that defined it, so it starts
+		// from that frame's value rather than from the context's.
+		{`{% set m = 1 %}{% macro q() %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 2 %}{% endmacro %}{{ q() }}`, "[1]"},
+		// With nothing to alias, undefined.
+		{`{% macro q() %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 2 %}{% endmacro %}{{ q() }}`, "[]"},
+		// A load before the store keeps resolving from the context, at
+		// any level.
+		{`{% block a %}[{{ m }}]{% set m = 1 %}{% endblock %}`, "[10]"},
+		{`[{{ m }}]{% set m = 1 %}`, "[10]"},
+	} {
+		got, err := renderVars(t, New(), tc.src, vars)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+}

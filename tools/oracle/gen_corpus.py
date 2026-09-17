@@ -317,6 +317,16 @@ case("escape/volatile_folds_constant_escaping", "{% autoescape blank %}{{ {'a': 
      __settings__={"autoescape": True}, blank="")
 case("escape/constant_block_folds_with_its_own", "{% autoescape true %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}")
 
+# A {% block %} body is compiled as a standalone function resolving against
+# the context, so the context is not an enclosing frame for it: a name the
+# block assigns late is undefined inside it beforehand, even when it was passed
+# in. A macro body does nest inside the frame that defined it, and starts from
+# what that frame had.
+case("scope/block_owns_a_name_it_sets_late", "{% block a %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}[{{ m }}]{% endblock %}", m=10)
+case("scope/block_reads_a_name_it_never_sets", "{% block a %}{% for i in [1] %}[{{ m }}]{% endfor %}{% endblock %}", m=10)
+case("scope/macro_aliases_the_defining_frame", "{% set m = 1 %}{% macro qq() %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 2 %}{% endmacro %}{{ qq() }}", m=10)
+case("scope/macro_without_an_enclosing_local", "{% macro qq() %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 2 %}{% endmacro %}{{ qq() }}", m=10)
+
 # {% autoescape %} is a scope, as jinja2 compiles it: what the body assigns
 # does not reach the frame outside it, and a name that frame assigns later is
 # already its local when the body reads it.
