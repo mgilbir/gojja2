@@ -557,6 +557,14 @@ case("errors/sort_positional_argument", "{% set L = [1] %}{{ L.sort(1) }}")
 case("errors/popitem_on_an_empty_dict", "{{ {}.popitem() }}")
 case("errors/cycler_without_items", "{{ cycler() }}")
 
+# `is filter` and `is test` are `value in env.filters` and `value in env.tests`,
+# so the value is hashed before anything asks whether it could be a name.
+case("tests/is_filter_and_is_test",
+     "{{ 'upper' is filter }}{{ 'bogus' is filter }}|{{ 'odd' is test }}{{ 'odd' is filter }}|"
+     "{{ 1 is filter }}{{ none is test }}{{ (1,2) is filter }}{{ nope is filter }}")
+case("errors/is_filter_unhashable", "{{ [1] is filter }}")
+case("errors/is_test_unhashable_in_a_tuple", "{{ (1,[2]) is test }}")
+
 # str.encode honours its codec and its error handler. The three codecs here are
 # the ones gojja2 implements; docs/divergences.md has why the rest are refused.
 case("methods/encode_codecs",
