@@ -560,6 +560,24 @@ case("errors/cycler_without_items", "{{ cycler() }}")
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
 # frame before the assignment sees undefined rather than the context's value.
+# int and float have real attributes, some properties and some methods, and
+# jinja2 reaches them by getattr. bool is an int subclass, so True.real is 1.
+case("methods/int_attributes",
+     "{{ (3).real }}{{ (3).imag }}{{ (3).numerator }}{{ (3).denominator }}|"
+     "{{ true.real }}{{ false.real }}|"
+     "{{ (3).bit_length() }}{{ (0).bit_length() }}{{ (-4).bit_length() }}|"
+     "{{ (3).bit_count() }}{{ (-4).bit_count() }}|{{ (3).as_integer_ratio() }}|"
+     "{{ (10000000000000000000000).bit_length() }}")
+case("methods/int_to_bytes",
+     "{{ (3).to_bytes(2,'big') }}|{{ (3).to_bytes(2,'little') }}|{{ (255).to_bytes(1,'big') }}")
+case("methods/float_attributes",
+     "{{ (2.5).real }}{{ (2.5).imag }}|{{ (2.5).is_integer() }}{{ (1.0).is_integer() }}|"
+     "{{ (2.5).as_integer_ratio() }}{{ (-1.5).as_integer_ratio() }}|{{ (2.5).conjugate() }}")
+case("methods/float_hex",
+     "{{ (2.5).hex() }}|{{ (1.0).hex() }}|{{ (0.0).hex() }}|{{ (-1.5).hex() }}|{{ (-0.5).hex() }}")
+case("errors/to_bytes_negative", "{{ (-1).to_bytes(2,'big') }}")
+case("errors/to_bytes_too_big", "{{ (300).to_bytes(1,'big') }}")
+
 # json.dumps splits "no indent" from "an indent of zero": only None gives the
 # one-line form, while 0 -- and any negative, which clamps to 0 -- still puts
 # every element on its own line.

@@ -392,6 +392,12 @@ func lookupAttr(s *State, base value.Value, name string) (value.Value, bool) {
 	if fn, ok := builtinMethod(s, base, name); ok {
 		return fn, true
 	}
+	// Numbers have a handful of real attributes -- some properties, some
+	// methods -- and no table in builtinMethod, which only covers the
+	// container types.
+	if v, ok := numericAttr(s, base, name); ok {
+		return v, true
+	}
 	return value.Undefined, false
 }
 
