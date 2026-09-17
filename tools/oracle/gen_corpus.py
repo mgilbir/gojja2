@@ -557,6 +557,23 @@ case("errors/sort_positional_argument", "{% set L = [1] %}{{ L.sort(1) }}")
 case("errors/popitem_on_an_empty_dict", "{{ {}.popitem() }}")
 case("errors/cycler_without_items", "{{ cycler() }}")
 
+# jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
+# frame: a name the body assigns is that frame's own, and a read from a *nested*
+# frame before the assignment sees undefined rather than the context's value.
+# One template per case: combining them changes the answer, because a read of
+# the name at the *root* level anywhere in the template stops a nested Scope
+# from owning it. That is a separate divergence, not this one.
+case("scope/autoescape_read_before_set",
+     "{% autoescape false %}[{{ m }}]{% set m = 1 %}[{{ m }}]{% endautoescape %}", m=10)
+case("scope/autoescape_owns_what_it_assigns",
+     "{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}", m=10)
+case("scope/autoescape_does_not_leak_out",
+     "[{{ m }}]{% autoescape false %}{% set m = 1 %}{% endautoescape %}[{{ m }}]", m=10)
+case("scope/autoescape_import_is_an_assignment",
+     "{% autoescape false %}{% for i in [1] %}[{{ mod }}]{% endfor %}"
+     "{% import 'mod.html' as mod %}{% endautoescape %}",
+     m=10, __templates__={"mod.html": "{% set a = 1 %}"})
+
 # `is filter` and `is test` are `value in env.filters` and `value in env.tests`,
 # so the value is hashed before anything asks whether it could be a name.
 case("tests/is_filter_and_is_test",

@@ -583,3 +583,64 @@ func TestSortKeepsMarkupInItsKey(t *testing.T) {
 		}
 	}
 }
+
+// TestAutoescapeAndScopeBodiesAreFrames: jinja2 compiles {% autoescape %} and
+// {% scope %} as Scopes, so each body is a frame and the names it assigns are
+// its own. A read *before* the assignment therefore sees undefined rather than
+// falling through to the context.
+//
+// {% filter %} already declared its frame's locals; these two created the scope
+// and never said what it owned, so a name the body assigned later still read
+// the context's value. Found by the differential fuzzer at seed 20260921, in
+// one template out of 118,826:
+//
+//	{% autoescape nil %}{%+ for a, b in pairs if m %}x{% endfor %}
+//	{% from 'mac.txt' import m with context %}{% endautoescape %}
+//
+// jinja2 renders nothing there -- the loop's `if m` reads through to the
+// autoescape frame, whose own first mention of m is the import, so m is that
+// frame's local and undefined until the import runs. gojja2 fell through to the
+// context's m, found 10, and ran the loop twice.
+//
+// Every expectation here was measured against CPython jinja2; a first draft
+// guessed them and got three of six wrong in both directions.
+func TestAutoescapeAndScopeBodiesAreFrames(t *testing.T) {
+	env := New(WithLoader(DictLoader{
+		"mac.txt": `{% macro m(x) %}({{ x }}){% endmacro %}`,
+	}))
+	for _, tc := range []struct{ name, src, want string }{
+		// The name is assigned later in the body, so the earlier read
+		// is the frame's own undefined.
+		// A direct read is the frame's first mention of the name, so the
+		// frame does not own it and the enclosing binding is aliased in.
+		{"set after read", `{% autoescape false %}[{{ m }}]{% set m = 1 %}[{{ m }}]{% endautoescape %}`, "[ctx][1]"},
+		{"import after read", `{% autoescape false %}[{{ m }}]{% import 'mac.txt' as m %}{% endautoescape %}`, "[ctx]"},
+		{"from-import after read", `{% autoescape false %}[{{ m }}]{% from 'mac.txt' import m %}{% endautoescape %}`, "[ctx]"},
+		// This is the one that was wrong. The read is inside a *nested*
+		// frame, so the autoescape frame's own first mention of m is the
+		// assignment -- it owns m, declares it undefined, and the loop
+		// reads through to that. Without the declaration the loop fell
+		// through to the context instead.
+		{"loop inside the body", `{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}`, "[]"},
+		// Outside the block the context's value is untouched, and the
+		// body's assignment does not escape it.
+		{"outside is unaffected", `[{{ m }}]{% autoescape false %}{% set m = 1 %}{% endautoescape %}[{{ m }}]`, "[ctx][ctx]"},
+		// A body that never assigns the name reads the context's.
+		{"no assignment", `{% autoescape false %}[{{ m }}]{% endautoescape %}`, "[ctx]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpl, err := env.FromString(tc.src)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			got, err := tmpl.RenderString(context.Background(),
+				map[string]any{"m": "ctx"})
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+			}
+		})
+	}
+}
