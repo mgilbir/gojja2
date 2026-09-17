@@ -376,6 +376,15 @@ case("errshape/grouptuple_percent_extra", GROUP + '{{ "%s" % g }}', **USERS)
 case("errshape/grouptuple_indent", GROUP + "{{ g|indent(2) }}", **USERS)
 case("errshape/range_slice", "{{ range(3)[::2] }}|{{ range(10)[2:8:3] }}|{{ range(0,10,2)[1:4] }}")
 case("errshape/format_char", "{{ '%S' % 'a' }}")
+# The C functions jinja2 registers do not all word an argument error alike:
+# abs, len and callable say "takes exactly one argument", the operator.*
+# comparisons behind eq and lt say "expected 2 arguments, got N" and name
+# themselves _operator.eq when refusing a keyword.
+case("errshape/operator_test_arity", "{{ 1 is eq(1,2) }}")
+case("errshape/operator_test_too_few", "{{ 1 is eq }}")
+case("errshape/operator_test_alias_arity", "{{ 1 is lessthan(1,2) }}")
+case("errshape/operator_test_keyword", "{{ 1 is ge(zz=1) }}")
+case("errshape/builtin_filter_arity", "{{ [1]|length(2) }}")
 case("errshape/callable_arity", "{{ 1 is callable(2) }}")
 case("errshape/wordcount_unicode", "{{ ['héllo', 1]|wordcount }}")
 

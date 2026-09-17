@@ -54,9 +54,21 @@ func checkArity(sig signature, args *value.CallArgs) error {
 	}
 
 	// A C function takes no keyword arguments at all, and says so in one
-	// message rather than naming the offender.
-	if sig.builtin && len(args.Kwargs) > 0 {
-		return errs.New(errs.TypeError, "%s() takes no keyword arguments", sig.pyName)
+	// message rather than naming the offender -- and then reports any wrong
+	// count with a single wording of its own, too few and too many alike.
+	// Neither wording can be derived from the signature: abs says "abs()
+	// takes exactly one argument (2 given)" where operator.eq, which jinja2
+	// registers as the `eq`, `==` and `equalto` tests, says "eq expected 2
+	// arguments, got 3" and calls itself "_operator.eq" when refusing a
+	// keyword. Both are probed out of CPython; see tools/oracle/gen_arity.py.
+	if sig.builtin {
+		if len(args.Kwargs) > 0 {
+			return errs.New(errs.TypeError, "%s", sig.kwMessage)
+		}
+		if given != sig.total {
+			return errs.New(errs.TypeError, "%s", fmt.Sprintf(sig.countMessage, given))
+		}
+		return nil
 	}
 
 	for _, kw := range args.Kwargs {
@@ -102,14 +114,10 @@ func checkArity(sig signature, args *value.CallArgs) error {
 	return nil
 }
 
-// tooManyMessage is CPython's wording for a call with too many positional
-// arguments, which differs between a Python function and a C one.
+// tooManyMessage is CPython's wording for a Python function called with too
+// many positional arguments. A C function has its own, generated with the
+// signature.
 func tooManyMessage(sig signature, given int) string {
-	if sig.builtin {
-		// A C function with a fixed arity words it this way, and all
-		// three jinja2 registers -- abs, len, callable -- take one.
-		return fmt.Sprintf("%s() takes exactly one argument (%d given)", sig.pyName, given)
-	}
 	if sig.required == sig.total {
 		return fmt.Sprintf("%s() takes %d positional argument%s but %d were given",
 			sig.pyName, sig.total, plural(sig.total), given)
