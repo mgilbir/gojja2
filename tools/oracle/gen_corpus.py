@@ -877,6 +877,60 @@ case("errors/dictsort_undefined", '{{ nope|dictsort }}')
 case("filters/dictsort_order", '{{ {"b":1,"A":2}|dictsort }}|{{ {"b":1,"A":2}|dictsort(true) }}|'
      '{{ {"b":1,"a":2}|dictsort(false,"value") }}|{{ {"b":1,"a":2}|dictsort(false,"key",true) }}')
 
+# --- cases that were once loose files -----------------------------------------
+# These were added straight into testdata/corpus as .jj2 files, which this
+# script deletes: main() starts by removing the whole directory and writing it
+# from CASES, so anything not registered here does not survive `make oracle`.
+# They are the cases covering dynamic call arguments, `attribute=` resolution
+# and tests taking their argument by name.
+
+# `**` is dict(**x): what it is handed must be a mapping, its keys must be
+# strings, and a key that repeats a keyword already written is the caller's
+# error and names the callee.
+case("errshape/dyn_kwargs_names_the_filter", '{{ lst|join(**5) }}', lst=[1, 2])
+case("errshape/dyn_kwargs_names_the_test", '{{ lst is odd(**5) }}', lst=[1, 2])
+case("errshape/dyn_kwargs_names_a_builtin", '{{ lst|abs(**5) }}', lst=[1, 2])
+case("errshape/dyn_kwargs_key_not_a_string", '{{ lst|join(**{1: "-"}) }}', lst=[1, 2])
+case("errshape/dyn_kwargs_duplicate_in_a_filter", '{{ lst|join(d="-", **{"d": "+"}) }}', lst=[1, 2])
+case("errshape/dyn_kwargs_duplicate_in_a_call",
+     '{% macro mm(x) %}{% endmacro %}{{ mm(x=1, **{"x": 2}) }}', lst=[1, 2])
+
+# A `*` or `**` argument is folded with the rest when everything in it is
+# constant, and holds the fold back when it is not.
+case("fold/star_args_fold_too",
+     '{{ (false)[1:]|join(*["-"]) }}|{{ (0o17)[1:]|center(*[4]) }}|'
+     '{{ ({})[1:]|default(*[1]) }}|{{ (0o17)[1:] is eq(*[2]) }}')
+case("fold/star_arg_not_iterable", '{{ [1,2]|join(*5) }}')
+case("fold/double_star_is_dict_update",
+     '{{ [1,2]|join(**{"d": "-"}) }}|{{ [1,2]|join(**["db"]) }}|{{ [1,2]|join(d="-", **{"d": "+"}) }}')
+case("fold/dynamic_args_unfolded", '{{ lst|join(*["-"]) }}|{{ lst|join(**{"d": "+"}) }}', lst=[1, 2])
+
+# A test takes its argument by name, as a filter already could, and collides
+# with the value being tested the way the signature says.
+case("tests/argument_by_name",
+     '{{ 4 is divisibleby(num=2) }}|{{ 2 is sameas(other=2) }}|{{ "a" is in(seq="ab") }}|'
+     '{{ 4 is divisibleby(**{"num": 2}) }}|{{ lst is in(seq=[1,2]) }}', lst=[1, 2])
+case("tests/argument_by_name_collides", '{{ "a" is in(seq="ab", value="a") }}')
+
+# make_attrgetter splits `attribute=` on dots and reads a segment of digits as
+# an index, so what is not a string is refused before anything is looked up.
+case("filters/attribute_not_a_string",
+     '{{ "ab cd"|groupby(attribute=none) }}|{{ "ab cd"|max(attribute=false) }}|'
+     '{{ "ab cd"|min(attribute=false) }}|{{ "ab cd"|join(attribute=false) }}')
+case("filters/attribute_bool_has_no_element", '{{ "ab cd"|max(attribute=true) }}')
+case("filters/attribute_float_has_no_element", '{{ "ab cd"|max(attribute=2.5) }}')
+case("filters/attribute_index_is_isdigit",
+     '{{ [[1,2]]|map(attribute="-1")|list }}|{{ ["ab"]|map(attribute="\u0661")|list }}|'
+     '{{ ["ab"]|map(attribute=" 1")|list }}|{{ ["ab"]|map(attribute="1")|list }}')
+case("filters/attribute_prefers_the_item",
+     '{{ [{"items": 1}]|map(attribute="items")|list }}|{{ [{"items": 1}]|join(attribute="items") }}|'
+     '{{ [{"items": 1}, {"items": 0}]|sort(attribute="items")|list }}|'
+     '{{ [{"items": 1}]|sum(attribute="items") }}|{{ [{"items": 1}]|groupby("items")|list }}')
+# do_attr starts with getattr_static, so an unhashable name is refused by that
+# lookup and a hashable non-string by the check after it.
+case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
+case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
+
 
 def main() -> int:
     if DST.exists():
