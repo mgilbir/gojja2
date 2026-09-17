@@ -377,9 +377,18 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 // block: the characters that could close the tag or start an entity are
 // written as escapes.
 func filterToJSON(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	indent, err := intArg(args, 0, "indent", 0)
-	if err != nil {
-		return value.Undefined, err
+	// json.dumps splits "no indent" from "an indent of zero": only None
+	// gives the one-line form, while 0 -- and any negative, which clamps to
+	// 0 -- still puts every element on its own line. A default of 0 here
+	// collapsed the two, so `{{ x|tojson(0) }}` came out on one line where
+	// CPython breaks it. A negative indent means none, internally.
+	indent := -1
+	if a, ok := arg(args, 0, "indent"); ok && !a.IsNone() {
+		n, err := intArg(args, 0, "indent", 0)
+		if err != nil {
+			return value.Undefined, err
+		}
+		indent = max(n, 0)
 	}
 	var b strings.Builder
 	if err := writeJSON(s, &b, v, indent, 0, nil); err != nil {
@@ -439,7 +448,7 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent, depth int, 
 	// json.dumps separates with ", " until an indent is given, at which
 	// point the space moves onto the next line.
 	nl, pad, padEnd, comma := "", "", "", ", "
-	if indent > 0 {
+	if indent >= 0 {
 		// The indent is repeated once per level and once per element, so
 		// a template-chosen one sizes the whole document: tojson(2000000000)
 		// asked for a two-gigabyte prefix. indent*(depth+1) can also
