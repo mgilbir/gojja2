@@ -30,6 +30,15 @@ whether the receiver is a value or a pointer; slices become lists, and maps
 become dicts. Errors carry the Python exception class jinja2 would have raised,
 so `errors.Is(err, errs.UndefinedError)` works.
 
+A method is reached as Python reaches one, so `{{ user.Name }}` is the bound
+method and `{{ user.Name() }}` is what it returns -- printing the first gives
+`<bound method Name>`, as it does in jinja2. A trailing `error` result fails the
+render whatever else the method returns, including when it is the only result.
+
+A template name given to `FSLoader` is refused if any segment of it is `..`,
+rather than being cleaned into something else: a template that asks for a file
+outside its root gets "not found" and not a different file.
+
 A method that *takes* arguments is not exposed by default, because calling one
 means the template chooses what a host method is invoked with.
 `WithMethodPolicy(value.AllMethods)` opts in, for templates as trusted as the

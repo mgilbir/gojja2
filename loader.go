@@ -69,23 +69,43 @@ func (l FSLoader) Load(name string) (string, error) {
 // safeJoin resolves a template name under root, refusing any name that would
 // escape it.
 //
-// Template names reach here from `{% include %}` and friends, where the name
-// may be an arbitrary expression and therefore attacker-influenced. Rejecting
-// traversal at the loader is the only place it can be done once.
+// This is jinja2's split_template_path: the name is cut on "/", a segment of
+// ".." is refused outright, and empty and "." segments are dropped. Refusing
+// is the point. Cleaning the path instead -- which is what this did -- silently
+// answers a different question: `{% include "../secret.html" %}` resolved to
+// "secret.html" and rendered it, so a template that asked for a file it should
+// not have got a *different* file and no error. The confinement held either
+// way, which is why it went unnoticed; the honest answer to a name that climbs
+// out is that there is no such template.
+//
+// The rejection also has to happen before any cleaning, or it can never fire:
+// path.Clean on a rooted path resolves every ".." away, so a check that ran
+// afterwards was unreachable code standing where the security control appeared
+// to be.
+//
+// A backslash is treated as a separator on every platform. jinja2 only refuses
+// one where the operating system says so, which leaves `..\secret` a valid
+// single segment on Linux; here it is refused everywhere, because a loader
+// backed by a Windows filesystem would read it as a path either way.
 func safeJoin(root, name string) (string, bool) {
-	name = strings.TrimPrefix(path.Clean("/"+strings.ReplaceAll(name, "\\", "/")), "/")
-	if name == "" || name == "." {
+	var parts []string
+	for _, part := range strings.Split(strings.ReplaceAll(name, "\\", "/"), "/") {
+		switch part {
+		case "..":
+			return "", false
+		case "", ".":
+			continue
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
 		return "", false
 	}
-	for _, part := range strings.Split(name, "/") {
-		if part == ".." {
-			return "", false
-		}
-	}
+	joined := strings.Join(parts, "/")
 	if root == "" {
-		return name, true
+		return joined, true
 	}
-	return path.Join(root, name), true
+	return path.Join(root, joined), true
 }
 
 // ChoiceLoader tries each loader in turn and uses the first hit.
