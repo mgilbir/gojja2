@@ -1,0 +1,3 @@
+{}
+---
+{{ []|map('upper','x')|list }}|{{ []|map('replace')|list }}|{{ []|select('odd','x')|list }}|{{ none|map('upper','x')|list }}

@@ -729,6 +729,15 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 			"No filter named %s.", value.Repr(value.String(value.Str(name))))
 	}
 	rest := &value.CallArgs{Pos: args.Pos[1:], Kwargs: args.Kwargs}
+	// The filter |map applies is called the same way a written one is, so
+	// it is bound the same way: jinja2 reaches it through
+	// Environment.call_filter, which binds the arguments and raises before
+	// any item is walked. Without this the extras were silently dropped --
+	// `|map("upper", "x")` upper-cased everything and said nothing.
+	if err := checkInnerArity(filterSignatures, s.env.stockFilters,
+		value.Str(name), rest); err != nil {
+		return value.Undefined, err
+	}
 
 	out, err := walk(func(item value.Value) (value.Value, error) {
 		return fn(s, item, rest)
@@ -774,6 +783,11 @@ func filterSelectReject(keep, byAttribute bool) Filter {
 			}
 			testFn = fn
 			testArgs = &value.CallArgs{Pos: pos[1:], Kwargs: args.Kwargs}
+			// Bound before the walk, as the filter above is.
+			if err := checkInnerArity(testSignatures, s.env.stockTests,
+				name, testArgs); err != nil {
+				return value.Undefined, err
+			}
 		}
 
 		parts := attrParts(attribute)

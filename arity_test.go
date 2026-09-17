@@ -263,3 +263,98 @@ func TestTestArgumentsTakeTheirName(t *testing.T) {
 		}
 	}
 }
+
+// TestInnerFilterAndTestArity: |map calls a filter by name and |select, |reject
+// and the attr variants call a test by name. jinja2 reaches those through
+// Environment.call_filter and call_test, which bind the arguments exactly as a
+// written call does -- and raise before a single item is walked.
+//
+// gojja2 checked the arity of a filter the template *wrote* and not of the one
+// it asked |map to apply, so the extras were dropped in silence:
+// `|map("upper", "x")` upper-cased everything and said nothing.
+func TestInnerFilterAndTestArity(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// Too many positional arguments for the inner filter.
+		{`{{ ["a"]|map("upper","x")|list }}`,
+			"do_upper() takes 1 positional argument but 2 were given"},
+		{`{{ ["a"]|map("upper","x","y")|list }}`,
+			"do_upper() takes 1 positional argument but 3 were given"},
+		{`{{ ["a"]|map("center",4,"-")|list }}`,
+			"do_center() takes from 1 to 2 positional arguments but 3 were given"},
+		{`{{ ["a"]|map("replace","o","0",1,2)|list }}`,
+			"do_replace() takes from 4 to 5 positional arguments but 6 were given"},
+		// Too few.
+		{`{{ ["a"]|map("replace")|list }}`,
+			"do_replace() missing 2 required positional arguments: 'old' and 'new'"},
+		{`{{ ["a"]|map("replace","o")|list }}`,
+			"do_replace() missing 1 required positional argument: 'new'"},
+		// An unexpected keyword, which beats a count problem.
+		{`{{ ["a"]|map("upper", foo=1)|list }}`,
+			"do_upper() got an unexpected keyword argument 'foo'"},
+		{`{{ ["a"]|map("replace", "o", bogus=1)|list }}`,
+			"do_replace() got an unexpected keyword argument 'bogus'"},
+		// The tests behind select/reject and the attr variants.
+		{`{{ [1]|select("odd","x")|list }}`,
+			"test_odd() takes 1 positional argument but 2 were given"},
+		{`{{ [1]|reject("odd","x")|list }}`,
+			"test_odd() takes 1 positional argument but 2 were given"},
+		{`{{ [1]|select("divisibleby")|list }}`,
+			"test_divisibleby() missing 1 required positional argument: 'num'"},
+		{`{{ [1]|select("divisibleby",2,3)|list }}`,
+			"test_divisibleby() takes 2 positional arguments but 3 were given"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		_, err = tmpl.RenderString(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s:\n got %v\nwant %q", tc.src, err, tc.want)
+		}
+	}
+
+	// A correct call still works.
+	for _, tc := range []struct{ src, want string }{
+		{`{{ ["a","b"]|map("upper")|list }}`, `['A', 'B']`},
+		{`{{ ["ao"]|map("replace","o","0")|list }}`, `['a0']`},
+		{`{{ [1,2,3]|select("odd")|list }}`, `[1, 3]`},
+		{`{{ [1,2,3]|select("divisibleby",2)|list }}`, `[2]`},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.src, got, tc.want)
+		}
+	}
+	// A falsey input is never checked, because jinja2 never binds: do_map
+	// prepares the filter inside `if value:`, so an empty sequence yields an
+	// empty one whatever the arguments were. Checking eagerly would have
+	// been the tidier rule and the wrong one.
+	for _, src := range []string{
+		`{{ []|map("upper","x")|list }}`,
+		`{{ []|map("replace")|list }}`,
+		`{{ []|select("odd","x")|list }}`,
+		`{{ none|map("upper","x")|list }}`,
+	} {
+		tmpl, err := env.FromString(src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v, want it to render an empty list", src, err)
+			continue
+		}
+		if got != "[]" {
+			t.Errorf("%s = %q, want %q", src, got, "[]")
+		}
+	}
+}
