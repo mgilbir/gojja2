@@ -644,3 +644,79 @@ func TestAutoescapeAndScopeBodiesAreFrames(t *testing.T) {
 		})
 	}
 }
+
+// TestInnerFrameAliasesAnOuterReference: when a frame assigns a name, jinja2
+// asks the enclosing symbol table for a *reference* to it before settling on
+// undefined -- Symbols.store's `self.parent.find_ref(name)`. A reference is any
+// mention at that level, so a read is enough, and where the read sits does not
+// matter.
+//
+// That makes the surrounding template change what an inner frame sees:
+//
+//	{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}
+//
+// renders "[]" on its own, and "[10]" if anything at the root level also
+// mentions m -- even `{% if false %}{{ m }}{% endif %}`, which never runs.
+// gojja2 looked for a *binding* rather than a reference, so it answered "[]" in
+// both. A mention inside a nested frame is a different symbol table and does
+// not count.
+func TestInnerFrameAliasesAnOuterReference(t *testing.T) {
+	// Every inner frame kind behaves the same; a block is the exception,
+	// because its body resolves against the context and has no enclosing
+	// frame to find a reference in.
+	inner := map[string]string{
+		"autoescape": `{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}`,
+		"for":        `{% for j in [1] %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endfor %}`,
+		"filter":     `{% filter upper %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endfilter %}`,
+		"with":       `{% with %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endwith %}`,
+		"macro":      `{% macro f() %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endmacro %}{{ f() }}`,
+	}
+	for name, body := range inner {
+		for _, tc := range []struct{ what, pre, post, want string }{
+			// Nothing above mentions m, so the store starts undefined.
+			{"root is silent", "", "", "[]"},
+			// A read at the root level is a reference, wherever it
+			// sits -- the want includes the root's own output.
+			{"root reads after", "", "{{ m }}", "[10]10"},
+			{"root reads before", "{{ m }}", "", "10[10]"},
+			{"root reads in a dead branch", "{% if false %}{{ m }}{% endif %}", "", "[10]"},
+			// A read inside a nested frame is a different symbol
+			// table, so it is not a reference here.
+			{"read inside a nested frame", "{% for z in [] %}{{ m }}{% endfor %}", "", "[]"},
+			// The root owning it is the existing rule: aliased to
+			// whatever the root holds when this frame is entered.
+			{"root assigns before", "{% set m = 9 %}", "", "[9]"},
+			{"root assigns after", "", "{% set m = 9 %}", "[]"},
+		} {
+			t.Run(name+"/"+tc.what, func(t *testing.T) {
+				src := tc.pre + body + tc.post
+				tmpl, err := New().FromString(src)
+				if err != nil {
+					t.Fatalf("compile: %v", err)
+				}
+				out, err := tmpl.RenderString(context.Background(),
+					map[string]any{"m": 10})
+				if err != nil {
+					t.Fatalf("render: %v", err)
+				}
+				if out != tc.want {
+					t.Errorf("%s\n got %q\nwant %q", src, out, tc.want)
+				}
+			})
+		}
+	}
+
+	// A block body has no enclosing frame, so it never aliases.
+	tmpl, err := New().FromString(
+		`{{ m }}{% block b %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endblock %}`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	got, err := tmpl.RenderString(context.Background(), map[string]any{"m": 10})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if got != "10[]" {
+		t.Errorf("block body = %q, want %q", got, "10[]")
+	}
+}

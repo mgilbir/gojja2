@@ -560,9 +560,27 @@ case("errors/cycler_without_items", "{{ cycler() }}")
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
 # frame before the assignment sees undefined rather than the context's value.
+# When a frame assigns a name, jinja2 asks the enclosing symbol table for a
+# *reference* to it before settling on undefined. A reference is any mention at
+# that level, so a read is enough and where it sits does not matter -- which is
+# why the same inner frame answers differently depending on the rest of the
+# template. A mention inside a nested frame is a different symbol table.
+case("scope/inner_frame_with_no_outer_reference",
+     "{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}", m=10)
+case("scope/inner_frame_aliases_an_outer_read",
+     "{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}{{ m }}", m=10)
+case("scope/an_unreached_read_is_still_a_reference",
+     "{% if false %}{{ m }}{% endif %}"
+     "{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}", m=10)
+case("scope/a_read_in_a_nested_frame_is_not",
+     "{% for z in [] %}{{ m }}{% endfor %}"
+     "{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}", m=10)
+case("scope/a_block_body_never_aliases",
+     "{{ m }}{% block b %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endblock %}", m=10)
+
 # One template per case: combining them changes the answer, because a read of
 # the name at the *root* level anywhere in the template stops a nested Scope
-# from owning it. That is a separate divergence, not this one.
+# from owning it.
 case("scope/autoescape_read_before_set",
      "{% autoescape false %}[{{ m }}]{% set m = 1 %}[{{ m }}]{% endautoescape %}", m=10)
 case("scope/autoescape_owns_what_it_assigns",

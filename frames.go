@@ -42,22 +42,34 @@ import (
 // cache there would grow without bound -- the same reason the template cache
 // itself is bounded. Here it is reachable only while the template is, and holds
 // at most one entry per frame in the templates that render reaches.
-func (t *Template) frameLocalsOf(key any, body []ast.Stmt) []string {
+func (t *Template) frameLocalsOf(key any, body []ast.Stmt) frameNames {
 	if key == nil || t == nil {
 		return frameLocals(body)
 	}
 	if v, ok := t.frameLocals.Load(key); ok {
-		return v.([]string)
+		return v.(frameNames)
 	}
-	locals := frameLocals(body)
-	t.frameLocals.Store(key, locals)
-	return locals
+	names := frameLocals(body)
+	t.frameLocals.Store(key, names)
+	return names
 }
 
-func frameLocals(body []ast.Stmt) []string {
+func frameLocals(body []ast.Stmt) frameNames {
 	v := &frameVisitor{seen: map[string]bool{}}
 	v.stmts(body)
-	return v.locals
+	return frameNames{owns: v.locals, refs: v.seen}
+}
+
+// frameNames is what one frame does with names at its own level: owns are the
+// ones whose first mention is a write, refs are every name mentioned at all.
+//
+// The difference decides what a *nested* frame sees. jinja2's Symbols.store
+// asks the parent symbol table for a reference before settling on undefined --
+// so a name the enclosing frame merely reads is aliased into the inner frame,
+// while one it never mentions starts undefined there.
+type frameNames struct {
+	owns []string
+	refs map[string]bool
 }
 
 type frameVisitor struct {
@@ -282,7 +294,11 @@ func (v *frameVisitor) args(a ast.Args) {
 // the block owning the name, and a block that assigns `x` late reads nothing
 // for it early even when `x` was an argument.
 func declareFrameLocals(sc *scope, st *State, key any, body []ast.Stmt, enclosing *scope) {
-	for _, name := range st.root.frameLocalsOf(key, body) {
+	names := st.root.frameLocalsOf(key, body)
+	// Recorded so a frame nested inside this one can ask what this one
+	// mentions, which is what decides whether its own stores alias.
+	sc.refs = names.refs
+	for _, name := range names.owns {
 		if enclosing != nil {
 			if v, found := enclosing.lookupUntil(name, st.ctx); found {
 				// Aliased at entry, as jinja2 does it, so a
@@ -291,7 +307,36 @@ func declareFrameLocals(sc *scope, st *State, key any, body []ast.Stmt, enclosin
 				sc.set(name, v)
 				continue
 			}
+			// Nothing above binds it yet -- but jinja2 asks the
+			// parent symbol table for a *reference*, not a value.
+			// An enclosing frame that merely reads the name has one,
+			// resolving from the context, and the store aliases
+			// that. So a root-level `{{ m }}` anywhere in the
+			// template, even inside `{% if false %}`, is enough to
+			// make this frame's m the context's rather than
+			// undefined -- while a read inside a nested frame is
+			// not, because that is a different symbol table.
+			if enclosingReferences(enclosing, st.ctx, name) {
+				if v, found := enclosing.lookup(name); found {
+					sc.set(name, v)
+					continue
+				}
+			}
 		}
 		sc.set(name, st.Undefined(value.NewUndefined(name)))
 	}
+}
+
+// enclosingReferences reports whether any frame from sc up to and including
+// stop mentions name at its own level.
+func enclosingReferences(sc *scope, stop *scope, name string) bool {
+	for cur := sc; cur != nil; cur = cur.parent {
+		if cur.refs[name] {
+			return true
+		}
+		if cur == stop {
+			break
+		}
+	}
+	return false
 }
