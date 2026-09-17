@@ -1,0 +1,11 @@
+{
+  "case": "fold/double_star_is_dict_update.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "1-2|1b2|1+2"
+}
