@@ -560,6 +560,15 @@ case("errors/cycler_without_items", "{{ cycler() }}")
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
 # frame before the assignment sees undefined rather than the context's value.
+# Python's round preserves the numeric type, so round(3, -1) is the int 0. The
+# rounding is ties-to-even on the scaled value, and exact past 2**53.
+case("filters/round_negative_precision",
+     "{{ (5)|round(-1) }}|{{ (15)|round(-1) }}|{{ (25)|round(-1) }}|{{ (35)|round(-1) }}|"
+     "{{ (-15)|round(-1) }}|{{ (99)|round(-1) }}|{{ (50)|round(-1) }}|{{ (150)|round(-2) }}")
+case("filters/round_keeps_the_type",
+     "{{ (3)|round(-1) }}|{{ (-4)|round(-1) }}|{{ (3)|round(0) }}|{{ (2.5)|round(-1) }}|"
+     "{{ (10000000000000000000000)|round(-1) }}|{{ (10000000000000000000000)|round(-25) }}")
+
 # |int with a base is Python's int(str, base): base 0 detects the prefix in
 # either case, a matching prefix is allowed but not required, a sign does not
 # hide it, and underscores separate digits -- including after a prefix.
