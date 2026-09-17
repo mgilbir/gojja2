@@ -26,6 +26,12 @@ type scope struct {
 	// converted on first lookup instead, and memoised into vars.
 	raw    map[string]any
 	expose value.MethodPolicy
+
+	// refs are the names this frame mentions at its own level, recorded by
+	// declareFrameLocals. A frame nested inside this one consults them to
+	// decide whether its own stores alias an outer value or start
+	// undefined; see declareFrameLocals.
+	refs map[string]bool
 }
 
 // newScope leaves vars nil. A scope is created for every loop iteration, every
