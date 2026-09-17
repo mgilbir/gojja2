@@ -28,6 +28,13 @@ func FormatPercent(format, args Value, budget Budget) (Value, error) {
 	// so a width applies to the escaped text.
 	escaping := format.safe
 
+	// A tuple subclass *is* the argument tuple: the check CPython makes is
+	// PyTuple_Check, which a subclass passes, so `"%s|%s" % g` fills two
+	// placeholders from the pair rather than one from the object. It is
+	// unwrapped before the mapping test below for the same reason CPython
+	// excludes tuples there -- a tuple never supplies names.
+	args = AsTupleIfPossible(args)
+
 	// CPython decides between "a mapping" and "one positional argument" by
 	// asking whether the right operand supports subscripting, excluding
 	// tuple and str. A list therefore counts as a mapping -- which is why

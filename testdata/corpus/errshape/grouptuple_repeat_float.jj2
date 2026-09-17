@@ -1,0 +1,21 @@
+{
+  "users": [
+    {
+      "name": "ana",
+      "age": 30,
+      "city": "Lisbon"
+    },
+    {
+      "name": "bo",
+      "age": 25,
+      "city": "Porto"
+    },
+    {
+      "name": "cy",
+      "age": 30,
+      "city": "Lisbon"
+    }
+  ]
+}
+---
+{% set g = users|groupby('city')|first %}{{ 2.0 * g }}

@@ -39,6 +39,18 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 		table = listMethods
 	case value.KindTuple:
 		table = tupleMethods
+	case value.KindObject:
+		// A tuple subclass inherits tuple's methods, so `g.index(x)`
+		// works on a |groupby pair. The receiver is unwrapped with it:
+		// the methods read a sequence, and the object itself is not one
+		// they know. An attribute the object defines has already won by
+		// the time this is reached, which is the Python order -- the
+		// subclass's own names shadow the base's.
+		if tv, ok := recv.Interface().(value.TupleView); ok {
+			table, recv = tupleMethods, tv.AsTuple()
+			break
+		}
+		return value.Undefined, false
 	default:
 		return value.Undefined, false
 	}

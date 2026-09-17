@@ -60,6 +60,20 @@ func equalDepth(a, b Value, depth int) (bool, error) {
 		ord, ok := compareNumbers(a, b)
 		return ok && ord == 0, nil
 	}
+	// A tuple subclass equals the tuple it stands for, in either position:
+	// `p == (1, 2)` and `(1, 2) == p` both go through tuple.__eq__. This
+	// has to come before the kind check below, which would otherwise call
+	// an object and a tuple different things and stop.
+	//
+	// An object that states its own equality keeps it. Equaler is an
+	// explicit opinion; standing for a tuple only supplies the default a
+	// subclass inherits.
+	if tupleSubclass(a) || tupleSubclass(b) {
+		if equal, known := statedEqual(a, b); known {
+			return equal, nil
+		}
+		a, b = AsTupleIfPossible(a), AsTupleIfPossible(b)
+	}
 	if a.kind != b.kind {
 		// str and bytes never compare equal, and neither do list and
 		// tuple -- Python keeps those distinct.
@@ -112,15 +126,8 @@ func equalDepth(a, b Value, depth int) (bool, error) {
 		}
 		return true, nil
 	case KindObject:
-		if e, ok := a.obj.(Equaler); ok {
-			if equal, known := e.Equals(b); known {
-				return equal, nil
-			}
-		}
-		if e, ok := b.obj.(Equaler); ok {
-			if equal, known := e.Equals(a); known {
-				return equal, nil
-			}
+		if equal, known := statedEqual(a, b); known {
+			return equal, nil
 		}
 		return a.obj == b.obj, nil
 	case KindFunc:
@@ -182,7 +189,25 @@ func compare(op string, a, b Value, depth int) (int, bool, error) {
 	// over |groupby results compare pair by pair. The originals are kept
 	// for the error, which names the class the template actually has.
 	origA, origB := a, b
-	a, b = asTupleIfPossible(a), asTupleIfPossible(b)
+	a, b = AsTupleIfPossible(a), AsTupleIfPossible(b)
+
+	// When the right operand's type derives from the left's, Python runs
+	// the reflected comparison first: `(1,) < g` is `g.__gt__((1,))`, not
+	// `tuple.__lt__((1,), g)`. The ordering is the same either way, but the
+	// error is not -- it names the swapped operator and compares the
+	// elements in the other order, which is what a template author sees
+	// when a group tuple meets a literal one.
+	//
+	// Both sides being tuple subclasses is left alone: CPython reflects
+	// only when one type strictly derives from the other, and nothing here
+	// can tell whether two host objects are related at all.
+	//
+	// The recursive call cannot swap again -- both operands are plain
+	// tuples by then -- so this terminates without spending depth.
+	if tupleSubclass(origB) && !tupleSubclass(origA) && a.kind == KindTuple && b.kind == KindTuple {
+		ord, ok, err := compare(swappedOp(op), b, a, depth)
+		return -ord, ok, err
+	}
 
 	if a.IsNumber() && b.IsNumber() {
 		ord, ok := compareNumbers(a, b)
@@ -203,15 +228,69 @@ func compare(op string, a, b Value, depth int) (int, bool, error) {
 		op, origA.TypeName(), origB.TypeName())
 }
 
-// asTupleIfPossible unwraps an Object that stands for a tuple.
-func asTupleIfPossible(v Value) Value {
-	if v.kind != KindObject {
-		return v
+// statedEqual asks either operand whether it decides equality for itself,
+// which is what an Object implementing Equaler is for. known is false when
+// neither has an opinion and the caller's own rule applies.
+func statedEqual(a, b Value) (equal, known bool) {
+	if a.kind == KindObject {
+		if e, ok := a.obj.(Equaler); ok {
+			if equal, known := e.Equals(b); known {
+				return equal, known
+			}
+		}
 	}
-	if tv, ok := v.obj.(TupleView); ok {
+	if b.kind == KindObject {
+		if e, ok := b.obj.(Equaler); ok {
+			if equal, known := e.Equals(a); known {
+				return equal, known
+			}
+		}
+	}
+	return false, false
+}
+
+// AsTupleIfPossible returns the tuple v stands for when v is a TupleView, and
+// v unchanged otherwise.
+//
+// It marks the places where Python's *tuple type* decides the behaviour, and
+// so sees a subclass as the tuple it is: concatenation, repetition, slicing,
+// the tuple methods, %-formatting's argument tuple and ordering. Everything
+// else -- the type name in an error, repr, attribute lookup -- belongs to the
+// subclass and must not be unwrapped.
+func AsTupleIfPossible(v Value) Value {
+	if tv, ok := tupleViewOf(v); ok {
 		return tv.AsTuple()
 	}
 	return v
+}
+
+// tupleSubclass reports whether v is an Object standing for a tuple subclass.
+func tupleSubclass(v Value) bool {
+	_, ok := tupleViewOf(v)
+	return ok
+}
+
+func tupleViewOf(v Value) (TupleView, bool) {
+	if v.kind != KindObject {
+		return nil, false
+	}
+	tv, ok := v.obj.(TupleView)
+	return tv, ok
+}
+
+// swappedOp is the comparison Python runs on the reflected operands.
+func swappedOp(op string) string {
+	switch op {
+	case "<":
+		return ">"
+	case "<=":
+		return ">="
+	case ">":
+		return "<"
+	case ">=":
+		return "<="
+	}
+	return op
 }
 
 // compareSeq is Python's lexicographic sequence ordering: the first differing
