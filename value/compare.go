@@ -11,7 +11,7 @@ import (
 	"github.com/mgilbir/gojja2/errs"
 )
 
-// maxCompareDepth bounds how deeply == descends.
+// maxCompareDepth bounds how deeply == and the ordering comparisons descend.
 //
 // A value graph can now contain a cycle, because a cyclic Go context converts
 // into a cyclic Value rather than expanding forever. Two *distinct* cyclic
@@ -135,7 +135,7 @@ func equalDepth(a, b Value, depth int) (bool, error) {
 // every comparison involving it is false, including NaN <= NaN, which no
 // -1/0/1 result can express.
 func Ordered(op string, a, b Value) (bool, error) {
-	ord, ok, err := compare(op, a, b)
+	ord, ok, err := compare(op, a, b, 0)
 	if err != nil {
 		return false, err
 	}
@@ -157,7 +157,18 @@ func Ordered(op string, a, b Value) (bool, error) {
 
 // compare returns the ordering of a and b. The second result is false when the
 // two are unordered because of NaN; op is carried only for the error message.
-func compare(op string, a, b Value) (int, bool, error) {
+//
+// depth bounds the descent for the same reason equalDepth is bounded, and it
+// is not optional: two *distinct* cyclic structures have no fixed point, so
+// `a < b` over a pair that point at each other recurses forever. Equality was
+// guarded and ordering was not, which meant `{{ a == b }}` raised CPython's
+// RecursionError while `{{ a < b }}` -- and every sort, min and max, which all
+// come through here -- took the process down with a Go stack overflow that
+// recover cannot catch.
+func compare(op string, a, b Value, depth int) (int, bool, error) {
+	if depth > maxCompareDepth {
+		return 0, false, errs.New(errs.RecursionError, "%s", RecursionMessageComparison)
+	}
 	// Undefined has no ordering: jinja2's Undefined raises on <, <=, > and
 	// >= even though == is answerable. Report the undefined's own error
 	// rather than a type mismatch, which is what a template author needs.
@@ -184,7 +195,7 @@ func compare(op string, a, b Value) (int, bool, error) {
 		case KindList, KindTuple:
 			as, _ := a.Seq()
 			bs, _ := b.Seq()
-			return compareSeq(op, as.items, bs.items)
+			return compareSeq(op, as.items, bs.items, depth)
 		}
 	}
 	return 0, false, errs.New(errs.TypeError,
@@ -205,13 +216,13 @@ func asTupleIfPossible(v Value) Value {
 
 // compareSeq is Python's lexicographic sequence ordering: the first differing
 // element decides, and if one runs out first the shorter sequence is smaller.
-func compareSeq(op string, a, b []Value) (int, bool, error) {
+func compareSeq(op string, a, b []Value, depth int) (int, bool, error) {
 	n := min(len(a), len(b))
 	for i := range n {
 		if Equal(a[i], b[i]) {
 			continue
 		}
-		ord, ok, err := compare(op, a[i], b[i])
+		ord, ok, err := compare(op, a[i], b[i], depth+1)
 		if err != nil {
 			return 0, false, err
 		}
