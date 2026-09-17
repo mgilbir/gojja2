@@ -185,3 +185,39 @@ func TestWithAutoescapeAppliesToStringTemplates(t *testing.T) {
 		t.Errorf("WithAutoescape(false) should not escape, got %q", got)
 	}
 }
+
+// TestSelectAutoescapeEmptyExtension pins what an extension that is nothing
+// but dots means.
+//
+// jinja2 builds each pattern as "." + the extension with its dots stripped, so
+// an empty one becomes ".", which selects a name ending in a dot. Dropping it
+// instead made SelectAutoescape("") escape nothing at all -- the wrong
+// direction for the one setting whose failure mode is cross-site scripting,
+// and the direction this package treats as a bug everywhere else.
+func TestSelectAutoescapeEmptyExtension(t *testing.T) {
+	for _, ext := range []string{"", ".", "..."} {
+		fn := SelectAutoescape(ext)
+		if !fn("page.", false) {
+			t.Errorf("SelectAutoescape(%q) must select a name ending in a dot", ext)
+		}
+		if fn("page.html", false) {
+			t.Errorf("SelectAutoescape(%q) must not select page.html", ext)
+		}
+		if fn("page", false) {
+			t.Errorf("SelectAutoescape(%q) must not select an extensionless name", ext)
+		}
+		// A template from a string still escapes: it has no name to
+		// decide by, and default_for_string is on.
+		if !fn("", true) {
+			t.Errorf("SelectAutoescape(%q) must escape a string template", ext)
+		}
+	}
+
+	// An explicit list that includes an empty entry keeps the others.
+	fn := SelectAutoescapeWith(SelectAutoescapeConfig{Enabled: []string{"", "html"}})
+	for name, want := range map[string]bool{"page.": true, "page.html": true, "page.txt": false} {
+		if got := fn(name, false); got != want {
+			t.Errorf(`SelectAutoescapeWith({"", "html"})(%q) = %v, want %v`, name, got, want)
+		}
+	}
+}
