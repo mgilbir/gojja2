@@ -560,6 +560,13 @@ case("errors/cycler_without_items", "{{ cycler() }}")
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
 # frame before the assignment sees undefined rather than the context's value.
+# Wherever CPython uses an argument as an integer it goes through __index__,
+# whose complaint names the type that was passed.
+case("errshape/integer_argument_index_message",
+     "{{ 'a'|center('x') }}")
+case("errshape/integer_argument_names_the_type", "{{ 'a'|center([1]) }}")
+case("errshape/integer_argument_on_a_method", "{{ 'a'.zfill('x') }}")
+
 # |map calls a filter by name and select/reject call a test by name; jinja2
 # reaches both through call_filter/call_test, which bind the arguments exactly
 # as a written call does. A falsey input is never checked, because do_map
