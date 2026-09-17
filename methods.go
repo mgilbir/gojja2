@@ -749,7 +749,7 @@ func indexMethod(search func(string, string) int, name string) func(*State, valu
 // Markup, which is markupsafe's whole point: `("a{}"|safe).format("<x>")`
 // renders the escaped "<x>" rather than raw markup, so marking a *template*
 // safe does not mark its arguments safe.
-func methodFormat(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodFormat(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	var b strings.Builder
 	s := r.AsString()
 	safe := r.IsSafe()
@@ -763,21 +763,32 @@ func methodFormat(_ *State, r value.Value, args *value.CallArgs) (value.Value, e
 			b.WriteByte('}')
 			i += 2
 		case s[i] == '{':
-			end := strings.IndexByte(s[i:], '}')
-			if end < 0 {
-				return value.Undefined, errs.New(errs.ValueError,
-					"Single '{' encountered in format string")
+			field, conv, spec, next, err := splitReplacement(s, i)
+			if err != nil {
+				return value.Undefined, err
 			}
-			field := s[i+1 : i+end]
-			i += end + 1
+			i = next
 			v, err := resolveFormatField(field, args, &auto)
 			if err != nil {
 				return value.Undefined, err
 			}
+			// A spec may itself hold replacement fields -- `{:{w}.{p}f}`
+			// -- which are resolved against the same arguments before
+			// the spec is read.
+			if strings.IndexByte(spec, '{') >= 0 {
+				spec, err = expandSpec(spec, args, &auto)
+				if err != nil {
+					return value.Undefined, err
+				}
+			}
+			text, err := convertAndFormat(st, v, conv, spec)
+			if err != nil {
+				return value.Undefined, err
+			}
 			if safe && !v.IsSafe() {
-				b.WriteString(escapeHTML(value.Str(v)))
+				b.WriteString(escapeHTML(text))
 			} else {
-				b.WriteString(value.Str(v))
+				b.WriteString(text)
 			}
 		case s[i] == '}':
 			return value.Undefined, errs.New(errs.ValueError,
@@ -791,6 +802,120 @@ func methodFormat(_ *State, r value.Value, args *value.CallArgs) (value.Value, e
 		return value.Safe(b.String()), nil
 	}
 	return value.String(b.String()), nil
+}
+
+// splitReplacement reads one `{...}` field, returning its name, its conversion
+// and its format spec.
+//
+// It cannot simply look for the next '}': a spec may hold replacement fields of
+// its own, so `{:{w}}` ends at the second one. Nesting is one level deep in
+// Python, which is what the depth counter here allows.
+func splitReplacement(s string, start int) (field, conv, spec string, next int, err error) {
+	depth, i, nested := 0, start, false
+	for ; i < len(s); i++ {
+		if s[i] == '{' {
+			depth++
+			if depth > 1 {
+				nested = true
+			}
+			continue
+		}
+		if s[i] == '}' {
+			depth--
+			if depth == 0 {
+				break
+			}
+		}
+	}
+	if depth != 0 {
+		// Three different complaints, depending on how far it got: a
+		// lone brace, a field that named something and never closed,
+		// and a spec whose own nested field never closed.
+		switch {
+		case nested:
+			return "", "", "", 0, errs.New(errs.ValueError,
+				"unmatched '{' in format spec")
+		case i > start+1:
+			return "", "", "", 0, errs.New(errs.ValueError,
+				"expected '}' before end of string")
+		default:
+			return "", "", "", 0, errs.New(errs.ValueError,
+				"Single '{' encountered in format string")
+		}
+	}
+	body := s[start+1 : i]
+	next = i + 1
+
+	// The spec starts at the first ':' that is not inside the [] of a field
+	// name -- `{a[1:2]}` indexes, it does not format.
+	bracket := 0
+	for j := 0; j < len(body); j++ {
+		switch body[j] {
+		case '[':
+			bracket++
+		case ']':
+			bracket--
+		case ':':
+			if bracket == 0 {
+				field, spec = body[:j], body[j+1:]
+				goto split
+			}
+		}
+	}
+	field = body
+split:
+	// The conversion sits between the name and the spec, and only there.
+	if k := strings.IndexByte(field, '!'); k >= 0 {
+		field, conv = field[:k], field[k+1:]
+		if conv == "" {
+			return "", "", "", 0, errs.New(errs.ValueError,
+				"unmatched '{' in format spec")
+		}
+	}
+	return field, conv, spec, next, nil
+}
+
+// expandSpec resolves the replacement fields inside a format spec, so the width
+// and precision in `{:{w}.{p}f}` can come from the arguments.
+func expandSpec(spec string, args *value.CallArgs, auto *int) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(spec); {
+		if spec[i] != '{' {
+			b.WriteByte(spec[i])
+			i++
+			continue
+		}
+		end := strings.IndexByte(spec[i:], '}')
+		if end < 0 {
+			return "", errs.New(errs.ValueError, "unmatched '{' in format spec")
+		}
+		v, err := resolveFormatField(spec[i+1:i+end], args, auto)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(value.Str(v))
+		i += end + 1
+	}
+	return b.String(), nil
+}
+
+// convertAndFormat applies `!r`, `!s` or `!a` and then the format spec, in that
+// order -- the conversion replaces the value with its text, and the spec lays
+// that text out.
+func convertAndFormat(st *State, v value.Value, conv, spec string) (string, error) {
+	switch conv {
+	case "":
+	case "s":
+		v = value.String(value.Str(v))
+	case "r":
+		v = value.String(value.Repr(v))
+	case "a":
+		v = value.String(value.Ascii(v))
+	default:
+		return "", errs.New(errs.ValueError,
+			"Unknown conversion specifier %s", conv)
+	}
+	return value.FormatValue(v, spec, st)
 }
 
 // methodFormatMap is str.format_map: the same substitution, with the fields
@@ -943,6 +1068,13 @@ func splitFieldName(field string) (string, []fieldAccessor) {
 func resolveFieldBase(name string, args *value.CallArgs, auto *int) (value.Value, error) {
 	switch {
 	case name == "":
+		// One format string counts its own fields or names them, never
+		// both: `"{0} {}"` is refused rather than guessing which the
+		// author meant. auto is negative once a manual field was seen.
+		if *auto < 0 {
+			return value.Undefined, errs.New(errs.ValueError,
+				"cannot switch from manual field specification to automatic field numbering")
+		}
 		v, ok := args.Arg(*auto)
 		*auto++
 		if !ok {
@@ -951,6 +1083,11 @@ func resolveFieldBase(name string, args *value.CallArgs, auto *int) (value.Value
 		}
 		return v, nil
 	case isAllDigits(name):
+		if *auto > 0 {
+			return value.Undefined, errs.New(errs.ValueError,
+				"cannot switch from automatic field numbering to manual field specification")
+		}
+		*auto = -1
 		i := 0
 		for _, c := range name {
 			i = i*10 + int(c-'0')

@@ -536,6 +536,39 @@ case("filters/urlencode", "{{ 'a b/c?d'|urlencode }}|{{ {'a':'1 2'}|urlencode }}
 # bytes.__repr__ escapes one byte at a time and has no \u or \U form, so a
 # character outside ASCII is one escape per UTF-8 byte -- not the single escape
 # the str repr writes for the rune those bytes decode to.
+# str.format's replacement field is a name, then an optional !conversion, then
+# an optional :format_spec -- a different mini-language from the one `%` uses.
+case("methods/format_conversions",
+     "{{ '{!r}'.format('ab') }}|{{ '{!s}'.format('ab') }}|{{ '{!a}'.format('\u00e9') }}|"
+     "{{ '[{!r:>8}]'.format('ab') }}|{{ '{!r}'.format(none) }}")
+case("methods/format_spec_strings",
+     "[{{ '{:10}'.format('ab') }}]|[{{ '{:>10}'.format('ab') }}]|[{{ '{:^10}'.format('ab') }}]|"
+     "[{{ '{:*^10}'.format('ab') }}]|[{{ '{:.3}'.format('abcdef') }}]|[{{ '{:>10.3}'.format('abcdef') }}]")
+case("methods/format_spec_integers",
+     "[{{ '{:5d}'.format(42) }}]|[{{ '{:05d}'.format(-42) }}]|[{{ '{:+d}'.format(42) }}]|"
+     "[{{ '{:,}'.format(1234567) }}]|[{{ '{:_}'.format(1234567) }}]|[{{ '{:#x}'.format(255) }}]|"
+     "[{{ '{:#06x}'.format(255) }}]|[{{ '{:b}'.format(10) }}]|[{{ '{:c}'.format(65) }}]")
+case("methods/format_spec_floats",
+     "[{{ '{:f}'.format(1.5) }}]|[{{ '{:.0f}'.format(1.5) }}]|[{{ '{:e}'.format(1234.5) }}]|"
+     "[{{ '{:.3g}'.format(1234.5) }}]|[{{ '{:.1%}'.format(0.25) }}]|[{{ '{:08.3f}'.format(-1.5) }}]|"
+     "[{{ '{:,.2f}'.format(1234567.891) }}]|[{{ '{:10}'.format(2.5) }}]")
+# A bool has no __format__ of its own, so any spec makes it the integer it is.
+case("methods/format_spec_bool",
+     "{{ '{}'.format(true) }}|{{ '{:>8}'.format(true) }}|{{ '{:d}'.format(true) }}")
+# The width and precision can themselves be replacement fields.
+case("methods/format_nested_fields",
+     "[{{ '{:{}}'.format(3, 6) }}]|[{{ '{0:{1}.{2}f}'.format(2.5, 9, 3) }}]|"
+     "[{{ '{v:>{w}}'.format(v='ab', w=6) }}]|[{{ '{0[1]:03d}'.format([7, 8]) }}]")
+# Only the empty spec reaches object.__format__, which is why `{}` renders a
+# list happily and `{:>8}` on one does not.
+case("errors/format_spec_on_a_list", "{{ '{:d}'.format([1]) }}")
+case("errors/format_unknown_conversion", "{{ '{!z}'.format(1) }}")
+case("errors/format_unknown_code", "{{ '{:*}'.format(1) }}")
+case("errors/format_invalid_specifier", "{{ '{:qq}'.format(1) }}")
+# One format string counts its fields or names them, never both.
+case("errors/format_mixed_numbering", "{{ '{} {0}'.format(1) }}")
+case("errors/format_unterminated_field", "{{ '{0'.format(1) }}")
+
 # Python has three numeric predicates and they are three different sets: only
 # isdecimal is a general category (Nd). isdigit adds Numeric_Type=Digit, and
 # isnumeric adds everything carrying a numeric value, CJK ideographs included.
