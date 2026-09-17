@@ -1515,15 +1515,19 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		return v, nil
 	case v.Kind() == value.KindFloat:
 		f := v.AsFloat()
-		if math.IsNaN(f) || math.IsInf(f, 0) {
+		if math.IsNaN(f) {
+			// int(nan) is a ValueError, which do_int catches
+			// twice over and answers with the default.
 			return def, nil
 		}
-		t := math.Trunc(f)
-		if n, ok := value.FloatToInt64(t); ok {
-			return value.Int(n), nil
+		if math.IsInf(f, 0) {
+			// int(inf) is an OverflowError, and do_int's first
+			// attempt catches only TypeError and ValueError -- so
+			// this one is the filter's answer rather than a reason
+			// to fall back on the default.
+			return value.Undefined, overflowToInt(f)
 		}
-		b, _ := big.NewFloat(t).Int(nil)
-		return value.BigInt(b), nil
+		return intFromFloat(f), nil
 	case v.IsString():
 		text := strings.TrimSpace(v.AsString())
 		if base != 10 {
@@ -1541,12 +1545,39 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 				return value.BigInt(n), nil
 			}
 		}
-		// jinja2 accepts "3.5" here by falling back to float then int.
-		if f, err := strconv.ParseFloat(text, 64); err == nil {
-			return value.Int(int64(math.Trunc(f))), nil
+		// jinja2 accepts "3.5" here by falling back to float then int,
+		// and int() of a float is exact however large it is -- which a
+		// raw int64 conversion is not: "9.223372036854776e+18"|int
+		// came out as the most negative int64 rather than 2**63.
+		if f, ok := value.ParseFloat(text); ok {
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				// The second attempt is int(float(value)), and
+				// that one *does* catch OverflowError -- so
+				// "inf"|int is the default and not an error,
+				// where a float inf would have raised.
+				return def, nil
+			}
+			return intFromFloat(f), nil
 		}
 	}
 	return def, nil
+}
+
+// overflowToInt is what int() says about an infinity.
+func overflowToInt(float64) error {
+	return errs.New(errs.OverflowError, "cannot convert float infinity to integer")
+}
+
+// intFromFloat is Python's int(float): it truncates toward zero, and it is
+// exact at any size, so a value past int64 becomes a big integer instead of
+// wrapping round to a negative one.
+func intFromFloat(f float64) value.Value {
+	t := math.Trunc(f)
+	if n, ok := value.FloatToInt64(t); ok {
+		return value.Int(n)
+	}
+	b, _ := big.NewFloat(t).Int(nil)
+	return value.BigInt(b)
 }
 
 // validIntBase reports whether Python's int() would accept this base.
@@ -1561,7 +1592,7 @@ func filterFloat(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 		return value.Float(f), nil
 	}
 	if v.IsString() {
-		if f, err := strconv.ParseFloat(strings.TrimSpace(v.AsString()), 64); err == nil {
+		if f, ok := value.ParseFloat(strings.TrimSpace(v.AsString())); ok {
 			return value.Float(f), nil
 		}
 	}
@@ -1713,8 +1744,8 @@ func filterFilesizeformat(_ *State, v value.Value, args *value.CallArgs) (value.
 				"float() argument must be a string or a real number, not '%s'",
 				v.TypeName())
 		}
-		f, convErr := strconv.ParseFloat(strings.TrimSpace(v.AsString()), 64)
-		if convErr != nil {
+		f, ok := value.ParseFloat(strings.TrimSpace(v.AsString()))
+		if !ok {
 			return value.Undefined, errs.New(errs.ValueError,
 				"could not convert string to float: %s", value.Repr(v))
 		}

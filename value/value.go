@@ -11,8 +11,10 @@
 package value
 
 import (
+	"errors"
 	"math"
 	"math/big"
+	"strconv"
 )
 
 // Kind is the Python type of a Value.
@@ -128,6 +130,18 @@ func BigInt(i *big.Int) Value {
 // value whose int64 conversion overflows -- which is how
 // `{{ 9223372036854775808|round(0, "ceil")|int }}` came out negative.
 const maxInt64AsFloat = 9223372036854775808.0
+
+// ParseFloat reads Python's float(), which has no range limit to report: a
+// literal too large for a float64 is inf and one too small is zero, and both
+// are answers rather than failures. strconv returns exactly those values
+// alongside ErrRange, so the value is kept and the error is not.
+func ParseFloat(text string) (float64, bool) {
+	f, err := strconv.ParseFloat(text, 64)
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
+		return 0, false
+	}
+	return f, true
+}
 
 // FloatToInt64 converts a float to an int64, reporting whether it fits.
 func FloatToInt64(f float64) (int64, bool) {
