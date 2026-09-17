@@ -1,0 +1,3 @@
+{}
+---
+{% set ns = namespace(n=0) %}{% for i in [1,2,3] if ns.n == 0 %}{% set ns.n = 1 %}{{ i }}{% endfor %}

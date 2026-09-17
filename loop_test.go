@@ -139,3 +139,46 @@ func TestURLEncodeRendersAsItWalks(t *testing.T) {
 		t.Errorf("= %q\n want %q", got, want)
 	}
 }
+
+// TestLoopFilterRunsAsItWalks pins when a loop's `if` runs.
+//
+// jinja2 compiles it into a generator the LoopContext consumes an item at a
+// time, so the test runs between the body's passes and sees what the body did.
+// Running every test before the first pass is the same answer for a pure test
+// and a different one for a test that reads what the body writes -- which is
+// how "take the first match" is spelled with a namespace.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestLoopFilterRunsAsItWalks(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// The body sets the flag the filter reads, so only the first
+		// item survives.
+		{`{% set ns = namespace(n=0) %}{% for i in [1,2,3] if ns.n == 0 %}{% set ns.n = 1 %}{{ i }}{% endfor %}`, "1"},
+		// loop.changed has state too, and a recursive call sees where
+		// the outer walk had got to.
+		{`{% for a in [1,2] %}{% for i in [7,8] if loop.changed(i) recursive %}{{ loop([i]) }}x{% endfor %}{% endfor %}`, "xxxx"},
+		// The counts still count only what survives, which means
+		// asking for one runs the rest of the filter.
+		{`{% for i in [1,2,3] if i > 1 %}{{ loop.length }}{{ loop.revindex }}{{ loop.last }}{% endfor %}`,
+			"22False21True"},
+		// And the else branch still runs when nothing did.
+		{`{% for i in [1,2,3] if false %}x{% else %}none{% endfor %}`, "none"},
+	} {
+		got, err := renderVars(t, env, tc.src, nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+
+	// A filter that fails stops the loop where it failed, rather than
+	// before it started.
+	_, err := renderVars(t, env, `{% for i in [1, 'a'] if i > 0 %}x{% endfor %}`, nil)
+	if err == nil {
+		t.Error("a failing filter did not stop the loop")
+	}
+}
