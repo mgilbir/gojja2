@@ -536,6 +536,23 @@ case("filters/urlencode", "{{ 'a b/c?d'|urlencode }}|{{ {'a':'1 2'}|urlencode }}
 # bytes.__repr__ escapes one byte at a time and has no \u or \U form, so a
 # character outside ASCII is one escape per UTF-8 byte -- not the single escape
 # the str repr writes for the rune those bytes decode to.
+# str.encode honours its codec and its error handler. The three codecs here are
+# the ones gojja2 implements; docs/divergences.md has why the rest are refused.
+case("methods/encode_codecs",
+     "{{ '\u00e9'.encode() }}|{{ '\u00e9'.encode('utf-8') }}|{{ '\u00e9'.encode('latin-1') }}|"
+     "{{ '\u00e9'.encode('latin1') }}|{{ '\u00e9'.encode('iso-8859-1') }}|{{ 'abc'.encode('ascii') }}")
+case("methods/encode_error_handlers",
+     "{{ '\u00e9'.encode('ascii', 'ignore') }}|{{ '\u00e9'.encode('ascii', 'replace') }}|"
+     "{{ '\u00e9'.encode('ascii', 'xmlcharrefreplace') }}|{{ '\u00e9'.encode('ascii', 'backslashreplace') }}|"
+     "{{ '\u20ac'.encode('ascii', 'xmlcharrefreplace') }}|{{ '\u20ac'.encode('latin-1', 'ignore') }}")
+case("methods/decode_round_trip",
+     "{{ '\u00e9'.encode().decode() }}|{{ '\u00e9'.encode('latin-1').decode('latin-1') }}|"
+     "{{ 'abc'.encode().decode('ascii') }}|{{ '\u00e9'.encode().decode('latin-1') }}")
+# The position counts characters, not bytes.
+case("errors/encode_ascii_position", "{{ 'a\u00e9b'.encode('ascii') }}")
+case("errors/encode_latin1_range", "{{ '\u20ac'.encode('latin-1') }}")
+case("errors/decode_ascii_range", "{{ '\u00e9'.encode().decode('ascii') }}")
+
 # CPython picks between three recursion wordings by where its own stack ran
 # out, which for most constructs is not a property of the template: the same
 # macro recursion reports two different messages one frame apart. Only these

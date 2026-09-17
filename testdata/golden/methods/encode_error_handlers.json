@@ -1,0 +1,11 @@
+{
+  "case": "methods/encode_error_handlers.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "b''|b'?'|b'&#233;'|b'\\\\xe9'|b'&#8364;'|b''"
+}

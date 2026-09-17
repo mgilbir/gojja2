@@ -33,6 +33,8 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 	switch recv.Kind() {
 	case value.KindString:
 		table = stringMethods
+	case value.KindBytes:
+		table = bytesMethods
 	case value.KindDict:
 		table = dictMethods
 	case value.KindList:
@@ -104,6 +106,12 @@ func intArg(args *value.CallArgs, i int, name string, def int) (int, error) {
 	return int(n), nil
 }
 
+// bytesMethods is what a bytes value answers. There was no table at all, so
+// `{{ "é".encode().decode() }}` could not round-trip.
+var bytesMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+	"decode": methodDecode,
+}
+
 // --- string methods ----------------------------------------------------------
 
 // stringMethods is populated in init rather than in its declaration: format
@@ -154,9 +162,7 @@ func init() {
 		"ljust":      padMethod(padLeftAligned),
 		"rjust":      padMethod(padRightAligned),
 		"center":     padMethod(padCentered),
-		"encode": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.Bytes([]byte(r.AsString())), nil
-		},
+		"encode":     methodEncode,
 
 		// Python's three numeric predicates are three different sets,
 		// and only isdecimal is a general category. Reading isdigit as

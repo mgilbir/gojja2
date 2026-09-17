@@ -1,0 +1,3 @@
+{}
+---
+{{ 'é'.encode() }}|{{ 'é'.encode('utf-8') }}|{{ 'é'.encode('latin-1') }}|{{ 'é'.encode('latin1') }}|{{ 'é'.encode('iso-8859-1') }}|{{ 'abc'.encode('ascii') }}

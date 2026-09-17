@@ -45,6 +45,12 @@ const (
 	StopIteration
 	RecursionError
 	ArithmeticError
+	// UnicodeError and its two halves are what a codec raises. Python
+	// derives them from ValueError, so a template catching that catches
+	// these.
+	UnicodeError
+	UnicodeEncodeError
+	UnicodeDecodeError
 	// AssertionError is what a bare `assert` in jinja2 raises, which is
 	// how do_truncate rejects a length shorter than its ellipsis.
 	AssertionError
@@ -73,6 +79,9 @@ var kindNames = [...]string{
 	OverflowError:          "OverflowError",
 	StopIteration:          "StopIteration",
 	RecursionError:         "RecursionError",
+	UnicodeError:           "UnicodeError",
+	UnicodeEncodeError:     "UnicodeEncodeError",
+	UnicodeDecodeError:     "UnicodeDecodeError",
 	ArithmeticError:        "ArithmeticError",
 	AssertionError:         "AssertionError",
 	Exception:              "Exception",
@@ -103,6 +112,9 @@ var parent = [...]Kind{
 	StopIteration:          Exception,
 	RecursionError:         Exception,
 	AssertionError:         Exception,
+	UnicodeError:           ValueError,
+	UnicodeEncodeError:     UnicodeError,
+	UnicodeDecodeError:     UnicodeError,
 }
 
 func (k Kind) String() string {
