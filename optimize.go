@@ -141,7 +141,53 @@ func (f *constFolder) fold(e ast.Expr) ast.Expr {
 		}
 	}
 	f.descend(e)
-	return e
+	return liftNegativePowerBase(e)
+}
+
+// liftNegativePowerBase reproduces a shape jinja2's *code generator* produces,
+// which its parser does not.
+//
+// A constant reaches the generated Python source as its repr, and a negative
+// number's repr begins with a minus -- so `{{ (-8) ** m }}` is written out as
+// `-8 ** m`, which Python reads as `-(8 ** m)`, unary minus binding looser than
+// `**`. The parentheses the template author wrote are long gone by then, and
+// the answer changes sign: -64 rather than 64.
+//
+// It only happens to a power that survives to run time. A foldable one is
+// computed by the optimizer, in Python, with the grouping intact -- which is
+// why `{{ (-8) ** 2 }}` is 64 while `{% set m = 2 %}{{ (-8) ** m }}` is -64,
+// and why this runs after the fold above has had its chance. A base that is
+// not a literal keeps its parentheses in the generated source and so is not
+// affected: `{% set x = -8 %}{{ x ** m }}` is 64.
+func liftNegativePowerBase(e ast.Expr) ast.Expr {
+	b, ok := e.(*ast.BinOp)
+	if !ok || b.Op != ast.OpPow {
+		return e
+	}
+	if _, constExponent := b.Right.(*ast.Const); constExponent {
+		// Both sides constant means jinja2 folded the power itself,
+		// in Python, with the grouping intact -- there is no generated
+		// source for the minus to escape from. Reaching here with a
+		// constant exponent means *this* fold refused where jinja2's
+		// would not have: `{{ (-8) ** 1.5 }}` is a complex number
+		// there, which is its own divergence, and rewriting it into
+		// -(8 ** 1.5) would answer a real number instead of raising.
+		return e
+	}
+	c, ok := b.Left.(*ast.Const)
+	if !ok || !c.Value.IsNumber() {
+		return e
+	}
+	negative, err := value.Ordered("<", c.Value, value.Int(0))
+	if err != nil || !negative {
+		return e
+	}
+	positive, err := value.Neg(c.Value)
+	if err != nil {
+		return e
+	}
+	b.Left = &ast.Const{Pos: ast.At(b.Left.Line()), Value: positive}
+	return &ast.UnaryOp{Pos: ast.At(b.Line()), Op: ast.OpNeg, Node: b}
 }
 
 func (f *constFolder) exprs(items []ast.Expr) {
