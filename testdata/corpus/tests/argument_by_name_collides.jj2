@@ -1,0 +1,3 @@
+{}
+---
+{{ "a" is in(seq="ab", value="a") }}

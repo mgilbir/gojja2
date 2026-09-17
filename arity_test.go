@@ -214,3 +214,52 @@ func TestDynamicKwargsNameTheCallee(t *testing.T) {
 		}
 	}
 }
+
+// TestTestArgumentsTakeTheirName pins that a test's argument can be given by
+// name, the way a filter's can.
+//
+// jinja2's tests are ordinary Python functions, so `{{ 4 is divisibleby(2) }}`
+// and `{{ 4 is divisibleby(num=2) }}` are the same call -- and the tested
+// value is the first parameter, so naming *it* collides with the value
+// already bound there. The names are jinja2's own, which is what arity.go
+// already checks a wrong one against.
+//
+// The comparison tests are the exception: they are operator.eq and friends,
+// C functions that take no keyword at all.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestTestArgumentsTakeTheirName(t *testing.T) {
+	vars := map[string]any{"lst": []any{1, 2}}
+	for _, tc := range []struct{ src, want string }{
+		{`{{ 4 is divisibleby(num=2) }}`, "True"},
+		{`{{ 4 is divisibleby(**{"num": 2}) }}`, "True"},
+		{`{{ 2 is sameas(other=2) }}`, "True"},
+		{`{{ "a" is in(seq="ab") }}`, "True"},
+		{`{{ lst is in(seq=[1,2]) }}`, "False"},
+	} {
+		got, err := renderVars(t, New(), tc.src, vars)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+	for _, tc := range []struct{ src, want string }{
+		{`{{ "a" is in(seq="ab", value="a") }}`,
+			"test_in() got multiple values for argument 'value'"},
+		{`{{ 4 is divisibleby(nummm=2) }}`,
+			"test_divisibleby() got an unexpected keyword argument 'nummm'"},
+		{`{{ 2 is eq(b=2) }}`, "_operator.eq() takes no keyword arguments"},
+	} {
+		_, err := renderVars(t, New(), tc.src, vars)
+		if err == nil {
+			t.Errorf("%s: rendered; want %q", tc.src, tc.want)
+			continue
+		}
+		if got := err.Error(); got != tc.want {
+			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+}
