@@ -285,11 +285,13 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 	}
 	loopValue := value.FromObject(loop)
 
-	for i := range src.Len() {
+	// The cursor lives on the loop object rather than in this loop, because
+	// `loop` is the iterator: a body that consumes it -- `{{ loop|list }}`
+	// -- advances this walk, and the walk has to see that.
+	for loop.index = 0; loop.index < src.Len(); loop.index++ {
 		if err := ex.st.budget.step(); err != nil {
 			return err
 		}
-		loop.index = i
 		// Each iteration gets a fresh scope, so a `{% set %}` in the
 		// body does not carry into the next pass -- jinja2 rebinds
 		// every body-assigned symbol from the enclosing scope at the
@@ -299,7 +301,7 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		body.sc.set("loop", loopValue)
 		declareFrameLocals(body.sc, ex.st, n.Body, body.sc.parent)
 
-		if err := body.assign(n.Target, src.At(i)); err != nil {
+		if err := body.assign(n.Target, src.At(loop.index)); err != nil {
 			return err
 		}
 		err := body.execBody(n.Body)

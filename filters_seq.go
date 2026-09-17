@@ -54,15 +54,24 @@ func filterItems(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error
 		"Can only get item pairs from a mapping.")
 }
 
+// filterFirst is `next(iter(seq))`, and takes exactly one item.
+//
+// How many it takes is visible, not just faster: an iterator that something
+// else is also walking -- `loop` inside its own body -- is advanced by one
+// here and drained by a materialising version, which ends the enclosing loop.
+// For an ordinary sequence it is the same answer without the copy.
 func filterFirst(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	items, err := materialize(s, v)
+	seq, err := value.Iterate(v)
 	if err != nil {
 		return value.Undefined, err
 	}
-	if len(items) == 0 {
-		return s.Undefined(value.UndefinedHint("No first item, sequence was empty.")), nil
+	for item := range seq {
+		if err := s.Step(1); err != nil {
+			return value.Undefined, err
+		}
+		return item, nil
 	}
-	return items[0], nil
+	return s.Undefined(value.UndefinedHint("No first item, sequence was empty.")), nil
 }
 
 func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -112,26 +121,54 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	if d, ok := arg(args, 0, "d"); ok {
 		sep = value.Str(d)
 	}
+	attribute, hasAttribute := arg(args, 1, "attribute")
+	hasAttribute = hasAttribute && !attribute.IsNone()
+	withAttribute := func(item value.Value) (value.Value, error) {
+		if !hasAttribute {
+			return item, nil
+		}
+		return attrPath(s, item, value.Str(attribute))
+	}
+
+	// Without autoescaping this is `str(d).join(map(str, value))`, and
+	// str.join converts each item as it takes it. That ordering is visible
+	// when the input is an iterator something else is also walking -- the
+	// `loop` inside its own body -- because each item's text is taken
+	// between its steps rather than after all of them.
+	if !s.autoescape {
+		seq, err := value.Iterate(v)
+		if err != nil {
+			return value.Undefined, err
+		}
+		var b strings.Builder
+		first := true
+		for item := range seq {
+			if err := s.Step(1); err != nil {
+				return value.Undefined, err
+			}
+			mapped, err := withAttribute(item)
+			if err != nil {
+				return value.Undefined, err
+			}
+			if !first {
+				b.WriteString(sep)
+			}
+			first = false
+			b.WriteString(value.Str(mapped))
+		}
+		return value.String(b.String()), nil
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
-	if attribute, ok := arg(args, 1, "attribute"); ok && !attribute.IsNone() {
-		for i, item := range items {
-			items[i], err = attrPath(s, item, value.Str(attribute))
-			if err != nil {
-				return value.Undefined, err
-			}
+	for i, item := range items {
+		items[i], err = withAttribute(item)
+		if err != nil {
+			return value.Undefined, err
 		}
 	}
-
 	parts := make([]string, len(items))
-	if !s.autoescape {
-		for i, item := range items {
-			parts[i] = value.Str(item)
-		}
-		return value.String(strings.Join(parts, sep)), nil
-	}
 	sepValue := value.String(sep)
 	if d, ok := arg(args, 0, "d"); ok {
 		sepValue = d
@@ -528,15 +565,33 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 	if empty, err := isFalsey(v); err != nil || empty {
 		return value.NewList(), err
 	}
-	items, err := materialize(s, v)
+	// The result is a list rather than a generator -- a deliberate
+	// divergence, see docs/divergences.md -- but the work is still done as
+	// each item arrives, not after the whole input has been collected.
+	// Where the input is an iterator something else is also walking, the
+	// difference shows in what that something else sees.
+	seq, err := value.Iterate(v)
 	if err != nil {
 		return value.Undefined, err
+	}
+	walk := func(each func(value.Value) (value.Value, error)) ([]value.Value, error) {
+		var out []value.Value
+		for item := range seq {
+			if err := s.Step(1); err != nil {
+				return nil, err
+			}
+			got, err := each(item)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, got)
+		}
+		return out, nil
 	}
 
 	if attribute, ok := args.Kwarg("attribute"); ok {
 		def, hasDef := args.Kwarg("default")
-		out := make([]value.Value, len(items))
-		for i, item := range items {
+		out, err := walk(func(item value.Value) (value.Value, error) {
 			got, err := attrPath(s, item, value.Str(attribute))
 			if err != nil {
 				return value.Undefined, err
@@ -544,7 +599,10 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 			if got.IsUndefined() && hasDef {
 				got = def
 			}
-			out[i] = got
+			return got, nil
+		})
+		if err != nil {
+			return value.Undefined, err
 		}
 		return value.NewList(out...), nil
 	}
@@ -563,13 +621,11 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 	}
 	rest := &value.CallArgs{Pos: args.Pos[1:], Kwargs: args.Kwargs}
 
-	out := make([]value.Value, len(items))
-	for i, item := range items {
-		got, err := fn(s, item, rest)
-		if err != nil {
-			return value.Undefined, err
-		}
-		out[i] = got
+	out, err := walk(func(item value.Value) (value.Value, error) {
+		return fn(s, item, rest)
+	})
+	if err != nil {
+		return value.Undefined, err
 	}
 	return value.NewList(out...), nil
 }

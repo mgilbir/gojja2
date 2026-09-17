@@ -59,6 +59,14 @@ type TupleView interface {
 	AsTuple() Value
 }
 
+// Sized is an Object that has a length but cannot be indexed: Python's __len__
+// without __getitem__. len() answers for it, and `is sequence` does not, which
+// is the pair jinja2's LoopContext presents.
+type Sized interface {
+	Object
+	Len() int
+}
+
 // Equaler lets an Object decide == for itself. The second result reports
 // whether it has an opinion; without one, objects compare by identity.
 //

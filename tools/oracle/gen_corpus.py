@@ -317,6 +317,18 @@ case("escape/volatile_folds_constant_escaping", "{% autoescape blank %}{{ {'a': 
      __settings__={"autoescape": True}, blank="")
 case("escape/constant_block_folds_with_its_own", "{% autoescape true %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}")
 
+# `loop` is the iterator the loop is walking, not a copy of it: consuming it
+# from inside the body advances that walk, each item arrives as a (value, loop)
+# pair, and the loop in the pair is the same object -- so its repr says where
+# the walk had got to when the pair was rendered. It has a length and no
+# indexing, which is __len__ without __getitem__.
+case("loops/loop_is_the_iterator", "{% for i in [1,2,3] %}[{{ loop|list }}]{% endfor %}")
+case("loops/loop_first_takes_one", "{% for i in [1,2,3] %}[{{ loop|first }}]{% endfor %}")
+case("loops/loop_length_and_shape", "{% for i in [1,2,3] %}[{{ loop|length }}{{ loop|count }}{{ loop is sequence }}{{ loop is iterable }}]{% endfor %}")
+case("loops/loop_join_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|join(',') }}]{% endfor %}")
+case("loops/loop_map_applies_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|map('string')|list }}]{% endfor %}")
+case("loops/loop_in_dict", "{% for i in [1,2,3] %}[{{ dict(loop, extra=2) }}]{% endfor %}")
+
 # A nested macro is not a boundary for `caller`: jinja2's search does not stop
 # at closure frames, so mentioning it inside one makes the enclosing macro
 # accept a caller as well.

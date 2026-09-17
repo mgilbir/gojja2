@@ -84,6 +84,10 @@ func Len(v Value) (int, error) {
 			return o.Len(), nil
 		case Sequence:
 			return o.Len(), nil
+		case Sized:
+			// Checked last: a Sequence is Sized too, and answers
+			// above as the sequence it is.
+			return o.Len(), nil
 		}
 	}
 	return 0, errs.New(errs.TypeError, "object of type '%s' has no len()", v.TypeName())

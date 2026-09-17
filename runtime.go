@@ -161,13 +161,34 @@ func (l *loopObject) Call(args *value.CallArgs) (value.Value, error) {
 	return l.recurse(args.Pos[0], l.depth+1)
 }
 
-// Iterate makes `dict(loop)` yield nothing.
+// Len is the number of items the loop walks, which is `loop.length`.
 //
-// A LoopContext wraps the iterator the enclosing loop is already consuming, so
-// anything that iterates it from inside the body sees it exhausted. That is
-// why jinja2's `dict(loop, extra=2)` is just {'extra': 2}.
+// It is a length without indexing: jinja2's LoopContext defines __len__ and no
+// __getitem__, so `{{ loop|length }}` answers and `loop is sequence` does not.
+func (l *loopObject) Len() int { return l.src.Len() }
+
+// Iterate consumes the loop the body is running inside.
+//
+// A LoopContext *is* the iterator the enclosing loop is walking, so iterating
+// it from within the body advances that loop: `{{ loop|list }}` yields the
+// items that have not been reached yet and the enclosing loop then ends,
+// having none left. Each item arrives as the (value, loop) pair jinja2's
+// LoopContextIterator returns, and the loop in it is this same object, so its
+// repr shows where the walk stopped rather than where the pair was made.
+//
+// Yielding nothing instead -- on the reasoning that the iterator is already
+// exhausted -- was wrong in a way a template can print:
+// `{{ dict(loop, extra=2) }}` is {2: <LoopContext 3/3>, 'extra': 2} in CPython
+// and was {'extra': 2} here.
 func (l *loopObject) Iterate() iter.Seq[value.Value] {
-	return func(func(value.Value) bool) {}
+	return func(yield func(value.Value) bool) {
+		for l.index+1 < l.src.Len() {
+			l.index++
+			if !yield(value.NewTuple(l.src.At(l.index), value.FromObject(l))) {
+				return
+			}
+		}
+	}
 }
 
 func (l *loopObject) TypeName() string { return "LoopContext" }
