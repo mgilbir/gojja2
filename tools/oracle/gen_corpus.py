@@ -560,6 +560,22 @@ case("errors/cycler_without_items", "{{ cycler() }}")
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
 # frame before the assignment sees undefined rather than the context's value.
+# count, find, rfind, index, rindex, startswith and endswith all take an
+# optional start and end that select the slice they look at. They are slice
+# indices: counted in characters, negative from the end, clamped out of range.
+case("methods/string_search_bounds",
+     "{{ 'Hello World'.find('o',1,2) }}|{{ 'Hello World'.count('o',1,2) }}|"
+     "{{ 'Hello World'.find('o',5) }}|{{ 'Hello World'.find('o',5,8) }}|"
+     "{{ 'Hello World'.rfind('o',0,6) }}|{{ 'Hello World'.count('o',-3) }}")
+case("methods/string_search_bounds_clamp",
+     "{{ 'Hello World'.count('o',100) }}|{{ 'Hello World'.count('o',-100) }}|"
+     "{{ 'Hello World'.count('o',5,1) }}|{{ 'Hello World'.count('o',none,none) }}|"
+     "{{ 'Hello World'.startswith('H',1) }}|{{ 'Hello World'.endswith('o',0,5) }}")
+case("methods/string_search_bounds_unicode",
+     "{{ 'h\u00e9llo w\u00f6rld'.find('l',1,4) }}|{{ 'h\u00e9llo w\u00f6rld'.count('l',1) }}")
+case("errors/string_search_bound_not_an_integer", "{{ 'Hello'.count('o','x') }}")
+case("errors/string_index_with_bounds", "{{ 'Hello'.index('o',0,2) }}")
+
 # Python's round preserves the numeric type, so round(3, -1) is the int 0. The
 # rounding is ties-to-even on the scaled value, and exact past 2**53.
 case("filters/round_negative_precision",

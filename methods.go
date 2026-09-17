@@ -703,9 +703,13 @@ func affixMethod(match func(string, string) bool) func(*State, value.Value, *val
 		if !ok {
 			return value.Undefined, errs.New(errs.TypeError, "missing required argument")
 		}
+		within, _, err := strSliceBounds(r.AsString(), args, 1)
+		if err != nil {
+			return value.Undefined, err
+		}
 		if s, ok := v.Seq(); ok && v.Kind() == value.KindTuple {
 			for _, cand := range s.Items() {
-				if cand.Kind() == value.KindString && match(r.AsString(), cand.AsString()) {
+				if cand.Kind() == value.KindString && match(within, cand.AsString()) {
 					return value.True, nil
 				}
 			}
@@ -715,8 +719,59 @@ func affixMethod(match func(string, string) bool) func(*State, value.Value, *val
 			return value.Undefined, errs.New(errs.TypeError,
 				"argument must be str or a tuple of str, not %s", v.TypeName())
 		}
-		return value.Bool(match(r.AsString(), v.AsString())), nil
+		return value.Bool(match(within, v.AsString())), nil
 	}
+}
+
+// strSliceBounds reads the optional start and end that every string search
+// takes -- count, find, rfind, index, rindex, startswith, endswith -- and
+// returns the slice they select, with the character offset of its start so a
+// found position can be reported against the whole string.
+//
+// These were ignored outright, so `{{ "Hello World".find("o", 1, 2) }}` was 4
+// where Python says -1: not a wording difference but a wrong answer. The bounds
+// are slice indices, counted in characters and clamped the way a slice clamps,
+// and anything that is not an integer or None is refused in the words CPython
+// uses for a slice.
+func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, error) {
+	runes := []rune(r)
+	n := len(runes)
+	read := func(i, def int) (int, error) {
+		v, ok := args.Arg(i)
+		if !ok || v.IsNone() {
+			return def, nil
+		}
+		k, fits := v.Int64()
+		if !fits {
+			return 0, errs.New(errs.TypeError,
+				"slice indices must be integers or None or have an __index__ method")
+		}
+		// A slice index counts from the end when negative, and is
+		// clamped rather than refused when out of range.
+		idx := int(k)
+		if idx < 0 {
+			idx += n
+			if idx < 0 {
+				idx = 0
+			}
+		}
+		if idx > n {
+			idx = n
+		}
+		return idx, nil
+	}
+	start, err := read(first, 0)
+	if err != nil {
+		return "", 0, err
+	}
+	end, err := read(first+1, n)
+	if err != nil {
+		return "", 0, err
+	}
+	if end < start {
+		end = start
+	}
+	return string(runes[start:end]), start, nil
 }
 
 func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
@@ -724,7 +779,11 @@ func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	return value.Int(int64(strings.Count(r.AsString(), sub))), nil
+	within, _, err := strSliceBounds(r.AsString(), args, 1)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.Int(int64(strings.Count(within, sub))), nil
 }
 
 // findMethod returns a code-point index, or -1, the way str.find does.
@@ -734,11 +793,17 @@ func findMethod(search func(string, string) int) func(*State, value.Value, *valu
 		if err != nil {
 			return value.Undefined, err
 		}
-		at := search(r.AsString(), sub)
+		within, offset, err := strSliceBounds(r.AsString(), args, 1)
+		if err != nil {
+			return value.Undefined, err
+		}
+		at := search(within, sub)
 		if at < 0 {
 			return value.Int(-1), nil
 		}
-		return value.Int(int64(value.StrLen(r.AsString()[:at]))), nil
+		// The answer is an index into the whole string, so the slice's
+		// own start goes back on.
+		return value.Int(int64(offset + value.StrLen(within[:at]))), nil
 	}
 }
 

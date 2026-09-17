@@ -111,3 +111,75 @@ func TestStringMethodsMatchCPython(t *testing.T) {
 		}
 	}
 }
+
+// TestStringSearchSliceBounds: count, find, rfind, index, rindex, startswith
+// and endswith all take an optional start and end, which select the slice they
+// look at. gojja2 ignored them outright, so this was not a wording difference
+// but a wrong answer:
+//
+//	{{ "Hello World".find("o", 1, 2) }}   -1  ->  4
+//	{{ "Hello World".count("o", 1, 2) }}   0  ->  2
+//	{{ "Hello World".startswith("H", 5) }} False -> True
+//
+// They are slice indices: counted in characters, negative from the end, and
+// clamped rather than refused when out of range.
+func TestStringSearchSliceBounds(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// The window really is a window.
+		{`{{ "Hello World".find("o",1,2) }}|{{ "Hello World".count("o",1,2) }}`, `-1|0`},
+		{`{{ "Hello World".find("o",5) }}|{{ "Hello World".count("o",5) }}`, `7|1`},
+		// A found index is reported against the whole string, not the slice.
+		{`{{ "Hello World".find("o") }}|{{ "Hello World".find("o",5,8) }}`, `4|7`},
+		{`{{ "Hello World".rfind("o") }}|{{ "Hello World".rfind("o",0,6) }}`, `7|4`},
+		// Negative bounds count from the end.
+		{`{{ "Hello World".count("o",-3) }}|{{ "Hello World".find("o",-7,-4) }}`, `0|4`},
+		// None means "the default end", as in a slice.
+		{`{{ "Hello World".count("o",none,none) }}|{{ "Hello World".count("o",1,none) }}`, `2|2`},
+		// Out of range clamps, and a reversed window is empty.
+		{`{{ "Hello World".count("o",100) }}|{{ "Hello World".count("o",-100) }}`, `0|2`},
+		{`{{ "Hello World".count("o",5,1) }}|{{ "Hello World".count("o",0,0) }}`, `0|0`},
+		// The affix tests take the same window.
+		{`{{ "Hello World".startswith("H") }}|{{ "Hello World".startswith("H",1) }}`, `True|False`},
+		{`{{ "Hello World".startswith("e",1) }}|{{ "Hello World".endswith("o",0,5) }}`, `True|True`},
+		// Counted in characters, not bytes.
+		{`{{ "héllo wörld".find("l",1,4) }}|{{ "héllo wörld".count("l",1) }}`, `2|3`},
+		{`{{ "héllo wörld".startswith("h",0,1) }}`, `True`},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+
+	// index and rindex raise where find and rfind answer -1, and the bound
+	// is what decides it.
+	for _, tc := range []struct{ src, want string }{
+		{`{{ "Hello".index("o",0,2) }}`, "substring not found"},
+		{`{{ "Hello".rindex("o",0,2) }}`, "substring not found"},
+		// A bound that is not an integer is refused as a slice index is.
+		{`{{ "Hello".count("o","x") }}`,
+			"slice indices must be integers or None or have an __index__ method"},
+		{`{{ "Hello".find("o",1,"y") }}`,
+			"slice indices must be integers or None or have an __index__ method"},
+		{`{{ "Hello".startswith("H","x") }}`,
+			"slice indices must be integers or None or have an __index__ method"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		_, err = tmpl.RenderString(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
+		}
+	}
+}
