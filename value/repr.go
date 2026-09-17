@@ -339,7 +339,11 @@ func writeStringRepr(b *strings.Builder, s string, asciiOnly bool) {
 		case r == '\t':
 			b.WriteString(`\t`)
 		case r == utf8.RuneError:
-			// Invalid UTF-8 survived the decode; show it as a byte.
+			// Either a real U+FFFD or a byte that is not valid
+			// UTF-8, which ranging over a string decodes as one.
+			// Python strings cannot hold the second, so there is
+			// nothing to match: it is written as the replacement
+			// character, which is what it decoded to.
 			b.WriteString(`�`)
 		case printable(r) && (!asciiOnly || r < utf8.RuneSelf):
 			b.WriteRune(r)

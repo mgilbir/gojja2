@@ -531,6 +531,37 @@ case("errors/urlize_rel_type", '{{ "x"|urlize(rel=4) }}')
 case("filters/urlize_attrs", '{{ "http://a.com"|urlize(rel="me") }}|{{ "http://a.com"|urlize(target="_b") }}')
 
 
+# --- what a module exports ----------------------------------------------------
+# jinja2 exports the names a top-level binding actually made, recorded as the
+# template runs. gojja2 kept that list too and then answered from the frame
+# instead, so a name the frame had pre-declared and never assigned -- one
+# bound only inside an `{% if %}` that did not run, or inside a loop -- was
+# exposed as an undefined rather than not exposed at all.
+MODULE = {
+    "__templates__": {
+        "mod.html": "{% if false %}{% set a = 1 %}{% endif %}{% set b = 2 %}"
+                    "{% set _c = 3 %}{% macro m() %}M{% endmacro %}"
+                    "{% for i in [1] %}{% set d = 4 %}{% endfor %}"
+    }
+}
+case("import/module_exports",
+     '{% import "mod.html" as mod %}{{ mod.a is defined }}|{{ mod.b }}|'
+     '{{ mod._c is defined }}|{{ mod.m() }}|{{ mod.d is defined }}|{{ mod.zz is defined }}',
+     **MODULE)
+case("import/from_unassigned", '{% from "mod.html" import a %}{{ a is defined }}', **MODULE)
+case("import/from_assigned", '{% from "mod.html" import b, m %}{{ b }}{{ m() }}', **MODULE)
+
+
+# do_dictsort checks `by` as its first statement, ahead of anything that looks
+# at the input, so a bad `by` is reported even when the input could not be
+# sorted either.
+case("errors/dictsort_by_before_input", '{{ nope|dictsort(1,2,3) }}')
+case("errors/dictsort_by_before_type", '{{ 5|dictsort(1,2,3) }}')
+case("errors/dictsort_undefined", '{{ nope|dictsort }}')
+case("filters/dictsort_order", '{{ {"b":1,"A":2}|dictsort }}|{{ {"b":1,"A":2}|dictsort(true) }}|'
+     '{{ {"b":1,"a":2}|dictsort(false,"value") }}|{{ {"b":1,"a":2}|dictsort(false,"key",true) }}')
+
+
 def main() -> int:
     if DST.exists():
         shutil.rmtree(DST)

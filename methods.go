@@ -283,7 +283,6 @@ func methodJoin(st *State, r value.Value, args *value.CallArgs) (value.Value, er
 		return value.Undefined, err
 	}
 	var parts []string
-	total := int64(0)
 	sep := r.AsString()
 	for item := range seq {
 		if item.Kind() != value.KindString {
@@ -297,7 +296,6 @@ func methodJoin(st *State, r value.Value, args *value.CallArgs) (value.Value, er
 		if err := st.Step(1); err != nil {
 			return value.Undefined, err
 		}
-		total += int64(len(item.AsString())) + int64(len(sep))
 		if err := st.ChargeBytes(int64(len(item.AsString())) + int64(len(sep))); err != nil {
 			return value.Undefined, err
 		}

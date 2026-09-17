@@ -126,12 +126,6 @@ func (k Kind) DerivesFrom(want Kind) bool {
 	return false
 }
 
-// Frame is one entry of a template traceback.
-type Frame struct {
-	Name string // template name, "" when rendered from a string
-	Line int    // 1-based
-}
-
 // Error is a template error carrying the CPython exception class it maps to.
 //
 // Error() returns the bare message, matching Python's str(exc), so it can be
@@ -143,7 +137,6 @@ type Error struct {
 	Name   string // template the error was raised in
 	Line   int    // 1-based; 0 when unknown
 	Source string // template source, retained for error rendering
-	Stack  []Frame
 	Cause  error
 	// Limit is the bound a RecursionError hit. The message reproduces
 	// CPython's wording, which names where in *its* interpreter the stack
@@ -192,8 +185,13 @@ func New(kind Kind, format string, args ...any) *Error {
 	return &Error{Kind: kind, Msg: fmt.Sprintf(format, args...)}
 }
 
-// At returns a copy of err located at name:line, filling in only the fields
-// that are still unset so the innermost frame wins.
+// At locates err at name:line, filling in only the fields that are still
+// unset so the innermost frame wins, and returns it.
+//
+// It edits the error in place rather than copying it. That is what makes the
+// "only if unset" rule work -- the first frame to see an error is the one
+// nearest where it was raised, and every frame outside that one must leave the
+// location alone.
 func At(err error, name string, line int) error {
 	e, ok := err.(*Error)
 	if !ok {

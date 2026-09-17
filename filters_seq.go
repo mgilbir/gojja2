@@ -186,19 +186,14 @@ func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 }
 
 func filterDictsort(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	caseSensitive, err := boolArg(args, 0, "case_sensitive", false)
-	if err != nil {
-		return value.Undefined, err
-	}
+	// `by` is settled first, because that is the order jinja2 does it in:
+	// the check is the first statement of do_dictsort, ahead of anything
+	// that touches the input. `nope|dictsort(1, 2, 3)` therefore reports
+	// the bad `by` and not the undefined.
 	by := "key"
 	if b, ok := arg(args, 1, "by"); ok {
 		by = value.Str(b)
 	}
-	reverse, err := boolArg(args, 2, "reverse", false)
-	if err != nil {
-		return value.Undefined, err
-	}
-
 	var pos int
 	switch by {
 	case "key":
@@ -208,6 +203,18 @@ func filterDictsort(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	default:
 		return value.Undefined, errs.New(errs.FilterArgumentError,
 			"You can only sort by either \"key\" or \"value\"")
+	}
+
+	caseSensitive, err := boolArg(args, 0, "case_sensitive", false)
+	if err != nil {
+		return value.Undefined, err
+	}
+	reverse, err := boolArg(args, 2, "reverse", false)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if err := requireDefined(v); err != nil {
+		return value.Undefined, err
 	}
 
 	d, ok := v.Dict()
