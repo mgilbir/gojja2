@@ -1810,6 +1810,13 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		if precision >= 0 {
 			return v, nil
 		}
+		// A negative precision rounds to a multiple of a power of ten,
+		// and the answer is still an int: round(3, -1) is 0, not 0.0.
+		// This used to fall through to the float path, which returned
+		// 0.0 -- and -0.0 for a negative input, which Python never
+		// writes for an integer.
+		b, _ := v.BigInt()
+		return value.BigInt(roundToPowerOfTen(b, -precision)), nil
 	}
 
 	f, ok := v.Float64()
@@ -1840,6 +1847,32 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 	}
 	scale := math.Pow(10, float64(precision))
 	return value.Float(math.RoundToEven(f*scale) / scale), nil
+}
+
+// roundToPowerOfTen rounds n to the nearest multiple of 10**k, ties going to
+// the even multiple -- which is what Python's round does for an integer.
+//
+// Exact, rather than by way of a float: an integer past 2**53 cannot be scaled
+// and divided back without losing the digits that decide the answer.
+func roundToPowerOfTen(n *big.Int, k int) *big.Int {
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(k)), nil)
+	mag := new(big.Int).Abs(n)
+	q, r := new(big.Int).QuoRem(mag, scale, new(big.Int))
+	twice := new(big.Int).Lsh(r, 1)
+	switch twice.Cmp(scale) {
+	case 1:
+		q.Add(q, big.NewInt(1))
+	case 0:
+		// A tie goes to the even multiple.
+		if q.Bit(0) == 1 {
+			q.Add(q, big.NewInt(1))
+		}
+	}
+	out := q.Mul(q, scale)
+	if n.Sign() < 0 {
+		out.Neg(out)
+	}
+	return out
 }
 
 func filterSum(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {

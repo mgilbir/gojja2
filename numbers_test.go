@@ -191,3 +191,45 @@ func TestIntFilterBaseParsing(t *testing.T) {
 		}
 	}
 }
+
+// TestRoundNegativePrecisionOnAnInteger: Python's round preserves the numeric
+// type, so round(3, -1) is the int 0 and not 0.0. gojja2 kept the type for a
+// non-negative precision and then fell through to the float path for a
+// negative one -- which also produced "-0.0" for a negative input, a thing
+// Python never writes for an integer.
+//
+// The rounding is ties-to-even on the scaled value, and exact: an integer past
+// 2**53 cannot be scaled and divided back without losing the digits that decide
+// the answer.
+func TestRoundNegativePrecisionOnAnInteger(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// Ties go to the even multiple, both signs.
+		{`{{ (5)|round(-1) }}|{{ (15)|round(-1) }}|{{ (25)|round(-1) }}|{{ (35)|round(-1) }}`,
+			`0|20|20|40`},
+		{`{{ (-5)|round(-1) }}|{{ (-15)|round(-1) }}|{{ (-25)|round(-1) }}`, `0|-20|-20`},
+		// Not a tie, and already a multiple.
+		{`{{ (99)|round(-1) }}|{{ (-99)|round(-1) }}|{{ (50)|round(-1) }}`, `100|-100|50`},
+		{`{{ (150)|round(-2) }}|{{ (250)|round(-2) }}`, `200|200`},
+		// Rounded away entirely, and never "-0.0" or "-0".
+		{`{{ (3)|round(-1) }}|{{ (-4)|round(-1) }}|{{ (0)|round(-2) }}`, `0|0|0`},
+		// Exact past what a float64 can carry.
+		{`{{ (10000000000000000000000)|round(-1) }}`, `10000000000000000000000`},
+		{`{{ (10000000000000000000000)|round(-25) }}`, `0`},
+		// A non-negative precision is unchanged, and a float stays a float.
+		{`{{ (3)|round(0) }}|{{ (3)|round(2) }}|{{ (2.5)|round(-1) }}`, `3|3|0.0`},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+}
