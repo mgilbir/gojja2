@@ -8,7 +8,6 @@ import (
 	"math"
 	"math/big"
 	"strconv"
-	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
 )
@@ -176,7 +175,92 @@ type hashKey struct {
 	str  string
 }
 
+// hash is Python's hash(), reduced to a Go-comparable key.
+//
+// A tuple's key is built from its elements', and a tuple may hold tuples
+// without limit, so that walk runs on an explicit stack. The nesting is chosen
+// at render time -- `{% for %}{% set ns.t = (ns.t,) %}{% endfor %}` builds one
+// as deep as the loop is long -- and a recursive walk died on a deep one with
+// `fatal error: stack overflow`, which is not a panic and so is not something
+// the render can report. CPython has no wall of its own here: its tuple hash
+// is iterative, and it hashes a 65,000-deep tuple without complaint.
 func hash(v Value) (hashKey, error) {
+	if items, ok := tupleItems(v); ok {
+		return hashTuple(items)
+	}
+	return hashScalar(v)
+}
+
+// tupleItems reports the elements v hashes as a tuple over. A tuple subclass
+// hashes as its tuple, so one holding a list is unhashable just as a plain
+// tuple would be.
+func tupleItems(v Value) ([]Value, bool) {
+	switch v.kind {
+	case KindTuple:
+		s, _ := v.Seq()
+		return s.items, true
+	case KindObject:
+		if tv, ok := v.obj.(TupleView); ok {
+			if s, ok := tv.AsTuple().Seq(); ok {
+				return s.items, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// hashFrame is one tuple whose elements are still being appended.
+type hashFrame struct {
+	items []Value
+	i     int
+}
+
+// tupleOpen and tupleClose bracket a tuple in an encoded key. They sit outside
+// the range appendKey writes for a scalar's kind byte, so a reader walking the
+// encoding can always tell which it is looking at.
+const (
+	tupleOpen  = '['
+	tupleClose = ']'
+)
+
+// hashTuple encodes a whole tuple tree into one buffer, in one pass.
+//
+// Folding each subtree into its own key and concatenating those is exact, and
+// it is quadratic: for a tuple nested n deep it builds n prefixes of length
+// O(n). A 400,000-deep tuple took two minutes and nineteen seconds to hash,
+// uninterruptibly, on a graph a template can build inside the default
+// iteration budget. Writing the tree out once instead is exactly as
+// discriminating -- the encoding is unambiguous, so distinct tuples still get
+// distinct keys and no two unequal tuples can collide -- and costs O(nodes).
+func hashTuple(items []Value) (hashKey, error) {
+	buf := []byte{tupleOpen}
+	stack := []hashFrame{{items: items}}
+	for len(stack) > 0 {
+		top := &stack[len(stack)-1]
+		if top.i >= len(top.items) {
+			buf = append(buf, tupleClose)
+			*top = hashFrame{}
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		child := top.items[top.i]
+		top.i++
+		if sub, ok := tupleItems(child); ok {
+			buf = append(buf, tupleOpen)
+			stack = append(stack, hashFrame{items: sub})
+			continue
+		}
+		h, err := hashScalar(child)
+		if err != nil {
+			return hashKey{}, err
+		}
+		buf = appendKey(buf, h)
+	}
+	return hashKey{kind: KindTuple, str: string(buf)}, nil
+}
+
+// hashScalar answers for every value that does not hash over children.
+func hashScalar(v Value) (hashKey, error) {
 	switch v.kind {
 	case KindNone:
 		return hashKey{kind: KindNone}, nil
@@ -198,23 +282,7 @@ func hash(v Value) (hashKey, error) {
 		return hashKey{kind: KindString, str: v.str}, nil
 	case KindBytes:
 		return hashKey{kind: KindBytes, str: v.str}, nil
-	case KindTuple:
-		s, _ := v.Seq()
-		var b strings.Builder
-		for _, item := range s.items {
-			h, err := hash(item)
-			if err != nil {
-				return hashKey{}, err
-			}
-			encodeKey(&b, h)
-		}
-		return hashKey{kind: KindTuple, str: b.String()}, nil
 	case KindObject:
-		if tv, ok := v.obj.(TupleView); ok {
-			// A tuple subclass hashes as its tuple, so one holding
-			// a list is unhashable just as a plain tuple would be.
-			return hash(tv.AsTuple())
-		}
 		if o, ok := v.obj.(interface{ HashKey() (string, bool) }); ok {
 			if s, ok := o.HashKey(); ok {
 				return hashKey{kind: KindObject, str: s}, nil
@@ -243,19 +311,23 @@ func hashFloat(f float64) hashKey {
 	return hashKey{kind: KindInt, str: bi.String()}
 }
 
-// encodeKey writes an unambiguous, length-prefixed encoding of h, so that
+// appendKey writes an unambiguous, length-prefixed encoding of h, so that
 // tuple keys cannot collide by concatenation.
-func encodeKey(b *strings.Builder, h hashKey) {
-	b.WriteByte(byte('0' + h.kind))
-	b.WriteString(strconv.FormatInt(h.num, 36))
-	b.WriteByte(':')
+//
+// It appends to a byte slice rather than to a strings.Builder because the
+// buffers live in a growable stack: a Builder moved by a reallocation trips
+// its own copy check.
+func appendKey(dst []byte, h hashKey) []byte {
+	dst = append(dst, byte('0'+h.kind))
+	dst = strconv.AppendInt(dst, h.num, 36)
+	dst = append(dst, ':')
 	if h.flt != 0 {
-		b.WriteString(strconv.FormatUint(math.Float64bits(h.flt), 36))
+		dst = strconv.AppendUint(dst, math.Float64bits(h.flt), 36)
 	}
-	b.WriteByte(':')
-	b.WriteString(strconv.Itoa(len(h.str)))
-	b.WriteByte(':')
-	b.WriteString(h.str)
+	dst = append(dst, ':')
+	dst = strconv.AppendInt(dst, int64(len(h.str)), 10)
+	dst = append(dst, ':')
+	return append(dst, h.str...)
 }
 
 // Hashable reports whether v can be used as a dict key.

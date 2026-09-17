@@ -6,6 +6,7 @@ package gojja2
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -153,4 +154,45 @@ func TestPollIsSafeWithoutARender(t *testing.T) {
 	if _, err := env.FromString(`{{ "x"|polls }}`); err != nil {
 		t.Errorf("compile: %v", err)
 	}
+}
+
+// TestTupleHashIsLinear pins that hashing a nested tuple costs time in the
+// number of nodes rather than in the square of the nesting.
+//
+// A tuple's key has to distinguish it from every other tuple, and the first
+// way to get that -- fold each subtree into its own key and concatenate those
+// -- builds n prefixes of length O(n). It was not a theoretical cost: a
+// 400,000-deep tuple, which a template can build inside the default iteration
+// budget, took two minutes and nineteen seconds to hash, and nothing could
+// interrupt it. Writing the tree out once is exactly as discriminating and
+// costs O(nodes).
+//
+// The assertion is a deadline rather than a ratio, because a ratio is flaky on
+// a loaded machine and the margin here is three orders of magnitude: linear
+// finishes in well under a second, quadratic cannot finish in thirty.
+func TestTupleHashIsLinear(t *testing.T) {
+	const n = 400_000
+	var src strings.Builder
+	src.WriteString(`{% set ns = namespace(t=(0,)) %}`)
+	fmt.Fprintf(&src, `{%% for i in range(%d) %%}{%% set ns.t = (ns.t,) %%}{%% endfor %%}`, n)
+	src.WriteString(`{{ {ns.t: "v"}[ns.t] }}`)
+
+	env := New()
+	tmpl, err := env.FromString(src.String())
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	out, err := tmpl.RenderString(ctx, nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("hashing a %d-deep tuple did not finish in 30s (%v): %v", n, elapsed, err)
+	}
+	if out != "v" {
+		t.Errorf("got %q, want %q: the key did not round-trip", out, "v")
+	}
+	t.Logf("%d-deep tuple hashed and looked up in %v", n, elapsed)
 }

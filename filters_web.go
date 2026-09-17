@@ -404,7 +404,22 @@ func (p jsonPath) enter(key any) (jsonPath, bool) {
 
 func (p jsonPath) leave(key any) { delete(p, key) }
 
+// maxJSONDepth bounds how deeply tojson descends.
+//
+// The nesting of a value graph is chosen at render time, so the walk needs a
+// wall of its own or a deep one takes the stack out. CPython has the same wall
+// and the same message, at about the same depth: json.dumps runs out of
+// interpreter stack at 986 levels of list.
+const maxJSONDepth = 1000
+
+// RecursionMessageJSON is what CPython reports when json.dumps runs out of
+// stack, and therefore what tojson must report here.
+const RecursionMessageJSON = "maximum recursion depth exceeded while encoding a JSON object"
+
 func writeJSON(st *State, b *strings.Builder, v value.Value, indent, depth int, path jsonPath) error {
+	if depth > maxJSONDepth {
+		return errs.New(errs.RecursionError, "%s", RecursionMessageJSON)
+	}
 	// json.dumps separates with ", " until an indent is given, at which
 	// point the space moves onto the next line.
 	nl, pad, padEnd, comma := "", "", "", ", "
