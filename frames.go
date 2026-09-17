@@ -103,8 +103,13 @@ func (v *frameVisitor) stmt(stmt ast.Stmt) {
 	case *ast.Extends:
 		v.expr(n.Template)
 	case *ast.AutoescapeBlock:
+		// A scope of its own, like {% with %} and {% filter %}: only
+		// the expression is read here. jinja2 compiles the block as a
+		// Scope, so what the body assigns does not reach this frame --
+		// and, the other way round, a name this frame assigns *later*
+		// is already its local when the body reads it, which makes the
+		// read undefined rather than a fall-through to the context.
 		v.expr(n.Value)
-		v.stmts(n.Body)
 	}
 }
 

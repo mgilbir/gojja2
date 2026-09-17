@@ -289,6 +289,12 @@ case("escape/volatile_folds_constant_escaping", "{% autoescape blank %}{{ {'a': 
      __settings__={"autoescape": True}, blank="")
 case("escape/constant_block_folds_with_its_own", "{% autoescape true %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}")
 
+# {% autoescape %} is a scope, as jinja2 compiles it: what the body assigns
+# does not reach the frame outside it, and a name that frame assigns later is
+# already its local when the body reads it.
+case("scope/autoescape_scopes_names", "{% autoescape true %}{% set q = 1 %}{% endautoescape %}[{{ q }}]", q=7)
+case("scope/autoescape_reads_a_later_local", "{% autoescape true %}[{{ q }}]{% endautoescape %}{% set q = 1 %}[{{ q }}]", q=7)
+
 # `~` is markup_join, which only switches to joining as Markup once it meets an
 # operand that already is. With none it concatenates the str()s into a plain
 # string, and the escaping happens at output like any other value.
