@@ -224,6 +224,30 @@ case("escape/off", "{{ v }}|{{ v|escape }}|{{ v|safe }}", v="<b>&'\"")
 case("escape/on", "{{ v }}|{{ v|escape }}|{{ v|safe }}|{{ v|safe|escape }}|{{ v|safe|forceescape }}",
      __settings__={"autoescape": True}, v="<b>&'\"")
 case("escape/concat", "{{ a ~ b }}|{{ [a, b]|join('-') }}", __settings__={"autoescape": True}, a="<x>", b="<y>")
+# The escaping in force is not one setting per template. Text escapes by where
+# it was written -- which for a macro body is where the macro was defined --
+# while a filter escapes by where it is *called*, because jinja2 hands it the
+# context's eval context. A macro can therefore print by one setting and be
+# trusted by another within a single call.
+AE = {"autoescape": True}
+case("escape/block_reaches_filter", "{% autoescape false %}{{ ([s, mk|safe]|join(sep))|pprint }}|{{ [s, mk|safe]|join(sep) }}{% endautoescape %}",
+     __settings__=AE, s="a", mk="&", sep="&")
+case("escape/block_reaches_filter_on", "{% autoescape true %}{{ ([s, mk|safe]|join(sep))|pprint }}|{{ [s, mk|safe]|join(sep) }}{% endautoescape %}",
+     s="a", mk="&", sep="&")
+case("escape/block_volatile", "{% autoescape v %}{{ ([s, mk|safe]|join(sep))|pprint }}{% endautoescape %}|{% autoescape w %}{{ ([s, mk|safe]|join(sep))|pprint }}{% endautoescape %}",
+     __settings__=AE, v=False, w=True, s="a", mk="&", sep="&")
+case("escape/block_constant_fold", "{% autoescape false %}{{ (['a', '&'|safe]|join('&'))|pprint }}{% endautoescape %}",
+     __settings__=AE)
+# A {% block %} body is compiled against a fresh eval context, so what is
+# folded inside one does not see the surrounding {% autoescape %} even though
+# what is left for run time does.
+case("escape/named_block_folds_with_environment", "{% autoescape true %}{% block b %}{{ (['a', '&'|safe]|join('&'))|pprint }}|{{ ([s, mk|safe]|join(sep))|pprint }}{% endblock %}{% endautoescape %}",
+     s="a", mk="&", sep="&")
+case("escape/macro_prints_where_written", "{% macro m(x) %}{{ ([x, mk|safe]|join(sep))|pprint }}/{{ [x, mk|safe]|join(sep) }}{% endmacro %}{% autoescape false %}{{ m(s) }}{% endautoescape %}",
+     __settings__=AE, s="a", mk="&", sep="&")
+case("escape/macro_trusted_where_called", "{% macro m(x) %}{{ [x, mk|safe]|join(sep) }}{% endmacro %}{% autoescape true %}[{{ m(s) is escaped }}][{{ m(s) }}]{% endautoescape %}",
+     s="a", mk="&", sep="&")
+
 # do_replace's autoescaping rule is finer than "escape everything": `old` is
 # matched verbatim, `new` is escaped only when the subject it replaces into is
 # Markup, and a plain subject with plain arguments stays a plain string. The

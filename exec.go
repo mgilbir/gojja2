@@ -395,6 +395,22 @@ func (ex *exec) execAutoescape(n *ast.AutoescapeBlock) error {
 	}
 	sub := ex.child(newScope(ex.sc))
 	sub.autoescape = on
+	// The setting moves on the state as well as on the exec, and for the
+	// *dynamic* extent of the body rather than its lexical one. The two
+	// are not the same thing and jinja2 uses both: text escapes by the
+	// setting where it was written -- which for a macro body is where the
+	// macro was defined -- while a filter is handed the context's eval
+	// context and so escapes by the setting in force at the call. A join
+	// inside a block or a macro invoked from here follows the block.
+	//
+	// Without this the state's copy never moved at all, and the five
+	// filters that read it -- join, replace, xmlattr, urlize, tojson --
+	// escaped by the template's setting wherever they were written: a join
+	// inside {% autoescape false %} still escaped its delimiter, leaving a
+	// visible `&amp;` in output that was meant not to be escaped.
+	saved := ex.st.autoescape
+	ex.st.autoescape = on
+	defer func() { ex.st.autoescape = saved }()
 	return sub.execBody(n.Body)
 }
 

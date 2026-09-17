@@ -87,11 +87,29 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 // behaviour -- and it is not one any template can observe through folding
 // alone.
 func foldConstantExpressions(c *constEvaluator, body []ast.Stmt) {
-	f := &constFolder{c: c}
+	f := &constFolder{c: c, envAutoescape: c.st.autoescape}
 	f.stmts(body)
 }
 
-type constFolder struct{ c *constEvaluator }
+// constFolder walks a template folding constant expressions, carrying the
+// escaping in force where it stands.
+//
+// jinja2 runs its optimizer from the code generator, once per node, with that
+// node's eval context -- so a fold inside {% autoescape %} uses the block's
+// setting, and a block whose expression is not constant makes the context
+// *volatile*, at which point the optimizer is not run at all. Both matter
+// here: five filters read the setting, so folding one under the wrong value
+// bakes the wrong text into the template.
+type constFolder struct {
+	c *constEvaluator
+	// volatile means the escaping at this point is not known until the
+	// template runs, which is what `{% autoescape x %}` produces. Nothing
+	// is folded there, exactly as jinja2 skips its optimizer.
+	volatile bool
+	// envAutoescape is the template's own setting, which a {% block %}
+	// body returns to; see stmt.
+	envAutoescape bool
+}
 
 // foldable reports whether a constant result can stand in for the expression
 // that produced it.
@@ -113,6 +131,9 @@ func foldable(v value.Value) bool {
 func (f *constFolder) fold(e ast.Expr) ast.Expr {
 	if e == nil {
 		return nil
+	}
+	if f.volatile {
+		return e
 	}
 	if _, isConst := e.(*ast.Const); !isConst {
 		if v, ok := f.c.tryConstEval(e); ok && foldable(v) && constSizeOK(v) {
@@ -224,7 +245,16 @@ func (f *constFolder) stmt(stmt ast.Stmt) {
 		n.Filter = f.fold(n.Filter)
 		f.stmts(n.Body)
 	case *ast.Block:
+		// A {% block %} body is compiled on its own, against a fresh
+		// eval context built from the environment -- so a constant
+		// folded inside one does not see an enclosing {% autoescape %},
+		// even though the same expression left unfolded sees it at run
+		// time. That split is jinja2's, and the two halves are
+		// observable against each other, so both are reproduced.
+		savedEsc, savedVol := f.c.st.autoescape, f.volatile
+		f.c.st.autoescape, f.volatile = f.envAutoescape, false
 		f.stmts(n.Body)
+		f.c.st.autoescape, f.volatile = savedEsc, savedVol
 	case *ast.ExprStmt:
 		n.Node = f.fold(n.Node)
 	case *ast.Include:
@@ -239,8 +269,39 @@ func (f *constFolder) stmt(stmt ast.Stmt) {
 		f.stmts(n.Body)
 	case *ast.AutoescapeBlock:
 		n.Value = f.fold(n.Value)
-		f.stmts(n.Body)
+		f.autoescapeBody(n)
 	}
+}
+
+// autoescapeBody folds the body of an {% autoescape %} block under the
+// escaping that block establishes.
+//
+// A constant expression -- which is nearly always a literal true or false --
+// is resolved here and lent to the evaluator for the length of the body, so a
+// filter folded inside sees the setting it would see at run time. Anything
+// else leaves the setting unknowable until the render, and jinja2 answers that
+// by not folding at all rather than by guessing; so does this.
+func (f *constFolder) autoescapeBody(n *ast.AutoescapeBlock) {
+	on, ok := f.c.tryConstEval(n.Value)
+	if !ok {
+		saved := f.volatile
+		f.volatile = true
+		f.stmts(n.Body)
+		f.volatile = saved
+		return
+	}
+	truth, err := value.IsTrue(on)
+	if err != nil {
+		saved := f.volatile
+		f.volatile = true
+		f.stmts(n.Body)
+		f.volatile = saved
+		return
+	}
+	saved := f.c.st.autoescape
+	f.c.st.autoescape = truth
+	f.stmts(n.Body)
+	f.c.st.autoescape = saved
 }
 
 // constEval evaluates the literal subset of the expression grammar: literals,
@@ -558,13 +619,6 @@ func (c *constEvaluator) tryConstEval(e ast.Expr) (v value.Value, ok bool) {
 	return c.constEval(e)
 }
 
-// evalContextFilters read the autoescape setting, so jinja2 refuses to fold
-// them while autoescaping is on -- the compile-time and render-time settings
-// can differ once {% autoescape %} is in play.
-var evalContextFilters = map[string]bool{
-	"replace": true, "join": true, "xmlattr": true, "urlize": true, "tojson": true,
-}
-
 // contextFilters take the render context in jinja2 and are therefore never
 // folded, whatever their arguments. That is load-bearing: an expression
 // containing one stays unfolded, so a failing subscript beside it still raises
@@ -584,9 +638,6 @@ func (c *constEvaluator) constFilter(n *ast.Filter) (value.Value, bool) {
 		return value.Undefined, false
 	}
 	if contextFilters[n.Name] {
-		return value.Undefined, false
-	}
-	if c.st.autoescape && evalContextFilters[n.Name] {
 		return value.Undefined, false
 	}
 	fn, ok := c.env.filters[n.Name]
