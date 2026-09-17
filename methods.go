@@ -974,32 +974,7 @@ type fieldAccessor struct {
 
 func (a fieldAccessor) apply(v value.Value) (value.Value, error) {
 	if a.isIndex {
-		key := value.String(a.name)
-		if isAllDigits(a.name) {
-			n, err := strconv.ParseInt(a.name, 10, 64)
-			if err != nil {
-				return value.Undefined, errs.New(errs.ValueError,
-					"invalid index %q", a.name)
-			}
-			key = value.Int(n)
-		}
-		if item, ok := lookupItem(v, key); ok {
-			return item, nil
-		}
-		if idx, ok := key.Int64(); ok {
-			if seq, isSeq := v.Seq(); isSeq {
-				i := int(idx)
-				if i < 0 {
-					i += seq.Len()
-				}
-				if i >= 0 && i < seq.Len() {
-					return seq.At(i), nil
-				}
-				return value.Undefined, errs.New(errs.IndexError,
-					"%s index out of range", v.TypeName())
-			}
-		}
-		return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
+		return fieldSubscript(v, a.name)
 	}
 
 	// Attribute access, with no item fall-back.
@@ -1008,6 +983,76 @@ func (a fieldAccessor) apply(v value.Value) (value.Value, error) {
 	}
 	return value.Undefined, errs.New(errs.AttributeError,
 		"'%s' object has no attribute '%s'", v.TypeName(), a.name)
+}
+
+// fieldSubscript is the `[key]` step of a replacement field, which is a real
+// `obj[key]` and not the dict-shaped lookup it used to be.
+//
+// The field-name parser decides the key's type by its spelling: all digits is
+// an integer index, and anything else -- "-1" and " 0" included, since neither
+// is all digits -- is a string key. So a negative index never reaches here, and
+// `{0[-1]}` on a list is a type error rather than the last element.
+func fieldSubscript(v value.Value, name string) (value.Value, error) {
+	if name == "" {
+		return value.Undefined, errs.New(errs.ValueError,
+			"Empty attribute in format string")
+	}
+	var key value.Value
+	if isAllDigits(name) {
+		n, err := strconv.ParseInt(name, 10, 64)
+		if err != nil {
+			return value.Undefined, errs.New(errs.ValueError,
+				"invalid index %q", name)
+		}
+		key = value.Int(n)
+	} else {
+		key = value.String(name)
+	}
+
+	switch v.Kind() {
+	case value.KindDict:
+		// A dict takes either kind of key and reports a miss as one.
+		if item, ok := lookupItem(v, key); ok {
+			return item, nil
+		}
+		return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
+
+	case value.KindString, value.KindBytes:
+		idx, ok := key.Int64()
+		if !ok {
+			return value.Undefined, errs.New(errs.TypeError,
+				"string indices must be integers, not '%s'", key.TypeName())
+		}
+		if ch, in := value.StrIndex(v.AsString(), int(idx)); in {
+			return value.String(ch), nil
+		}
+		return value.Undefined, errs.New(errs.IndexError, "string index out of range")
+
+	case value.KindList, value.KindTuple:
+		idx, ok := key.Int64()
+		if !ok {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s indices must be integers or slices, not %s",
+				v.TypeName(), key.TypeName())
+		}
+		seq, _ := v.Seq()
+		if idx >= 0 && idx < int64(seq.Len()) {
+			return seq.At(int(idx)), nil
+		}
+		return value.Undefined, errs.New(errs.IndexError,
+			"%s index out of range", v.TypeName())
+	}
+
+	// An object may still define __getitem__; anything else is not
+	// subscriptable at all, which is a different complaint from a miss.
+	if item, ok := lookupItem(v, key); ok {
+		return item, nil
+	}
+	if v.Kind() == value.KindObject {
+		return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
+	}
+	return value.Undefined, errs.New(errs.TypeError,
+		"'%s' object is not subscriptable", v.TypeName())
 }
 
 // splitFieldName separates the base of a replacement field from its accessors,

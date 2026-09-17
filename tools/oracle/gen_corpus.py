@@ -560,6 +560,19 @@ case("errors/cycler_without_items", "{{ cycler() }}")
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
 # frame before the assignment sees undefined rather than the context's value.
+# A replacement field's [key] step is a real obj[key]. What decides the key's
+# type is how it is spelled: all digits is an integer index, anything else --
+# "-1" and " 0" included -- is a string key, so a negative index never occurs.
+case("methods/format_field_subscript",
+     "{{ '{0[0]}{0[1]}'.format('Hello') }}|{{ '{0[01]}'.format('Hello') }}|"
+     "{{ '{0[0]}'.format([3,1]) }}|{{ '{0[1]}'.format((7,8)) }}|"
+     "{{ '{0[a]}'.format({'a': 1}) }}|{{ '{0[0][0]}'.format(['ab']) }}")
+case("errors/format_subscript_not_subscriptable", "{{ '{0[0]}'.format(3) }}")
+case("errors/format_subscript_string_key_on_a_list", "{{ '{0[-1]}'.format([1]) }}")
+case("errors/format_subscript_string_key_on_a_string", "{{ '{0[a]}'.format('ab') }}")
+case("errors/format_subscript_out_of_range", "{{ '{0[9]}'.format([1]) }}")
+case("errors/format_subscript_empty_key", "{{ '{0[]}'.format([1]) }}")
+
 # int and float have real attributes, some properties and some methods, and
 # jinja2 reaches them by getattr. bool is an int subclass, so True.real is 1.
 case("methods/int_attributes",
