@@ -1,0 +1,3 @@
+{}
+---
+{{ 'é'.encode('ascii', 'ignore') }}|{{ 'é'.encode('ascii', 'replace') }}|{{ 'é'.encode('ascii', 'xmlcharrefreplace') }}|{{ 'é'.encode('ascii', 'backslashreplace') }}|{{ '€'.encode('ascii', 'xmlcharrefreplace') }}|{{ '€'.encode('latin-1', 'ignore') }}

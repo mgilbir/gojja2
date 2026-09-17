@@ -375,6 +375,35 @@ render budget long before the count could matter. Asserted by
 `TestRangeLengthDoesNotOverflow` and graded against CPython over 1,452
 start/stop/step combinations.
 
+## Which codecs `.encode()` and `.decode()` know
+
+```jinja
+{{ "€"|string.encode("cp1252") }}
+```
+
+CPython ships about a hundred codecs. gojja2 implements the three a template
+plausibly asks for -- `utf-8`, `ascii` and `latin-1`, under all the aliases
+CPython accepts for them -- with every error handler (`strict`, `ignore`,
+`replace`, `xmlcharrefreplace`, `backslashreplace`) and CPython's own
+`UnicodeEncodeError` and `UnicodeDecodeError` wording, positions counted in
+characters as CPython counts them.
+
+Anything else raises the `LookupError` CPython raises for an encoding it does
+not have:
+
+| template | jinja2 | gojja2 |
+|---|---|---|
+| `{{ "é".encode("latin-1") }}` | `b'\xe9'` | the same |
+| `{{ "€".encode("ascii", "xmlcharrefreplace") }}` | `b'&#8364;'` | the same |
+| `{{ "é".encode("cp1252") }}` | `b'\xe9'` | `LookupError: unknown encoding: cp1252` |
+| `{{ "é".encode("utf-16") }}` | `b'\xff\xfe\xe9\x00'` | `LookupError: unknown encoding: utf-16` |
+
+The line is drawn at codecs that need a character table: `utf-8`, `ascii` and
+`latin-1` are arithmetic, and the rest are data that would have to be generated
+and carried. Refusing is the point -- encode used to ignore its argument
+entirely and answer UTF-8 whatever was asked for, so a template asking for
+latin-1 silently got two bytes where it wanted one.
+
 ## `|pprint` of a value that contains itself
 
 ```jinja
