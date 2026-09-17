@@ -164,9 +164,14 @@ clean-suites: ## Remove downloaded suites
 # --- oracle ------------------------------------------------------------------
 
 .PHONY: oracle
-oracle: venv ## Regenerate golden files for testdata/corpus from CPython jinja2
+oracle: venv arity ## Regenerate golden files for testdata/corpus from CPython jinja2
 	$(PY) tools/oracle/gen_corpus.py
 	$(PY) tools/oracle/oracle.py --corpus testdata/corpus --golden testdata/golden
+
+.PHONY: arity
+arity: venv ## Regenerate arity.go from jinja2's own filter and test signatures
+	$(PY) tools/oracle/gen_arity.py
+	gofmt -w arity.go
 
 .PHONY: oracle-check
 oracle-check: venv ## Verify committed goldens still match CPython jinja2

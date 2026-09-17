@@ -579,17 +579,28 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	end := "..."
+	end, endLen := "...", 3
 	if e, ok := arg(args, 2, "end"); ok {
-		end = value.Str(e)
+		// jinja2 asserts `length >= len(end)`, so an end with no length
+		// -- a number, say -- fails as len() does rather than being
+		// stringified. And the comparison counts characters, which for
+		// a non-ASCII end is not the same as counting bytes.
+		n, err := value.Len(e)
+		if err != nil {
+			return value.Undefined, err
+		}
+		end, endLen = value.Str(e), n
 	}
 	leeway, err := intArg(args, 3, "leeway", s.env.policies.TruncateLeeway)
 	if err != nil {
 		return value.Undefined, err
 	}
-	if length < len(end) {
-		return value.Undefined, errs.New(errs.ValueError,
-			"expected length >= %d, got %d", len(end), length)
+	if length < endLen {
+		// jinja2 spells this as a bare assert, so the class is
+		// AssertionError rather than the ValueError the wording
+		// suggests.
+		return value.Undefined, errs.New(errs.AssertionError,
+			"expected length >= %d, got %d", endLen, length)
 	}
 
 	// jinja2 measures len(s) on the value itself, not on its string form,
@@ -648,6 +659,14 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 	}
 	wrapString := "\n"
 	if w, ok := arg(args, 2, "wrapstring"); ok && !w.IsNone() {
+		// jinja2's body is `wrapstring.join([... for line in
+		// s.splitlines()])`, and Python resolves the attribute on the
+		// left before evaluating the argument -- so a wrapstring that
+		// is not a string fails first, ahead of anything about s.
+		if !w.IsString() {
+			return value.Undefined, errs.New(errs.AttributeError,
+				"'%s' object has no attribute 'join'", w.TypeName())
+		}
 		wrapString = value.Str(w)
 	}
 

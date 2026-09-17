@@ -423,6 +423,9 @@ func (g *generator) expr(depth int) string {
 	case 4:
 		return g.binary(depth)
 	case 14:
+		if g.c.chance(3) {
+			return g.wrongArity()
+		}
 		return g.percentFormat()
 	case 5:
 		return g.c.pick([]string{"not ", "-", "+"}) + g.expr(depth-1)
@@ -454,6 +457,44 @@ func (g *generator) binary(depth int) string {
 		return g.expr(depth-1) + " * " + g.c.pick(smallInts)
 	}
 	return g.expr(depth-1) + " " + op + " " + g.expr(depth-1)
+}
+
+// wrongArity calls a filter or test with arguments it does not take.
+//
+// Nothing else generates one: the argument lists come from a hand-curated
+// table of *correct* calls, and the imported corpora are templates written by
+// people who got the arity right. So the whole argument-validation surface --
+// too many, too few, a name the function does not have, a name it already has
+// a value for -- was invisible to both gates while the pass rate sat at 99.8%,
+// and 85 of 96 probed cases diverged.
+func (g *generator) wrongArity() string {
+	name := g.c.pick(arityNames)
+	shape := g.c.pick([]string{
+		"(1, 2, 3, 4, 5)", "(1, 2, 3)", "(zzzz=1)", "()", "(1, zzzz=2)",
+	})
+	if g.c.chance(4) {
+		return g.expr(1) + " is " + g.c.pick(testNames) + shape
+	}
+	out := g.expr(1) + "|" + name + shape
+	if lazyFilters[name] {
+		// A call that is accepted returns a generator in jinja2 and a
+		// list here, so it is forced for the same reason every other
+		// arm forces one: printing a generator compares two memory
+		// addresses. A call that is refused fails before this.
+		out += "|list"
+	}
+	return out
+}
+
+// arityNames are filters with a fixed signature, so a call can be too long for
+// them. The lazy sequence filters take *args and are left out.
+var arityNames = []string{
+	"upper", "lower", "title", "capitalize", "trim", "string", "replace",
+	"center", "indent", "truncate", "wordwrap", "wordcount", "striptags",
+	"urlencode", "filesizeformat", "pprint", "tojson", "abs", "int", "float",
+	"round", "sum", "length", "list", "items", "first", "last", "join",
+	"reverse", "sort", "dictsort", "unique", "min", "max", "batch", "slice",
+	"groupby", "default", "attr", "escape", "forceescape", "safe", "xmlattr",
 }
 
 // percentFormat builds a printf-style conversion and an argument that suits it.

@@ -45,6 +45,15 @@ type Environment struct {
 	tests   map[string]Test
 	globals map[string]value.Value
 
+	// stockFilters and stockTests name the ones that are still jinja2's
+	// own. A call is checked against jinja2's signature only while it is:
+	// a filter a caller replaced through AddFilter answers to whatever
+	// that caller accepts, and the conformance profiles rely on it --
+	// transformers supplies a tojson that takes ensure_ascii, which
+	// jinja2's does not.
+	stockFilters map[string]bool
+	stockTests   map[string]bool
+
 	// policies mirror jinja2's environment policies, which some filters
 	// read for their defaults.
 	policies Policies
@@ -102,6 +111,14 @@ func New(opts ...Option) *Environment {
 	registerDefaultFilters(env)
 	registerDefaultTests(env)
 	registerDefaultGlobals(env)
+	env.stockFilters = make(map[string]bool, len(env.filters))
+	for name := range env.filters {
+		env.stockFilters[name] = true
+	}
+	env.stockTests = make(map[string]bool, len(env.tests))
+	for name := range env.tests {
+		env.stockTests[name] = true
+	}
 	for _, opt := range opts {
 		opt(env)
 	}
@@ -382,10 +399,20 @@ func WithPolicies(p Policies) Option { return func(e *Environment) { e.policies 
 func (e *Environment) Policies() Policies { return e.policies }
 
 // AddFilter registers a filter, replacing any filter of the same name.
-func (e *Environment) AddFilter(name string, f Filter) { e.filters[name] = f }
+//
+// Replacing one of jinja2's own also gives up the argument checking that goes
+// with its signature: what the replacement accepts is the replacement's
+// business.
+func (e *Environment) AddFilter(name string, f Filter) {
+	e.filters[name] = f
+	delete(e.stockFilters, name)
+}
 
 // AddTest registers a test, replacing any test of the same name.
-func (e *Environment) AddTest(name string, t Test) { e.tests[name] = t }
+func (e *Environment) AddTest(name string, t Test) {
+	e.tests[name] = t
+	delete(e.stockTests, name)
+}
 
 // AddGlobal registers a global, replacing any global of the same name.
 func (e *Environment) AddGlobal(name string, v value.Value) { e.globals[name] = v }

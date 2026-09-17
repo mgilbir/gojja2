@@ -304,6 +304,11 @@ func (ex *exec) applyFilter(n *ast.Filter, input value.Value) (value.Value, erro
 	if err != nil {
 		return value.Undefined, err
 	}
+	if sig, known := filterSignatures[n.Name]; known && ex.st.env.stockFilters[n.Name] {
+		if err := checkArity(sig, args); err != nil {
+			return value.Undefined, errs.At(err, ex.st.tmpl.name, n.Line())
+		}
+	}
 	out, err := fn(ex.st, input, args)
 	if err != nil {
 		return value.Undefined, errs.At(err, ex.st.tmpl.name, n.Line())
@@ -341,6 +346,11 @@ func (ex *exec) evalTest(n *ast.Test) (value.Value, error) {
 	args, err := ex.evalArgs(n.Args)
 	if err != nil {
 		return value.Undefined, err
+	}
+	if sig, known := testSignatures[n.Name]; known && ex.st.env.stockTests[n.Name] {
+		if err := checkArity(sig, args); err != nil {
+			return value.Undefined, errs.At(err, ex.st.tmpl.name, n.Line())
+		}
 	}
 	ok, err = fn(ex.st, input, args)
 	if err != nil {

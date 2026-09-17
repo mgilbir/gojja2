@@ -601,6 +601,14 @@ func (c *constEvaluator) constFilter(n *ast.Filter) (value.Value, bool) {
 	if !ok {
 		return value.Undefined, false
 	}
+	// The arity is checked here as well as at render time, because a fold
+	// that skipped the check would answer a call CPython refuses -- and
+	// answer it at compile time, so the refusal never happened at all.
+	if sig, known := filterSignatures[n.Name]; known && c.env.stockFilters[n.Name] {
+		if checkArity(sig, args) != nil {
+			return value.Undefined, false
+		}
+	}
 	out, err := fn(c.st, input, args)
 	if err != nil {
 		return value.Undefined, false
@@ -621,6 +629,11 @@ func (c *constEvaluator) constTest(n *ast.Test) (value.Value, bool) {
 	args, ok := c.constArgs(n.Args)
 	if !ok {
 		return value.Undefined, false
+	}
+	if sig, known := testSignatures[n.Name]; known && c.env.stockTests[n.Name] {
+		if checkArity(sig, args) != nil {
+			return value.Undefined, false
+		}
 	}
 	out, err := fn(c.st, input, args)
 	if err != nil {

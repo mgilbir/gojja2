@@ -1,0 +1,3 @@
+{}
+---
+{{ "http://a.com"|urlize(rel="me") }}|{{ "http://a.com"|urlize(target="_b") }}

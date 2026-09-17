@@ -45,8 +45,8 @@ exact, including CPython's quirk that `"\é"` decodes to the four characters
 {% if items|selectattr("active") %}...{% endif %}
 ```
 
-jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr` and `unique`
-return generators. gojja2's return lists. Anything that *consumes* the result
+jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
+`items` return generators. gojja2's return lists. Anything that *consumes* the result
 -- iterating it, `|list`, `|join`, `|first`, `|sort` -- behaves identically.
 Three things do not:
 
