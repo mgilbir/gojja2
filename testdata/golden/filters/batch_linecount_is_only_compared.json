@@ -1,0 +1,11 @@
+{
+  "case": "filters/batch_linecount_is_only_compared.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "[[1, 2, 3, 4, 5]]|[[1, 2, 3, 4, 5]]|[[1, 2, 3, 4, 5]]|[[1, 2, 3, 4, 5]]"
+}
