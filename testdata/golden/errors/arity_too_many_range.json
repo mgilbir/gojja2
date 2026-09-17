@@ -1,0 +1,14 @@
+{
+  "case": "errors/arity_too_many_range.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "do_replace() takes from 4 to 5 positional arguments but 6 were given"
+  }
+}

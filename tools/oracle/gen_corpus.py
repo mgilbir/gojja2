@@ -493,6 +493,44 @@ case("literals/nested_tuple_keys",
      '{{ d[(1,(2,3))] }}{{ d[((1,2),3)] }}{{ d[(1,2,3)] }}{{ d[()] }}{{ d[((),)] }}|{{ d|length }}')
 
 
+# --- argument binding ---------------------------------------------------------
+# Every argument error a template can provoke is CPython's, raised by CPython's
+# own binding against a signature in jinja2.filters or jinja2.tests. Nothing
+# checked any of it: extra arguments were read as the next parameter, so
+# `|min(1,2,3,4,5)` took the 2 for an attribute name, and an unknown keyword
+# was dropped in silence. The four shapes, and the order they are reported in.
+case("errors/arity_too_many", '{{ "x"|upper(1) }}')
+case("errors/arity_too_many_range", '{{ "x"|replace("a","b",1,2) }}')
+case("errors/arity_unknown_keyword", '{{ "x"|upper(zzzz=1) }}')
+case("errors/arity_multiple_values", '{{ "x"|center(3, width=4) }}')
+case("errors/arity_multiple_values_self", '{{ "x"|upper(s=1) }}')
+case("errors/arity_missing_one", '{{ "x"|replace("a") }}')
+case("errors/arity_missing_two", '{{ "x"|replace() }}')
+case("errors/arity_builtin", '{{ -1|abs(1) }}')
+case("errors/arity_builtin_keyword", '{{ 1 is callable(zzz=1) }}')
+case("errors/arity_test", '{{ 1 is odd(1) }}')
+case("errors/arity_injected", '{{ "x"|truncate(1,2,3,4,5) }}')
+# Keyword problems beat count problems, and count problems beat missing ones;
+# among keywords the first one in the call wins.
+case("errors/arity_keyword_beats_count", '{{ "x"|upper(1, zzzz=2) }}')
+case("errors/arity_dup_beats_count", '{{ "x"|center(1, 2, width=3) }}')
+case("errors/arity_first_keyword_wins", '{{ "x"|center(1, zzzz=4, width=3) }}')
+case("errors/arity_keyword_beats_missing", '{{ "x"|replace(zzzz=1) }}')
+# Calls that are legal and must stay so.
+case("filters/arity_keyword_forms",
+     '{{ "x"|center(width=3) }}|{{ "ab"|replace(old="a", new="b") }}|'
+     '{{ "x"|indent(width=2, first=true) }}|{{ 1|round(precision=1, method="ceil") }}|'
+     '{{ "x"|format(zzzz=1) }}|{{ [1,2]|sum(start=3) }}')
+# A wrapstring that cannot join, and an ellipsis that has no length, both fail
+# where the attribute is looked up rather than where the value is used.
+case("errors/wordwrap_wrapstring", '{{ 0|wordwrap(1, 2, 3) }}')
+case("errors/truncate_end_length", '{{ "abc"|truncate(1,2,3) }}')
+case("errors/truncate_too_short", '{{ "abc"|truncate(1) }}')
+case("filters/truncate_unicode_end", '{{ "abcdefghij"|truncate(6, true, "éé") }}')
+case("errors/urlize_rel_type", '{{ "x"|urlize(rel=4) }}')
+case("filters/urlize_attrs", '{{ "http://a.com"|urlize(rel="me") }}|{{ "http://a.com"|urlize(target="_b") }}')
+
+
 def main() -> int:
     if DST.exists():
         shutil.rmtree(DST)
