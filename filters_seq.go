@@ -74,6 +74,23 @@ func filterFirst(s *State, v value.Value, _ *value.CallArgs) (value.Value, error
 	return s.Undefined(value.UndefinedHint("No first item, sequence was empty.")), nil
 }
 
+// reversible reports whether reversed() would accept the value: a sequence or
+// a mapping, which have the indexing reversed() walks backwards through, but
+// not an object that merely knows its length or how to yield its items.
+func reversible(v value.Value) bool {
+	switch v.Kind() {
+	case value.KindString, value.KindBytes, value.KindList, value.KindTuple,
+		value.KindDict, value.KindUndefined:
+		return true
+	case value.KindObject:
+		switch v.Interface().(type) {
+		case value.Sequence, value.Mapping:
+			return true
+		}
+	}
+	return false
+}
+
 func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	// jinja2 takes the last item through reversed(), which reaches a
 	// string by __getitem__ -- so the last character of a Markup is
@@ -87,6 +104,14 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 			return value.Safe(last), nil
 		}
 		return value.String(last), nil
+	}
+	// reversed() asks for __reversed__, or for __len__ and __getitem__
+	// together. Something that can only be walked forwards has neither, so
+	// it is refused before it is walked -- `{{ loop|last }}` inside a loop
+	// raises rather than answering the item the walk would have ended on.
+	if !reversible(v) {
+		return value.Undefined, errs.New(errs.TypeError,
+			"'%s' object is not reversible", v.TypeName())
 	}
 	items, err := materialize(s, v)
 	if err != nil {

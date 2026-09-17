@@ -329,6 +329,11 @@ case("loops/loop_join_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|join
 case("loops/loop_map_applies_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|map('string')|list }}]{% endfor %}")
 case("loops/loop_in_dict", "{% for i in [1,2,3] %}[{{ dict(loop, extra=2) }}]{% endfor %}")
 
+# |last goes through reversed(), which wants indexing and not just iteration,
+# so a LoopContext -- which knows its length and nothing else -- is refused.
+case("errshape/last_of_a_loop", "{% for i in [1,2,3] %}{{ loop|last }}{% endfor %}")
+case("filters/last_of_what_reverses", "{{ [1,2]|last }}|{{ 'ab'|last }}|{{ range(3)|last }}|{{ {1:2,3:4}|last }}")
+
 # A nested macro is not a boundary for `caller`: jinja2's search does not stop
 # at closure frames, so mentioning it inside one makes the enclosing macro
 # accept a caller as well.
