@@ -453,3 +453,29 @@ func TestVolatileAutoescapeFoldsAndDefers(t *testing.T) {
 		}
 	}
 }
+
+// TestAutoescapeIsAScope pins that {% autoescape %} scopes names, which is
+// what jinja2 compiling it as a Scope means.
+//
+// What the body assigns does not reach the frame outside it -- so a context
+// value that was shadowed inside is visible again after -- and a name that
+// frame assigns *later* is already its local when the body reads it, which
+// makes that read undefined rather than a fall-through to the context.
+func TestAutoescapeIsAScope(t *testing.T) {
+	vars := map[string]any{"q": 7}
+	for _, tc := range []struct{ src, want string }{
+		{`{% autoescape true %}{% set q = 1 %}{% endautoescape %}[{{ q }}]`, "[7]"},
+		{`{% autoescape true %}[{{ q }}]{% endautoescape %}{% set q = 1 %}[{{ q }}]`, "[][1]"},
+		// Inside the block the assignment is visible, as in any scope.
+		{`{% autoescape true %}{% set q = 1 %}[{{ q }}]{% endautoescape %}`, "[1]"},
+	} {
+		got, err := renderVars(t, New(), tc.src, vars)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.src, got, tc.want)
+		}
+	}
+}

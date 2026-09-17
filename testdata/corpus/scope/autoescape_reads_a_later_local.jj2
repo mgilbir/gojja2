@@ -1,0 +1,5 @@
+{
+  "q": 7
+}
+---
+{% autoescape true %}[{{ q }}]{% endautoescape %}{% set q = 1 %}[{{ q }}]
