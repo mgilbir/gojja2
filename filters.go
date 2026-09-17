@@ -1583,13 +1583,13 @@ func sliceValue(v value.Value, n int) (value.Value, error) {
 	if !ok {
 		return v, nil
 	}
-	idx, err := value.SliceIndices(seq.Len(), nil, &n, nil)
+	begin, stride, count, err := value.SliceSpan(seq.Len(), nil, &n, nil)
 	if err != nil {
 		return value.Undefined, err
 	}
-	items := make([]value.Value, len(idx))
-	for i, j := range idx {
-		items[i] = seq.At(j)
+	items := make([]value.Value, count)
+	for i := range count {
+		items[i] = seq.At(begin + i*stride)
 	}
 	if v.Kind() == value.KindTuple {
 		return value.NewTuple(items...), nil
