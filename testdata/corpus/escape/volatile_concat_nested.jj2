@@ -1,0 +1,7 @@
+{
+  "yes": true,
+  "mk": "<i>",
+  "s": "a&b"
+}
+---
+{% autoescape yes %}{% autoescape true %}{{ (mk|safe) ~ s }}{% endautoescape %}{% endautoescape %}|{% autoescape true %}{{ (mk|safe) ~ s }}{% endautoescape %}

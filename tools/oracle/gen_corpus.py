@@ -276,6 +276,25 @@ case("escape/replace_no_autoescape", "{{ (s|replace(o, n))|pprint }}|{{ s|replac
 case("escape/replace_constant", '{{ ("a&<b"|replace("&", "+"))|pprint }}|{{ "a&<b"|replace("&", "+") }}',
      __settings__={"autoescape": True})
 
+# `~` inside a volatile {% autoescape %} concatenates plainly whatever the
+# setting says: jinja2 picks the join with `markup_join if
+# context.eval_ctx.volatile else str_join`, and an eval context is only ever
+# volatile at compile time, so the attribute the generated code reads is always
+# False. The same `~` one line further out answers Markup.
+case("escape/volatile_concat", "{% autoescape yes %}{{ (mk|safe) ~ s }}|{{ ((mk|safe) ~ s) is escaped }}|{{ ((mk|safe) ~ s)|length }}{% endautoescape %}",
+     yes=True, mk="<i>", s="a&b")
+case("escape/volatile_concat_nested", "{% autoescape yes %}{% autoescape true %}{{ (mk|safe) ~ s }}{% endautoescape %}{% endautoescape %}|{% autoescape true %}{{ (mk|safe) ~ s }}{% endautoescape %}",
+     yes=True, mk="<i>", s="a&b")
+case("escape/volatile_concat_macro", "{% autoescape yes %}{% macro q() %}{{ (mk|safe) ~ s }}{% endmacro %}{{ q() }}{% endautoescape %}",
+     yes=True, mk="<i>", s="a&b")
+
+# Markup on the left of * settles the operation before an undefined on the
+# right can raise: Markup.__mul__ asks for __index__ and lets that TypeError
+# out, where str.__mul__ steps aside and the undefined raises instead.
+case("errshape/markup_times_undefined", "{{ (s|safe) * nope }}", s="a")
+case("errshape/string_times_undefined", "{{ s * nope }}", s="a")
+case("errshape/undefined_times_markup", "{{ nope * (s|safe) }}", s="a")
+
 # An {% autoescape %} whose argument is not constant leaves the escaping
 # unknowable until the render -- a volatile eval context. jinja2 still folds a
 # constant print there, and folds it with the setting the block was supposed to

@@ -238,6 +238,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 	ex.st.tmpl = m.tmpl
 	text, err := ex.captureFunction(sc, func(sub *exec) error {
 		sub.autoescape = autoescape
+		sub.volatileEscape = m.volatileEscape
 		// A macro body is not inside the block that called it, so
 		// super() must not resolve through to one.
 		sub.blockName, sub.blockIndex = "", 0

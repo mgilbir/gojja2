@@ -256,8 +256,9 @@ type macroObject struct {
 	st       *State
 	// tmpl is the template the macro was defined in, which decides
 	// autoescaping of its output.
-	tmpl       *Template
-	autoescape bool
+	tmpl           *Template
+	autoescape     bool
+	volatileEscape bool
 	// catchKwargs, catchVarargs and caller record whether the body reads
 	// `kwargs`, `varargs` or `caller`. jinja2 decides this when the macro
 	// is compiled and refuses the corresponding arguments otherwise, so a

@@ -260,7 +260,19 @@ func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
 	}
 	// One Markup operand escapes every other one, including those already
 	// passed -- markup_join rejoins the whole sequence when it finds one.
-	escaping := ex.autoescape && markup
+	//
+	// Except inside an {% autoescape %} whose argument is not a literal,
+	// where jinja2 concatenates plainly whatever the setting says. Its
+	// compiler picks the join for a volatile context with
+	//
+	//	(markup_join if context.eval_ctx.volatile else str_join)
+	//
+	// and an eval context is only ever volatile at *compile* time -- the
+	// attribute the generated code reads is always False -- so `~` there
+	// escapes nothing and returns a plain string, which the output then
+	// escapes as a whole. That is upstream's, wording and all, and a
+	// template can see it: the same `~` a line further out answers Markup.
+	escaping := ex.autoescape && markup && !ex.volatileEscape
 
 	var b strings.Builder
 	for _, v := range parts {

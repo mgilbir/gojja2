@@ -1,0 +1,7 @@
+{
+  "yes": true,
+  "mk": "<i>",
+  "s": "a&b"
+}
+---
+{% autoescape yes %}{% macro q() %}{{ (mk|safe) ~ s }}{% endmacro %}{{ q() }}{% endautoescape %}
