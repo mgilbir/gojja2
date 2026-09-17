@@ -1002,17 +1002,77 @@ var stripTagsRe = regexp.MustCompile(`(?s)<!--.*?-->|<[^>]*>`)
 
 // filterStriptags removes markup and normalises whitespace, the way jinja2
 // does before handing text to something that cannot render HTML.
+//
+// The order is markupsafe's and it is load-bearing: tags go, then the spaces
+// collapse, and only then are the character references resolved. Resolving
+// first would let a reference standing for a space -- `&nbsp;`, `&#32;` -- be
+// collapsed away as though the author had typed one.
 func filterStriptags(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	text := unescapeHTML(stripTagsRe.ReplaceAllString(value.Str(v), ""))
-	return value.String(strings.Join(strings.Fields(text), " ")), nil
+	text := stripTagsRe.ReplaceAllString(value.Str(v), "")
+	return value.String(unescapeHTML(strings.Join(strings.Fields(text), " "))), nil
 }
 
-var htmlUnescaper = strings.NewReplacer(
-	"&lt;", "<", "&gt;", ">", "&#39;", "'", "&#34;", `"`, "&quot;", `"`,
-	"&apos;", "'", "&nbsp;", " ", "&amp;", "&",
-)
+// charrefRe is Python's _charref, which decides how much of the text after an
+// "&" a reference may claim: digits for a decimal one, hex digits after "&#x",
+// and otherwise up to 32 characters that are none of tab, newline, form feed,
+// space, "<", "&", "#" or ";". The trailing ";" is optional, which is what
+// lets `&amp` resolve.
+var charrefRe = regexp.MustCompile("&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)")
 
-func unescapeHTML(s string) string { return htmlUnescaper.Replace(s) }
+// unescapeHTML is Python's html.unescape, which is what markupsafe's unescape
+// is, and therefore what |striptags ends in.
+//
+// It used to be a replacer over eight entities. That left `&AMP;` -- the
+// uppercase spelling the standard also defines, and what `{{ html|upper }}`
+// produces -- and the other 2,223 named references sitting in the output.
+func unescapeHTML(s string) string {
+	if !strings.Contains(s, "&") {
+		return s
+	}
+	return charrefRe.ReplaceAllStringFunc(s, func(match string) string {
+		return resolveCharref(match[1:])
+	})
+}
+
+// resolveCharref resolves one reference, given the text after the "&".
+func resolveCharref(ref string) string {
+	if strings.HasPrefix(ref, "#") {
+		digits, base := strings.TrimSuffix(ref[1:], ";"), 10
+		if digits != "" && (digits[0] == 'x' || digits[0] == 'X') {
+			digits, base = digits[1:], 16
+		}
+		// The pattern admits any number of digits, so a long one
+		// overflows; anything that does is far past the last code
+		// point, which the standard answers with the replacement
+		// character like any other value out of range.
+		num, err := strconv.ParseInt(digits, base, 32)
+		if err != nil {
+			return "\uFFFD"
+		}
+		if text, ok := invalidCharrefs[int(num)]; ok {
+			return text
+		}
+		if (num >= 0xD800 && num <= 0xDFFF) || num > 0x10FFFF {
+			return "\uFFFD"
+		}
+		if invalidCodepoints[int(num)] {
+			return ""
+		}
+		return string(rune(num))
+	}
+	if text, ok := htmlEntities[ref]; ok {
+		return text
+	}
+	// A named reference may be missing its semicolon and run into the text
+	// after it, so the longest prefix that is a name wins and the rest
+	// stays where it was: `&notit` is "\u00acit".
+	for i := len(ref) - 1; i > 1; i-- {
+		if text, ok := htmlEntities[ref[:i]]; ok {
+			return text + ref[i:]
+		}
+	}
+	return "&" + ref
+}
 
 // filterFormat is jinja2's `|format`, which is `%` interpolation.
 //

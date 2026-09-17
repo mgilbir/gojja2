@@ -1,5 +1,5 @@
 {
-  "case": "filters/striptags_partial.jj2",
+  "case": "filters/striptags_entities.jj2",
   "oracle": {
     "impl": "cpython-jinja2",
     "version": "3.1.6",
@@ -7,5 +7,5 @@
     "python": "3.11.15"
   },
   "ok": true,
-  "output": "¬it;|¬it|¬|&|&x|&#;|&;|&"
+  "output": "A & B|© ® Ý"
 }
