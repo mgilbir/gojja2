@@ -59,10 +59,19 @@ type signature struct{{
 	// varKw accepts any keyword, which is what **kwargs means.
 	varKw bool
 	// builtin marks one of Python's own functions, which jinja2 registers
-	// directly -- abs, len, callable. A C function words its arity error
-	// differently from a Python one, and a template author sees the
-	// difference.
+	// directly -- abs, len, callable, and the operator.* comparisons. A C
+	// function words its argument errors differently from a Python one,
+	// and differently from each other, so the wordings are probed out of
+	// CPython rather than derived from the signature.
 	builtin bool
+	// countMessage is what this C function says for any wrong number of
+	// positional arguments, too few or too many alike, with the count
+	// given. Empty for a Python function, which words it from the
+	// signature instead.
+	countMessage string
+	// kwMessage is what it says when handed a keyword argument at all. It
+	// names neither the keyword nor the count.
+	kwMessage string
 }}
 
 // filterSignatures and testSignatures are keyed by the name a template uses.
@@ -85,6 +94,77 @@ var testSignatures = map[string]signature{{
 # function CPython actually binds is the only thing that answers this, so the
 # wrapper is unwrapped first and the first parameter's *name* decides.
 INJECTED_NAMES = {"environment", "env", "context", "eval_ctx"}
+
+
+def probe(fn, *args, **kwargs) -> str | None:
+    """Return the TypeError CPython raises for this call, if it raises one."""
+    try:
+        fn(*args, **kwargs)
+    except TypeError as e:
+        return str(e)
+    except Exception:
+        return None
+    return None
+
+
+def substitute(a: str, b: str, lo: int, hi: int, what: str) -> str:
+    """Turn two messages differing only in a count into one %d format."""
+    i = 0
+    while i < len(a) and i < len(b) and a[i] == b[i]:
+        i += 1
+    j = 0
+    while j < len(a) - i and j < len(b) - i and a[len(a) - 1 - j] == b[len(b) - 1 - j]:
+        j += 1
+    if a[i : len(a) - j] != str(lo) or b[i : len(b) - j] != str(hi):
+        raise SystemExit(
+            f"{what}: cannot read a count out of CPython's wording; got {a!r} and {b!r}"
+        )
+    return a[:i] + "%d" + a[len(a) - j :]
+
+
+def builtin_messages(fn, total: int, what: str) -> tuple[str, str]:
+    """Probe CPython for how this C function words its argument errors.
+
+    There is more than one wording, and which one a function uses cannot be
+    read off its signature: abs, len and callable say "abs() takes exactly one
+    argument (2 given)", while operator.eq -- which jinja2 registers as the
+    `eq`, `==` and `equalto` tests -- says "eq expected 2 arguments, got 3",
+    and names itself "_operator.eq" when refusing a keyword. Guessing produced
+    the first wording for all of them, so the real messages are taken from the
+    real functions instead.
+
+    The count template comes from diffing two wrong-count calls, so the shape
+    is never assumed; anything that does not differ in exactly the count stops
+    the generator.
+    """
+    if total < 0:
+        raise SystemExit(f"{what}: a builtin taking *args is not handled")
+    lo, hi = total + 1, total + 7
+    too_many = substitute(
+        probe(fn, *([None] * lo)), probe(fn, *([None] * hi)), lo, hi, what
+    )
+    # One too few has to reach the same wording, or a single template cannot
+    # stand for both and the caller below would report the wrong thing.
+    few = total - 1
+    if few >= 0:
+        got = probe(fn, *([None] * few))
+        if got != too_many % few:
+            raise SystemExit(
+                f"{what}: too few and too many are worded differently: "
+                f"{got!r} against {too_many % few!r}"
+            )
+    # The keyword refusal names neither the key nor the count, which two
+    # different keys confirm rather than assume.
+    first, second = probe(fn, **{"zz": None}), probe(fn, **{"qq": None})
+    if first is None or first != second:
+        raise SystemExit(
+            f"{what}: keyword refusal is not a constant message: {first!r} and {second!r}"
+        )
+    return too_many, first
+
+
+def go_string(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def describe(fn) -> dict | None:
@@ -119,6 +199,9 @@ def describe(fn) -> dict | None:
             required += 1
         if i >= injected:
             params.append(p.name)
+    count_msg, kw_msg = "", ""
+    if builtin:
+        count_msg, kw_msg = builtin_messages(target, total, getattr(target, "__name__", "?"))
     return {
         "pyName": getattr(target, "__name__", "?"),
         "params": params,
@@ -127,6 +210,8 @@ def describe(fn) -> dict | None:
         "total": total,
         "varKw": var_kw,
         "builtin": builtin,
+        "countMessage": count_msg,
+        "kwMessage": kw_msg,
     }
 
 
@@ -143,7 +228,9 @@ def rows_for(kind: str, table: dict) -> tuple[str, int]:
             f"params: []string{{{names}}}, "
             f'injected: {d["injected"]}, required: {d["required"]}, '
             f'total: {d["total"]}, varKw: {str(d["varKw"]).lower()}, '
-            f'builtin: {str(d["builtin"]).lower()}}},\n'
+            f'builtin: {str(d["builtin"]).lower()}, '
+            f'countMessage: {go_string(d["countMessage"])}, '
+            f'kwMessage: {go_string(d["kwMessage"])}}},\n'
         )
     return "".join(rows), len(rows)
 
