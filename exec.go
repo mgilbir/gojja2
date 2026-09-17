@@ -646,16 +646,17 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 }
 
 // export records a top-level binding so an importing template can see it.
+//
+// jinja2 does not export a name beginning with an underscore, which is the one
+// rule here; the set is what moduleObject answers from.
 func (s *State) export(name string) {
 	if strings.HasPrefix(name, "_") {
 		return
 	}
-	for _, existing := range s.exported {
-		if existing == name {
-			return
-		}
+	if s.exports == nil {
+		s.exports = make(map[string]bool, 8)
 	}
-	s.exported = append(s.exported, name)
+	s.exports[name] = true
 }
 
 // moduleObject is what `{% import %}` binds: the exported names of a rendered
@@ -666,10 +667,16 @@ type moduleObject struct {
 }
 
 func (m *moduleObject) GetAttr(name string) (value.Value, bool) {
-	if strings.HasPrefix(name, "_") {
+	// The exported list decides, rather than the frame being read directly.
+	// It was written by every top-level binding and read by nothing, so the
+	// comment on State.exported -- "so `{% import %}` can expose them" --
+	// described something that was not happening, and the underscore rule
+	// it applies was duplicated here to make up for it.
+	if !m.st.exports[name] {
 		return value.Undefined, false
 	}
-	return m.st.ctx.vars[name], m.st.ctx.vars[name] != value.Value{}
+	v, ok := m.st.ctx.vars[name]
+	return v, ok
 }
 
 // A TemplateModule is deliberately attribute-only: jinja2's is not a mapping

@@ -73,7 +73,10 @@ func registerDefaultFilters(env *Environment) {
 	add("join", filterJoin)
 	add("reverse", filterReverse)
 	add("sort", filterSort)
-	add("dictsort", definedFilter(filterDictsort))
+	// Not wrapped in definedFilter: jinja2 validates `by` before it looks
+	// at the input at all, so an undefined input with a bad `by` reports
+	// the bad `by`.
+	add("dictsort", filterDictsort)
 	add("unique", filterUnique)
 	add("min", filterMinMax(false))
 	add("max", filterMinMax(true))

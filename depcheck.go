@@ -127,11 +127,11 @@ func (c *depChecker) failAt(line int, format string, args ...any) {
 // default. Without one, a macro invoked outside a {% call %} block would leave
 // it unbound, and jinja2 refuses the definition rather than the call.
 func (c *depChecker) checkCallerDefault(params []*ast.Name, defaults []ast.Expr, line int) {
+	// Defaults align with the tail of the parameter list, so a parameter
+	// before that tail has none.
+	firstDefault := len(params) - len(defaults)
 	for i, p := range params {
-		if p.Name != "caller" && i >= len(params)-len(defaults) {
-			continue
-		}
-		if p.Name == "caller" && i < len(params)-len(defaults) {
+		if p.Name == "caller" && i < firstDefault {
 			c.failAt(line, "When defining macros or call blocks the special"+
 				` "caller" argument must be omitted or be given a default.`)
 			return

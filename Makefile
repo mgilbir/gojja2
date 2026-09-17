@@ -242,8 +242,12 @@ fmt: ## Format Go sources
 vet: ## Run go vet
 	go vet ./...
 
+.PHONY: lint
+lint: ## Run golangci-lint, pinned to the version CI uses
+	golangci-lint run
+
 .PHONY: check
-check: fmt-check vet test race ## Everything CI runs
+check: fmt-check vet test race lint ## Everything CI runs
 
 .PHONY: race
 race: ## Run the Go test suite under the race detector

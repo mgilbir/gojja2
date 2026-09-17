@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "mod.html": "{% if false %}{% set a = 1 %}{% endif %}{% set b = 2 %}{% set _c = 3 %}{% macro m() %}M{% endmacro %}{% for i in [1] %}{% set d = 4 %}{% endfor %}"
+  }
+}
+---
+{% from "mod.html" import b, m %}{{ b }}{{ m() }}

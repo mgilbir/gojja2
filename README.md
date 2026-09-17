@@ -99,7 +99,7 @@ at all -- silently.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 325 | 325 |
+| gojja2's own (committed, with goldens) | 332 | 332 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -107,7 +107,7 @@ at all -- silently.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **2645** | **2641 (99.8%)** |
+| **total** | **2652** | **2648 (99.8%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -229,7 +229,7 @@ make venv       # CPython + jinja2 oracle
 make suites     # download reference suites (gitignored)
 make oracle     # regenerate goldens from CPython jinja2
 make test       # go test ./...
-make check      # what CI runs: fmt, vet, test, race
+make check      # what CI runs: fmt, vet, test, race, lint
 ```
 
 CI runs on every pull request and on every commit that reaches `main`. A pull

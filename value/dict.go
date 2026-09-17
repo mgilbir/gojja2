@@ -330,9 +330,6 @@ func appendKey(dst []byte, h hashKey) []byte {
 	return append(dst, h.str...)
 }
 
-// Hashable reports whether v can be used as a dict key.
-func Hashable(v Value) bool { return CheckHashable(v) == nil }
-
 // CheckHashable reports why v cannot be a key, naming the element at fault.
 //
 // The distinction matters: a tuple holding a list is unhashable, and Python

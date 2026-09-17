@@ -104,12 +104,24 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # The resource tests assert that a hostile template returns an error
-      # rather than taking the process down. Without a memory cap a regression
-      # would look like a slow job rather than a failure, so the runner is
-      # given one it can actually hit.
-      - name: Test under a memory cap
-        run: go test ./...
+      # A second pass under a tight GOMEMLIMIT, which changes when the
+      # collector runs and so exercises the allocation paths differently.
+      #
+      # -count=1 is not decoration. GOMEMLIMIT is read by the runtime rather
+      # than through os.Getenv, so it is not part of the test cache key: this
+      # step used to replay the step above and report every package as
+      # "(cached)" in 0.134s, executing no test code at all.
+      #
+      # It is also not a cap in the sense the name would suggest. GOMEMLIMIT is
+      # a *soft* limit -- the runtime collects harder rather than refusing an
+      # allocation -- so a regression here shows up as a slow job and not as a
+      # failure. What actually fails on one is the guards that measure the
+      # property directly: TestSlicingCostsTheResultNotTheInput,
+      # TestTupleHashIsLinear, TestLexingIsLinearInTheSource and the deep-graph
+      # tests, which lower the stack ceiling rather than hoping the machine has
+      # one.
+      - name: Test again under a tight GOMEMLIMIT
+        run: go test -count=1 ./...
         env:
           GOMEMLIMIT: 1GiB
 
