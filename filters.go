@@ -36,9 +36,9 @@ func registerDefaultFilters(env *Environment) {
 	add("string", filterString)
 	add("replace", filterReplace)
 	add("center", filterCenter)
-	add("indent", definedFilter(filterIndent))
+	add("indent", filterIndent)
 	add("truncate", filterTruncate)
-	add("wordwrap", definedFilter(filterWordwrap))
+	add("wordwrap", filterWordwrap)
 	add("wordcount", filterWordcount)
 	add("striptags", filterStriptags)
 	add("format", filterFormat)
@@ -519,16 +519,17 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		if w.IsString() {
 			prefix = w.AsString()
 		} else {
-			width, err := intArg(args, 0, "width", 4)
+			// jinja2 writes `" " * width`, so a width that is not
+			// an integer fails as a sequence repetition, naming the
+			// type it could not repeat by -- not as a bad argument.
+			// Going through the operator inherits that wording, the
+			// bool that counts as 1, the negative that repeats
+			// nothing, and the charge against the render budget.
+			p, err := value.Mul(value.String(" "), w, s)
 			if err != nil {
 				return value.Undefined, err
 			}
-			// A negative width repeats nothing, as Python's
-			// `" " * -1` does. strings.Repeat panics on one.
-			prefix, err = s.repeatString(" ", width)
-			if err != nil {
-				return value.Undefined, err
-			}
+			prefix = p.AsString()
 		}
 	}
 	first, err := boolArg(args, 1, "first", false)
@@ -537,6 +538,13 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	}
 	blank, err := boolArg(args, 2, "blank", false)
 	if err != nil {
+		return value.Undefined, err
+	}
+
+	// Only now is the value itself touched: jinja2 sizes the indent from
+	// `width` first, so an undefined input outlives a width that cannot be
+	// repeated by.
+	if err := requireDefined(v); err != nil {
 		return value.Undefined, err
 	}
 
@@ -560,7 +568,10 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	// whether or not it is blank, while `blank` governs only the lines
 	// after it. Conflating the two makes `""|indent(2, true)` empty
 	// instead of two spaces.
-	lines := splitLinesKeepingEmpty(value.Str(v) + "\n")
+	// jinja2 writes `s += newline` and then s.splitlines(), so the append
+	// is the reason a trailing line survives -- and splitlines is the
+	// reason a carriage return breaks a line here too.
+	lines := splitLines(value.Str(v)+"\n", false)
 	head, rest := lines[0], lines[1:]
 	out := head
 	if len(rest) > 0 {
@@ -582,12 +593,28 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	return keepSafe(v, out), nil
 }
 
-// splitLinesKeepingEmpty is Python's str.splitlines: it drops a single
-// trailing newline rather than producing an empty last element.
-func splitLinesKeepingEmpty(s string) []string {
-	out := strings.Split(s, "\n")
-	if len(out) > 1 && out[len(out)-1] == "" {
-		out = out[:len(out)-1]
+// splitLines is Python's str.splitlines: it breaks on a newline, a carriage
+// return or the pair, keeps no empty last element for a trailing break, and
+// gives an empty string no lines at all -- which is why `{{ ""|wordwrap("z") }}`
+// renders nothing rather than complaining about the width.
+func splitLines(s string, keepEnds bool) []string {
+	var out []string
+	for len(s) > 0 {
+		i := strings.IndexAny(s, "\n\r")
+		if i < 0 {
+			out = append(out, s)
+			break
+		}
+		end := i + 1
+		if s[i] == '\r' && end < len(s) && s[end] == '\n' {
+			end++
+		}
+		if keepEnds {
+			out = append(out, s[:end])
+		} else {
+			out = append(out, s[:i])
+		}
+		s = s[end:]
 	}
 	return out
 }
@@ -667,9 +694,14 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 func ptr[T any](v T) *T { return &v }
 
 func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	width, err := intArg(args, 0, "width", 79)
-	if err != nil {
-		return value.Undefined, err
+	// The width is carried as a value rather than converted here. jinja2
+	// hands it straight to textwrap, which only looks at it once it has a
+	// line to wrap -- so `{{ ""|wordwrap("z") }}` renders nothing, and a
+	// width that is a float wraps happily until something has to be sliced
+	// by it.
+	width := value.Int(79)
+	if w, ok := arg(args, 0, "width"); ok {
+		width = w
 	}
 	breakLong, err := boolArg(args, 1, "break_long_words", true)
 	if err != nil {
@@ -692,6 +724,13 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 		wrapString = value.Str(w)
 	}
 
+	// s is reached only at s.splitlines(), which Python evaluates after it
+	// has resolved the attribute on the left of the join -- so an
+	// undefined input outlives a wrapstring that has no join to call.
+	if err := requireDefined(v); err != nil {
+		return value.Undefined, err
+	}
+
 	// jinja2 calls value.splitlines(), so a non-string fails as a missing
 	// attribute rather than being stringified.
 	if !v.IsString() {
@@ -699,14 +738,13 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 			"'%s' object has no attribute 'splitlines'", v.TypeName())
 	}
 
-	if width <= 0 {
-		return value.Undefined, errs.New(errs.ValueError,
-			"invalid width %d (must be > 0)", width)
-	}
-
 	var out []string
-	for _, paragraph := range strings.Split(value.Str(v), "\n") {
-		out = append(out, wrapLine(paragraph, width, breakLong, breakOnHyphens)...)
+	for _, paragraph := range splitLines(value.Str(v), false) {
+		wrapped, err := wrapLine(paragraph, width, breakLong, breakOnHyphens)
+		if err != nil {
+			return value.Undefined, err
+		}
+		out = append(out, wrapped...)
 	}
 	return value.String(strings.Join(out, wrapString)), nil
 }
@@ -723,7 +761,26 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 //   - exactly one trailing whitespace chunk is dropped from a finished line,
 //     so a line can still end in a space when an empty piece was dropped
 //     ahead of it.
-func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
+func wrapLine(text string, widthVal value.Value, breakLong, breakOnHyphens bool) ([]string, error) {
+	// textwrap checks the width before anything else, and it checks it with
+	// Python's own comparison -- which is what refuses a string, a list or
+	// None here, naming the operator, rather than an argument check at the
+	// filter's door. It happens once per line, so a value with no lines
+	// never reaches it.
+	tooNarrow, err := value.Ordered("<=", widthVal, value.Int(0))
+	if err != nil {
+		return nil, err
+	}
+	if tooNarrow {
+		return nil, errs.New(errs.ValueError,
+			"invalid width %s (must be > 0)", value.Repr(widthVal))
+	}
+	// Past that, the width is only compared against -- so a float wraps as
+	// its value -- until a word has to be cut at it, which is a slice, and
+	// a slice index has to be an integer.
+	width, _ := widthVal.Float64()
+	sliceable := widthVal.IsInteger()
+
 	chunks := wrapChunks(text, breakOnHyphens)
 	var lines []string
 
@@ -744,7 +801,7 @@ func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
 		curLen := 0
 		for len(chunks) > 0 {
 			size := value.StrLen(chunks[0])
-			if curLen+size > width {
+			if float64(curLen+size) > width {
 				break
 			}
 			cur = append(cur, chunks[0])
@@ -753,11 +810,19 @@ func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
 		}
 
 		// The next chunk is too big for any line, not just this one.
-		if len(chunks) > 0 && value.StrLen(chunks[0]) > width {
+		if len(chunks) > 0 && float64(value.StrLen(chunks[0])) > width {
 			if breakLong {
-				space := max(width-curLen, 0)
-				if width < 1 {
-					space = 1
+				// A width below 1 cuts one character, which is
+				// a literal 1 and so always a valid index; any
+				// other width becomes the index itself, and
+				// textwrap gives up on one that is not whole.
+				space := 1
+				if width >= 1 {
+					if !sliceable {
+						return nil, errs.New(errs.TypeError,
+							"slice indices must be integers or None or have an __index__ method")
+					}
+					space = max(int(width)-curLen, 0)
 				}
 				if breakOnHyphens && space > 0 {
 					if at := lastHyphenBefore(chunks[0], space); at > 0 {
@@ -789,9 +854,9 @@ func wrapLine(text string, width int, breakLong, breakOnHyphens bool) []string {
 		}
 	}
 	if len(lines) == 0 {
-		return []string{""}
+		return []string{""}, nil
 	}
-	return lines
+	return lines, nil
 }
 
 // lastHyphenBefore finds the hyphen a long word may be broken after, which

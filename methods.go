@@ -263,24 +263,10 @@ func methodSplitlines(_ *State, r value.Value, args *value.CallArgs) (value.Valu
 		}
 		keepEnds = ok
 	}
-	s := r.AsString()
-	var items []value.Value
-	for len(s) > 0 {
-		i := strings.IndexAny(s, "\n\r")
-		if i < 0 {
-			items = append(items, value.String(s))
-			break
-		}
-		end := i + 1
-		if s[i] == '\r' && end < len(s) && s[end] == '\n' {
-			end++
-		}
-		if keepEnds {
-			items = append(items, value.String(s[:end]))
-		} else {
-			items = append(items, value.String(s[:i]))
-		}
-		s = s[end:]
+	lines := splitLines(r.AsString(), keepEnds)
+	items := make([]value.Value, len(lines))
+	for i, line := range lines {
+		items[i] = value.String(line)
 	}
 	return value.NewList(items...), nil
 }
