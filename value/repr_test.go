@@ -173,3 +173,55 @@ type reprOnly struct{ text string }
 func (r reprOnly) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
 func (r reprOnly) Repr() string                       { return r.text }
 func (r reprOnly) Str() string                        { return r.text }
+
+// TestBytesReprEscapesPerByte: bytes.__repr__ escapes one byte at a time, and
+// has no \u or \U form at all. The shared string repr ranges over runes, which
+// is right for a str and wrong here -- the two bytes of "é" decode to one rune
+// and printed as a single \xe9 where CPython prints \xc3\xa9, and a euro sign
+// printed as €, which no bytes repr ever contains.
+//
+// The bytes themselves were always correct; only the text describing them was
+// wrong, so nothing failed and the output was simply read as bytes that were
+// never there.
+func TestBytesReprEscapesPerByte(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   []byte
+		want string
+	}{
+		// One escape per byte, not per decoded rune.
+		{"latin1 range", []byte("é"), `b'\xc3\xa9'`},
+		{"three-byte", []byte("€"), `b'\xe2\x82\xac'`},
+		{"four-byte", []byte("😀"), `b'\xf0\x9f\x98\x80'`},
+		{"mixed", []byte("héllo wörld"), `b'h\xc3\xa9llo w\xc3\xb6rld'`},
+		// Raw bytes that are not valid UTF-8 at all survive as themselves
+		// rather than collapsing into a replacement character.
+		{"invalid utf8", []byte{0xff, 0xfe}, `b'\xff\xfe'`},
+		{"lone continuation", []byte{0x80}, `b'\x80'`},
+		// Printable ASCII is literal; DEL and the C0 controls are not.
+		{"printable", []byte("ab cd~"), `b'ab cd~'`},
+		{"nul", []byte{0x00}, `b'\x00'`},
+		{"del", []byte{0x7f}, `b'\x7f'`},
+		{"escape", []byte{0x1b}, `b'\x1b'`},
+		// The short escapes Python prefers over \xNN.
+		{"tab newline cr", []byte("\t\n\r"), `b'\t\n\r'`},
+		{"backslash", []byte(`\`), `b'\\'`},
+		// Quote selection is the str rule: switch to " only when there is
+		// a ' and no ".
+		{"empty", []byte{}, `b''`},
+		{"apostrophe", []byte("it's"), `b"it's"`},
+		{"quote", []byte(`say "hi"`), `b'say "hi"'`},
+		{"both quotes", []byte(`it's "hi"`), `b'it\'s "hi"'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := value.Repr(value.Bytes(tc.in)); got != tc.want {
+				t.Errorf("Repr(%q) = %s, want %s", tc.in, got, tc.want)
+			}
+			// ascii() of bytes is the same text: a bytes repr is
+			// already ASCII, so there is nothing left to escape.
+			if got := value.Ascii(value.Bytes(tc.in)); got != tc.want {
+				t.Errorf("Ascii(%q) = %s, want %s", tc.in, got, tc.want)
+			}
+		})
+	}
+}

@@ -236,7 +236,7 @@ func writeScalarRepr(b *strings.Builder, v Value, ascii bool) {
 		writeStringRepr(b, v.str, ascii)
 	case KindBytes:
 		b.WriteByte('b')
-		writeStringRepr(b, v.str, true)
+		writeBytesRepr(b, v.str)
 	case KindObject:
 		if r, ok := v.obj.(Reprer); ok {
 			// ascii() is repr() with what it produced escaped
@@ -361,6 +361,46 @@ func writeStringRepr(b *strings.Builder, s string, asciiOnly bool) {
 		default:
 			b.WriteString(`\U`)
 			writeHex(b, uint32(r), 8)
+		}
+	}
+	b.WriteByte(quote)
+}
+
+// writeBytesRepr is bytes.__repr__, which escapes one *byte* at a time.
+//
+// writeStringRepr ranges over runes, which is right for a str and wrong here:
+// the bytes of a multi-byte character decode to a single rune and print as one
+// escape instead of one per byte, so `{{ "é".encode() }}` rendered b'\xe9'
+// where CPython renders b'\xc3\xa9'. The bytes themselves were always correct
+// -- |length agreed throughout -- so only the text was wrong, which is the
+// kind of wrong that is read rather than caught.
+//
+// There is also no \u or \U form in a bytes repr at all: every byte that is
+// not printable ASCII is \xNN, so a euro sign is three escapes and never
+// €. DEL is not printable, which is why the range stops below 0x7f.
+func writeBytesRepr(b *strings.Builder, s string) {
+	quote := byte('\'')
+	if strings.IndexByte(s, '\'') >= 0 && strings.IndexByte(s, '"') < 0 {
+		quote = '"'
+	}
+	b.WriteByte(quote)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == quote || c == '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c >= 0x20 && c < 0x7f:
+			b.WriteByte(c)
+		default:
+			b.WriteString(`\x`)
+			writeHex(b, uint32(c), 2)
 		}
 	}
 	b.WriteByte(quote)
