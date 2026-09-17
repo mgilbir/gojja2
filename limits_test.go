@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mgilbir/gojja2"
+	"github.com/mgilbir/gojja2/errs"
 )
 
 // renderWith is the shape every test here uses: render src and return the
@@ -223,9 +224,12 @@ func TestRepetitionIsCharged(t *testing.T) {
 		"tuple": {gojja2.New(gojja2.WithMaxIterations(1000)),
 			`{% set t = (1, 2) * 1000000000 %}`, gojja2.ErrTooManyIterations},
 		// The count overflows int64 when multiplied by the width, so a
-		// wrapped negative would read as a tiny allocation.
+		// wrapped negative would read as a tiny allocation. Past the
+		// hard ceiling the answer is CPython's own OverflowError rather
+		// than a budget error: the repetition is refused outright, and
+		// no budget large enough to matter exists.
 		"overflowing count": {gojja2.New(gojja2.WithMaxOutputBytes(4096)),
-			`{{ "xx" * 9000000000000000000 }}`, gojja2.ErrOutputTooLarge},
+			`{{ "xx" * 9000000000000000000 }}`, errs.OverflowError},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := renderWith(t, context.Background(), tc.env, tc.src); !errors.Is(err, tc.want) {
@@ -246,12 +250,50 @@ func TestCompilingDoesNotAllocate(t *testing.T) {
 		"doubling":       `{{ "x" * 60000 + "x" * 60000 }}`,
 		"nested repeat":  `{{ ("x" * 60000) * 60000 }}`,
 		"inside a block": `{% if true %}{{ "x" * 1000000000 }}{% endif %}`,
+		// `%` sizes its result from a width the template wrote, which
+		// the fold budget never saw: `*` was screened by its callers
+		// and `%` by neither of them. The last of these OOM-killed
+		// FromString at a four-gigabyte cap, from 42 bytes of template.
+		"pad width":     `{{ "%1000000000s" % "x" }}`,
+		"precision":     `{{ "%.1000000000f" % 1.5 }}`,
+		"starred width": `{{ "%*s" % (1000000000, "x") }}`,
+		"many pads":     `{{ ("%(a)10000000s" * 200) % {"a": "x"} }}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			// Compiling must return; what it produces is the render's
 			// problem, and the render is bounded.
 			if _, err := env.FromString(src); err != nil {
 				t.Fatalf("compile %q: %v", src, err)
+			}
+		})
+	}
+}
+
+// TestSizedAllocationsAreCharged covers every operator that sizes its result
+// from a number the template wrote, against a budget far below what it asks
+// for. `*` was charged by each of its two callers and `%` by neither, which is
+// the shape this table exists to stop: the charge belongs to the operation, so
+// a new caller cannot forget it and a new operator has to be added here.
+func TestSizedAllocationsAreCharged(t *testing.T) {
+	for name, tc := range map[string]struct {
+		src  string
+		want error
+	}{
+		"repeat":          {`{{ "x" * 1000000 }}`, gojja2.ErrOutputTooLarge},
+		"list repeat":     {`{% set l = [1] * 1000000 %}`, gojja2.ErrTooManyIterations},
+		"pad width":       {`{% set w = "%1000000s" %}{{ w % "x" }}`, gojja2.ErrOutputTooLarge},
+		"pad precision":   {`{% set w = "%.1000000f" %}{{ w % 1.5 }}`, gojja2.ErrOutputTooLarge},
+		"starred width":   {`{% set w = "%*s" %}{{ w % (1000000, "x") }}`, gojja2.ErrOutputTooLarge},
+		"integer minimum": {`{% set w = "%.1000000d" %}{{ w % 1 }}`, gojja2.ErrOutputTooLarge},
+		"through format":  {`{% set w = "%1000000s" %}{{ w|format("x") }}`, gojja2.ErrOutputTooLarge},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := gojja2.New(
+				gojja2.WithMaxOutputBytes(4096),
+				gojja2.WithMaxIterations(1000),
+			)
+			if err := renderWith(t, context.Background(), env, tc.src); !errors.Is(err, tc.want) {
+				t.Errorf("%s: got %v, want %v", tc.src, err, tc.want)
 			}
 		})
 	}

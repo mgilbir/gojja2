@@ -4,7 +4,6 @@
 package gojja2
 
 import (
-	"math"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -200,53 +199,17 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 	case ast.OpSub:
 		return value.Sub(left, right)
 	case ast.OpMul:
-		if err := ex.chargeRepeat(left, right); err != nil {
-			return value.Undefined, err
-		}
-		return value.Mul(left, right)
+		return value.Mul(left, right, ex.st)
 	case ast.OpDiv:
 		return value.Div(left, right)
 	case ast.OpFloorDiv:
 		return value.FloorDiv(left, right)
 	case ast.OpMod:
-		return value.Mod(left, right)
+		return value.Mod(left, right, ex.st)
 	case ast.OpPow:
 		return value.Pow(left, right)
 	}
 	return value.Undefined, errs.New(errs.TemplateRuntimeError, "unknown operator %s", n.Op)
-}
-
-// chargeRepeat charges what `left * right` is about to allocate, when it is a
-// repetition.
-//
-// value.repeat() caps a single result at 2**31 elements, which for a list of
-// values is tens of gigabytes and for a string is two -- far past any budget
-// the render has. The cap bounds one expression; the budget bounds the render,
-// and it has to be consulted before the allocation rather than after, because
-// after it the memory is already gone. `{{ "x" * 1000000000 }}` took the
-// process down with an output budget of four kilobytes in force.
-//
-// Bytes are charged against the output budget and elements against the
-// iteration budget, so each lands on the bound that measures the same unit.
-func (ex *exec) chargeRepeat(left, right value.Value) error {
-	size, isBytes, ok := value.RepeatSize(left, right)
-	if !ok || size <= 0 {
-		return nil
-	}
-	if isBytes {
-		return ex.st.budget.account(clampToInt(size))
-	}
-	return ex.st.Step(clampToInt(size))
-}
-
-// clampToInt caps a saturated int64 at the widest int the budget can take. The
-// budgets are far smaller than either, so clamping only affects a number that
-// was already past every bound.
-func clampToInt(n int64) int {
-	if n > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	return int(n)
 }
 
 func (ex *exec) evalUnaryOp(n *ast.UnaryOp) (value.Value, error) {
