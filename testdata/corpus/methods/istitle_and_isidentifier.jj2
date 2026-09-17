@@ -1,0 +1,3 @@
+{}
+---
+{{ 'Hello World'.istitle() }}{{ 'Hello world'.istitle() }}{{ "It's".istitle() }}|{{ 'class'.isidentifier() }}{{ '1x'.isidentifier() }}{{ 'a-b'.isidentifier() }}

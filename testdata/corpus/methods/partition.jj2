@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a-b-c'.partition('-') }}|{{ 'a-b-c'.rpartition('-') }}|{{ 'abc'.partition('-') }}|{{ 'abc'.rpartition('-') }}

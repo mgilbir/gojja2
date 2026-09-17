@@ -536,6 +536,41 @@ case("filters/urlencode", "{{ 'a b/c?d'|urlencode }}|{{ {'a':'1 2'}|urlencode }}
 # bytes.__repr__ escapes one byte at a time and has no \u or \U form, so a
 # character outside ASCII is one escape per UTF-8 byte -- not the single escape
 # the str repr writes for the rune those bytes decode to.
+# Python has three numeric predicates and they are three different sets: only
+# isdecimal is a general category (Nd). isdigit adds Numeric_Type=Digit, and
+# isnumeric adds everything carrying a numeric value, CJK ideographs included.
+case("methods/numeric_predicates_differ",
+     "{{ '\u00b2'.isdecimal() }}{{ '\u00b2'.isdigit() }}{{ '\u00b2'.isnumeric() }}|"
+     "{{ '\u00bd'.isdecimal() }}{{ '\u00bd'.isdigit() }}{{ '\u00bd'.isnumeric() }}|"
+     "{{ '\u4e00'.isdecimal() }}{{ '\u4e00'.isdigit() }}{{ '\u4e00'.isnumeric() }}|"
+     "{{ '\u0667'.isdecimal() }}{{ '\u0667'.isdigit() }}{{ '\u0667'.isnumeric() }}")
+case("methods/isalnum_is_the_union",
+     "{{ '\u00b2'.isalnum() }}|{{ '\u00bd'.isalnum() }}|{{ 'a'.isalnum() }}|{{ '-'.isalnum() }}")
+# isascii and isprintable answer True for the empty string; the rest answer False.
+case("methods/empty_string_predicates",
+     "{{ ''.isascii() }}{{ ''.isprintable() }}|{{ ''.isdigit() }}{{ ''.istitle() }}"
+     "{{ ''.isidentifier() }}{{ ''.isnumeric() }}|{{ ' '.isprintable() }}{{ '\t'.isprintable() }}")
+case("methods/istitle_and_isidentifier",
+     "{{ 'Hello World'.istitle() }}{{ 'Hello world'.istitle() }}{{ \"It's\".istitle() }}|"
+     "{{ 'class'.isidentifier() }}{{ '1x'.isidentifier() }}{{ 'a-b'.isidentifier() }}")
+# expandtabs counts from the last line break, not from the start of the string.
+case("methods/expandtabs",
+     "[{{ 'a\tb'.expandtabs() }}]|[{{ 'ab\tcd'.expandtabs(4) }}]|"
+     "[{{ 'a\tb\nc\td'.expandtabs(4) }}]|[{{ 'a\tb'.expandtabs(0) }}]")
+# partition always answers a 3-tuple; which side the empties fall on is the
+# only thing that differs when the separator is absent.
+case("methods/partition",
+     "{{ 'a-b-c'.partition('-') }}|{{ 'a-b-c'.rpartition('-') }}|"
+     "{{ 'abc'.partition('-') }}|{{ 'abc'.rpartition('-') }}")
+case("errors/partition_empty_separator", "{{ 'abc'.partition('') }}")
+case("methods/remove_affix",
+     "{{ 'abc'.removeprefix('ab') }}|{{ 'abc'.removeprefix('zz') }}|"
+     "{{ 'abc'.removesuffix('bc') }}|{{ 'abc'.removesuffix('zz') }}|{{ 'abc'.removeprefix('') }}")
+case("methods/maketrans_and_translate",
+     "{{ 'abc'.maketrans('ab', 'xy') }}|{{ 'abc'.translate('abc'.maketrans('ab','xy')) }}|"
+     "{{ 'abc'.translate({97: 'X'}) }}|{{ 'abc'.translate({97: none}) }}|"
+     "{{ 'abc'.translate({}) }}|{{ 'abc'.translate('abc'.maketrans('a','x','b')) }}")
+
 case("repr/bytes_escape_per_byte",
      "{{ 'é'.encode() }}|{{ '€'.encode() }}|{{ 'héllo'.encode() }}|{{ 'ab~'.encode() }}")
 case("repr/bytes_inside_a_container",

@@ -1,0 +1,3 @@
+{}
+---
+{{ '²'.isalnum() }}|{{ '½'.isalnum() }}|{{ 'a'.isalnum() }}|{{ '-'.isalnum() }}

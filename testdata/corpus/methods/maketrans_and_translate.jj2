@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.maketrans('ab', 'xy') }}|{{ 'abc'.translate('abc'.maketrans('ab','xy')) }}|{{ 'abc'.translate({97: 'X'}) }}|{{ 'abc'.translate({97: none}) }}|{{ 'abc'.translate({}) }}|{{ 'abc'.translate('abc'.maketrans('a','x','b')) }}

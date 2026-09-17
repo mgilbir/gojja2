@@ -1,0 +1,4 @@
+{}
+---
+[{{ 'a	b'.expandtabs() }}]|[{{ 'ab	cd'.expandtabs(4) }}]|[{{ 'a	b
+c	d'.expandtabs(4) }}]|[{{ 'a	b'.expandtabs(0) }}]

@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.removeprefix('ab') }}|{{ 'abc'.removeprefix('zz') }}|{{ 'abc'.removesuffix('bc') }}|{{ 'abc'.removesuffix('zz') }}|{{ 'abc'.removeprefix('') }}
