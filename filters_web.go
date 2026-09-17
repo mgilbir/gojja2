@@ -42,12 +42,20 @@ func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 	// Anything iterable that is not a string is a sequence of pairs, a
 	// range included.
 	if !v.IsString() && isIterableValue(v) {
-		items, err := materialize(s, v)
+		// `"&".join(f"..." for k, v in items)` builds each pair as it
+		// takes it, which is visible when the input is an iterator
+		// something else is also walking -- `loop` inside its own body
+		// renders a different position in each pair than it would if
+		// they were all collected first.
+		seq, err := value.Iterate(v)
 		if err != nil {
 			return value.Undefined, err
 		}
-		parts := make([]string, 0, len(items))
-		for _, item := range items {
+		var parts []string
+		for item := range seq {
+			if err := s.Step(1); err != nil {
+				return value.Undefined, err
+			}
 			// jinja2 writes `for k, v in items`, so each element is
 			// unpacked and fails with Python's unpacking errors --
 			// a string of six characters is iterable but too long.
