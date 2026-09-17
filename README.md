@@ -99,7 +99,7 @@ at all -- silently.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 439 | 439 |
+| gojja2's own (committed, with goldens) | 440 | 439 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -107,7 +107,7 @@ at all -- silently.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **2759** | **2755 (99.9%)** |
+| **total** | **2760** | **2755 (99.8%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -116,17 +116,20 @@ four project generators. Only their *inputs* are used: every expected output is
 regenerated from the pinned CPython jinja2, because that is the specification. On top of that, roughly a million generated templates have been
 rendered by both implementations and compared (see below).
 
-The 4 that differ are listed, with reasons, in `testdata/known_failures.txt`;
+The 5 that differ are listed, with reasons, in `testdata/known_failures.txt`;
 a case on that list which starts passing fails the test, so the list can only
 shrink deliberately. The table above is checked against the suite by
 `TestConformance` whenever every corpus is present, so it cannot drift from
 what is actually measured -- it had. Two are Jinja's own sandbox-escape tests, which walk a
 Python object graph out to `__subclasses__` and `__import__`. `__class__` *is*
-implemented; these two go past it. The other two are DeepSeek-R1's chat
+implemented; these two go past it. Two are DeepSeek-R1's chat
 template, which writes `{{ tools|map(attribute='function')|tojson }}` -- jinja2's
 `map` returns a generator, which `json.dumps` refuses, so the template raises
-under CPython and renders under gojja2. See
-[docs/divergences.md](docs/divergences.md) for both.
+under CPython and renders under gojja2. The fifth is `{% if 1e400 %}`: jinja2
+writes a folded constant into its generated Python as that constant's repr, and
+`repr(float("inf"))` is the bare word `inf`, so the template raises a NameError
+there and renders here. See [docs/divergences.md](docs/divergences.md) for all
+three.
 
 Four further cases are marked *ungradable* and left out of the table: they
 render a generator's memory address, which differs between two runs of CPython

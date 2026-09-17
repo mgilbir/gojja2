@@ -41,3 +41,16 @@ chat-templates/models_llama-cpp-deepseek-r1__tools.jj2       # map()|tojson: gen
 minja/syntax_2470465c79.jj2   ungradable: jinja2 prints a generator's address
 minja/syntax_abd817f094.jj2   ungradable: jinja2 prints a generator's address
 minja/syntax_decfafe0b4.jj2   ungradable: jinja2 prints a generator's address
+
+# --- a constant that folds to an infinity --------------------------------------
+# jinja2 writes a folded constant into its generated Python as that constant's
+# repr, and repr(float("inf")) is `inf`, which is not a literal -- so the
+# template raises NameError at run time. It only bites when the constant is
+# emitted as *code*: `{{ 1e400 }}` prints "inf" because the output folder
+# converts it to text first, while `{% if 1e400 %}` and `{% set x = 1e400 %}`
+# raise.
+#
+# gojja2 renders the template. Reproducing the other answer would mean carrying
+# a poisoned constant through the optimizer so that using it raises a NameError
+# about a Python identifier that has no counterpart here.
+own/fold/infinite_constant.jj2   # jinja2 writes `inf` into its generated source

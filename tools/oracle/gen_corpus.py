@@ -329,6 +329,11 @@ case("loops/loop_join_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|join
 case("loops/loop_map_applies_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|map('string')|list }}]{% endfor %}")
 case("loops/loop_in_dict", "{% for i in [1,2,3] %}[{{ dict(loop, extra=2) }}]{% endfor %}")
 
+# A constant that folds to an infinity is written into jinja2's generated
+# Python as the bare word `inf`, which is not a literal -- so the template
+# raises NameError where it renders here. Listed in known_failures.txt.
+case("fold/infinite_constant", "{% if 1e400 %}y{% endif %}")
+
 # int() of a float is exact at any size, and float() has no range to fail on:
 # a literal too large is inf and one too small is zero. int() of an infinity is
 # an OverflowError that |int lets out, and int() of a NaN is a ValueError it

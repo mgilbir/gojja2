@@ -23,6 +23,25 @@ tries to use the result.
 gojja2 raises `ValueError` rather than inventing an approximation that would be
 wrong in a different way. Asserted by `TestOperatorsMatchCPython`.
 
+## A constant that folds to an infinity
+
+```jinja
+{% if 1e400 %}y{% endif %}
+```
+
+CPython raises `NameError: name 'inf' is not defined`. jinja2 writes a folded
+constant into its generated Python as that constant's repr, and
+`repr(float("inf"))` is the bare word `inf`, which is not a literal.
+
+It only bites when the constant is emitted as *code*. `{{ 1e400 }}` prints
+`inf`, because the output folder converts it to text before it is written out;
+`{% if 1e400 %}`, `{% set x = 1e400 %}` and `{{ ('1e400')|float|int }}` raise.
+
+gojja2 renders the template. Reproducing the other answer would mean carrying a
+poisoned constant through the optimizer so that *using* it raises a NameError
+about a Python identifier that has no counterpart here. The corpus case is in
+`testdata/known_failures.txt`.
+
 ## `\N{...}` escapes in string literals
 
 ```jinja
