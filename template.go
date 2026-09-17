@@ -310,7 +310,7 @@ func (t *Template) newState(vars map[string]value.Value, depth int, b *budget) *
 	// nothing even when x was passed in.
 	arguments := newScope(globals)
 	for k, v := range vars {
-		arguments.vars[k] = v
+		arguments.set(k, v)
 	}
 	ctx := newScope(arguments)
 
