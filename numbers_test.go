@@ -140,3 +140,54 @@ func TestNumericAttributes(t *testing.T) {
 		}
 	}
 }
+
+// TestIntFilterBaseParsing: |int with a base is Python's int(str, base), which
+// big.Int.SetString is not. The old reading stripped "0"+"x" off the front and
+// handed the rest over, which got the easy case right and little else.
+//
+// Failure is not an error: do_int catches it and falls back to
+// int(float(value)), which is why "010"|int(0, 0) is 10 even though Python
+// refuses that string with base 0.
+func TestIntFilterBaseParsing(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// Base 0 detects the prefix, in either case.
+		{`{{ '0x1f'|int(-1,0) }}|{{ '0X1F'|int(-1,0) }}`, `31|31`},
+		{`{{ '0b11'|int(-1,0) }}|{{ '0B11'|int(-1,0) }}`, `3|3`},
+		{`{{ '0o17'|int(-1,0) }}|{{ '0O17'|int(-1,0) }}`, `15|15`},
+		// A prefix is allowed, not required, when it matches the base.
+		{`{{ '0x1f'|int(-1,16) }}|{{ '1f'|int(-1,16) }}`, `31|31`},
+		{`{{ '0X1F'|int(-1,16) }}|{{ 'FF'|int(-1,16) }}`, `31|255`},
+		// A prefix that does not match the base is just digits.
+		{`{{ '0B11'|int(-1,16) }}`, `2833`},
+		// A sign no longer puts the prefix out of reach.
+		{`{{ '-0x10'|int(-1,16) }}|{{ '+0x10'|int(-1,0) }}`, `-16|16`},
+		{`{{ ' 0x10 '|int(-1,0) }}`, `16`},
+		// Underscores separate digits, including straight after a prefix.
+		{`{{ '1_0'|int(-1,16) }}|{{ '1_0'|int(-1,2) }}|{{ '0x_1f'|int(-1,16) }}`, `16|2|31`},
+		{`{{ '0_0'|int(-1,10) }}`, `0`},
+		// And are refused doubled, leading or trailing -- which falls
+		// through to the float attempt, hence the default.
+		{`{{ '1__0'|int(-1,16) }}|{{ '_10'|int(-1,16) }}|{{ '10_'|int(-1,16) }}`, `-1|-1|-1`},
+		// Zero in every base, and base 36's full alphabet.
+		{`{{ '0'|int(-1,16) }}|{{ '00'|int(-1,2) }}|{{ 'z'|int(-1,36) }}|{{ 'Z'|int(-1,36) }}`,
+			`0|0|35|35`},
+		// A bare prefix is not a number, except where it is digits.
+		{`{{ '0x'|int(-1,16) }}|{{ '0x'|int(-1,36) }}`, `-1|33`},
+		// Base 0 refuses a leading zero, and the float fallback answers.
+		{`{{ '010'|int(-1,0) }}|{{ '010'|int(-1,8) }}`, `10|8`},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+}

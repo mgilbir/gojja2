@@ -1621,20 +1621,11 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		return intFromFloat(f), nil
 	case v.IsString():
 		text := strings.TrimSpace(v.AsString())
-		if base != 10 {
-			text = strings.TrimPrefix(strings.TrimPrefix(text, "0"), map[int]string{
-				2: "b", 8: "o", 16: "x",
-			}[base])
-		}
 		// Python accepts base 0 or 2..36 and raises ValueError otherwise;
 		// jinja2's filter catches that and falls through to the float
-		// path, so `"10"|int(0, 99999)` is 10. big.Int.SetString panics
-		// on a base outside its own range rather than reporting it, so
-		// the check has to happen here.
-		if validIntBase(base) {
-			if n, ok := new(big.Int).SetString(text, base); ok {
-				return value.BigInt(n), nil
-			}
+		// path, so `"10"|int(0, 99999)` is 10.
+		if n, ok := pyParseInt(v.AsString(), base); ok {
+			return value.BigInt(n), nil
 		}
 		// jinja2 accepts "3.5" here by falling back to float then int,
 		// and int() of a float is exact however large it is -- which a
@@ -1652,6 +1643,72 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		}
 	}
 	return def, nil
+}
+
+// pyParseInt is Python's int(str, base), which big.Int.SetString is not.
+//
+// The old reading stripped "0"+"x" off the front and handed the rest to
+// SetString, which got the easy case right and little else: the prefix match
+// was case-sensitive so "0X1F" failed, a sign put the prefix out of reach so
+// "-0x10" failed, base 0 was never detected, and underscores -- which Python
+// allows between digits -- only worked in the bases SetString itself accepts.
+//
+// Failure is not an error here: do_int catches it and falls back to
+// int(float(value)), which is why `"010"|int(0, 0)` is 10 even though Python
+// refuses that string with base 0.
+func pyParseInt(text string, base int) (*big.Int, bool) {
+	s := strings.TrimSpace(text)
+	neg := false
+	if s != "" && (s[0] == '+' || s[0] == '-') {
+		neg, s = s[0] == '-', s[1:]
+	}
+	// A prefix selects the base when none was given, and is allowed -- but
+	// not required -- when it matches the one that was. It is matched
+	// case-insensitively, so 0X and 0x are the same.
+	prefixed := false
+	if len(s) >= 2 && s[0] == '0' {
+		want := 0
+		switch s[1] {
+		case 'x', 'X':
+			want = 16
+		case 'o', 'O':
+			want = 8
+		case 'b', 'B':
+			want = 2
+		}
+		if want != 0 && (base == 0 || base == want) {
+			base, s, prefixed = want, s[2:], true
+		}
+	}
+	if base == 0 {
+		// No prefix and no base: decimal, and Python refuses a leading
+		// zero unless the whole thing is zeros.
+		base = 10
+		if len(s) > 1 && s[0] == '0' && strings.Trim(s, "0_") != "" {
+			return nil, false
+		}
+	}
+	if !validIntBase(base) {
+		return nil, false
+	}
+	// An underscore separates digits: never doubled, never trailing, and
+	// never leading unless a prefix just ended -- "0x_1f" is 31.
+	if strings.Contains(s, "__") || strings.HasSuffix(s, "_") ||
+		(!prefixed && strings.HasPrefix(s, "_")) {
+		return nil, false
+	}
+	s = strings.ReplaceAll(s, "_", "")
+	if s == "" {
+		return nil, false
+	}
+	n, ok := new(big.Int).SetString(s, base)
+	if !ok {
+		return nil, false
+	}
+	if neg {
+		n.Neg(n)
+	}
+	return n, true
 }
 
 // overflowToInt is what int() says about an infinity.

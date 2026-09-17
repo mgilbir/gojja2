@@ -560,6 +560,19 @@ case("errors/cycler_without_items", "{{ cycler() }}")
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
 # frame before the assignment sees undefined rather than the context's value.
+# |int with a base is Python's int(str, base): base 0 detects the prefix in
+# either case, a matching prefix is allowed but not required, a sign does not
+# hide it, and underscores separate digits -- including after a prefix.
+case("filters/int_base_prefixes",
+     "{{ '0x1f'|int(-1,0) }}|{{ '0X1F'|int(-1,0) }}|{{ '0b11'|int(-1,0) }}|"
+     "{{ '0o17'|int(-1,0) }}|{{ '0x1f'|int(-1,16) }}|{{ '0B11'|int(-1,16) }}")
+case("filters/int_base_signs_and_underscores",
+     "{{ '-0x10'|int(-1,16) }}|{{ '+0x10'|int(-1,0) }}|{{ '1_0'|int(-1,16) }}|"
+     "{{ '0x_1f'|int(-1,16) }}|{{ '1__0'|int(-1,16) }}|{{ '_10'|int(-1,16) }}")
+case("filters/int_base_edges",
+     "{{ '0'|int(-1,16) }}|{{ 'z'|int(-1,36) }}|{{ '0x'|int(-1,16) }}|"
+     "{{ '0x'|int(-1,36) }}|{{ '010'|int(-1,0) }}|{{ '010'|int(-1,8) }}")
+
 # Wherever CPython uses an argument as an integer it goes through __index__,
 # whose complaint names the type that was passed.
 case("errshape/integer_argument_index_message",
