@@ -671,7 +671,7 @@ func markupFloat(v Value) (float64, error) {
 	}
 	if v.kind == KindString {
 		if text, ok := pyNumericText(v.str, true); ok {
-			if f, err := strconv.ParseFloat(text, 64); err == nil {
+			if f, ok := ParseFloat(text); ok {
 				return f, nil
 			}
 		}

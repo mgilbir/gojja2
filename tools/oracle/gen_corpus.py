@@ -329,6 +329,16 @@ case("loops/loop_join_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|join
 case("loops/loop_map_applies_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|map('string')|list }}]{% endfor %}")
 case("loops/loop_in_dict", "{% for i in [1,2,3] %}[{{ dict(loop, extra=2) }}]{% endfor %}")
 
+# int() of a float is exact at any size, and float() has no range to fail on:
+# a literal too large is inf and one too small is zero. int() of an infinity is
+# an OverflowError that |int lets out, and int() of a NaN is a ValueError it
+# catches, so the two answer differently.
+case("filters/int_of_a_big_float", "{{ '9.223372036854776e+18'|int }}|{{ 9223372036854775808|float|int }}|{{ '9223372036854775808'|int }}")
+case("filters/float_out_of_range", "{{ '1e400'|float }}|{{ '-1e400'|float }}|{{ '1e-400'|float }}")
+case("filters/int_of_infinity_from_a_string", "{{ 'inf'|int }}|{{ 'nan'|int }}|{{ 'inf'|int(7) }}|{{ '-inf'|int }}")
+case("filters/int_of_a_nan", "{{ z|float|int }}", z="nan")
+case("errshape/int_of_an_infinity", "{{ z|float|int }}", z="inf")
+
 # The case-folding a sort does keeps Markup: markupsafe overrides the case
 # methods, because changing the case of escaped text cannot unescape it. The
 # folded key is what a comparison error names.
