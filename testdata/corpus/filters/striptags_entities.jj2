@@ -1,0 +1,5 @@
+{
+  "html": "<b>a &amp; b</b>"
+}
+---
+{{ html|upper|striptags }}|{{ '<b>&copy;</b> &reg; &Yacute;'|striptags }}
