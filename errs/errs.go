@@ -54,6 +54,8 @@ const (
 	// AssertionError is what a bare `assert` in jinja2 raises, which is
 	// how do_truncate rejects a length shorter than its ellipsis.
 	AssertionError
+	// RuntimeError is what jinja2's Cycler raises for an empty cycle.
+	RuntimeError
 	Exception
 )
 
@@ -84,6 +86,7 @@ var kindNames = [...]string{
 	UnicodeDecodeError:     "UnicodeDecodeError",
 	ArithmeticError:        "ArithmeticError",
 	AssertionError:         "AssertionError",
+	RuntimeError:           "RuntimeError",
 	Exception:              "Exception",
 }
 
@@ -112,6 +115,7 @@ var parent = [...]Kind{
 	StopIteration:          Exception,
 	RecursionError:         Exception,
 	AssertionError:         Exception,
+	RuntimeError:           Exception,
 	UnicodeError:           ValueError,
 	UnicodeEncodeError:     UnicodeError,
 	UnicodeDecodeError:     UnicodeError,

@@ -536,6 +536,27 @@ case("filters/urlencode", "{{ 'a b/c?d'|urlencode }}|{{ {'a':'1 2'}|urlencode }}
 # bytes.__repr__ escapes one byte at a time and has no \u or \U form, so a
 # character outside ASCII is one escape per UTF-8 byte -- not the single escape
 # the str repr writes for the rune those bytes decode to.
+# list.sort is in place and answers None; dict.popitem takes the pair inserted
+# last, dicts having been ordered since 3.7; dict.fromkeys is a classmethod, so
+# the dict it is reached through contributes nothing.
+case("methods/list_sort_in_place",
+     "{% set L = [3,1,2] %}{{ L.sort() }}|{{ L }}|"
+     "{% set M = ['b','A','c'] %}{{ M.sort(reverse=true) }}|{{ M }}|"
+     "{% set N = [1.5, 1, true] %}{{ N.sort() }}|{{ N }}")
+case("methods/dict_popitem",
+     "{% set D = {'a':1,'b':2} %}{{ D.popitem() }}|{{ D }}|"
+     "{% set E = {'a':1} %}{{ E.popitem() }}|{{ E }}")
+case("methods/dict_fromkeys",
+     "{{ {'x': 1}.fromkeys('ab') }}|{{ {'x': 1}.fromkeys([3,1,2], 9) }}|"
+     "{{ {'x': 1}.fromkeys([]) }}|{{ {'b':2,'a':1}.fromkeys({'b':2,'a':1}) }}")
+# A C function counts its arguments, and a tuple names itself.
+case("errors/dict_get_too_many", "{{ {'a':1}.get('a', 1, 2) }}")
+case("errors/tuple_index_missing", "{{ (1,2).index(99) }}")
+case("errors/list_index_missing", "{{ [1,2].index(99) }}")
+case("errors/sort_positional_argument", "{% set L = [1] %}{{ L.sort(1) }}")
+case("errors/popitem_on_an_empty_dict", "{{ {}.popitem() }}")
+case("errors/cycler_without_items", "{{ cycler() }}")
+
 # str.encode honours its codec and its error handler. The three codecs here are
 # the ones gojja2 implements; docs/divergences.md has why the rest are refused.
 case("methods/encode_codecs",
