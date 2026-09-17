@@ -176,6 +176,12 @@ func Add(a, b Value) (Value, error) {
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}
+	// The left operand decides which concatenation runs, and a tuple
+	// subclass runs tuple's: `g + (1,)` is a tuple, and `g + "s"` fails
+	// the way tuple fails, reporting itself as "tuple". Only the operation
+	// sees the unwrapped value -- b keeps the name the template gave it,
+	// and the generic error below keeps both.
+	lhs := AsTupleIfPossible(a)
 	switch {
 	case bothNumbers(a, b):
 		if eitherFloat(a, b) {
@@ -221,18 +227,25 @@ func Add(a, b Value) (Value, error) {
 		}
 		return Bytes([]byte(a.str + b.str)), nil
 
-	case a.kind == KindList || a.kind == KindTuple:
-		if a.kind != b.kind {
+	case lhs.kind == KindList || lhs.kind == KindTuple:
+		// tuple.__add__ accepts any tuple, a subclass included.
+		// list.__add__ does not: it requires an actual list, so a tuple
+		// subclass is refused there and named as itself.
+		rhs := b
+		if lhs.kind == KindTuple {
+			rhs = AsTupleIfPossible(b)
+		}
+		if lhs.kind != rhs.kind {
 			return Undefined, errs.New(errs.TypeError,
 				"can only concatenate %s (not \"%s\") to %s",
-				a.TypeName(), b.TypeName(), a.TypeName())
+				lhs.TypeName(), b.TypeName(), lhs.TypeName())
 		}
-		as, _ := a.Seq()
-		bs, _ := b.Seq()
+		as, _ := lhs.Seq()
+		bs, _ := rhs.Seq()
 		items := make([]Value, 0, as.Len()+bs.Len())
 		items = append(items, as.items...)
 		items = append(items, bs.items...)
-		if a.kind == KindTuple {
+		if lhs.kind == KindTuple {
 			return NewTuple(items...), nil
 		}
 		return NewList(items...), nil
@@ -303,8 +316,13 @@ func Mul(a, b Value, budget Budget) (Value, error) {
 		by, _ := b.BigInt()
 		return BigInt(new(big.Int).Mul(bx, by)), nil
 	}
+	// A tuple subclass repeats as the tuple it stands for, and does so from
+	// either side: `g * 2` is tuple.__mul__ and `2 * g` is tuple.__rmul__.
+	// The unwrapped pair decides what happens; the originals are what the
+	// errors below name.
+	ua, ub := AsTupleIfPossible(a), AsTupleIfPossible(b)
 	// Repetition is commutative in Python: "ab" * 2 and 2 * "ab" agree.
-	if seq, n, ok := repeatOperands(a, b); ok {
+	if seq, n, ok := repeatOperands(ua, ub); ok {
 		if err := chargeRepeat(seq, n, budget); err != nil {
 			return Undefined, err
 		}
@@ -314,7 +332,11 @@ func Mul(a, b Value, budget Budget) (Value, error) {
 	// sequence.__mul__ and names only the other operand's type. Markup
 	// coerces through __index__ instead, so it reports the other operand
 	// as not interpretable as an integer.
-	if other, ok := nonSequenceOperand(a, b); ok {
+	if otherIsB, ok := sequenceRepetitionFailed(ua, ub); ok {
+		other := a
+		if otherIsB {
+			other = b
+		}
 		if a.safe || b.safe {
 			// Markup multiplies through __index__, so the operand
 			// named is the one that is not the Markup.
@@ -341,16 +363,21 @@ func isSequenceKind(v Value) bool {
 	return false
 }
 
-// nonSequenceOperand returns the operand that is not a sequence, when exactly
-// the sequence-repetition message applies.
-func nonSequenceOperand(a, b Value) (Value, bool) {
+// sequenceRepetitionFailed reports whether the sequence-repetition message
+// applies -- one operand is a sequence and the repetition did not happen -- and
+// which operand it names as the non-int: the one that is not the sequence.
+//
+// It decides on the unwrapped operands so that a tuple subclass counts as the
+// sequence, while the caller names the originals: `"s" * g` is a sequence
+// repeated by a _GroupTuple, and that is the name CPython prints.
+func sequenceRepetitionFailed(a, b Value) (otherIsB, ok bool) {
 	switch {
 	case isSequenceKind(a):
-		return b, true
+		return true, true
 	case isSequenceKind(b):
-		return a, true
+		return false, true
 	}
-	return Undefined, false
+	return false, false
 }
 
 func repeatOperands(a, b Value) (seq Value, n int64, ok bool) {
