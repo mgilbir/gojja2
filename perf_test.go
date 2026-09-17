@@ -196,3 +196,37 @@ func TestTupleHashIsLinear(t *testing.T) {
 	}
 	t.Logf("%d-deep tuple hashed and looked up in %v", n, elapsed)
 }
+
+// TestLexingIsLinearInTheSource pins that compiling a template costs time in
+// its length, not in its length times its number of tags.
+//
+// The lexer asks where each opening delimiter appears next, once per tag. A
+// delimiter the template never uses -- and most templates use one of the three
+// -- was searched for afresh every time, which means scanning everything left
+// in the source on every tag:
+//
+//	800 KB of `{{1}}`                       8.7s
+//	1.6 MB of `{{1}}`                      34.5s
+//	5.0 MB with all three delimiters        0.5s
+//
+// Compilation takes no context and has no budget, so nothing bounded it.
+//
+// The assertion is a deadline rather than a ratio, because a ratio is flaky on
+// a loaded machine and the margin is two orders of magnitude: linear compiles
+// this in a third of a second, quadratic takes the better part of a minute.
+func TestLexingIsLinearInTheSource(t *testing.T) {
+	const tags = 400_000
+	src := strings.Repeat("{{1}}", tags)
+
+	env := New()
+	start := time.Now()
+	_, err := env.FromString(src)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("compiling %d bytes of print tags took %v", len(src), elapsed)
+	}
+	t.Logf("%d tags (%d bytes) compiled in %v", tags, len(src), elapsed)
+}
