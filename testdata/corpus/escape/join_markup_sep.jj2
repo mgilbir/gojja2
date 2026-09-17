@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "a": "a'",
+  "b": "<i>",
+  "sep": "&"
+}
+---
+{{ ([a, b]|join(sep|safe))|pprint }}|{{ [a, b]|join(sep|safe) }}

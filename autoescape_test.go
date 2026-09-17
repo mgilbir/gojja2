@@ -221,3 +221,49 @@ func TestSelectAutoescapeEmptyExtension(t *testing.T) {
 		}
 	}
 }
+
+// TestJoinIsMarkupOnlyWhenMarkupIsInvolved pins do_join's coercion rule.
+//
+// Autoescaping alone does not make a join Markup: jinja2 coerces only when
+// there is markup to preserve -- a safe delimiter, or a safe item -- and
+// otherwise joins the str()s into a plain string, leaving the escaping to the
+// output. Escaping eagerly is invisible in `{{ xs|join(",") }}` and wrong for
+// every other use of the result.
+//
+// Expectations taken from CPython jinja2 3.1.6 with autoescape on.
+func TestJoinIsMarkupOnlyWhenMarkupIsInvolved(t *testing.T) {
+	env := New(WithAutoescape(true))
+	vars := map[string]any{"a": "a'", "b": "<i>", "sep": "&"}
+
+	// |safe on the pprint keeps the repr readable here: without it the
+	// output escapes the quotes and ampersands of the repr itself.
+	for _, tc := range []struct{ expr, want string }{
+		// Nothing safe: a plain string, unescaped, so its length is
+		// what a reader would count.
+		{`(xs|join(sep))|pprint|safe`, `"a'&<i>"`},
+		{`(xs|join(sep)) is escaped`, "False"},
+		{`xs|join(sep)|length`, "6"},
+		// ... and it still reaches the page escaped, which is why the
+		// bug was invisible here.
+		{`xs|join(sep)`, "a&#39;&amp;&lt;i&gt;"},
+		// A safe item coerces the join: the delimiter is escaped with
+		// it, and the safe item is left alone.
+		{`([a, b|safe]|join(sep))|pprint|safe`, `Markup('a&#39;&amp;<i>')`},
+		{`([a, b|safe]|join(sep)) is escaped`, "True"},
+		// A safe delimiter coerces it too, and stays raw itself.
+		{`([a, b]|join(sep|safe))|pprint|safe`, `Markup('a&#39;&&lt;i&gt;')`},
+	} {
+		v := map[string]any{"xs": []any{"a'", "<i>"}}
+		for k, val := range vars {
+			v[k] = val
+		}
+		got, err := renderVars(t, env, "{{ "+tc.expr+" }}", v)
+		if err != nil {
+			t.Errorf("%s: %v", tc.expr, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.expr, got, tc.want)
+		}
+	}
+}
