@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/mgilbir/gojja2/errs"
 )
@@ -385,6 +386,27 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 		return formatted{}, v.UndefinedError()
 	}
 
+	// A Markup format string is markupsafe's __mod__, not str's. It wraps
+	// each argument in a helper that defines __str__, __repr__, __int__ and
+	// __float__ and nothing else, and which of those a conversion reaches
+	// decides what happens:
+	//
+	//	%r %a      escape the repr, even of a value that is already Markup
+	//	%d %f ...  go through int() and float(), which *coerce a string*
+	//	           and raise ValueError rather than TypeError when it does
+	//	           not parse
+	//	%x %o %c   want __index__, which the helper does not define, so
+	//	           they refuse every argument outright
+	//
+	// The last line is why this is not only a conformance detail: `%c` was
+	// writing a raw character into a value the template had been told was
+	// trusted, so `{{ "%c"|safe % 60 }}` emitted an unescaped "<".
+	if escaping {
+		if out, handled, err := c.markupConvert(v); handled {
+			return out, err
+		}
+	}
+
 	switch c.verb {
 	case '%':
 		return formatted{body: "%"}, nil
@@ -551,3 +573,129 @@ func (c *conversion) floatBody(v Value) (formatted, error) {
 	body := fmt.Sprintf(spec, math.Abs(f))
 	return formatted{prefix: sign, body: body, numeric: true}, nil
 }
+
+// markupConvert applies the conversions markupsafe's argument helper changes.
+// handled is false for the ones it leaves to the ordinary path.
+func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err error) {
+	switch c.verb {
+	case 'o', 'x', 'X':
+		// No __index__ on the helper, so the argument is never right.
+		return formatted{}, true, errs.New(errs.TypeError,
+			"%%%c format: an integer is required, not _MarkupEscapeHelper", c.verb)
+	case 'c':
+		return formatted{}, true, errs.New(errs.TypeError, "%%c requires int or char")
+
+	case 'r', 'a':
+		// repr() of a Markup is text *about* the markup, so it is
+		// escaped like any other text -- including when the value it
+		// describes is itself Markup.
+		text := Repr(v)
+		if c.verb == 'a' {
+			text = Ascii(v)
+		}
+		return formatted{body: c.truncate(EscapeHTML(text))}, true, nil
+
+	case 'd', 'i', 'u':
+		n, err := markupInt(v, c.verb)
+		if err != nil {
+			return formatted{}, true, err
+		}
+		digits, negative := c.padDigits(n)
+		return formatted{prefix: c.sign(negative), body: digits, numeric: true}, true, nil
+
+	case 'e', 'E', 'f', 'F', 'g', 'G':
+		f, err := markupFloat(v)
+		if err != nil {
+			return formatted{}, true, err
+		}
+		out, err := c.floatBody(Float(f))
+		return out, true, err
+	}
+	return formatted{}, false, nil
+}
+
+// padDigits renders an integer's magnitude and applies the minimum-digit
+// precision, which is the part %d shares between the two paths.
+func (c *conversion) padDigits(b *big.Int) (string, bool) {
+	digits := new(big.Int).Abs(b).Text(10)
+	if c.hasPrec && len(digits) < c.prec {
+		digits = strings.Repeat("0", c.prec-len(digits)) + digits
+	}
+	return digits, b.Sign() < 0
+}
+
+// markupInt is Python's int() over the helper: a number truncates, a string is
+// parsed, and anything else is the conversion's own type error.
+func markupInt(v Value, verb byte) (*big.Int, error) {
+	switch {
+	case v.IsInteger():
+		b, _ := v.BigInt()
+		return b, nil
+	case v.kind == KindFloat:
+		f := v.AsFloat()
+		if math.IsNaN(f) {
+			return nil, errs.New(errs.ValueError, "cannot convert float NaN to integer")
+		}
+		if math.IsInf(f, 0) {
+			return nil, errs.New(errs.OverflowError, "cannot convert float infinity to integer")
+		}
+		b, _ := big.NewFloat(math.Trunc(f)).Int(nil)
+		return b, nil
+	case v.kind == KindString:
+		text, ok := pyNumericText(v.str, false)
+		if ok {
+			if b, good := new(big.Int).SetString(text, 10); good {
+				return b, nil
+			}
+		}
+		return nil, errs.New(errs.ValueError,
+			"invalid literal for int() with base 10: %s", Repr(v))
+	}
+	return nil, errs.New(errs.TypeError,
+		"%%%c format: a real number is required, not _MarkupEscapeHelper", verb)
+}
+
+// markupFloat is Python's float() over the helper.
+func markupFloat(v Value) (float64, error) {
+	if f, ok := v.Float64(); ok {
+		return f, nil
+	}
+	if v.kind == KindString {
+		if text, ok := pyNumericText(v.str, true); ok {
+			if f, err := strconv.ParseFloat(text, 64); err == nil {
+				return f, nil
+			}
+		}
+		return 0, errs.New(errs.ValueError,
+			"could not convert string to float: %s", Repr(v))
+	}
+	return 0, errs.New(errs.TypeError,
+		"float() argument must be a string or a real number, not '%s'", v.TypeName())
+}
+
+// pyNumericText prepares a string for int() or float(): Python trims
+// surrounding whitespace and allows single underscores between digits, neither
+// of which Go's parsers accept.
+func pyNumericText(s string, isFloat bool) (string, bool) {
+	s = strings.TrimFunc(s, unicode.IsSpace)
+	if s == "" {
+		return "", false
+	}
+	if !strings.Contains(s, "_") {
+		return s, true
+	}
+	var b strings.Builder
+	for i := range len(s) {
+		if s[i] != '_' {
+			b.WriteByte(s[i])
+			continue
+		}
+		// An underscore must sit between two digits.
+		if i == 0 || i == len(s)-1 || !isASCIIDigit(s[i-1]) || !isASCIIDigit(s[i+1]) {
+			return "", false
+		}
+	}
+	return b.String(), true
+}
+
+func isASCIIDigit(b byte) bool { return b >= '0' && b <= '9' }

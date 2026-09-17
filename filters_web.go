@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -459,17 +460,21 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent, depth int, 
 		b.WriteString(value.Repr(v))
 	case value.KindFloat:
 		f := v.AsFloat()
-		if f != f || f > 1e308 || f < -1e308 {
-			// Python's json emits NaN and Infinity bare, which is
-			// not valid JSON but is what jinja2 produces.
-			b.WriteString(map[bool]string{true: "NaN", false: "Infinity"}[f != f])
-			if f < 0 {
-				b.Reset()
-				b.WriteString("-Infinity")
-			}
-			return nil
+		// Python's json emits NaN and Infinity bare, which is not valid
+		// JSON but is what jinja2 produces. Writing "Infinity" and then
+		// retracting it for a negative one reset the whole builder, not
+		// this element: `{{ [1, -1e308*10, 2]|tojson }}` rendered
+		// "-Infinity, 2]", a truncated document, with no error.
+		switch {
+		case math.IsNaN(f):
+			b.WriteString("NaN")
+		case math.IsInf(f, 1):
+			b.WriteString("Infinity")
+		case math.IsInf(f, -1):
+			b.WriteString("-Infinity")
+		default:
+			b.WriteString(value.FormatFloat(f))
 		}
-		b.WriteString(value.FormatFloat(f))
 	case value.KindString, value.KindBytes:
 		writeJSONString(b, v.AsString())
 	case value.KindList, value.KindTuple:

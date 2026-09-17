@@ -1,0 +1,11 @@
+{
+  "case": "subscript/slice_steps.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "aceg|gfedcba|geca|be|3ö2ü1é|1ü2|ö3||abc"
+}

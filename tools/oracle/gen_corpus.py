@@ -389,6 +389,110 @@ case("methods/list", "{% set l = [3,1,2] %}{{ l.index(1) }}{{ l.count(3) }}{% do
      __settings__={"extensions": ["do"]})
 
 
+# --- cases that were once loose files -----------------------------------------
+# These were added straight into testdata/corpus/ rather than here, and this
+# script rebuilds that directory from scratch -- so `make oracle`, the
+# documented way to regenerate the goldens, quietly deleted them along with the
+# regressions they pin. Two of them are the ones that pin the very bugs the
+# commit which introduced them had fixed. The generator is the single source of
+# truth for the corpus; a case that is not in it does not exist.
+case("errshape/dict_pop_arity", "{{ {}.pop() }}")
+case("escape/markup_percent_format",
+     r"""{{ "%s"|safe|format("<b>") }}|{{ "%s"|format("<b>") }}|{{ "%(a)s"|safe|format(a="<b>") }}|{{ "%s and %s"|safe|format("<a>", "<b>") }}|{{ "%d"|safe|format(5) }}|{{ "%s"|safe|format(["<b>"]) }}|{{ "%s"|safe|format(none) }}|{{ "%s"|safe|format(true) }}|{{ "%s"|safe|format("x"|safe) }}|{{ ("%s"|safe|format("x")).__class__.__name__ }}|{{ ("%s"|format("x")).__class__.__name__ }}""")
+case("escape/markup_pprint",
+     r"""{{ "x"|safe|pprint }}|{{ "x"|pprint }}|{{ ["a"]|safe|pprint }}|{{ long|escape|pprint }}|{{ long|pprint }}""",
+     long="the quick brown fox jumps over the lazy dog and keeps on running well past eighty columns")
+case("filters/round_signed_zero",
+     r"""{{ -0.0|round(1, 'floor') }}|{{ -0.0|round(1, 'ceil') }}|{{ -0.0|round(1) }}|{{ -0.4|round(0, 'floor') }}|{{ -0.4|round(0, 'ceil') }}|{{ 0.0|round(1, 'floor') }}|{{ -1.5|round(0, 'floor') }}|{{ -0.04|round(1, 'ceil') }}""")
+case("macro/default_per_call",
+     "{% macro fresh(v=[]) %}{% set _ = v.append(1) %}{{ v }}{% endmacro %}{{ fresh() }} {{ fresh() }}\n"
+     "{%- set n = 1 %}{% macro outer(x=n) %}{{ x }}{% endmacro %}{{ outer() }}{% set n = 2 %}{{ outer() }}\n"
+     "{%- set L = [9] %}{% macro shared(v=L) %}{% set _ = v.append(1) %}{{ v }}{% endmacro %}{{ shared() }} {{ shared() }} {{ L }}\n"
+     "{%- macro chain(a, b=2, c=b) %}{{ a }}{{ b }}{{ c }}{% endmacro %}{{ chain(1) }}\n"
+     '{%- macro dct(v={}) %}{% set _ = v.update({"a": 1}) %}{{ v }}{% endmacro %}{{ dct() }} {{ dct() }}')
+case("subscript/empty_subscript", "{{ [1,2][] }}|{{ {(): 5}[] }}|{{ {(1,2): 'p'}[1,2] }}|{{ a[] is undefined }}")
+case("tests/callable_macro",
+     "{% macro local(x) %}{% endmacro %}{% from 'mac.html' import f %}{% import 'mac.html' as mod %}"
+     "{{ local is callable }}{{ f is callable }}{{ mod.f is callable }}{{ mod.exported is callable }}{{ local(1) is callable }}",
+     __templates__={"mac.html": "{% macro f(x) %}<{{x}}>{% endmacro %}{% set exported = 'E' %}"})
+
+# --- printf-style formatting --------------------------------------------------
+# `%` sizes its result from a width the template wrote and lays it out by rules
+# that are C's, not Go's. A sweep of 62,000 combinations of flag, width,
+# precision, verb and argument found 2,444 of them wrong; these are one row per
+# rule that was broken.
+case("operators/percent_flags",
+     r"""{{ "[%05s][%05r][%05c][%05d][%05d][%-05d]" % ("x", "x", 65, 42, -42, 42) }}""")
+case("operators/percent_width",
+     r"""{{ "[%5c][%5.2c][%10s][%-8s][%8.3s]" % (65, 65, "éü", "x", "abcdef") }}""")
+case("operators/percent_precision",
+     r"""{{ "[%.0d][%.3d][%5.0d][%.3x][%.2s][%.0s]" % (0, 5, 0, 255, "éüö", "abc") }}""")
+case("operators/percent_alt",
+     r"""{{ "[%#o][%#x][%#X][%#08x][%#.0f]" % (8, 255, 255, 255, 1.0) }}""")
+case("operators/percent_sign",
+     r"""{{ "[%+d][% d][%+08.3f][%08.3f][%+x]" % (42, 42, 1.5, -1.5, 42) }}""")
+case("operators/percent_star",
+     r"""{{ "[%*s][%-*s][%*s][%.*f][%*.*f][%.*s]" % (5, "x", 5, "x", -5, "x", 3, 1.5, 8, 2, 1.5, -3, "abc") }}""")
+case("operators/percent_nonfinite",
+     "{% set big = 1e308 %}" +
+     r"""{{ "[%f][%f][%F][%E][%09f][%09f][%09f][%+f][%-9f]" % (big*10, -big*10, big*10-big*10, big*10, big*10, -big*10, big*10-big*10, big*10-big*10, big*10-big*10) }}""")
+case("operators/percent_wide",
+     r"""{{ "[%d][%x][%.30f]" % (2**70, 2**70, 1.5) }}|{{ "%f" % -0.0 }}""")
+case("errors/percent_c_type", '{{ "%c" % 1.0 }}')
+case("errors/percent_c_range", '{{ "%c" % 1114112 }}')
+case("errors/percent_x_float", '{{ "%x" % 1.5 }}')
+case("errors/percent_d_string", '{{ "%d" % "x" }}')
+case("errors/percent_d_nan", "{% set big = 1e308 %}{{ '%d' % (big*10-big*10) }}")
+case("errors/percent_d_undefined", '{{ "%d" % nope }}')
+case("errors/percent_x_undefined", '{{ "%x" % nope }}')
+
+# markupsafe's __mod__ wraps each argument in a helper that defines __str__,
+# __repr__, __int__ and __float__ and nothing else. Which of those a conversion
+# reaches decides the answer, and `%c` reached none of them -- so it used to
+# write a raw "<" into a value the template had been told was trusted.
+case("escape/markup_percent_verbs",
+     r"""{{ ("[%s][%r][%a]"|safe) % ("<b>", "<b>", "<b>") }}|{{ ("[%r]"|safe) % ("<b>"|safe) }}""")
+case("escape/markup_percent_numbers",
+     r"""{{ ("[%d][%d][%f][%d]"|safe) % (60, "12", "1.5", 1.5) }}""")
+case("errors/markup_percent_c", '{{ ("%c"|safe) % 60 }}')
+case("errors/markup_percent_x", '{{ ("%x"|safe) % 60 }}')
+case("errors/markup_percent_int", '{{ ("%d"|safe) % "x" }}')
+case("errors/markup_percent_float", '{{ ("%f"|safe) % "x" }}')
+case("errors/markup_percent_none", '{{ ("%d"|safe) % none }}')
+
+# --- other places the output was not CPython's --------------------------------
+# tojson wrote "Infinity" and then reset the whole builder to correct the sign,
+# which discarded every byte of the document produced so far.
+case("filters/tojson_nonfinite",
+     "{% set big = 1e308 %}{{ [1, -big*10, 2]|tojson }}|{{ (big*10)|tojson }}|{{ (big*10-big*10)|tojson }}|{{ {'a': 1, 'z': -big*10}|tojson }}")
+# A literal outside float64's range is inf or 0.0, not a syntax error.
+case("literals/float_range", "{{ 1e999 }}|{{ -1e999 }}|{{ 1e-999 }}|{{ 1e999 == 1e999 }}")
+# Python's sum refuses a str start outright and points at join instead.
+case("errors/sum_string_start", "{{ ['a','b']|sum(start='') }}")
+case("filters/sum_list_start", "{{ [[1],[2]]|sum(start=[]) }}")
+# Eight hex digits overflow a rune, so this arrived as -1 and passed a check
+# written for values above 0x10FFFF.
+case("errors/unicode_escape_overflow", r'{{ "\Uffffffff" }}')
+case("literals/unicode_escape", r'{{ "\U0000ffff"|length }}|{{ "\U0010FFFF"|length }}|{{ "é" }}|{{ "\xe9" }}')
+
+# --- membership and slicing ---------------------------------------------------
+# `x in range(...)` is arithmetic in Python, not a search.
+case("operators/range_membership",
+     "{{ 5 in range(10) }}|{{ -1 in range(10) }}|{{ 1.0 in range(3) }}|{{ 1.5 in range(3) }}|"
+     "{{ 'x' in range(3) }}|{{ 4 in range(0,10,2) }}|{{ 3 in range(0,10,2) }}|{{ 2 in range(3,0,-1) }}|"
+     "{{ 9223372036854775806 in range(9223372036854775807) }}")
+case("subscript/slice_steps",
+     "{{ 'abcdefg'[::2] }}|{{ 'abcdefg'[::-1] }}|{{ 'abcdefg'[::-2] }}|{{ 'abcdefg'[1:6:3] }}|"
+     "{{ 'é1ü2ö3'[::-1] }}|{{ 'é1ü2ö3'[1:4] }}|{{ 'é1ü2ö3'[-2:] }}|{{ 'abc'[99:] }}|{{ 'abc'[-99:] }}")
+case("subscript/slice_sequences",
+     "{{ [1,2,3,4,5][::2] }}|{{ [1,2,3,4,5][::-1] }}|{{ (1,2,3)[1:] }}|{{ range(7)[1:6:2] }}|{{ range(3)[::-1] }}")
+
+# A tuple key is hashed by a walk of the whole tuple, which has to stay exact.
+case("literals/nested_tuple_keys",
+     '{% set d = {(1,(2,3)): "a", ((1,2),3): "b", (1,2,3): "c", (): "d", ((),): "e"} %}'
+     '{{ d[(1,(2,3))] }}{{ d[((1,2),3)] }}{{ d[(1,2,3)] }}{{ d[()] }}{{ d[((),)] }}|{{ d|length }}')
+
+
 def main() -> int:
     if DST.exists():
         shutil.rmtree(DST)

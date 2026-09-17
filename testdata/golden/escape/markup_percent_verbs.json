@@ -1,0 +1,11 @@
+{
+  "case": "escape/markup_percent_verbs.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "[&lt;b&gt;][&#39;&lt;b&gt;&#39;][&#39;&lt;b&gt;&#39;]|[Markup(&#39;&lt;b&gt;&#39;)]"
+}

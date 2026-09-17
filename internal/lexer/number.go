@@ -4,6 +4,7 @@
 package lexer
 
 import (
+	"errors"
 	"math/big"
 	"strconv"
 	"strings"
@@ -179,9 +180,14 @@ func ParseInteger(text string) (value.Value, error) {
 }
 
 // ParseFloat converts a float literal to a value.
+//
+// A literal outside float64's range is not a syntax error: Python reads 1e999
+// as inf and 1e-999 as 0.0, and strconv reports both by returning that exact
+// value alongside ErrRange. Discarding the value with the error turned a
+// template CPython renders into one that would not compile.
 func ParseFloat(text string) (value.Value, error) {
 	f, err := strconv.ParseFloat(strings.ReplaceAll(text, "_", ""), 64)
-	if err != nil {
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
 		return value.Undefined, errs.New(errs.TemplateSyntaxError,
 			"invalid float literal %q", text)
 	}

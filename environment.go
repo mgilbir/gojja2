@@ -257,14 +257,16 @@ func SelectAutoescapeWith(cfg SelectAutoescapeConfig) AutoescapeFunc {
 // carrying exactly one leading dot -- so that matching happens on an extension
 // boundary rather than on any trailing substring. Without the dot, "tml" would
 // select "page.html".
+//
+// An extension that is empty once the dots are trimmed becomes the pattern ".",
+// which is what jinja2 builds and which selects a name ending in a dot.
+// Dropping it instead made SelectAutoescape("") escape nothing at all -- the
+// wrong direction for the one setting whose failure mode is cross-site
+// scripting, and the direction this package treats as a bug everywhere else.
 func normalizeExtensions(extensions []string) []string {
 	out := make([]string, 0, len(extensions))
 	for _, ext := range extensions {
-		trimmed := strings.TrimLeft(ext, ".")
-		if trimmed == "" {
-			continue
-		}
-		out = append(out, "."+strings.ToLower(trimmed))
+		out = append(out, "."+strings.ToLower(strings.TrimLeft(ext, ".")))
 	}
 	return out
 }
