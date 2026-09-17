@@ -25,6 +25,20 @@ import (
 // takes the process down -- where CPython would have raised RecursionError
 // long before. Templates are frequently attacker-supplied; nothing anyone
 // writes on purpose nests a hundred deep, let alone this.
+//
+// What is bounded is the depth of the *tree*, one level per node on a
+// root-to-leaf path, and that is the property the bound has to have: the
+// parser is not the only thing that walks this tree recursively. The constant
+// folder, the frame-local visitor, the dependency checker and the evaluator
+// all descend it once per level, so an AST the parser accepted but they cannot
+// walk is no safer than one the parser could not build.
+//
+// Counting call depth instead missed every construct that nests *iteratively*.
+// `not not not ...`, `-----...`, `x|f|f|f...` and `a.b.c.d...` all build a tree
+// as deep as they are long from a loop or a tail call, so a 500 KB template of
+// `not ` was accepted by the parser and then overflowed the stack inside the
+// constant folder -- at compile time, where there is no render to bound and no
+// context to cancel.
 const MaxNestingDepth = 1000
 
 // Options controls the optional tags an environment enables.
@@ -77,7 +91,12 @@ type parser struct {
 	depth int
 }
 
-// enter bounds the recursion, failing cleanly instead of exhausting the stack.
+// enter opens one level of the tree being built, failing cleanly instead of
+// letting it grow past what anything walking it can descend. Every production
+// that constructs a node calls it, and only those: a helper that merely passes
+// an expression along adds no level and must not charge for one, or the bound
+// would depend on how many layers of grammar a shape happens to traverse
+// rather than on how deep the result is.
 func (p *parser) enter() {
 	p.depth++
 	if p.depth > MaxNestingDepth {
@@ -86,6 +105,31 @@ func (p *parser) enter() {
 }
 
 func (p *parser) leave() { p.depth-- }
+
+// chain counts the levels a loop opens.
+//
+// A left-associative run -- `a|f|f|f`, `a.b.c.d`, `1+x+x+x` -- is built by a
+// loop rather than by recursion, but the tree it produces is as deep as the
+// run is long. Each pass therefore opens a level, and the whole run is
+// released together when the chain is complete, so that an expression nested
+// *inside* one of its arguments sees the depth already spent.
+type chain struct {
+	p    *parser
+	open int
+}
+
+func (p *parser) chain() *chain { return &chain{p: p} }
+
+// level charges for the node this pass of the loop is about to build.
+func (c *chain) level() {
+	c.p.enter()
+	c.open++
+}
+
+// done releases the whole run. It is deferred, so it runs on the way out of a
+// failed parse as well -- not that the parse continues, but leaving the
+// counter consistent keeps the failure honest about where it happened.
+func (c *chain) done() { c.p.depth -= c.open }
 
 // --- token stream ------------------------------------------------------------
 
