@@ -560,6 +560,16 @@ case("errors/cycler_without_items", "{{ cycler() }}")
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
 # frame before the assignment sees undefined rather than the context's value.
+# json.dumps splits "no indent" from "an indent of zero": only None gives the
+# one-line form, while 0 -- and any negative, which clamps to 0 -- still puts
+# every element on its own line.
+case("filters/tojson_indent_zero",
+     "{{ [1,2]|tojson }}|{{ [1,2]|tojson(none) }}|{{ [1,2]|tojson(0) }}|"
+     "{{ [1,2]|tojson(-1) }}|{{ [1,2]|tojson(2) }}")
+case("filters/tojson_indent_nested",
+     "{{ [[1]]|tojson(0) }}|{{ [[1]]|tojson(2) }}|{{ {'b':1,'a':2}|tojson(0) }}|"
+     "{{ []|tojson(0) }}|{{ 1|tojson(0) }}")
+
 # When a frame assigns a name, jinja2 asks the enclosing symbol table for a
 # *reference* to it before settling on undefined. A reference is any mention at
 # that level, so a read is enough and where it sits does not matter -- which is
