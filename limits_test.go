@@ -58,21 +58,88 @@ func TestIterationBudgetAllowsRealTemplates(t *testing.T) {
 	}
 }
 
-// TestBudgetCrossesIncludes is the test that would have caught the bug the
-// recursion counter had: a budget stored on the State restarts at every
-// {% include %}, because an include builds a fresh State. Neither template
-// here exceeds the bound on its own.
-func TestBudgetCrossesIncludes(t *testing.T) {
-	env := gojja2.New(
-		gojja2.WithMaxIterations(10),
-		gojja2.WithLoader(gojja2.DictLoader(map[string]string{
-			"inner.txt": `{% for j in range(6) %}x{% endfor %}`,
-		})),
-	)
-	err := renderWith(t, context.Background(), env,
-		`{% for i in range(6) %}{% include "inner.txt" %}{% endfor %}`)
-	if !errors.Is(err, gojja2.ErrTooManyIterations) {
-		t.Fatalf("got %v, want ErrTooManyIterations across the include boundary", err)
+// TestBudgetCrossesEveryTemplateBoundary is the test that would have caught
+// the bug the recursion counter had: a budget stored on the State restarts at
+// every template boundary, because each of them builds a fresh State. Neither
+// template in any pair here exceeds the bound on its own.
+//
+// Every construct that can reach another template is listed, and the list is
+// the point: {% import %} built its State by hand and left the budget nil, so
+// an imported template ran with no bound and no context while the importing
+// one was bounded. A table that names every boundary is what stops the next
+// one from being added without its budget.
+func TestBudgetCrossesEveryTemplateBoundary(t *testing.T) {
+	loader := gojja2.DictLoader(map[string]string{
+		"inner.txt":  `{% for j in range(6) %}x{% endfor %}`,
+		"module.txt": `{% for j in range(6) %}{% endfor %}{% macro m() %}{% endmacro %}`,
+		"parent.txt": `{% for j in range(6) %}{% endfor %}`,
+	})
+	for name, src := range map[string]string{
+		"include":     `{% for i in range(6) %}{% include "inner.txt" %}{% endfor %}`,
+		"import":      `{% for i in range(6) %}{% import "module.txt" as m %}{% endfor %}`,
+		"from import": `{% for i in range(6) %}{% from "module.txt" import m %}{% endfor %}`,
+		"extends":     `{% for i in range(6) %}{% endfor %}{% extends "parent.txt" %}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := gojja2.New(gojja2.WithMaxIterations(10), gojja2.WithLoader(loader))
+			err := renderWith(t, context.Background(), env, src)
+			if !errors.Is(err, gojja2.ErrTooManyIterations) {
+				t.Fatalf("got %v, want ErrTooManyIterations across the %s boundary", err, name)
+			}
+		})
+	}
+}
+
+// renderWithin runs a render on its own goroutine and gives up after wall.
+//
+// A render that ignores its deadline must fail the test rather than hang it:
+// a bound that has gone missing is a bug to report, not a build to wait out.
+// The goroutine is left running -- it is already unbounded, which is the thing
+// under test -- and the process exits when the package's tests finish.
+func renderWithin(t *testing.T, wall time.Duration, ctx context.Context, env *gojja2.Environment, src string) error {
+	t.Helper()
+	tmpl, err := env.FromString(src)
+	if err != nil {
+		t.Fatalf("compile %q: %v", src, err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- tmpl.Render(ctx, io.Discard, nil) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(wall):
+		t.Fatalf("render did not stop within %v: nothing is bounding it", wall)
+		return nil
+	}
+}
+
+// TestCancellationCrossesEveryTemplateBoundary is the same list against the
+// context rather than the iteration bound. The two are not redundant: the
+// context is read *through* the budget, so a nested render with no budget
+// also has no deadline, and a caller who turned the bounds off with
+// WithoutLimits and is relying on a deadline would have had nothing at all.
+func TestCancellationCrossesEveryTemplateBoundary(t *testing.T) {
+	loader := gojja2.DictLoader(map[string]string{
+		"spin.txt": `{% for j in range(1000000000) %}{% endfor %}`,
+		"base.txt": `{% for j in range(1000000000) %}{% endfor %}`,
+	})
+	for name, src := range map[string]string{
+		"include":     `{% include "spin.txt" %}`,
+		"import":      `{% import "spin.txt" as m %}`,
+		"from import": `{% from "spin.txt" import m %}`,
+		"extends":     `{% extends "base.txt" %}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := gojja2.New(gojja2.WithoutLimits(), gojja2.WithLoader(loader))
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			start := time.Now()
+			err := renderWithin(t, 30*time.Second, ctx, env, src)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("got %v after %v, want DeadlineExceeded across the %s boundary",
+					err, time.Since(start), name)
+			}
+		})
 	}
 }
 

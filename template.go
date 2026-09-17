@@ -126,9 +126,7 @@ func (e *Environment) valuesFromGo(vars map[string]any) map[string]value.Value {
 // zero each time would never fire and a self-including template would take the
 // stack out instead.
 func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int, b *budget) error {
-	st := t.newState(vars)
-	st.depth = depth
-	st.budget = b
+	st := t.newState(vars, depth, b)
 	ex := &exec{st: st, sc: st.ctx, out: out, stream: out, autoescape: st.autoescape}
 
 	if err := ex.execBody(t.tree.Body); err != nil {
@@ -272,7 +270,16 @@ func (s *State) Undefined(v value.Value) value.Value {
 	return v.WithBehavior(s.env.undefined)
 }
 
-func (t *Template) newState(vars map[string]value.Value) *State {
+// newState builds the per-render state for one template.
+//
+// depth and budget are parameters rather than fields a caller fills in
+// afterwards, because a nested render that forgets the budget does not get a
+// fresh allowance -- it gets none at all, and no context either, since the
+// context is read through the budget. `{% import %}` built its State by hand
+// and omitted it, so an imported template ran unbounded and uninterruptible
+// while the including one was bounded. Making both arguments is what stops a
+// third construction site from doing it again.
+func (t *Template) newState(vars map[string]value.Value, depth int, b *budget) *State {
 	globals := &scope{vars: t.env.globals}
 	// The render arguments get a scope of their own, below the one the
 	// template writes into. A top-level `{% set %}` then shadows an
@@ -299,6 +306,8 @@ func (t *Template) newState(vars map[string]value.Value) *State {
 		contextVars: arguments,
 		blocks:      blocks,
 		autoescape:  t.env.escapes(t.name, t.fromString),
+		depth:       depth,
+		budget:      b,
 	}
 	declareFrameLocals(ctx, st, t.tree.Body)
 	return st
