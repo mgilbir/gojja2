@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"unicode"
@@ -1332,6 +1333,8 @@ var dictMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.V
 	},
 	"clear":      methodDictClear,
 	"setdefault": methodDictSetdefault,
+	"popitem":    methodDictPopitem,
+	"fromkeys":   methodDictFromkeys,
 }
 
 func methodDictItems(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -1345,9 +1348,16 @@ func methodDictItems(_ *State, r value.Value, _ *value.CallArgs) (value.Value, e
 
 func methodDictGet(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
+	// dict.get is a C function: it counts its arguments rather than binding
+	// them by name, so both the shortage and the excess are reported with
+	// the count that was actually passed.
+	if n := len(args.Pos) + len(args.Kwargs); n > 2 {
+		return value.Undefined, errs.New(errs.TypeError,
+			"get expected at most 2 arguments, got %d", n)
+	}
 	key, ok := arg(args, 0, "key")
 	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "get expected at least 1 argument")
+		return value.Undefined, errs.New(errs.TypeError, "get expected at least 1 argument, got 0")
 	}
 	v, found, err := d.Get(key)
 	if err != nil {
@@ -1525,6 +1535,7 @@ var listMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.V
 	"extend":  methodListExtend,
 	"copy":    func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) { return r.AsList(), nil },
 	"clear":   methodListClear,
+	"sort":    methodListSort,
 }
 
 func methodListClear(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -1534,7 +1545,7 @@ func methodListClear(_ *State, r value.Value, _ *value.CallArgs) (value.Value, e
 }
 
 var tupleMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
-	"index": methodSeqIndex,
+	"index": methodTupleIndex,
 	"count": methodSeqCount,
 }
 
@@ -1650,6 +1661,105 @@ func methodSeqIndex(_ *State, r value.Value, args *value.CallArgs) (value.Value,
 		}
 	}
 	return value.Undefined, errs.New(errs.ValueError, "%s is not in list", value.Repr(v))
+}
+
+// methodTupleIndex is list.index on a tuple, which names itself when the value
+// is absent rather than borrowing list's wording.
+func methodTupleIndex(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	out, err := methodSeqIndex(s, r, args)
+	var e *errs.Error
+	if errors.As(err, &e) && e.Kind == errs.ValueError {
+		e.Msg = "tuple.index(x): x not in tuple"
+	}
+	return out, err
+}
+
+// methodListSort is list.sort: in place, returning None. Its arguments are
+// keyword-only, so a positional one is refused rather than taken for `key`.
+func methodListSort(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	if len(args.Pos) > 0 {
+		return value.Undefined, errs.New(errs.TypeError,
+			"sort() takes no positional arguments")
+	}
+	reverse := false
+	for _, kw := range args.Kwargs {
+		switch kw.Name {
+		case "reverse":
+			b, err := value.IsTrue(kw.Value)
+			if err != nil {
+				return value.Undefined, err
+			}
+			reverse = b
+		case "key":
+			if !kw.Value.IsNone() {
+				return value.Undefined, errs.New(errs.TypeError,
+					"sort() key must be None")
+			}
+		default:
+			return value.Undefined, errs.New(errs.TypeError,
+				"'%s' is an invalid keyword argument for sort()", kw.Name)
+		}
+	}
+	seq, _ := r.Seq()
+	items := seq.Items()
+	if err := stableSortBy(st, items, func(v value.Value) (value.Value, error) {
+		return v, nil
+	}, reverse); err != nil {
+		return value.Undefined, err
+	}
+	// Sorting a list in place answers None, not the list -- which is why
+	// `{{ L.sort() }}` renders "None" and the sorted list is in L.
+	return value.None, nil
+}
+
+// methodDictPopitem is dict.popitem, which takes the *last* pair inserted:
+// dicts have been ordered since 3.7, so it is a stack rather than arbitrary.
+func methodDictPopitem(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	if len(args.Pos) > 0 || len(args.Kwargs) > 0 {
+		return value.Undefined, errs.New(errs.TypeError,
+			"dict.popitem() takes no arguments (%d given)", len(args.Pos)+len(args.Kwargs))
+	}
+	d, _ := r.Dict()
+	entries := d.Entries()
+	if len(entries) == 0 {
+		return value.Undefined, errs.New(errs.KeyError,
+			"'popitem(): dictionary is empty'")
+	}
+	last := entries[len(entries)-1]
+	if _, err := d.Delete(last.Key); err != nil {
+		return value.Undefined, err
+	}
+	return value.NewTuple(last.Key, last.Value), nil
+}
+
+// methodDictFromkeys is dict.fromkeys, a classmethod: the dict it is reached
+// through contributes nothing, so `{{ d.fromkeys("ab") }}` is a fresh two-entry
+// dict whatever d held.
+func methodDictFromkeys(st *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
+	keys, ok := arg(args, 0, "iterable")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError,
+			"fromkeys expected at least 1 argument, got 0")
+	}
+	fill := value.None
+	if v, ok := arg(args, 1, "value"); ok {
+		fill = v
+	}
+	items, err := materialize(st, keys)
+	if err != nil {
+		return value.Undefined, err
+	}
+	out := value.NewDict()
+	d, _ := out.Dict()
+	for _, k := range items {
+		if err := value.Hashable(k); err != nil {
+			return value.Undefined, err
+		}
+		if err := d.Set(k, fill); err != nil {
+			return value.Undefined, err
+		}
+	}
+	return out, nil
 }
 
 func methodSeqCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {

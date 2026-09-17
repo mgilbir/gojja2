@@ -304,7 +304,7 @@ func (c *cyclerObject) Repr() string                              { return "<Cyc
 
 func globalCycler(s *State, args *value.CallArgs) (value.Value, error) {
 	if len(args.Pos) == 0 {
-		return value.Undefined, errs.New(errs.TypeError, "at least one item has to be provided")
+		return value.Undefined, errs.New(errs.RuntimeError, "at least one item has to be provided")
 	}
 	return value.FromObject(&cyclerObject{items: args.Pos}), nil
 }
