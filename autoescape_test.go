@@ -267,3 +267,45 @@ func TestJoinIsMarkupOnlyWhenMarkupIsInvolved(t *testing.T) {
 		}
 	}
 }
+
+// TestReplaceEscapesWhatJinja2Escapes pins do_replace's autoescaping rule,
+// which is finer than escaping everything.
+//
+// `old` is matched verbatim -- escaping it first made `|replace("&", "+")`
+// hunt for `&amp;` in text it had just escaped itself, so it found the `&` of
+// every *other* entity and rewrote the middle of them. `new` is escaped only
+// when the subject it replaces into is Markup, and a plain subject with plain
+// arguments stays a plain string for the output to escape once.
+//
+// Expectations from CPython jinja2 3.1.6 with autoescape on.
+func TestReplaceEscapesWhatJinja2Escapes(t *testing.T) {
+	env := New(WithAutoescape(true))
+	vars := map[string]any{"s": "a&<b", "o": "&", "n": "<i>"}
+
+	for _, tc := range []struct{ expr, want string }{
+		// Nothing safe: a plain string, and `old` found the real `&`.
+		{`(s|replace("&", "+"))|pprint|safe`, `'a+<b'`},
+		{`(s|replace("&", "+")) is escaped`, "False"},
+		// A Markup subject: `new` is escaped into it, `old` is not.
+		{`(s|safe|replace(o, n))|pprint|safe`, `Markup('a&lt;i&gt;<b')`},
+		// A Markup `old` forces the subject to be escaped first, and
+		// then matches against the escaped text -- which is why this
+		// finds the `&` of `&lt;` as well.
+		{`(s|replace(o|safe, n))|pprint|safe`, `Markup('a&lt;i&gt;amp;&lt;i&gt;lt;b')`},
+		// A Markup `new` against a plain subject does the same, and is
+		// then inserted without being escaped again -- so the `a` of
+		// `&amp;` is a match for `old` like any other.
+		{`(s|replace("a", n|safe))|pprint|safe`, `Markup('<i>&<i>mp;&lt;b')`},
+		// Both Markup: nothing is escaped at all.
+		{`(s|safe|replace("a", n|safe))|pprint|safe`, `Markup('<i>&<b')`},
+	} {
+		got, err := renderVars(t, env, "{{ "+tc.expr+" }}", vars)
+		if err != nil {
+			t.Errorf("%s: %v", tc.expr, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.expr, got, tc.want)
+		}
+	}
+}

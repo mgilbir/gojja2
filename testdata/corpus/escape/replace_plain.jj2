@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "s": "a&<b",
+  "o": "&",
+  "n": "+"
+}
+---
+{{ (s|replace(o, n))|pprint }}|{{ (s|replace(o, n)) is escaped }}|{{ s|replace(o, n) }}

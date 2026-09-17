@@ -441,8 +441,8 @@ func filterString(_ *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 	return value.String(value.Str(v)), nil
 }
 
-// filterReplace escapes its arguments when autoescaping, so that replacing
-// with user data cannot inject markup.
+// filterReplace implements jinja2's do_replace, whose autoescaping rule is
+// finer than it looks; see below.
 func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	old, ok := arg(args, 0, "old")
 	if !ok {
@@ -466,19 +466,38 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		}
 		return value.String(strings.Replace(src, from, to, count)), nil
 	}
-	// Under autoescape everything is escaped first, so the replacement
-	// operates on escaped text and the result is safe.
-	esc := func(x value.Value) string {
-		if x.IsSafe() {
-			return value.Str(x)
+	// Under autoescape the rule is not "escape everything", and escaping
+	// everything got two things wrong. `old` is matched verbatim -- so
+	// `{{ x|replace("&", "+") }}` finds the ampersands the subject really
+	// has, not the `&amp;` an eager escape would have left -- and the
+	// subject stays a plain string when nothing markup is involved, to be
+	// escaped once on the way out like any other value.
+	//
+	// What jinja2 writes is `escape(s) if old is Markup or (new is Markup
+	// and s is not) else soft_str(s)`, followed by a replace that escapes
+	// `new` only when the subject it is replacing into is Markup. The odd
+	// shape of that condition is Python operator precedence, and it is
+	// reproduced rather than tidied.
+	markup := v.IsSafe()
+	src := value.Str(v)
+	if old.IsSafe() || (new.IsSafe() && !v.IsSafe()) {
+		if !v.IsSafe() {
+			src = escapeHTML(src)
 		}
-		return escapeHTML(value.Str(x))
+		markup = true
 	}
-	src, from, to := esc(v), esc(old), esc(new)
+	from, to := value.Str(old), value.Str(new)
+	if markup && !new.IsSafe() {
+		to = escapeHTML(to)
+	}
 	if err := chargeReplace(s, src, from, to, count); err != nil {
 		return value.Undefined, err
 	}
-	return value.Safe(strings.Replace(src, from, to, count)), nil
+	out := strings.Replace(src, from, to, count)
+	if markup {
+		return value.Safe(out), nil
+	}
+	return value.String(out), nil
 }
 
 func filterCenter(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {

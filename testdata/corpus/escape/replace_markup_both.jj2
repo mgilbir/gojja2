@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "s": "a&<b",
+  "o": "a",
+  "n": "<i>"
+}
+---
+{{ (s|safe|replace(o, n|safe))|pprint }}|{{ s|safe|replace(o, n|safe) }}

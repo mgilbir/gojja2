@@ -1,0 +1,7 @@
+{
+  "s": "a&<b",
+  "o": "&",
+  "n": "<i>"
+}
+---
+{{ (s|replace(o, n))|pprint }}|{{ s|replace(o, n) }}
