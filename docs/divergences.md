@@ -198,6 +198,43 @@ a base case -- is bounded separately at 100 levels, controlled by
 `WithMaxRecursion`, and *does* raise `RecursionError` with CPython's wording.
 The configured limit is on the error's `Limit` field rather than in the message.
 
+## How deep a value may be before printing it fails
+
+```jinja
+{% set ns = namespace(t=[0]) %}
+{% for i in range(5000) %}{% set ns.t = [ns.t] %}{% endfor %}
+{{ ns.t }}
+```
+
+The depth of a *value* is chosen at render time, not at compile time -- the
+nesting bound above is about the template's own text, and says nothing about
+what a loop builds. CPython walks such a value with its interpreter stack and
+raises `RecursionError` at around a thousand levels, with a different message
+for each walk: `while getting the repr of an object`, `in comparison`, `while
+encoding a JSON object`.
+
+gojja2 matches that wherever the walk can report a failure, and does not need
+to wall the walk at all where it cannot:
+
+| walk | CPython | gojja2 |
+|---|---|---|
+| `==`, `<`, `\|sort`, `\|min` | `RecursionError` at ~991 | the same error, at 1,000 |
+| `\|tojson` | `RecursionError` at ~986 | the same error, at 1,000 |
+| `\|pprint` | `RecursionError` at ~326 | the same error, at 1,000 |
+| `{{ v }}`, `\|string`, `\|upper`, a dict key | `RecursionError` at ~989 | renders |
+| hashing a tuple | no limit | no limit |
+
+The last two rows are the divergence. `str()` and `repr()` are reached from
+more than a hundred places here, most of them building an error message, and
+none of them can return an error -- so those walks are written iteratively and
+have no depth to exceed. That is strictly safer than the alternative: before,
+every one of those call sites was somewhere a deep value ended the process
+with a Go stack overflow, which is a fatal error rather than a panic and so is
+not something the backstop in `catchPanic` can turn into a failed render.
+
+Hashing a tuple has no wall in either implementation -- CPython's is iterative
+too, and hashes a 65,000-deep tuple without complaint.
+
 ## A budget on the work of one render
 
 ```jinja
