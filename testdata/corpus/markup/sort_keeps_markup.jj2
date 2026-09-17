@@ -1,0 +1,5 @@
+{
+  "mk": "<i>"
+}
+---
+{{ ([mk|safe, 'B', 'a']|sort)|pprint }}|{{ [mk|safe, 'B']|min|pprint }}

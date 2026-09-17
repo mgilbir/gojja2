@@ -550,3 +550,36 @@ func TestMarkupTimesUndefined(t *testing.T) {
 		}
 	}
 }
+
+// TestSortKeepsMarkupInItsKey pins that the case-folding a sort does keeps
+// Markup.
+//
+// markupsafe overrides the case methods -- changing the case of escaped text
+// cannot unescape it -- so `Markup("<i>").lower()` is Markup. Rebuilding the
+// folded key as a plain string was invisible in the sorted output and visible
+// in the error a failed comparison raises, which names the folded key's type.
+func TestSortKeepsMarkupInItsKey(t *testing.T) {
+	env := New()
+	vars := map[string]any{"mk": "<i>"}
+
+	_, err := renderVars(t, env, `{{ [false, mk|safe]|sort }}`, vars)
+	if err == nil {
+		t.Fatal("sorted; want the TypeError CPython raises")
+	}
+	if got, want := err.Error(), "'<' not supported between instances of 'Markup' and 'bool'"; got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+	for _, tc := range []struct{ expr, want string }{
+		{`([mk|safe, 'B', 'a']|sort)|pprint`, `[Markup('<i>'), 'a', 'B']`},
+		{`([mk|safe, 'B']|min)|pprint`, `Markup('<i>')`},
+	} {
+		got, err := renderVars(t, env, "{{ "+tc.expr+" }}", vars)
+		if err != nil {
+			t.Errorf("%s: %v", tc.expr, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.expr, got, tc.want)
+		}
+	}
+}

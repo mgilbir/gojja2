@@ -202,7 +202,12 @@ func attrPath(s *State, v value.Value, path string) (value.Value, error) {
 func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value.Value) (value.Value, error) {
 	fold := func(v value.Value) value.Value {
 		if !caseSensitive && v.IsString() {
-			return value.String(strings.ToLower(v.AsString()))
+			// Markup.lower() is Markup: markupsafe overrides the
+			// case methods, and escaped text cannot be unescaped
+			// by changing its case. Dropping that here made a
+			// comparison error inside a sort name 'str' where
+			// CPython names 'Markup'.
+			return keepSafe(v, strings.ToLower(v.AsString()))
 		}
 		return v
 	}
@@ -223,7 +228,12 @@ func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value.Value) (value.Value, error) {
 	fold := func(v value.Value) value.Value {
 		if !caseSensitive && v.IsString() {
-			return value.String(strings.ToLower(v.AsString()))
+			// Markup.lower() is Markup: markupsafe overrides the
+			// case methods, and escaped text cannot be unescaped
+			// by changing its case. Dropping that here made a
+			// comparison error inside a sort name 'str' where
+			// CPython names 'Markup'.
+			return keepSafe(v, strings.ToLower(v.AsString()))
 		}
 		return v
 	}

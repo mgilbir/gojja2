@@ -329,6 +329,12 @@ case("loops/loop_join_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|join
 case("loops/loop_map_applies_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|map('string')|list }}]{% endfor %}")
 case("loops/loop_in_dict", "{% for i in [1,2,3] %}[{{ dict(loop, extra=2) }}]{% endfor %}")
 
+# The case-folding a sort does keeps Markup: markupsafe overrides the case
+# methods, because changing the case of escaped text cannot unescape it. The
+# folded key is what a comparison error names.
+case("errshape/sort_markup_key", "{{ [false, mk|safe]|sort }}", mk="<i>")
+case("markup/sort_keeps_markup", "{{ ([mk|safe, 'B', 'a']|sort)|pprint }}|{{ [mk|safe, 'B']|min|pprint }}", mk="<i>")
+
 # A filtered loop with a tuple target walks tuples. jinja2 compiles the filter
 # into a function that unpacks the target and yields it straight back --
 # `for a, b in fiter: if cond: yield (a, b)` -- so the items the loop sees are
