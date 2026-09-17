@@ -128,3 +128,75 @@ func TestStrFormatSpecs(t *testing.T) {
 		}
 	}
 }
+
+// TestFormatFieldSubscript: a replacement field's `[key]` step is a real
+// `obj[key]`, not the dict-shaped lookup gojja2 did. What decides the key's
+// type is how it is *spelled*: all digits is an integer index, and anything
+// else is a string key -- so "-1" and " 0" are string keys, and a negative
+// index can never occur in a format field at all.
+//
+// gojja2 answered KeyError for everything that missed, so indexing a string
+// failed outright and a number reported a missing key rather than not being
+// subscriptable.
+func TestFormatFieldSubscript(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// A string indexes by character.
+		{`{{ '{0[0]}{0[1]}'.format('Hello') }}`, `He`},
+		// Leading zeros still make it a number.
+		{`{{ '{0[01]}'.format('Hello') }}`, `e`},
+		// Sequences index, dicts take either kind of key.
+		{`{{ '{0[0]}'.format([3,1]) }}|{{ '{0[1]}'.format((7,8)) }}`, `3|8`},
+		{`{{ '{0[a]}'.format({'a': 1}) }}|{{ '{0[0]}'.format({0: 'z'}) }}`, `1|z`},
+		// Chained steps, and a step after an attribute.
+		{`{{ '{0[0][0]}'.format(['ab']) }}`, `a`},
+		{`{{ '{0[0].real}'.format([3]) }}`, `3`},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+
+	for _, tc := range []struct{ src, want string }{
+		// Not subscriptable at all is a different complaint from a miss.
+		{`{{ '{0[0]}'.format(3) }}`, "'int' object is not subscriptable"},
+		{`{{ '{0[a]}'.format(2.5) }}`, "'float' object is not subscriptable"},
+		{`{{ '{0[0]}'.format(none) }}`, "'NoneType' object is not subscriptable"},
+		{`{{ '{0[0]}'.format(true) }}`, "'bool' object is not subscriptable"},
+		// A string key on a sequence, which "-1" and " 0" both are.
+		{`{{ '{0[a]}'.format([1]) }}`, "list indices must be integers or slices, not str"},
+		{`{{ '{0[-1]}'.format([1]) }}`, "list indices must be integers or slices, not str"},
+		{`{{ '{0[ 0]}'.format([1]) }}`, "list indices must be integers or slices, not str"},
+		{`{{ '{0[a]}'.format((1,)) }}`, "tuple indices must be integers or slices, not str"},
+		{`{{ '{0[a]}'.format('ab') }}`, "string indices must be integers, not 'str'"},
+		{`{{ '{0[-1]}'.format('ab') }}`, "string indices must be integers, not 'str'"},
+		// Out of range keeps the sequence's own wording.
+		{`{{ '{0[9]}'.format([1]) }}`, "list index out of range"},
+		{`{{ '{0[9]}'.format((1,)) }}`, "tuple index out of range"},
+		{`{{ '{0[9]}'.format('ab') }}`, "string index out of range"},
+		// A dict miss is a KeyError, with the key as it was read.
+		{`{{ '{0[zz]}'.format({'a':1}) }}`, `'zz'`},
+		{`{{ '{0[0]}'.format({'a':1}) }}`, `0`},
+		// An empty key is refused by the parser, whatever it is applied to.
+		{`{{ '{0[]}'.format([1]) }}`, "Empty attribute in format string"},
+		{`{{ '{0[]}'.format(3) }}`, "Empty attribute in format string"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		_, err = tmpl.RenderString(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
+		}
+	}
+}
