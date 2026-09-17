@@ -560,6 +560,19 @@ case("errors/cycler_without_items", "{{ cycler() }}")
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
 # frame before the assignment sees undefined rather than the context's value.
+# |map calls a filter by name and select/reject call a test by name; jinja2
+# reaches both through call_filter/call_test, which bind the arguments exactly
+# as a written call does. A falsey input is never checked, because do_map
+# prepares the filter inside `if value:`.
+case("errshape/map_inner_filter_too_many", "{{ ['a']|map('upper','x')|list }}")
+case("errshape/map_inner_filter_too_few", "{{ ['a']|map('replace')|list }}")
+case("errshape/map_inner_filter_bad_keyword", "{{ ['a']|map('upper', foo=1)|list }}")
+case("errshape/select_inner_test_too_many", "{{ [1]|select('odd','x')|list }}")
+case("errshape/select_inner_test_too_few", "{{ [1]|select('divisibleby')|list }}")
+case("filters/map_empty_input_is_never_bound",
+     "{{ []|map('upper','x')|list }}|{{ []|map('replace')|list }}|"
+     "{{ []|select('odd','x')|list }}|{{ none|map('upper','x')|list }}")
+
 # A replacement field's [key] step is a real obj[key]. What decides the key's
 # type is how it is spelled: all digits is an integer index, anything else --
 # "-1" and " 0" included -- is a string key, so a negative index never occurs.

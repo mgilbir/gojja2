@@ -27,6 +27,21 @@ import (
 // tools/oracle/gen_arity.py) and the binding below is Python's, reporting
 // Python's messages.
 
+// checkInnerArity applies checkArity to a filter or test that another filter
+// invokes by name -- what |map, |select, |reject and the attr variants do.
+//
+// jinja2 reaches those through Environment.call_filter and call_test, which
+// bind the arguments exactly as a written call does, so the same check belongs
+// here. A filter or test the caller replaced is left alone, for the same reason
+// the direct path leaves it alone: it answers to whatever that caller accepts.
+func checkInnerArity(sigs map[string]signature, stock map[string]bool,
+	name string, args *value.CallArgs) error {
+	if sig, known := sigs[name]; known && stock[name] {
+		return checkArity(sig, args)
+	}
+	return nil
+}
+
 // checkArity reports the error CPython's argument binding would raise for a
 // call of this shape, or nil.
 //
