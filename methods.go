@@ -158,12 +158,353 @@ func init() {
 			return value.Bytes([]byte(r.AsString())), nil
 		},
 
-		"isdigit": classifyMethod(unicode.IsDigit),
-		"isalpha": classifyMethod(unicode.IsLetter),
-		"isalnum": classifyMethod(func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }),
+		// Python's three numeric predicates are three different sets,
+		// and only isdecimal is a general category. Reading isdigit as
+		// Nd made `{{ "\u00b2".isdigit() }}` False where CPython says
+		// True, and isalnum inherited it. strclass.go carries what the
+		// wider two accept beyond Nd; see tools/oracle/gen_strclass.py.
+		"isdecimal": classifyMethod(unicode.IsDigit),
+		"isdigit":   classifyMethod(pyIsDigit),
+		"isnumeric": classifyMethod(pyIsNumeric),
+		"isalpha":   classifyMethod(unicode.IsLetter),
+		// str.isalnum is the union of the four, not letters and Nd.
+		"isalnum": classifyMethod(func(r rune) bool {
+			return unicode.IsLetter(r) || pyIsNumeric(r)
+		}),
 		"isspace": classifyMethod(unicode.IsSpace),
 		"isupper": caseMethod(unicode.IsUpper, unicode.IsLower),
 		"islower": caseMethod(unicode.IsLower, unicode.IsUpper),
+		// isascii and isprintable are the two that answer True for the
+		// empty string, so neither can go through classifyMethod.
+		"isascii":      methodIsASCII,
+		"isprintable":  methodIsPrintable,
+		"istitle":      methodIsTitle,
+		"isidentifier": methodIsIdentifier,
+
+		"expandtabs":   methodExpandtabs,
+		"maketrans":    methodMaketrans,
+		"translate":    methodTranslate,
+		"partition":    partitionMethod(false),
+		"rpartition":   partitionMethod(true),
+		"removeprefix": affixCutMethod(strings.HasPrefix, func(s, a string) string { return s[len(a):] }),
+		"removesuffix": affixCutMethod(strings.HasSuffix, func(s, a string) string { return s[:len(s)-len(a)] }),
+	}
+}
+
+// methodMaketrans is str.maketrans, which only ever builds the table another
+// call translates with. It is a static method in Python, so the string it is
+// reached through has no say in the result.
+//
+// One argument is a mapping whose keys are single characters or ordinals; two
+// are equal-length strings paired off; a third names characters to delete. The
+// table it returns is always keyed by ordinal, which is why translate can look
+// a character up without knowing how the table was written.
+func methodMaketrans(_ *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
+	out := value.NewDict()
+	d, _ := out.Dict()
+	switch len(args.Pos) {
+	case 1:
+		src, ok := args.Pos[0].Dict()
+		if !ok {
+			return value.Undefined, errs.New(errs.TypeError,
+				"if you give only one argument to maketrans it must be a dict")
+		}
+		for _, e := range src.Entries() {
+			key, err := transKey(e.Key)
+			if err != nil {
+				return value.Undefined, err
+			}
+			if err := d.Set(key, e.Value); err != nil {
+				return value.Undefined, err
+			}
+		}
+	case 2, 3:
+		from, to := []rune(value.Str(args.Pos[0])), []rune(value.Str(args.Pos[1]))
+		if !args.Pos[0].IsString() || !args.Pos[1].IsString() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"maketrans arguments must be strings")
+		}
+		if len(from) != len(to) {
+			return value.Undefined, errs.New(errs.ValueError,
+				"the first two maketrans arguments must have equal length")
+		}
+		for i, c := range from {
+			if err := d.Set(value.Int(int64(c)), value.Int(int64(to[i]))); err != nil {
+				return value.Undefined, err
+			}
+		}
+		if len(args.Pos) == 3 {
+			if !args.Pos[2].IsString() {
+				return value.Undefined, errs.New(errs.TypeError,
+					"third argument to maketrans must be a string")
+			}
+			for _, c := range value.Str(args.Pos[2]) {
+				if err := d.Set(value.Int(int64(c)), value.None); err != nil {
+					return value.Undefined, err
+				}
+			}
+		}
+	default:
+		return value.Undefined, errs.New(errs.TypeError,
+			"maketrans() takes 1, 2 or 3 arguments (%d given)", len(args.Pos))
+	}
+	return out, nil
+}
+
+// transKey turns a maketrans key into the ordinal the table is keyed by: a
+// one-character string becomes its code point, an integer is already one.
+func transKey(k value.Value) (value.Value, error) {
+	if k.IsString() {
+		rs := []rune(value.Str(k))
+		if len(rs) != 1 {
+			return value.Undefined, errs.New(errs.ValueError,
+				"string keys in translate table must be of length 1")
+		}
+		return value.Int(int64(rs[0])), nil
+	}
+	if k.IsInteger() {
+		return k, nil
+	}
+	return value.Undefined, errs.New(errs.TypeError,
+		"keys in translate table must be strings or integers")
+}
+
+// methodTranslate is str.translate: every character is looked up by ordinal and
+// replaced by a string, by another ordinal, or by nothing at all when the entry
+// is None. A character the table does not mention is left exactly as it was,
+// which is why a missing key is not an error.
+func methodTranslate(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	table, ok := arg(args, 0, "table")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError,
+			"translate() takes exactly one argument (0 given)")
+	}
+	d, ok := table.Dict()
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError,
+			"'%s' object is not subscriptable", table.TypeName())
+	}
+	var b strings.Builder
+	for _, c := range r.AsString() {
+		repl, found, err := d.Get(value.Int(int64(c)))
+		if err != nil {
+			return value.Undefined, err
+		}
+		switch {
+		case !found:
+			b.WriteRune(c)
+		case repl.IsNone():
+			// Deleted.
+		case repl.IsString():
+			if err := s.ChargeBytes(int64(len(value.Str(repl)))); err != nil {
+				return value.Undefined, err
+			}
+			b.WriteString(value.Str(repl))
+		case repl.IsInteger():
+			n, fits := repl.Int64()
+			if !fits || n < 0 || n > unicode.MaxRune {
+				return value.Undefined, errs.New(errs.ValueError,
+					"character mapping must be in range(0x110000)")
+			}
+			b.WriteRune(rune(n))
+		default:
+			return value.Undefined, errs.New(errs.TypeError,
+				"character mapping must return integer, None or str")
+		}
+	}
+	if r.IsSafe() {
+		return value.Safe(b.String()), nil
+	}
+	return value.String(b.String()), nil
+}
+
+// pyIsDigit is str.isdigit: Nd plus Numeric_Type=Digit.
+func pyIsDigit(r rune) bool {
+	return unicode.IsDigit(r) || unicode.Is(digitExtra, r)
+}
+
+// pyIsNumeric is str.isnumeric: anything carrying a numeric value, which
+// reaches past the number categories into CJK ideographs like U+4E00.
+func pyIsNumeric(r rune) bool {
+	return unicode.IsDigit(r) || unicode.Is(unicode.Nl, r) ||
+		unicode.Is(unicode.No, r) || unicode.Is(numericExtra, r)
+}
+
+// methodIsASCII is str.isascii, which is True for the empty string: it asks
+// whether anything is out of range, and nothing is.
+func methodIsASCII(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+	for _, c := range r.AsString() {
+		if c > unicode.MaxASCII {
+			return value.False, nil
+		}
+	}
+	return value.True, nil
+}
+
+// methodIsPrintable is str.isprintable: nothing in Cc, Cf, Cs, Co, Cn, Zl, Zp
+// or Zs -- except U+0020, which is the one separator Python calls printable.
+// Empty is True, for the same reason isascii is.
+func methodIsPrintable(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+	for _, c := range r.AsString() {
+		if c == ' ' {
+			continue
+		}
+		if unicode.In(c, unicode.Cc, unicode.Cf, unicode.Cs, unicode.Co,
+			unicode.Zl, unicode.Zp, unicode.Zs) || !unicode.IsGraphic(c) {
+			return value.False, nil
+		}
+	}
+	return value.True, nil
+}
+
+// methodIsTitle is str.istitle: every uppercase letter follows an uncased
+// character and every lowercase one follows a cased character, with at least
+// one cased character present. Titlecase counts as upper here, which is what
+// makes a digraph like U+01C8 titlecase rather than a failure.
+func methodIsTitle(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+	cased, prevCased := false, false
+	for _, c := range r.AsString() {
+		switch {
+		case unicode.IsUpper(c) || unicode.IsTitle(c):
+			if prevCased {
+				return value.False, nil
+			}
+			cased, prevCased = true, true
+		case unicode.IsLower(c):
+			if !prevCased {
+				return value.False, nil
+			}
+			cased, prevCased = true, true
+		default:
+			prevCased = false
+		}
+	}
+	return value.Bool(cased), nil
+}
+
+// methodIsIdentifier is str.isidentifier, which asks the same question the
+// parser does: XID_Start followed by XID_Continue, with underscore allowed in
+// either position. It says nothing about keywords -- "class".isidentifier() is
+// True.
+func methodIsIdentifier(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+	s := r.AsString()
+	if s == "" {
+		return value.False, nil
+	}
+	for i, c := range s {
+		if i == 0 {
+			if !isXIDStart(c) {
+				return value.False, nil
+			}
+			continue
+		}
+		if !isXIDContinue(c) {
+			return value.False, nil
+		}
+	}
+	return value.True, nil
+}
+
+func isXIDStart(c rune) bool {
+	return c == '_' || unicode.IsLetter(c) || unicode.Is(unicode.Nl, c)
+}
+
+func isXIDContinue(c rune) bool {
+	return isXIDStart(c) || unicode.IsDigit(c) ||
+		unicode.In(c, unicode.Mn, unicode.Mc, unicode.Pc)
+}
+
+// methodExpandtabs is str.expandtabs: each tab advances to the next multiple
+// of tabsize, and the column resets at every line break rather than counting
+// from the start of the string.
+func methodExpandtabs(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	size, err := intArg(args, 0, "tabsize", 8)
+	if err != nil {
+		return value.Undefined, err
+	}
+	var b strings.Builder
+	col := 0
+	for _, c := range r.AsString() {
+		switch c {
+		case '\t':
+			// A tabsize of zero or less deletes the tab rather than
+			// padding to it, which is what Python's loop does.
+			if size > 0 {
+				pad := size - col%size
+				if err := s.ChargeBytes(int64(pad)); err != nil {
+					return value.Undefined, err
+				}
+				b.WriteString(strings.Repeat(" ", pad))
+				col += pad
+			}
+		case '\n', '\r':
+			b.WriteRune(c)
+			col = 0
+		default:
+			b.WriteRune(c)
+			col++
+		}
+	}
+	if r.IsSafe() {
+		return value.Safe(b.String()), nil
+	}
+	return value.String(b.String()), nil
+}
+
+// partitionMethod is str.partition and str.rpartition, which always answer a
+// 3-tuple: the separator sits in the middle when it was found, and the two
+// empty strings go on whichever side the search came from when it was not.
+func partitionMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+		name := "partition"
+		if fromRight {
+			name = "rpartition"
+		}
+		sep, err := strArg(args, 0, "sep", name)
+		if err != nil {
+			return value.Undefined, err
+		}
+		if sep == "" {
+			return value.Undefined, errs.New(errs.ValueError, "empty separator")
+		}
+		s := r.AsString()
+		i := strings.Index(s, sep)
+		if fromRight {
+			i = strings.LastIndex(s, sep)
+		}
+		wrap := value.String
+		if r.IsSafe() {
+			wrap = value.Safe
+		}
+		if i < 0 {
+			// Not found: partition keeps the text on the left,
+			// rpartition on the right.
+			if fromRight {
+				return value.NewTuple(wrap(""), wrap(""), wrap(s)), nil
+			}
+			return value.NewTuple(wrap(s), wrap(""), wrap("")), nil
+		}
+		return value.NewTuple(wrap(s[:i]), wrap(sep), wrap(s[i+len(sep):])), nil
+	}
+}
+
+// affixCutMethod is str.removeprefix and str.removesuffix, which return the
+// string unchanged when the affix is absent -- and an empty affix is always
+// present, so it is not an error the way partition's is.
+func affixCutMethod(has func(string, string) bool, cut func(string, string) string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+		affix, err := strArg(args, 0, "affix", "removeprefix")
+		if err != nil {
+			return value.Undefined, err
+		}
+		s := r.AsString()
+		if has(s, affix) {
+			s = cut(s, affix)
+		}
+		if r.IsSafe() {
+			return value.Safe(s), nil
+		}
+		return value.String(s), nil
 	}
 }
 

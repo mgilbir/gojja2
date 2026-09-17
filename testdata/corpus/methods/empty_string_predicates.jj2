@@ -1,0 +1,3 @@
+{}
+---
+{{ ''.isascii() }}{{ ''.isprintable() }}|{{ ''.isdigit() }}{{ ''.istitle() }}{{ ''.isidentifier() }}{{ ''.isnumeric() }}|{{ ' '.isprintable() }}{{ '	'.isprintable() }}
