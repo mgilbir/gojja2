@@ -400,7 +400,20 @@ func (b *blockReference) Call(args *value.CallArgs) (value.Value, error) {
 	return b.render()
 }
 
+// render executes one definition of the block and returns its output.
+//
+// Rendering a block is entering another template function, so it is bounded by
+// the same counter as include, extends and a macro call. It has to be: a block
+// that prints itself -- `{% block x %}{{ self.x }}{% endblock %}` -- otherwise
+// recurses until the goroutine stack is exhausted, and a Go stack overflow is
+// a fatal error rather than a panic, so the backstop in catchPanic never sees
+// it and the process dies.
 func (b *blockReference) render() (value.Value, error) {
+	if err := b.st.enter(); err != nil {
+		return value.Undefined, err
+	}
+	defer b.st.leave()
+
 	chain := b.st.blocks[b.name]
 	if b.index >= len(chain) {
 		return value.Undefined, errs.New(errs.UndefinedError,
