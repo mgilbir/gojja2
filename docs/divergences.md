@@ -165,6 +165,13 @@ Where CPython raises `MemoryError` for these, gojja2 raises its own
 budget to exceed, so there is nothing to match here; the divergence is the
 bound itself, which this file already records above.
 
+Not all of them reach a `MemoryError` at all. `{{ x|slice(10000000000000000000000) }}`
+is a perfectly legal `range()` in CPython, which then walks it, so the template
+does not fail -- it runs until something outside the process stops it. gojja2
+saturates the count and charges it, so the same template is an `OverflowError`
+in bounded time. The count is charged rather than clamped: clamping a refusal
+into "allocate the maximum" is the failure this ceiling exists to prevent.
+
 ### A backstop on panics
 
 A panic anywhere inside gojja2 is turned into a render error wrapping

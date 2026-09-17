@@ -502,6 +502,19 @@ case("filters/batch_fill_pads_only_the_last_row",
 case("filters/batch_fill_of_none_does_not_pad",
      "{{ [9]|batch(3, none)|list }}|{{ [9]|batch(3)|list }}|{{ [9]|batch('x', none)|list }}")
 case("filters/slice", "{{ seq|slice(3)|list }}|{{ seq|slice(3, 'X')|list }}|{{ []|slice(2, 'X')|list }}", **SEQ)
+# do_slice does not convert slices either: it divides the length by it twice
+# and then hands it to range(). Each of those refuses differently, and the
+# order is what decides which error a template sees.
+case("filters/slice_count_divides_the_length", "{{ seq|slice('x')|list }}", **SEQ)
+case("filters/slice_count_divides_the_length_none", "{{ seq|slice(none)|list }}", **SEQ)
+case("filters/slice_count_divides_by_zero", "{{ seq|slice(0)|list }}", **SEQ)
+case("filters/slice_count_divides_by_false", "{{ seq|slice(false)|list }}", **SEQ)
+# A float divides happily -- 5 // 2.5 is 2.0 -- and it is range() that refuses.
+case("filters/slice_count_reaches_range_as_a_float", "{{ seq|slice(2.5)|list }}", **SEQ)
+# range() of a negative count is empty, so there is no slice at all, with or
+# without a fill to put in one.
+case("filters/slice_count_negative_yields_nothing",
+     "{{ seq|slice(-1)|list }}|{{ seq|slice(-1, 'X')|list }}|{{ []|slice(-1)|list }}", **SEQ)
 case("filters/groupby", "{{ users|groupby('city') }}", **USERS)
 case("filters/map", "{{ seq|map('string')|list }}|{{ users|map(attribute='name')|list }}|{{ users|map(attribute='nope', default='?')|list }}", **SEQ, **USERS)
 case("filters/select", "{{ seq|select('odd')|list }}|{{ seq|reject('odd')|list }}|{{ [0,1,'',2]|select|list }}", **SEQ)
