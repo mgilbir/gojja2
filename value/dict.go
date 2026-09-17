@@ -191,6 +191,13 @@ func hash(v Value) (hashKey, error) {
 	return hashScalar(v)
 }
 
+// Hashable reports what Python's hash() would refuse about v, and nil when it
+// would not. A tuple is hashable exactly when its elements are.
+func Hashable(v Value) error {
+	_, err := hash(v)
+	return err
+}
+
 // tupleItems reports the elements v hashes as a tuple over. A tuple subclass
 // hashes as its tuple, so one holding a list is unhashable just as a plain
 // tuple would be.
