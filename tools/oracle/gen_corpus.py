@@ -276,6 +276,19 @@ case("escape/replace_no_autoescape", "{{ (s|replace(o, n))|pprint }}|{{ s|replac
 case("escape/replace_constant", '{{ ("a&<b"|replace("&", "+"))|pprint }}|{{ "a&<b"|replace("&", "+") }}',
      __settings__={"autoescape": True})
 
+# An {% autoescape %} whose argument is not constant leaves the escaping
+# unknowable until the render -- a volatile eval context. jinja2 still folds a
+# constant print there, and folds it with the setting the block was supposed to
+# replace, because a volatile context carries no value of its own. A filter is
+# not folded there at all: Filter.as_const refuses outright, so it runs at the
+# render, under the block's own setting. The two halves of one block therefore
+# disagree, and both are graded here.
+case("escape/volatile_folds_constant", "{% autoescape yes %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}",
+     yes=True)
+case("escape/volatile_folds_constant_escaping", "{% autoescape blank %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}",
+     __settings__={"autoescape": True}, blank="")
+case("escape/constant_block_folds_with_its_own", "{% autoescape true %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}")
+
 # `~` is markup_join, which only switches to joining as Markup once it meets an
 # operand that already is. With none it concatenates the str()s into a plain
 # string, and the escaping happens at output like any other value.
