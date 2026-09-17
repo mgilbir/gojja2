@@ -476,6 +476,45 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 		value.ObjectTypeRepr(base))), nil
 }
 
+// envGetItem is Environment.getitem: the item first, the attribute as a
+// fallback when the key is a string, and undefined for anything it cannot
+// resolve. Unlike a subscript in a template it never raises -- Python's
+// version catches TypeError and LookupError -- which is why a filter's
+// `attribute=` never reports a bad lookup as an error.
+//
+// Reaching the item first is the visible half: `{'items': 1}|attribute('items')`
+// is the stored 1, where `x.items` is the method.
+//
+// s is the render the lookup belongs to, and is nil when there is none. Both
+// callers matter: a fold has no undefined class to apply and no budget to bind
+// a method against.
+func envGetItem(s *State, base, key value.Value) value.Value {
+	if v, ok := lookupItem(base, key); ok {
+		return v
+	}
+	if v, ok := constIndex(base, key); ok {
+		return v
+	}
+	if key.Kind() == value.KindString {
+		if v, ok := lookupAttr(s, base, key.AsString()); ok {
+			return v
+		}
+		return undefinedFor(s, value.UndefinedAttr(base, key.AsString()))
+	}
+	// Not a string, so the message says "element" and shows the key as
+	// Python would repr it: `True`, not the 1 it indexes with.
+	return undefinedFor(s, value.UndefinedHint("%s has no element %s",
+		value.ObjectTypeRepr(base), value.Repr(key)))
+}
+
+// undefinedFor applies the render's Undefined class, when there is a render.
+func undefinedFor(s *State, v value.Value) value.Value {
+	if s == nil {
+		return v
+	}
+	return s.Undefined(v)
+}
+
 func (ex *exec) indexSequence(base, key value.Value) (value.Value, error) {
 	i, ok := key.Int64()
 	if !ok {

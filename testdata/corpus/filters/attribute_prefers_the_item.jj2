@@ -1,0 +1,3 @@
+{}
+---
+{{ [{"items": 1}]|map(attribute="items")|list }}|{{ [{"items": 1}]|join(attribute="items") }}|{{ [{"items": 1}, {"items": 0}]|sort(attribute="items")|list }}|{{ [{"items": 1}]|sum(attribute="items") }}|{{ [{"items": 1}]|groupby("items")|list }}

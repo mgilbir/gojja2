@@ -938,22 +938,9 @@ func constGetAttr(base value.Value, name string) value.Value {
 	return value.UndefinedAttr(base, name)
 }
 
-// constGetItem mirrors Environment.getitem, which swallows the failure.
+// constGetItem is envGetItem with no render behind it.
 func constGetItem(base, key value.Value) value.Value {
-	if v, ok := lookupItem(base, key); ok {
-		return v
-	}
-	if v, ok := constIndex(base, key); ok {
-		return v
-	}
-	if key.Kind() == value.KindString {
-		return constGetAttr(base, key.AsString())
-	}
-	if i, ok := key.Int64(); ok {
-		return value.UndefinedIndex(base, int(i))
-	}
-	return value.UndefinedHint("%s has no element %s",
-		value.ObjectTypeRepr(base), value.Repr(key))
+	return envGetItem(nil, base, key)
 }
 
 func constIndex(base, key value.Value) (value.Value, bool) {
