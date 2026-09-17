@@ -166,3 +166,51 @@ func TestBuiltinArityMessagesAreCPythonsOwn(t *testing.T) {
 		}
 	}
 }
+
+// TestDynamicKwargsNameTheCallee pins which function an unpacking error names.
+//
+// CPython has two ways of spelling a function in a TypeError: the code object
+// being bound, which is what a wrong argument count reports, and the object
+// being called, which is module and qualified name. A `**` that cannot be
+// merged is refused at the call site, so it uses the second -- and jinja2
+// calls a filter directly while calling everything else through Context.call,
+// so the two are visibly different from a template.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestDynamicKwargsNameTheCallee(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`{{ lst|join(**5) }}`,
+			"jinja2.filters.do_join() argument after ** must be a mapping, not int"},
+		{`{{ lst is odd(**5) }}`,
+			"jinja2.tests.test_odd() argument after ** must be a mapping, not int"},
+		{`{{ lst|abs(**5) }}`, "abs() argument after ** must be a mapping, not int"},
+		{`{{ lst is eq(**5) }}`, "_operator.eq() argument after ** must be a mapping, not int"},
+		{`{% macro mm(x) %}{% endmacro %}{{ mm(**5) }}`,
+			"jinja2.runtime.Context.call() argument after ** must be a mapping, not int"},
+		{`{{ range(**5) }}`,
+			"jinja2.runtime.Context.call() argument after ** must be a mapping, not int"},
+		// A name given twice is refused by the merge, which words it
+		// with "keyword argument" -- the binding, reached without the
+		// unpacking, says only "argument".
+		{`{{ lst|join(d="-", **{"d": "+"}) }}`,
+			"jinja2.filters.do_join() got multiple values for keyword argument 'd'"},
+		{`{{ lst|join("-", d="+") }}`,
+			"sync_do_join() got multiple values for argument 'd'"},
+		{`{% macro mm(x) %}{% endmacro %}{{ mm(x=1, **{"x": 2}) }}`,
+			"jinja2.runtime.Context.call() got multiple values for keyword argument 'x'"},
+		// The key check names nothing at all, not even the type.
+		{`{{ lst|join(**{1: "-"}) }}`, "keywords must be strings"},
+		// The star form names nothing either: jinja2 always passes
+		// something before it, so CPython builds that list on its own.
+		{`{{ lst|join(*5) }}`, "Value after * must be an iterable, not int"},
+	} {
+		_, err := renderVars(t, New(), tc.src, map[string]any{"lst": []any{1, 2}})
+		if err == nil {
+			t.Errorf("%s: rendered; want %q", tc.src, tc.want)
+			continue
+		}
+		if got := err.Error(); got != tc.want {
+			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+}

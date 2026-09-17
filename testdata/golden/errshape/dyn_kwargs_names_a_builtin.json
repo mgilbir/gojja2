@@ -1,0 +1,14 @@
+{
+  "case": "errshape/dyn_kwargs_names_a_builtin.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "abs() argument after ** must be a mapping, not int"
+  }
+}

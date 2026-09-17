@@ -9,8 +9,37 @@ import (
 	"github.com/mgilbir/gojja2/value"
 )
 
+// contextCall is what CPython prints for the callable in jinja2's generated
+// code for a macro, a global or anything else a template calls by name: the
+// call goes through Context.call, so that is the function a refused unpacking
+// names. A filter or a test is called directly and names itself.
+const contextCall = "jinja2.runtime.Context.call()"
+
+// filterCallee is the callable CPython would name for this filter.
+//
+// A host filter has no Python function behind it, and the template's own name
+// for it is the only honest answer; a stock name the host has overridden is
+// one of those, which is why the table is consulted only for the stock ones.
+func (ex *exec) filterCallee(name string) string {
+	if sig, ok := filterSignatures[name]; ok && ex.st.env.stockFilters[name] {
+		return sig.pyCallName
+	}
+	return name + "()"
+}
+
+// testCallee is filterCallee for the test table.
+func (ex *exec) testCallee(name string) string {
+	if sig, ok := testSignatures[name]; ok && ex.st.env.stockTests[name] {
+		return sig.pyCallName
+	}
+	return name + "()"
+}
+
 // evalArgs builds a call's argument list, expanding `*args` and `**kwargs`.
-func (ex *exec) evalArgs(a ast.Args) (*value.CallArgs, error) {
+//
+// callee is the function CPython would name in an unpacking error, which is
+// the call site's name for it and not the one a binding error inside it uses.
+func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 	out := &value.CallArgs{}
 	for _, arg := range a.Args {
 		v, err := ex.eval(arg)
@@ -26,6 +55,11 @@ func (ex *exec) evalArgs(a ast.Args) (*value.CallArgs, error) {
 		}
 		seq, err := value.Iterate(v)
 		if err != nil {
+			// Unnamed, unlike the ** message below: jinja2 always
+			// passes something before the star -- the filtered
+			// value, or the macro being called -- so CPython
+			// builds the list separately and has no callable to
+			// name by the time it refuses.
 			return nil, errs.New(errs.TypeError,
 				"Value after * must be an iterable, not %s", v.TypeName())
 		}
@@ -53,15 +87,23 @@ func (ex *exec) evalArgs(a ast.Args) (*value.CallArgs, error) {
 		d, ok := v.Dict()
 		if !ok {
 			return nil, errs.New(errs.TypeError,
-				"jinja2.runtime.Context.call() argument after **"+
-					" must be a mapping, not %s", v.TypeName())
+				"%s argument after ** must be a mapping, not %s",
+				callee, v.TypeName())
 		}
 		for _, e := range d.Entries() {
 			if e.Key.Kind() != value.KindString {
-				return nil, errs.New(errs.TypeError,
-					"keywords must be strings, not %s", e.Key.TypeName())
+				return nil, errs.New(errs.TypeError, "keywords must be strings")
 			}
-			out.Kwargs = append(out.Kwargs, value.Kwarg{Name: e.Key.AsString(), Value: e.Value})
+			name := e.Key.AsString()
+			// The merge happens before the call, so a name given
+			// twice is refused here rather than by the binding --
+			// which words it differently, and without "keyword".
+			if _, dup := out.Kwarg(name); dup {
+				return nil, errs.New(errs.TypeError,
+					"%s got multiple values for keyword argument %s",
+					callee, value.Repr(e.Key))
+			}
+			out.Kwargs = append(out.Kwargs, value.Kwarg{Name: name, Value: e.Value})
 		}
 	}
 	return out, nil
@@ -72,7 +114,7 @@ func (ex *exec) evalCall(n *ast.Call) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
-	args, err := ex.evalArgs(n.Args)
+	args, err := ex.evalArgs(n.Args, contextCall)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -271,7 +313,7 @@ func (ex *exec) execCallBlock(n *ast.CallBlock) error {
 	if err != nil {
 		return err
 	}
-	args, err := ex.evalArgs(n.Call.Args)
+	args, err := ex.evalArgs(n.Call.Args, contextCall)
 	if err != nil {
 		return err
 	}
@@ -316,7 +358,7 @@ func (ex *exec) applyFilter(n *ast.Filter, input value.Value) (value.Value, erro
 		return value.Undefined, errs.New(errs.TemplateRuntimeError,
 			"No filter named %s found.", value.Repr(value.String(n.Name)))
 	}
-	args, err := ex.evalArgs(n.Args)
+	args, err := ex.evalArgs(n.Args, ex.filterCallee(n.Name))
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -359,7 +401,7 @@ func (ex *exec) evalTest(n *ast.Test) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
-	args, err := ex.evalArgs(n.Args)
+	args, err := ex.evalArgs(n.Args, ex.testCallee(n.Name))
 	if err != nil {
 		return value.Undefined, err
 	}
