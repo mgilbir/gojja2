@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -402,4 +403,68 @@ func mustRender(t *testing.T, env *gojja2.Environment, src string) (string, erro
 		t.Fatalf("compile: %v", err)
 	}
 	return tmpl.RenderString(context.Background(), nil)
+}
+
+// TestMembershipIsBounded covers the generic scan that Container does not
+// short-circuit. `in` over a long sequence is a walk, and a walk that consults
+// neither the budget nor the context is a region nothing can interrupt.
+func TestMembershipIsBounded(t *testing.T) {
+	env := gojja2.New(gojja2.WithMaxIterations(1000))
+	for name, src := range map[string]string{
+		"list":        `{% set l = range(100000)|list %}{{ -1 in l }}`,
+		"not in list": `{% set l = range(100000)|list %}{{ -1 not in l }}`,
+		"is in":       `{% set l = range(100000)|list %}{{ -1 is in(l) }}`,
+		"tuple":       `{% set t = range(100000)|list|first %}{{ -1 in range(100000)|list }}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := renderWith(t, context.Background(), env, src); !errors.Is(err, gojja2.ErrTooManyIterations) {
+				t.Errorf("%s: got %v, want ErrTooManyIterations", src, err)
+			}
+		})
+	}
+}
+
+// TestSustainedFiltersStopWhenCancelled pins the promise docs/divergences.md
+// makes: a filter that does sustained work without writing output polls as it
+// goes, so a cancelled render stops within microseconds rather than at the end
+// of whatever was running. urlencode and urlize did; the ones that sort or
+// aggregate did not.
+func TestSustainedFiltersStopWhenCancelled(t *testing.T) {
+	for name, src := range map[string]string{
+		"sort":     `{{ big|sort|length }}`,
+		"min":      `{{ big|min }}`,
+		"max":      `{{ big|max }}`,
+		"groupby":  `{{ big|groupby("x")|length }}`,
+		"dictsort": `{{ mapping|dictsort|length }}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := gojja2.New(gojja2.WithoutLimits())
+			tmpl, err := env.FromString(src)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			big := make([]any, 120_000)
+			mapping := make(map[string]any, 120_000)
+			for i := range big {
+				big[i] = map[string]any{"x": i % 97}
+				mapping[strconv.Itoa(i)] = i
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel() // already done before the filter starts
+
+			done := make(chan error, 1)
+			go func() {
+				_, err := tmpl.RenderString(ctx, map[string]any{"big": big, "mapping": mapping})
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("got %v, want context.Canceled", err)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("the filter did not notice a cancelled context")
+			}
+		})
+	}
 }

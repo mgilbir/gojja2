@@ -263,7 +263,7 @@ func (ex *exec) evalCompare(n *ast.Compare) (value.Value, error) {
 		if err != nil {
 			return value.Undefined, err
 		}
-		ok, err := compareStep(op.Op, left, right)
+		ok, err := compareStep(op.Op, left, right, ex.st)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -275,7 +275,7 @@ func (ex *exec) evalCompare(n *ast.Compare) (value.Value, error) {
 	return value.True, nil
 }
 
-func compareStep(op string, left, right value.Value) (bool, error) {
+func compareStep(op string, left, right value.Value, budget value.Budget) (bool, error) {
 	switch op {
 	case "eq":
 		return value.EqualErr(left, right)
@@ -291,9 +291,9 @@ func compareStep(op string, left, right value.Value) (bool, error) {
 	case "gteq":
 		return value.Ordered(">=", left, right)
 	case "in":
-		return value.Contains(left, right)
+		return value.Contains(left, right, budget)
 	case "notin":
-		ok, err := value.Contains(left, right)
+		ok, err := value.Contains(left, right, budget)
 		return !ok, err
 	}
 	return false, errs.New(errs.TemplateRuntimeError, "unknown comparison %q", op)

@@ -179,7 +179,7 @@ func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	if err != nil {
 		return value.Undefined, err
 	}
-	if err := stableSortBy(items, sortKeyFunc(s, attribute, caseSensitive), reverse); err != nil {
+	if err := stableSortBy(s, items, sortKeyFunc(s, attribute, caseSensitive), reverse); err != nil {
 		return value.Undefined, err
 	}
 	return value.NewList(items...), nil
@@ -237,7 +237,7 @@ func filterDictsort(s *State, v value.Value, args *value.CallArgs) (value.Value,
 		}
 		return k, nil
 	}
-	if err := stableSortBy(items, key, reverse); err != nil {
+	if err := stableSortBy(s, items, key, reverse); err != nil {
 		return value.Undefined, err
 	}
 	return value.NewList(items...), nil
@@ -255,29 +255,33 @@ func filterUnique(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err != nil {
 		return value.Undefined, err
 	}
-	var seen []value.Value
+	// jinja2 tracks what it has seen in a set, and so does this: a dict
+	// keyed by the same hash the language already defines answers in
+	// constant time and reports an unhashable key as the error a set would.
+	//
+	// Scanning the keys seen so far instead is quadratic, and it was not
+	// interruptible either -- neither the budget nor the context was
+	// consulted between comparisons, so 60,000 distinct items under a
+	// three-second deadline were still being compared ninety seconds later.
+	seen := value.NewDict()
+	index, _ := seen.Dict()
 	var out []value.Value
 	for _, item := range items {
 		k, err := key(item)
 		if err != nil {
 			return value.Undefined, err
 		}
-		// jinja2 tracks what it has seen in a set, so an unhashable key
-		// is an error rather than merely never matching.
-		if err := value.CheckHashable(k); err != nil {
+		_, duplicate, err := index.Get(k)
+		if err != nil {
 			return value.Undefined, err
 		}
-		duplicate := false
-		for _, prev := range seen {
-			if value.Equal(prev, k) {
-				duplicate = true
-				break
-			}
+		if duplicate {
+			continue
 		}
-		if !duplicate {
-			seen = append(seen, k)
-			out = append(out, item)
+		if err := index.Set(k, value.None); err != nil {
+			return value.Undefined, err
 		}
+		out = append(out, item)
 	}
 	return value.NewList(out...), nil
 }
@@ -305,6 +309,9 @@ func filterMinMax(wantMax bool) Filter {
 			return value.Undefined, err
 		}
 		for _, item := range items[1:] {
+			if err := s.Poll(); err != nil {
+				return value.Undefined, err
+			}
 			k, err := key(item)
 			if err != nil {
 				return value.Undefined, err
@@ -452,7 +459,7 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		}
 		return k, nil
 	}
-	if err := stableSortBy(items, sortKey, false); err != nil {
+	if err := stableSortBy(s, items, sortKey, false); err != nil {
 		return value.Undefined, err
 	}
 
@@ -469,6 +476,9 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		}
 	}
 	for _, item := range items {
+		if err := s.Poll(); err != nil {
+			return value.Undefined, err
+		}
 		k, err := groupKey(item)
 		if err != nil {
 			return value.Undefined, err

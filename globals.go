@@ -109,6 +109,56 @@ func (r *rangeObject) Slice(start, stop, step *int) (value.Value, error) {
 	}), nil
 }
 
+// Contains decides `x in range(...)` by arithmetic, as Python's range does.
+//
+// Falling through to the generic scan makes membership cost the length of the
+// range: `{{ -1 in range(9223372036854775807) }}` walked toward nine quintillion
+// elements, and a three-second deadline was still running ninety seconds later.
+//
+// A range holds nothing but integers, and no value in this model can compare
+// equal to an integer without being a number itself, so every other value is
+// answered False without looking. CPython only takes this path for an exact
+// int and scans for anything else; the answer is the same either way, so the
+// arithmetic is used for every number that is one.
+func (r *rangeObject) Contains(item value.Value) (found, known bool) {
+	n, ok := integerOf(item)
+	if !ok {
+		// Not an integer -- a float with a fraction, a string, a list.
+		// None of them can equal an element of a range.
+		return false, true
+	}
+	step := big.NewInt(r.step)
+	offset := new(big.Int).Sub(n, big.NewInt(r.start))
+	// Before the start, or at or past the stop, in the step's direction.
+	if r.step > 0 {
+		if offset.Sign() < 0 || n.Cmp(big.NewInt(r.stop)) >= 0 {
+			return false, true
+		}
+	} else {
+		if offset.Sign() > 0 || n.Cmp(big.NewInt(r.stop)) <= 0 {
+			return false, true
+		}
+	}
+	return new(big.Int).Rem(offset, step).Sign() == 0, true
+}
+
+// integerOf reports the exact integer a value stands for: an int, a bool, or a
+// float with no fractional part. Python's `1.0 in range(3)` is True.
+func integerOf(v value.Value) (*big.Int, bool) {
+	if v.IsInteger() {
+		return v.BigInt()
+	}
+	if v.Kind() != value.KindFloat {
+		return nil, false
+	}
+	f := v.AsFloat()
+	if math.IsInf(f, 0) || math.IsNaN(f) || f != math.Trunc(f) {
+		return nil, false
+	}
+	n, _ := big.NewFloat(f).Int(nil)
+	return n, true
+}
+
 // Equals compares ranges the way Python does: by the sequence they stand for,
 // so range(0, 3, 2) and range(0, 4, 2) are equal despite differing stops.
 func (r *rangeObject) Equals(other value.Value) (bool, bool) {

@@ -305,7 +305,19 @@ func cmpFloat(a, b float64) int {
 
 // Contains implements `in`: substring for strings, membership for sequences,
 // and key lookup for mappings.
-func Contains(item, container Value) (bool, error) {
+//
+// budget is charged one element per element examined, which is what makes a
+// membership test over something large interruptible. `{{ -1 in range(2**63-1) }}`
+// walked to the end with nothing counting and nothing able to stop it: a
+// three-second deadline was still running ninety seconds later. An Object that
+// knows a better answer than a scan says so through Container, which is how a
+// range answers arithmetically rather than by searching.
+func Contains(item, container Value, budget Budget) (bool, error) {
+	if o, ok := container.obj.(Container); ok && container.kind == KindObject {
+		if found, known := o.Contains(item); known {
+			return found, nil
+		}
+	}
 	switch container.kind {
 	case KindString:
 		if item.kind != KindString {
@@ -322,6 +334,9 @@ func Contains(item, container Value) (bool, error) {
 	case KindList, KindTuple:
 		s, _ := container.Seq()
 		for _, v := range s.items {
+			if err := chargeItems(budget, 1); err != nil {
+				return false, err
+			}
 			if Equal(item, v) {
 				return true, nil
 			}
@@ -346,6 +361,9 @@ func Contains(item, container Value) (bool, error) {
 			return ok, nil
 		case Sequence:
 			for i := range o.Len() {
+				if err := chargeItems(budget, 1); err != nil {
+					return false, err
+				}
 				v, ok := o.GetIndex(i)
 				if ok && Equal(item, v) {
 					return true, nil
@@ -354,6 +372,9 @@ func Contains(item, container Value) (bool, error) {
 			return false, nil
 		case Iterable:
 			for v := range o.Iterate() {
+				if err := chargeItems(budget, 1); err != nil {
+					return false, err
+				}
 				if Equal(item, v) {
 					return true, nil
 				}
