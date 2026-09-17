@@ -419,6 +419,43 @@ its own container.
 A cyclic value reaches `pprint` at all only when its `repr` is too wide to
 print on one line; a small one collapses to `{...}` first, which is exact.
 
+## A render does not mutate the caller's data
+
+```jinja
+{% do xs.append(9) %}
+```
+
+jinja2 hands a template the caller's real objects, so a template that appends
+to a list appends to *your* list, and the next render starts from the longer
+one:
+
+```python
+xs = [1]
+t.render(xs=xs)   # [1, 9]
+t.render(xs=xs)   # [1, 9, 9]   -- and xs is now [1, 9, 9]
+```
+
+gojja2 converts what it is given, so the same template renders `[1, 9]` both
+times and the caller's slice is still `[1]`. Maps and nested containers are the
+same. This is deliberate: a template is usually the least trusted part of a
+program, and several filters mutate in place in jinja2 -- `do_indent` extends
+the list it is handed -- so the alternative is a template reaching into the
+host's state by accident.
+
+Two things are still shared, on purpose:
+
+| what | shared? | why |
+|---|---|---|
+| a slice, map or nested container | no, converted | a template cannot corrupt the caller |
+| a global registered on the Environment | **yes** | it lives on the Environment, as in jinja2 |
+| a host object exposed by pointer | **yes** | its methods are the point; copying it would break every stateful object |
+
+A list written *in the template* is rebuilt per render for the same reason: it
+is part of the compiled tree, which every render of that template shares --
+including renders on other goroutines at the same time. `concurrency_test.go`
+pins all of it, and the version without the rebuild fails there with one
+goroutine's values appearing in another's output.
+
 ## No automatic template reload
 
 jinja2's `Environment` takes `auto_reload=True` and recompiles a template whose
