@@ -1,0 +1,11 @@
+{
+  "case": "loops/loop_map_applies_as_it_walks.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "[['(2, <LoopContext 2/3>)', '(3, <LoopContext 3/3>)']]"
+}

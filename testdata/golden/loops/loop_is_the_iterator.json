@@ -1,0 +1,11 @@
+{
+  "case": "loops/loop_is_the_iterator.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "[[(2, <LoopContext 3/3>), (3, <LoopContext 3/3>)]]"
+}
