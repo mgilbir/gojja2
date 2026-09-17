@@ -358,3 +358,53 @@ func TestInnerFilterAndTestArity(t *testing.T) {
 		}
 	}
 }
+
+// TestIntegerArgumentUsesTheIndexMessage: wherever CPython uses an argument as
+// an integer it goes through __index__, whose complaint is
+// "'str' object cannot be interpreted as an integer". gojja2 had a wording of
+// its own -- "expected an integer, not str" -- that no Python produces, and it
+// reached every filter, method and global that takes a count or a width.
+func TestIntegerArgumentUsesTheIndexMessage(t *testing.T) {
+	env := New()
+	const want = "'str' object cannot be interpreted as an integer"
+	for _, src := range []string{
+		// Filters.
+		`{{ "a"|center("x") }}`,
+		`{{ 1.5|round("x") }}`,
+		`{{ "a"|replace("a","b","x") }}`,
+		// String methods.
+		`{{ "a".center("x") }}`,
+		`{{ "a".ljust("x") }}`,
+		`{{ "a".rjust("x") }}`,
+		`{{ "a".zfill("x") }}`,
+		`{{ "a,b".split(",", "x") }}`,
+		`{{ "a".expandtabs("x") }}`,
+		// A number's own method, and a global.
+		`{{ (3).to_bytes("x","big") }}`,
+		`{{ lipsum("x") }}`,
+	} {
+		tmpl, err := env.FromString(src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", src, err)
+		}
+		_, err = tmpl.RenderString(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v, want %q", src, err, want)
+		}
+	}
+	// The type named is the one that was passed.
+	for _, tc := range []struct{ src, want string }{
+		{`{{ "a"|center([1]) }}`, "'list' object cannot be interpreted as an integer"},
+		{`{{ "a"|center({}) }}`, "'dict' object cannot be interpreted as an integer"},
+		{`{{ "a"|center(1.5) }}`, "'float' object cannot be interpreted as an integer"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		_, err = tmpl.RenderString(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
+		}
+	}
+}

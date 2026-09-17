@@ -102,7 +102,14 @@ func intArg(args *value.CallArgs, i int, name string, def int) (int, error) {
 	}
 	n, fits := v.Int64()
 	if !fits {
-		return 0, errs.New(errs.TypeError, "expected an integer, not %s", v.TypeName())
+		// This is the __index__ protocol's own complaint, which is what
+		// CPython raises wherever an argument is used as an integer:
+		// str.center, str.zfill, |round, |replace's count, lipsum and
+		// the rest all report it in these words. gojja2 had a wording
+		// of its own -- "expected an integer, not str" -- that no
+		// Python ever produces.
+		return 0, errs.New(errs.TypeError,
+			"'%s' object cannot be interpreted as an integer", v.TypeName())
 	}
 	return int(n), nil
 }
