@@ -65,7 +65,7 @@ var binaryOps = map[string]func(a, b value.Value) (value.Value, error){
 	">=": ordered(">="),
 	// Python spells this `a in b`, so the container is the second operand.
 	"in": func(a, b value.Value) (value.Value, error) {
-		ok, err := value.Contains(a, b)
+		ok, err := value.Contains(a, b, nil)
 		return value.Bool(ok), err
 	},
 }

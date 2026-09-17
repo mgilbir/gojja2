@@ -258,9 +258,12 @@ func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 // it again afterwards -- so `[1, 'a', 2.5, True, None]|sort(true)` fails on
 // True against None, the first pair of the reversed list, and not on the first
 // pair of the original.
-func stableSortBy(items []value.Value, key func(value.Value) (value.Value, error), reverse bool) error {
+func stableSortBy(s *State, items []value.Value, key func(value.Value) (value.Value, error), reverse bool) error {
 	keys := make([]value.Value, len(items))
 	for i, item := range items {
+		if err := s.Poll(); err != nil {
+			return err
+		}
 		k, err := key(item)
 		if err != nil {
 			return err
@@ -271,7 +274,7 @@ func stableSortBy(items []value.Value, key func(value.Value) (value.Value, error
 	if reverse {
 		reverseBoth(items, keys)
 	}
-	err := pythonSort(items, keys)
+	err := pythonSort(s, items, keys)
 	if reverse {
 		reverseBoth(items, keys)
 	}
@@ -291,18 +294,22 @@ func reverseBoth(items, keys []value.Value) {
 // operands named by a comparison failure differ.
 const binarySortLimit = 64
 
-func pythonSort(items, keys []value.Value) error {
+func pythonSort(s *State, items, keys []value.Value) error {
 	n := len(items)
 	if n < 2 {
 		return nil
 	}
 	if n > binarySortLimit {
-		return stableSortFallback(items, keys)
+		return stableSortFallback(s, items, keys)
 	}
 
 	var failure error
 	less := func(i, j int) bool {
 		if failure != nil {
+			return false
+		}
+		if err := s.Poll(); err != nil {
+			failure = err
 			return false
 		}
 		ok, err := value.Ordered("<", keys[i], keys[j])
@@ -346,6 +353,9 @@ func pythonSort(items, keys []value.Value) error {
 		lo, hi := 0, start
 		for lo < hi {
 			mid := lo + (hi-lo)/2
+			if err := s.Poll(); err != nil {
+				return err
+			}
 			ok, err := value.Ordered("<", pivotKey, keys[mid])
 			if err != nil {
 				return err
@@ -365,7 +375,7 @@ func pythonSort(items, keys []value.Value) error {
 
 // stableSortFallback keeps long lists out of a quadratic sort. The result is
 // the same stable ordering; only the comparison order differs.
-func stableSortFallback(items, keys []value.Value) error {
+func stableSortFallback(s *State, items, keys []value.Value) error {
 	var failure error
 	idx := make([]int, len(items))
 	for i := range idx {
@@ -373,6 +383,10 @@ func stableSortFallback(items, keys []value.Value) error {
 	}
 	sort.SliceStable(idx, func(a, b int) bool {
 		if failure != nil {
+			return false
+		}
+		if err := s.Poll(); err != nil {
+			failure = err
 			return false
 		}
 		ok, err := value.Ordered("<", keys[idx[a]], keys[idx[b]])

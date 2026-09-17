@@ -92,6 +92,18 @@ type BigLener interface {
 	BigLen() *big.Int
 }
 
+// Container is an Object that answers `x in obj` itself.
+//
+// It exists for the types where scanning is the wrong algorithm rather than
+// merely a slow one: Python's range decides membership by arithmetic, so
+// `{{ 5 in range(10000000000) }}` is a division and not a walk of ten billion
+// elements. The second result reports whether the object has an opinion;
+// without one the generic scan runs, charged element by element.
+type Container interface {
+	Object
+	Contains(item Value) (found, known bool)
+}
+
 // Booler overrides truthiness. Without it an Object is truthy unless it is a
 // Mapping or Sequence, in which case emptiness decides -- Python's __bool__
 // then __len__ fallback.
