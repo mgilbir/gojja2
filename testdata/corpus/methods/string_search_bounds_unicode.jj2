@@ -1,0 +1,3 @@
+{}
+---
+{{ 'héllo wörld'.find('l',1,4) }}|{{ 'héllo wörld'.count('l',1) }}

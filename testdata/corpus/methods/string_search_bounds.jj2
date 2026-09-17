@@ -1,0 +1,3 @@
+{}
+---
+{{ 'Hello World'.find('o',1,2) }}|{{ 'Hello World'.count('o',1,2) }}|{{ 'Hello World'.find('o',5) }}|{{ 'Hello World'.find('o',5,8) }}|{{ 'Hello World'.rfind('o',0,6) }}|{{ 'Hello World'.count('o',-3) }}

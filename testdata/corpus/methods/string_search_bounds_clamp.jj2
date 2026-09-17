@@ -1,0 +1,3 @@
+{}
+---
+{{ 'Hello World'.count('o',100) }}|{{ 'Hello World'.count('o',-100) }}|{{ 'Hello World'.count('o',5,1) }}|{{ 'Hello World'.count('o',none,none) }}|{{ 'Hello World'.startswith('H',1) }}|{{ 'Hello World'.endswith('o',0,5) }}
