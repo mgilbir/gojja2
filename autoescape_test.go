@@ -374,3 +374,41 @@ func TestAutoescapeScope(t *testing.T) {
 		}
 	}
 }
+
+// TestConcatIsMarkupOnlyWhenMarkupIsInvolved pins markup_join, which is what
+// `~` compiles to.
+//
+// It walks the operands and only switches to joining as Markup once it meets
+// one that already is; with none it concatenates the str()s into a plain
+// string, to be escaped at output like any other value. Escaping regardless
+// was invisible in `{{ a ~ b }}` and wrong for every other use of the result.
+//
+// Expectations from CPython jinja2 3.1.6 with autoescape on.
+func TestConcatIsMarkupOnlyWhenMarkupIsInvolved(t *testing.T) {
+	env := New(WithAutoescape(true))
+	vars := map[string]any{"sv": "a<b", "n": 5, "mk": "<i>"}
+
+	for _, tc := range []struct{ expr, want string }{
+		// Nothing safe: a plain string, so its length is what a reader
+		// would count and its type is what an error would name.
+		{`(sv ~ n)|pprint|safe`, `'a<b5'`},
+		{`(sv ~ n) is escaped`, "False"},
+		{`(sv ~ n)|length`, "4"},
+		{`(n ~ n)|pprint|safe`, `'55'`},
+		// ... and it still reaches the page escaped.
+		{`sv ~ n`, "a&lt;b5"},
+		// One safe operand escapes every other one, in either position
+		// -- markup_join rejoins the whole sequence when it finds one.
+		{`(sv ~ mk|safe)|pprint|safe`, `Markup('a&lt;b<i>')`},
+		{`(mk|safe ~ sv)|pprint|safe`, `Markup('<i>a&lt;b')`},
+	} {
+		got, err := renderVars(t, env, "{{ "+tc.expr+" }}", vars)
+		if err != nil {
+			t.Errorf("%s: %v", tc.expr, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.expr, got, tc.want)
+		}
+	}
+}

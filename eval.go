@@ -233,7 +233,18 @@ func (ex *exec) evalUnaryOp(n *ast.UnaryOp) (value.Value, error) {
 }
 
 func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
-	var b strings.Builder
+	// Autoescaping alone does not make `~` produce Markup. jinja2 compiles
+	// it to markup_join, which walks the operands and only switches to
+	// joining as Markup once it meets one that already is; with none it
+	// concatenates the str()s and returns a plain string, to be escaped at
+	// output like any other value.
+	//
+	// Escaping regardless looked identical in `{{ a ~ b }}` and was wrong
+	// for every other use of the result: `{{ (sv ~ n)|length }}` counted
+	// the entities it had just introduced, `|upper` shouted them, and a
+	// type error named Markup where CPython names str.
+	parts := make([]value.Value, 0, len(n.Nodes))
+	markup := false
 	for _, node := range n.Nodes {
 		v, err := ex.eval(node)
 		if err != nil {
@@ -242,13 +253,27 @@ func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
 		if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
 			return value.Undefined, v.UndefinedError()
 		}
+		if v.IsSafe() {
+			markup = true
+		}
+		parts = append(parts, v)
+	}
+	// One Markup operand escapes every other one, including those already
+	// passed -- markup_join rejoins the whole sequence when it finds one.
+	escaping := ex.autoescape && markup
+
+	var b strings.Builder
+	for _, v := range parts {
 		text := value.Str(v)
-		if ex.autoescape && !v.IsSafe() {
+		if escaping && !v.IsSafe() {
 			text = escapeHTML(text)
 		}
 		b.WriteString(text)
 	}
-	return markup(b.String(), ex.autoescape), nil
+	if escaping {
+		return value.Safe(b.String()), nil
+	}
+	return value.String(b.String()), nil
 }
 
 // evalCompare walks a comparison chain, evaluating each operand once and
