@@ -85,3 +85,40 @@ func TestLastNeedsSomethingReversible(t *testing.T) {
 		}
 	}
 }
+
+// TestFilteredLoopWalksTuples pins what a loop with an `if` filter iterates.
+//
+// jinja2 compiles the filter into a function that unpacks the target and
+// yields it straight back -- `for a, b in fiter: if cond: yield (a, b)` -- so
+// with a tuple target the loop walks tuples, whatever the source held. Without
+// a filter there is no such function and the items are the source's own, which
+// is why the same template answers a list one way and a tuple the other.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestFilteredLoopWalksTuples(t *testing.T) {
+	env := New()
+	vars := map[string]any{
+		"pairs":  []any{[]any{1, 2}, []any{3, 4}},
+		"nested": []any{[]any{1, []any{2, 3}}, []any{4, []any{5, 6}}},
+	}
+	for _, tc := range []struct{ src, want string }{
+		{`{% for a, b in pairs if true %}[{{ loop.previtem }}][{{ loop.nextitem }}]{% endfor %}`,
+			"[][(3, 4)][(1, 2)][]"},
+		{`{% for a, b in pairs %}[{{ loop.previtem }}]{% endfor %}`, "[][[1, 2]]"},
+		// One target unpacks nothing, so nothing is repacked.
+		{`{% for x in pairs if true %}[{{ loop.previtem }}]{% endfor %}`, "[][[1, 2]]"},
+		// A nested target yields the nesting back.
+		{`{% for a, (b, c) in nested if true %}[{{ loop.nextitem }}]{% endfor %}`, "[(4, (5, 6))][]"},
+		// The filter still sees the unpacked names.
+		{`{% for a, b in pairs if a > 1 %}[{{ a }}{{ b }}]{% endfor %}`, "[34]"},
+	} {
+		got, err := renderVars(t, env, tc.src, vars)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+}
