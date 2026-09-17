@@ -834,7 +834,7 @@ func unescapeHTML(s string) string { return htmlUnescaper.Replace(s) }
 // value the template had already been told to trust -- so
 // `{{ tmpl|safe|format(comment) }}` emitted the comment's markup verbatim
 // where CPython emits it escaped.
-func filterFormat(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterFormat(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	safe := v.IsSafe()
 	format := value.String(value.Str(v))
 
@@ -846,13 +846,13 @@ func filterFormat(_ *State, v value.Value, args *value.CallArgs) (value.Value, e
 		for _, kw := range args.Kwargs {
 			dict.SetString(kw.Name, escapeArg(safe, kw.Value))
 		}
-		out, err = value.Mod(format, d)
+		out, err = value.Mod(format, d, s)
 	} else {
 		pos := make([]value.Value, len(args.Pos))
 		for i, arg := range args.Pos {
 			pos[i] = escapeArg(safe, arg)
 		}
-		out, err = value.Mod(format, value.NewTuple(pos...))
+		out, err = value.Mod(format, value.NewTuple(pos...), s)
 	}
 	if err != nil {
 		return value.Undefined, err
@@ -1338,7 +1338,7 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		if err != nil {
 			return value.Undefined, err
 		}
-		scaled, err := value.Mul(v, scale)
+		scaled, err := value.Mul(v, scale, s)
 		if err != nil {
 			return value.Undefined, err
 		}

@@ -109,3 +109,33 @@ func TestContainerRepr(t *testing.T) {
 		})
 	}
 }
+
+// TestAsciiEscapesInsideContainers pins that ascii() is about the whole
+// rendered form, not only a bare string. It used to fall back to repr() for
+// anything that was not a str, so ascii(['é']) rendered the character where
+// CPython escapes it -- and the `%a` conversion inherited that.
+func TestAsciiEscapesInsideContainers(t *testing.T) {
+	for _, tc := range []struct {
+		in   value.Value
+		want string
+	}{
+		{value.String("é"), `'\xe9'`},
+		{value.Safe("é"), `Markup('\xe9')`},
+		{value.NewList(value.String("é")), `['\xe9']`},
+		{value.NewTuple(value.String("é")), `('\xe9',)`},
+		{value.NewList(value.NewTuple(value.String("é"))), `[('\xe9',)]`},
+		{value.DictOf(value.String("é"), value.String("ü")), `{'\xe9': '\xfc'}`},
+		{value.String("ok"), `'ok'`},
+		{value.Int(7), `7`},
+		{value.String("\U0001F600"), `'\U0001f600'`},
+	} {
+		if got := value.Ascii(tc.in); got != tc.want {
+			t.Errorf("Ascii(%s) = %q, want %q", value.Repr(tc.in), got, tc.want)
+		}
+	}
+
+	// repr() is unchanged: it leaves printable non-ASCII alone.
+	if got := value.Repr(value.NewList(value.String("é"))); got != `['é']` {
+		t.Errorf("Repr(['é']) = %q, want %q", got, `['é']`)
+	}
+}

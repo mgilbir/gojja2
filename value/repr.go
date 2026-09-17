@@ -39,7 +39,7 @@ func Str(v Value) string {
 // Repr is Python's repr(): the form a value takes inside a container.
 func Repr(v Value) string {
 	var b strings.Builder
-	writeRepr(&b, v, nil)
+	writeRepr(&b, v, nil, false)
 	return b.String()
 }
 
@@ -80,8 +80,12 @@ func (a active) leave(key any) { delete(a, key) }
 // CPython raises RecursionError here instead, at around 990 levels. Matching
 // that would mean making Str and Repr partial everywhere they are used to
 // build a message; see docs/divergences.md.
-func writeRepr(b *strings.Builder, v Value, seen active) {
-	frame, open := openRepr(b, v, &seen)
+// ascii selects Python's ascii() rather than its repr(): every non-ASCII code
+// point is escaped, wherever it sits. It travels with the walk because ascii()
+// applies to the whole structure and not only to a bare string -- ascii(['é'])
+// is "['\\xe9']".
+func writeRepr(b *strings.Builder, v Value, seen active, ascii bool) {
+	frame, open := openRepr(b, v, &seen, ascii)
 	if !open {
 		return
 	}
@@ -98,7 +102,7 @@ func writeRepr(b *strings.Builder, v Value, seen active) {
 			stack = stack[:len(stack)-1]
 			continue
 		}
-		if frame, open := openRepr(b, child, &seen); open {
+		if frame, open := openRepr(b, child, &seen, ascii); open {
 			stack = append(stack, frame)
 		}
 	}
@@ -164,7 +168,7 @@ func (f *reprFrame) advance(b *strings.Builder) (Value, bool) {
 // container is marked on the way down and unmarked when its frame closes, so
 // two references to one non-cyclic value are both expanded in full while a
 // value that contains itself collapses.
-func openRepr(b *strings.Builder, v Value, seen *active) (reprFrame, bool) {
+func openRepr(b *strings.Builder, v Value, seen *active, ascii bool) (reprFrame, bool) {
 	switch v.kind {
 	case KindList, KindTuple, KindDict:
 		next, ok := seen.enter(v.obj)
@@ -195,12 +199,12 @@ func openRepr(b *strings.Builder, v Value, seen *active) (reprFrame, bool) {
 			return reprFrame{ents: d.entries, dict: true, close: '}', key: v.obj}, true
 		}
 	}
-	writeScalarRepr(b, v)
+	writeScalarRepr(b, v, ascii)
 	return reprFrame{}, false
 }
 
 // writeScalarRepr renders everything that holds no children.
-func writeScalarRepr(b *strings.Builder, v Value) {
+func writeScalarRepr(b *strings.Builder, v Value, ascii bool) {
 	switch v.kind {
 	case KindUndefined:
 		b.WriteString("Undefined")
@@ -225,11 +229,11 @@ func writeScalarRepr(b *strings.Builder, v Value) {
 			// markupsafe's Markup has a repr of its own, which is
 			// what |pprint and a container's repr show.
 			b.WriteString("Markup(")
-			writeStringRepr(b, v.str, false)
+			writeStringRepr(b, v.str, ascii)
 			b.WriteByte(')')
 			return
 		}
-		writeStringRepr(b, v.str, false)
+		writeStringRepr(b, v.str, ascii)
 	case KindBytes:
 		b.WriteByte('b')
 		writeStringRepr(b, v.str, true)
@@ -362,12 +366,12 @@ func writeHex(b *strings.Builder, v uint32, width int) {
 }
 
 // Ascii is Python's ascii(): repr() with every non-ASCII code point escaped.
+//
+// The escaping reaches inside a container, because ascii() is about the whole
+// rendered form: ascii(['é']) is "['\\xe9']", not "['é']".
 func Ascii(v Value) string {
-	if v.kind != KindString {
-		return Repr(v)
-	}
 	var b strings.Builder
-	writeStringRepr(&b, v.str, true)
+	writeRepr(&b, v, nil, true)
 	return b.String()
 }
 

@@ -391,18 +391,16 @@ func (c *constEvaluator) constBinOp(n *ast.BinOp) (value.Value, bool) {
 	case ast.OpSub:
 		out, err = value.Sub(left, right)
 	case ast.OpMul:
-		// Checked before the multiplication, not after: the point is to
-		// not make the allocation at all.
-		if size, _, isRepeat := value.RepeatSize(left, right); isRepeat && size > maxFoldedConst {
-			return value.Undefined, false
-		}
-		out, err = value.Mul(left, right)
+		// The fold budget is passed in, so the multiplication refuses
+		// itself before allocating rather than being pre-screened here
+		// -- which is what `%` never was.
+		out, err = value.Mul(left, right, c.st)
 	case ast.OpDiv:
 		out, err = value.Div(left, right)
 	case ast.OpFloorDiv:
 		out, err = value.FloorDiv(left, right)
 	case ast.OpMod:
-		out, err = value.Mod(left, right)
+		out, err = value.Mod(left, right, c.st)
 	case ast.OpPow:
 		out, err = value.Pow(left, right)
 	default:
