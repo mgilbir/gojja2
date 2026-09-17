@@ -1,0 +1,14 @@
+{
+  "pairs": [
+    [
+      1,
+      2
+    ],
+    [
+      3,
+      4
+    ]
+  ]
+}
+---
+{% for a, b in pairs %}[{{ loop.previtem }}]{% endfor %}

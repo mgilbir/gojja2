@@ -342,6 +342,21 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 			return nil, err
 		}
 		if ok {
+			// jinja2 compiles a filtered loop into a function that
+			// unpacks the target and yields it straight back:
+			// `for a, b in fiter: if cond: yield (a, b)`. So with a
+			// tuple target the loop walks tuples, whatever the
+			// source held -- which is what `loop.previtem` reports
+			// and what an operator on it names. Without a filter
+			// there is no such function and the items are the
+			// source's own.
+			if _, unpacks := n.Target.(*ast.Tuple); unpacks {
+				repacked, err := filterScope.eval(n.Target)
+				if err != nil {
+					return nil, err
+				}
+				item = repacked
+			}
 			kept = append(kept, item)
 		}
 	}

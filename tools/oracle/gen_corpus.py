@@ -329,6 +329,16 @@ case("loops/loop_join_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|join
 case("loops/loop_map_applies_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|map('string')|list }}]{% endfor %}")
 case("loops/loop_in_dict", "{% for i in [1,2,3] %}[{{ dict(loop, extra=2) }}]{% endfor %}")
 
+# A filtered loop with a tuple target walks tuples. jinja2 compiles the filter
+# into a function that unpacks the target and yields it straight back --
+# `for a, b in fiter: if cond: yield (a, b)` -- so the items the loop sees are
+# that tuple and not the source's own lists. Without a filter there is no such
+# function, and they are.
+case("loops/filtered_tuple_target", "{% for a, b in pairs if true %}[{{ loop.previtem }}][{{ loop.nextitem }}]{% endfor %}", pairs=[[1, 2], [3, 4]])
+case("loops/unfiltered_tuple_target", "{% for a, b in pairs %}[{{ loop.previtem }}]{% endfor %}", pairs=[[1, 2], [3, 4]])
+case("loops/filtered_single_target", "{% for x in pairs if true %}[{{ loop.previtem }}]{% endfor %}", pairs=[[1, 2], [3, 4]])
+case("loops/filtered_nested_target", "{% for a, (b, c) in nested if true %}[{{ loop.nextitem }}]{% endfor %}", nested=[[1, [2, 3]], [4, [5, 6]]])
+
 # |last goes through reversed(), which wants indexing and not just iteration,
 # so a LoopContext -- which knows its length and nothing else -- is refused.
 case("errshape/last_of_a_loop", "{% for i in [1,2,3] %}{{ loop|last }}{% endfor %}")
