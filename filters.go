@@ -1905,7 +1905,20 @@ func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 		return value.Undefined, errs.New(errs.FilterArgumentError,
 			"attr() missing required argument 'name'")
 	}
-	attrName := value.Str(name)
+	// do_attr starts with inspect.getattr_static, which looks the name up
+	// in the type's dictionaries -- so an unhashable name is refused by
+	// the lookup before anything checks that it is a string at all, and a
+	// hashable one that is not a string is refused by that check. Neither
+	// reaches the object, so both answer the same whatever it is.
+	if err := value.Hashable(name); err != nil {
+		return value.Undefined, err
+	}
+	if name.Kind() != value.KindString {
+		return value.Undefined, errs.New(errs.TypeError,
+			"attribute name must be string, not %s",
+			value.Repr(value.String(name.TypeName())))
+	}
+	attrName := name.AsString()
 	if attr, ok := lookupAttr(s, v, attrName); ok {
 		return attr, nil
 	}

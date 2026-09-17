@@ -66,3 +66,35 @@ func TestAttributeIsAnItemLookup(t *testing.T) {
 		}
 	}
 }
+
+// TestAttrNameMustBeAString pins that |attr refuses a name that is not one.
+//
+// do_attr starts with inspect.getattr_static, which looks the name up in the
+// type's dictionaries. So an unhashable name is refused by that lookup before
+// anything checks it is a string, and a hashable one that is not a string is
+// refused by the check after it. Neither reaches the object, so both answer
+// the same whatever is being asked.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestAttrNameMustBeAString(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`{{ "ab"|attr(name=true) }}`, "attribute name must be string, not 'bool'"},
+		{`{{ "ab"|attr(name=none) }}`, "attribute name must be string, not 'NoneType'"},
+		{`{{ "ab"|attr(name=2.5) }}`, "attribute name must be string, not 'float'"},
+		{`{{ "ab"|attr(name=3) }}`, "attribute name must be string, not 'int'"},
+		{`{{ "ab"|attr(name=[1]) }}`, "unhashable type: 'list'"},
+		{`{{ "ab"|attr(name={}) }}`, "unhashable type: 'dict'"},
+		// A tuple hashes only if what it holds does, and the refusal
+		// names what actually stopped it.
+		{`{{ "ab"|attr(name=(1,[2])) }}`, "unhashable type: 'list'"},
+	} {
+		_, err := renderVars(t, New(), tc.src, nil)
+		if err == nil {
+			t.Errorf("%s: rendered; want %q", tc.src, tc.want)
+			continue
+		}
+		if got := err.Error(); got != tc.want {
+			t.Errorf("%s\n  = %q\n want %q", tc.src, got, tc.want)
+		}
+	}
+}
