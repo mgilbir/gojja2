@@ -1,0 +1,14 @@
+{
+  "case": "filters/attribute_bool_has_no_element.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "UndefinedError",
+    "message": "str object has no element True"
+  }
+}

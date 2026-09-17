@@ -1,0 +1,3 @@
+{}
+---
+{{ "ab cd"|groupby(attribute=none) }}|{{ "ab cd"|max(attribute=false) }}|{{ "ab cd"|min(attribute=false) }}|{{ "ab cd"|join(attribute=false) }}

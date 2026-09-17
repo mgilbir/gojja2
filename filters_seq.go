@@ -146,13 +146,13 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	if d, ok := arg(args, 0, "d"); ok {
 		sep = value.Str(d)
 	}
-	attribute, hasAttribute := arg(args, 1, "attribute")
-	hasAttribute = hasAttribute && !attribute.IsNone()
+	attribute, _ := arg(args, 1, "attribute")
+	keyParts := attrParts(attribute)
 	withAttribute := func(item value.Value) (value.Value, error) {
-		if !hasAttribute {
+		if len(keyParts) == 0 {
 			return item, nil
 		}
-		return attrPath(s, item, value.Str(attribute))
+		return attrPath(s, item, keyParts)
 	}
 
 	// Without autoescaping this is `str(d).join(map(str, value))`, and
@@ -529,8 +529,9 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		return value.Undefined, err
 	}
 
+	parts := attrParts(attribute)
 	groupKey := func(item value.Value) (value.Value, error) {
-		k, err := attrPath(s, item, value.Str(attribute))
+		k, err := attrPath(s, item, parts)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -616,8 +617,9 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 
 	if attribute, ok := args.Kwarg("attribute"); ok {
 		def, hasDef := args.Kwarg("default")
+		parts := attrParts(attribute)
 		out, err := walk(func(item value.Value) (value.Value, error) {
-			got, err := attrPath(s, item, value.Str(attribute))
+			got, err := attrPath(s, item, parts)
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -692,11 +694,12 @@ func filterSelectReject(keep, byAttribute bool) Filter {
 			testArgs = &value.CallArgs{Pos: pos[1:], Kwargs: args.Kwargs}
 		}
 
+		parts := attrParts(attribute)
 		var out []value.Value
 		for _, item := range items {
 			subject := item
 			if byAttribute {
-				subject, err = attrPath(s, item, value.Str(attribute))
+				subject, err = attrPath(s, item, parts)
 				if err != nil {
 					return value.Undefined, err
 				}

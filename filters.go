@@ -167,27 +167,107 @@ func materialize(s *State, v value.Value) ([]value.Value, error) {
 	return out, nil
 }
 
-// attrPath resolves a jinja2 attribute specification, which may be dotted
-// ("user.name") and may address a sequence by index ("0.name").
-func attrPath(s *State, v value.Value, path string) (value.Value, error) {
-	ex := &exec{st: s, sc: s.ctx, autoescape: s.autoescape}
-	for _, part := range strings.Split(path, ".") {
+// attrParts is jinja2's _prepare_attribute_parts: what a filter's
+// `attribute=` means as a sequence of lookups.
+//
+// None is no lookup at all, so `|groupby(attribute=none)` groups by the item
+// itself. A string is dotted ("user.name") and a run of digits in it is an
+// index ("0.name") -- by Python's str.isdigit, so "-1" stays a name. Anything
+// else is one lookup with that value as the key, which is how
+// `|max(attribute=false)` reads element 0 and `|max(attribute=2.5)` reports
+// "no element 2.5" rather than looking for an attribute called "2.5".
+func attrParts(attribute value.Value) []value.Value {
+	if attribute.IsNone() || attribute.IsUndefined() {
+		return nil
+	}
+	if attribute.Kind() != value.KindString {
+		return []value.Value{attribute}
+	}
+	fields := strings.Split(attribute.AsString(), ".")
+	parts := make([]value.Value, 0, len(fields))
+	for _, part := range fields {
+		if n, ok := pyDigitsToInt(part); ok {
+			parts = append(parts, value.Int(n))
+			continue
+		}
+		parts = append(parts, value.String(part))
+	}
+	return parts
+}
+
+// pyDigitsToInt reads a part the way `int(x) if x.isdigit() else x` does.
+//
+// str.isdigit accepts no sign and no spaces, so "-1" and " 1" are names; it
+// does accept other scripts' digits, and int() reads those, so "١" is 1.
+func pyDigitsToInt(part string) (int64, bool) {
+	if part == "" {
+		return 0, false
+	}
+	var n int64
+	for _, r := range part {
+		d := pyDigitValue(r)
+		if d < 0 {
+			return 0, false
+		}
+		// An attribute specification long enough to overflow is not
+		// an index anyone meant; Python would build the integer, and
+		// the lookup would miss either way.
+		if n > (math.MaxInt64-int64(d))/10 {
+			return 0, false
+		}
+		n = n*10 + int64(d)
+	}
+	return n, true
+}
+
+// pyDigitValue is the decimal value of a rune str.isdigit accepts, or -1.
+//
+// Python's isdigit is wider than a decimal digit: it also takes the ones with
+// a Numeric_Type of Digit, such as the superscripts -- but int() rejects those,
+// so a part containing one is left as a name rather than raising the way
+// jinja2 does.
+func pyDigitValue(r rune) int {
+	if !unicode.IsDigit(r) {
+		return -1
+	}
+	return int(r - runeZero(r))
+}
+
+// runeZero is the zero of the decimal-digit block r belongs to.
+func runeZero(r rune) rune {
+	for z := r; ; z-- {
+		if !unicode.IsDigit(z) {
+			return z + 1
+		}
+	}
+}
+
+// trimSpec drops the spaces around a single attribute specification, which
+// only a string one has.
+func trimSpec(attribute value.Value) value.Value {
+	if attribute.Kind() != value.KindString {
+		return attribute
+	}
+	return value.String(strings.TrimSpace(attribute.AsString()))
+}
+
+// attrPath resolves a jinja2 attribute specification against one item.
+//
+// Every part goes through Environment.getitem, the way make_attrgetter does,
+// so the item wins over the attribute of the same name and a lookup that
+// misses answers undefined instead of raising.
+func attrPath(s *State, v value.Value, parts []value.Value) (value.Value, error) {
+	for _, part := range parts {
 		// No early exit for an undefined receiver: the next lookup has
 		// to raise, which is what makes a second |map(attribute=...)
 		// over the results of a first one fail.
-		if n, err := strconv.Atoi(part); err == nil {
-			item, err := ex.getItem(v, value.Int(int64(n)))
-			if err != nil {
-				return value.Undefined, err
+		if v.IsUndefined() {
+			if v.UndefinedBehavior() == value.UndefinedChainable {
+				continue
 			}
-			v = item
-			continue
+			return value.Undefined, v.UndefinedError()
 		}
-		attr, err := ex.getAttr(v, part)
-		if err != nil {
-			return value.Undefined, err
-		}
-		v = attr
+		v = envGetItem(s, v, part)
 	}
 	return v, nil
 }
@@ -214,9 +294,9 @@ func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 	if attribute.IsUndefined() || attribute.IsNone() {
 		return func(v value.Value) (value.Value, error) { return fold(v), nil }
 	}
-	path := strings.TrimSpace(value.Str(attribute))
+	parts := attrParts(trimSpec(attribute))
 	return func(v value.Value) (value.Value, error) {
-		k, err := attrPath(s, v, path)
+		k, err := attrPath(s, v, parts)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -248,12 +328,23 @@ func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 			return value.NewList(fold(v)), nil
 		}
 	}
-	// A comma-separated specification sorts by several keys in turn.
-	paths := strings.Split(value.Str(attribute), ",")
+	// A comma-separated specification sorts by several keys in turn --
+	// but only a string one: make_multi_attrgetter splits nothing else.
+	specs := []value.Value{attribute}
+	if attribute.Kind() == value.KindString {
+		specs = nil
+		for _, field := range strings.Split(attribute.AsString(), ",") {
+			specs = append(specs, value.String(strings.TrimSpace(field)))
+		}
+	}
+	paths := make([][]value.Value, len(specs))
+	for i, spec := range specs {
+		paths[i] = attrParts(spec)
+	}
 	return func(v value.Value) (value.Value, error) {
 		keys := make([]value.Value, len(paths))
 		for i, p := range paths {
-			k, err := attrPath(s, v, strings.TrimSpace(p))
+			k, err := attrPath(s, v, p)
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -1716,9 +1807,10 @@ func filterSum(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		return value.Undefined, errs.New(errs.TypeError,
 			"sum() can't sum bytes [use b''.join(seq) instead]")
 	}
+	parts := attrParts(attribute)
 	for _, item := range items {
-		if !attribute.IsUndefined() && !attribute.IsNone() {
-			item, err = attrPath(s, item, value.Str(attribute))
+		if len(parts) > 0 {
+			item, err = attrPath(s, item, parts)
 			if err != nil {
 				return value.Undefined, err
 			}
