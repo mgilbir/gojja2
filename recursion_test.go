@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"runtime/debug"
+
 	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/internal/parser"
@@ -265,6 +267,126 @@ func TestNestingBoundSurvivesTheWholeCompile(t *testing.T) {
 			env := gojja2.New()
 			if _, err := mustRender(t, env, src); err != nil {
 				t.Fatalf("%s: %v", name, err)
+			}
+		})
+	}
+}
+
+// --- deep value graphs -------------------------------------------------------
+
+// nestValue builds a value nested n deep out of open, using a namespace so the
+// nesting survives the loop's scope. The depth of a value graph is chosen at
+// render time and bounded only by the iteration budget, which defaults to ten
+// million -- so "how deep can a template go" is not a question the parser's
+// nesting bound answers.
+func nestValue(n int, open, close, expr string) string {
+	return "{% set ns = namespace(t=" + open + "0" + close + ") %}" +
+		"{% for i in range(" + itoa(n) + ") %}" +
+		"{% set ns.t = " + open + "ns.t" + close + " %}{% endfor %}" + expr
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
+}
+
+// deepGraphStack is the stack ceiling the deep-graph tests run under.
+//
+// The walks they cover used to recurse once per level, so proving they no
+// longer do needs a graph deeper than the stack. Millions of levels would do
+// it at the default one-gigabyte ceiling and would cost seconds and gigabytes;
+// lowering the ceiling reaches the same wall with a graph small enough to build
+// in a fraction of a second. A recursive walk over deepGraphLevels overflows
+// this by roughly a factor of two.
+const (
+	deepGraphStack  = 24 << 20
+	deepGraphLevels = 300_000
+)
+
+// TestDeepValueGraphDoesNotExhaustTheStack covers the walks that cannot report
+// a failure. Str and Repr are called from more than a hundred places and
+// return no error, so they have to be total: every one of those callers --
+// `{{ deep }}`, `{{ deep|upper }}`, `{{ deep|string }}`, `{{ {deep: 1} }}` --
+// was a site where a deep graph ended the process rather than the render.
+func TestDeepValueGraphDoesNotExhaustTheStack(t *testing.T) {
+	defer debug.SetMaxStack(debug.SetMaxStack(deepGraphStack))
+
+	for name, tc := range map[string]struct{ open, close, expr string }{
+		"print a list":  {"[", "]", `{{ ns.t|length }}`},
+		"repr a list":   {"[", "]", `{{ ns.t|string|length }}`},
+		"upper a list":  {"[", "]", `{{ ns.t|upper|length }}`},
+		"repr a tuple":  {"(", ",)", `{{ ns.t|string|length }}`},
+		"repr a dict":   {`{"k":`, "}", `{{ ns.t|string|length }}`},
+		"hash a tuple":  {"(", ",)", `{{ {ns.t: 1}|length }}`},
+		"equal a tuple": {"(", ",)", `{{ ns.t == ns.t }}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := gojja2.New()
+			src := nestValue(deepGraphLevels, tc.open, tc.close, tc.expr)
+			if _, err := mustRender(t, env, src); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+		})
+	}
+}
+
+// TestDeepValueGraphReportsWhereItCan is the other half of the rule. A walk
+// that already carries an error says what CPython says rather than being made
+// total: tojson and pprint both have one, and both wall CPython's interpreter
+// at a comparable depth.
+func TestDeepValueGraphReportsWhereItCan(t *testing.T) {
+	defer debug.SetMaxStack(debug.SetMaxStack(deepGraphStack))
+
+	for name, tc := range map[string]struct{ expr, want string }{
+		"tojson": {`{{ ns.t|tojson }}`, "maximum recursion depth exceeded while encoding a JSON object"},
+		"pprint": {`{{ ns.t|pprint }}`, "maximum recursion depth exceeded while getting the repr of an object"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := gojja2.New()
+			src := nestValue(deepGraphLevels, "[", "]", tc.expr)
+			err := renderWith(t, context.Background(), env, src)
+			if err == nil {
+				t.Fatalf("%s rendered a %d-deep graph without error", name, deepGraphLevels)
+			}
+			if !errors.Is(err, errs.RecursionError) {
+				t.Fatalf("%s: got %T %v, want a RecursionError", name, err, err)
+			}
+			if err.Error() != tc.want {
+				t.Errorf("%s: got %q, want CPython's %q", name, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestShallowValueGraphsStillRender guards the other direction: the walls must
+// not fire on anything a template really prints.
+func TestShallowValueGraphsStillRender(t *testing.T) {
+	env := gojja2.New()
+	for name, tc := range map[string]struct{ src, want string }{
+		"nested list":  {`{{ [[1, [2]], 3] }}`, "[[1, [2]], 3]"},
+		"nested tuple": {`{{ ((1,), 2) }}`, "((1,), 2)"},
+		"one tuple":    {`{{ (1,) }}`, "(1,)"},
+		"empty":        {`{{ [] }}{{ () }}{{ {} }}`, "[]()" + "{}"},
+		"dict":         {`{{ {"b": [1], "a": {"c": 2}} }}`, `{'b': [1], 'a': {'c': 2}}`},
+		"tojson":       {`{{ {"b": [1], "a": 2}|tojson }}`, `{"a": 2, "b": [1]}`},
+		"pprint":       {`{{ {"b": [1], "a": 2}|pprint }}`, `{'a': 2, 'b': [1]}`},
+		"tuple key":    {`{% set d = {(1, (2, 3)): "v"} %}{{ d[(1, (2, 3))] }}`, "v"},
+		"deep-ish":     {nestValue(400, "[", "]", `{{ ns.t|string|length }}`), "803"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := mustRender(t, env, tc.src)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if got != tc.want {
+				t.Errorf("%s = %q, want %q", name, got, tc.want)
 			}
 		})
 	}

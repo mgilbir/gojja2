@@ -885,9 +885,31 @@ func escapeArg(safe bool, v value.Value) value.Value {
 func filterPprint(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	// pformat returns a str even for Markup input -- what it renders is the
 	// repr, which for Markup is `Markup('...')`.
+	sorted, err := sortDictKeys(v, 0)
+	if err != nil {
+		return value.Undefined, err
+	}
 	var b strings.Builder
-	pformat(&b, sortDictKeys(v), 0, 0, 0)
+	if err := pformat(&b, sorted, 0, 0, 0); err != nil {
+		return value.Undefined, err
+	}
 	return value.String(b.String()), nil
+}
+
+// maxPPrintDepth bounds how deeply pprint descends, for the same reason
+// maxJSONDepth does: the nesting is chosen at render time and the walk would
+// otherwise exhaust the stack. CPython's pprint hits its own wall at 326
+// levels, three interpreter frames per level, and reports it as a failure to
+// take the repr -- which is where it happens.
+const maxPPrintDepth = 1000
+
+// RecursionMessageRepr is what CPython reports when it runs out of stack
+// taking an object's repr, which is how both pprint and a plain print of a
+// deeply nested value fail there.
+const RecursionMessageRepr = "maximum recursion depth exceeded while getting the repr of an object"
+
+func tooDeepToPrint() error {
+	return errs.New(errs.RecursionError, "%s", RecursionMessageRepr)
 }
 
 // pprintWidth is pprint.pformat's default line width.
@@ -900,8 +922,8 @@ const pprintWidth = 80
 // column the value starts at; allowance is the space reserved on the last line
 // for whatever closes around it; level counts how deep the dispatch has gone,
 // because a long string only gains its wrapping parentheses at the top.
-func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) {
-	pformatSeen(b, v, indent, allowance, level, nil)
+func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) error {
+	return pformatSeen(b, v, indent, allowance, level, nil)
 }
 
 // pformatSeen carries the containers on the active path.
@@ -910,11 +932,14 @@ func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) {
 // reaches the recursive arms below; one whose repr is too wide to print on a
 // line does. CPython's pprint marks that case with the container's id, which
 // differs between runs there as it does here -- see docs/divergences.md.
-func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int, seen map[any]bool) {
+func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int, seen map[any]bool) error {
+	if level > maxPPrintDepth {
+		return tooDeepToPrint()
+	}
 	rep := value.Repr(v)
 	if len(rep) <= pprintWidth-indent-allowance {
 		b.WriteString(rep)
-		return
+		return nil
 	}
 
 	switch v.Kind() {
@@ -922,7 +947,7 @@ func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int
 		if seen[v.Interface()] {
 			fmt.Fprintf(b, "<Recursion on %s with id=%d>",
 				v.TypeName(), recursionID(v))
-			return
+			return nil
 		}
 		seen = markSeen(seen, v.Interface())
 		defer delete(seen, v.Interface())
@@ -936,7 +961,7 @@ func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int
 		// one line however long it is.
 		if v.IsSafe() {
 			b.WriteString(rep)
-			return
+			return nil
 		}
 		pformatString(b, v.AsString(), rep, indent, allowance, level+1)
 
@@ -947,9 +972,12 @@ func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int
 			open, close = "(", ")"
 		}
 		b.WriteString(open)
-		pformatItems(b, s.Items(), indent, allowance+1, func(b *strings.Builder, item value.Value, at, room int) {
-			pformatSeen(b, item, at, room, level+1, seen)
+		err := pformatItems(b, s.Items(), indent, allowance+1, func(b *strings.Builder, item value.Value, at, room int) error {
+			return pformatSeen(b, item, at, room, level+1, seen)
 		})
+		if err != nil {
+			return err
+		}
 		if v.Kind() == value.KindTuple && s.Len() == 1 {
 			b.WriteString(",")
 		}
@@ -958,18 +986,22 @@ func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int
 	case value.KindDict:
 		d, _ := v.Dict()
 		b.WriteString("{")
-		pformatItems(b, d.Keys(), indent, allowance+1, func(b *strings.Builder, key value.Value, at, room int) {
+		err := pformatItems(b, d.Keys(), indent, allowance+1, func(b *strings.Builder, key value.Value, at, room int) error {
 			keyRep := value.Repr(key)
 			b.WriteString(keyRep)
 			b.WriteString(": ")
 			val, _, _ := d.Get(key)
-			pformatSeen(b, val, at+len(keyRep)+2, room, level+1, seen)
+			return pformatSeen(b, val, at+len(keyRep)+2, room, level+1, seen)
 		})
+		if err != nil {
+			return err
+		}
 		b.WriteString("}")
 
 	default:
 		b.WriteString(rep)
 	}
+	return nil
 }
 
 // wordChunkRe matches a run of non-space followed by the space after it, which
@@ -1084,8 +1116,8 @@ func splitLinesKeepingEnds(s string) []string {
 // pformatItems writes a sequence of entries one per line, indented one column
 // past the bracket that opened them.
 func pformatItems[T any](b *strings.Builder, items []T, indent, allowance int,
-	write func(*strings.Builder, T, int, int),
-) {
+	write func(*strings.Builder, T, int, int) error,
+) error {
 	inner := indent + 1
 	separator := ",\n" + pprintIndent(inner)
 	for i, item := range items {
@@ -1096,8 +1128,11 @@ func pformatItems[T any](b *strings.Builder, items []T, indent, allowance int,
 		if i == len(items)-1 {
 			room = allowance
 		}
-		write(b, item, inner, room)
+		if err := write(b, item, inner, room); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // sortDictKeys rebuilds a value with every dict in key order.
@@ -1106,13 +1141,18 @@ func pformatItems[T any](b *strings.Builder, items []T, indent, allowance int,
 // cycle, and rebuilding one without noticing runs until memory is gone; a
 // container already being rebuilt is left as it is, which is enough for
 // pformat to reach it and print its recursion marker.
-func sortDictKeys(v value.Value) value.Value { return sortDictKeysSeen(v, nil) }
+func sortDictKeys(v value.Value, level int) (value.Value, error) {
+	return sortDictKeysSeen(v, nil, level)
+}
 
-func sortDictKeysSeen(v value.Value, seen map[any]bool) value.Value {
+func sortDictKeysSeen(v value.Value, seen map[any]bool, level int) (value.Value, error) {
+	if level > maxPPrintDepth {
+		return value.Undefined, tooDeepToPrint()
+	}
 	switch v.Kind() {
 	case value.KindDict:
 		if seen[v.Interface()] {
-			return v
+			return v, nil
 		}
 		seen = markSeen(seen, v.Interface())
 		defer delete(seen, v.Interface())
@@ -1124,26 +1164,34 @@ func sortDictKeysSeen(v value.Value, seen map[any]bool) value.Value {
 		out := value.NewDict()
 		target, _ := out.Dict()
 		for _, e := range entries {
-			_ = target.Set(e.Key, sortDictKeysSeen(e.Value, seen))
+			sorted, err := sortDictKeysSeen(e.Value, seen, level+1)
+			if err != nil {
+				return value.Undefined, err
+			}
+			_ = target.Set(e.Key, sorted)
 		}
-		return out
+		return out, nil
 	case value.KindList, value.KindTuple:
 		if seen[v.Interface()] {
-			return v
+			return v, nil
 		}
 		seen = markSeen(seen, v.Interface())
 		defer delete(seen, v.Interface())
 		seq, _ := v.Seq()
 		items := make([]value.Value, seq.Len())
 		for i, item := range seq.Items() {
-			items[i] = sortDictKeysSeen(item, seen)
+			sorted, err := sortDictKeysSeen(item, seen, level+1)
+			if err != nil {
+				return value.Undefined, err
+			}
+			items[i] = sorted
 		}
 		if v.Kind() == value.KindTuple {
-			return value.NewTuple(items...)
+			return value.NewTuple(items...), nil
 		}
-		return value.NewList(items...)
+		return value.NewList(items...), nil
 	}
-	return v
+	return v, nil
 }
 
 // recursionID is the identity CPython's pprint prints for a repeated
