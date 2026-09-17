@@ -67,6 +67,67 @@ type lexer struct {
 	// is non-empty an end delimiter is not recognised, so the `}` in
 	// `{{ {"a": 1} }}` closes the dict rather than the print tag.
 	balance []byte
+
+	// scan remembers where each opening delimiter was last found. See
+	// delimScan: without it, a delimiter a template never uses costs a
+	// scan of everything left on every tag.
+	scan [scanKinds]delimScan
+}
+
+// The delimiters findTag looks for, one cursor each.
+const (
+	scanComment = iota
+	scanBlock
+	scanVariable
+	scanLineStatement
+	scanLineComment
+	scanKinds
+)
+
+// delimScan remembers the next position of one delimiter.
+//
+// findTag is called once per tag and asks about every delimiter, and the
+// cursor only ever moves forward. Searching afresh each time makes a delimiter
+// the template never uses cost a scan to the end of the source *per tag*,
+// which is quadratic in the number of tags: 800 KB of `{{1}}` took 8.7 seconds
+// to compile and 1.6 MB took 34.5, while the same 5 MB with all three
+// delimiters present took 0.48. Compilation has no budget and no context, so
+// there was nothing to bound it either.
+//
+// Remembering the answer makes each delimiter's search pointer monotonic, so
+// the whole lex is linear in the source however many tags it holds.
+type delimScan struct {
+	// at is the first occurrence at or after from, or -1 when there is
+	// none left in the source.
+	at   int
+	from int
+	// known distinguishes "searched, found nothing" from "never searched".
+	known bool
+}
+
+// find returns the first occurrence of delim at or after from.
+func (d *delimScan) find(src, delim string, from int) int {
+	if d.known && d.from <= from {
+		// Nothing at or after an earlier position means nothing at or
+		// after this one either.
+		if d.at < 0 {
+			return -1
+		}
+		// The remembered hit is still the first one: there was nothing
+		// between the earlier position and it, so there is nothing
+		// between here and it.
+		if d.at >= from {
+			return d.at
+		}
+	}
+	i := strings.Index(src[from:], delim)
+	d.known, d.from = true, from
+	if i < 0 {
+		d.at = -1
+	} else {
+		d.at = from + i
+	}
+	return d.at
 }
 
 func (l *lexer) errorf(line int, format string, args ...any) error {
@@ -167,23 +228,24 @@ func (l *lexer) findTag(from int) (tagMatch, bool) {
 
 	for _, c := range []struct {
 		kind  tagKind
+		slot  int
 		delim string
 	}{
-		{tagComment, l.syn.CommentStart},
-		{tagBlock, l.syn.BlockStart},
-		{tagVariable, l.syn.VariableStart},
+		{tagComment, scanComment, l.syn.CommentStart},
+		{tagBlock, scanBlock, l.syn.BlockStart},
+		{tagVariable, scanVariable, l.syn.VariableStart},
 	} {
-		if i := strings.Index(l.src[from:], c.delim); i >= 0 {
-			consider(c.kind, from+i, len(c.delim), from+i+len(c.delim))
+		if at := l.scan[c.slot].find(l.src, c.delim, from); at >= 0 {
+			consider(c.kind, at, len(c.delim), at+len(c.delim))
 		}
 	}
 	if p := l.syn.LineStatementPrefix; p != "" {
-		if start, prefixAt, ok := l.findLinePrefix(from, p, true); ok {
+		if start, prefixAt, ok := l.findLinePrefix(from, p, true, scanLineStatement); ok {
 			consider(tagLineStatement, start, len(p), prefixAt+len(p))
 		}
 	}
 	if p := l.syn.LineCommentPrefix; p != "" {
-		if start, prefixAt, ok := l.findLinePrefix(from, p, false); ok {
+		if start, prefixAt, ok := l.findLinePrefix(from, p, false, scanLineComment); ok {
 			consider(tagLineComment, start, len(p), prefixAt+len(p))
 		}
 	}
@@ -217,13 +279,16 @@ func (l *lexer) findTag(from int) (tagMatch, bool) {
 //
 // A line statement must begin a line; a line comment may also follow other
 // content on the line, which is why the two differ only in that final check.
-func (l *lexer) findLinePrefix(from int, prefix string, mustStartLine bool) (start, prefixAt int, ok bool) {
+// The accepted candidate is remembered the same way the plain delimiters are,
+// so a prefix that never matches is not re-scanned for at every tag. Only the
+// prefix's own position is cached: the whitespace in front of it is measured
+// back from the current cursor, which moves.
+func (l *lexer) findLinePrefix(from int, prefix string, mustStartLine bool, slot int) (start, prefixAt int, ok bool) {
 	for search := from; ; {
-		i := strings.Index(l.src[search:], prefix)
-		if i < 0 {
+		at := l.scan[slot].find(l.src, prefix, search)
+		if at < 0 {
 			return 0, 0, false
 		}
-		at := search + i
 		start = at
 		for start > from && isHorizontalSpace(l.src[start-1]) {
 			start--
