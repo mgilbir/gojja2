@@ -341,6 +341,17 @@ func Mul(a, b Value, budget Budget) (Value, error) {
 		}
 		return repeat(seq, n)
 	}
+	// A count too wide to be an index fails before any repetition is
+	// attempted: CPython asks it for __index__, and a Python int outside
+	// Py_ssize_t refuses there. That happens whatever the count's sign and
+	// however short the sequence is, so it comes ahead of the non-int
+	// message below -- `[] * (10**22)` is an OverflowError, not a sequence
+	// multiplied by a non-int, and `[] * (-10**22)` is the same error
+	// rather than the empty list the negative count would have produced.
+	if indexOverflows(ua, ub) {
+		return Undefined, errs.New(errs.OverflowError,
+			"cannot fit 'int' into an index-sized integer")
+	}
 	// Once one operand is a sequence, the failure comes from
 	// sequence.__mul__ and names only the other operand's type. Markup
 	// coerces through __index__ instead, so it reports the other operand
@@ -393,6 +404,22 @@ func sequenceRepetitionFailed(a, b Value) (otherIsB, ok bool) {
 	return false, false
 }
 
+// indexOverflows reports whether a sequence is being repeated by an integer
+// too wide to be an index. Not fitting an int64 is exactly the condition
+// __index__ refuses on, and a bigint reaches here as a KindInt whose Int64
+// does not fit -- which is why repeatOperands turned it down.
+func indexOverflows(a, b Value) bool {
+	seq, n := a, b
+	if !isSequenceKind(seq) {
+		seq, n = b, a
+	}
+	if !isSequenceKind(seq) || !n.IsInteger() {
+		return false
+	}
+	_, fits := n.Int64()
+	return !fits
+}
+
 func repeatOperands(a, b Value) (seq Value, n int64, ok bool) {
 	if a.IsInteger() {
 		a, b = b, a
@@ -408,7 +435,8 @@ func repeatOperands(a, b Value) (seq Value, n int64, ok bool) {
 	count, fits := b.Int64()
 	if !fits {
 		// A repetition count that does not fit in an int64 could never
-		// be allocated anyway.
+		// be allocated anyway; Mul turns it into the OverflowError
+		// __index__ raises rather than attempting the repetition.
 		return Undefined, 0, false
 	}
 	return a, count, true
