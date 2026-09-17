@@ -674,18 +674,6 @@ func (g *groupObject) Repr() string {
 	return "(" + value.Repr(g.key) + ", " + value.Repr(g.items) + ")"
 }
 
-// Equals compares like the tuple it is, against another group or a plain
-// two-element sequence.
-func (g *groupObject) Equals(other value.Value) (bool, bool) {
-	if o, ok := other.Interface().(*groupObject); ok {
-		return value.Equal(g.key, o.key) && value.Equal(g.items, o.items), true
-	}
-	if s, ok := other.Seq(); ok && other.Kind() == value.KindTuple {
-		return s.Len() == 2 && value.Equal(g.key, s.At(0)) && value.Equal(g.items, s.At(1)), true
-	}
-	return false, false
-}
-
 func (g *groupObject) TypeName() string { return "_GroupTuple" }
 
 func (g *groupObject) QualifiedName() string { return "jinja2.filters._GroupTuple" }

@@ -499,6 +499,19 @@ func (ex *exec) indexSequence(base, key value.Value) (value.Value, error) {
 	return ex.st.Undefined(value.UndefinedIndex(base, int(i))), nil
 }
 
+// sliceSeq selects the elements a slice covers, in order.
+func sliceSeq(s *value.Seq, start, stop, step *int) ([]value.Value, error) {
+	begin, stride, count, err := value.SliceSpan(s.Len(), start, stop, step)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]value.Value, count)
+	for i := range count {
+		items[i] = s.At(begin + i*stride)
+	}
+	return items, nil
+}
+
 func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 	bound := func(e ast.Expr) (*int, error) {
 		if e == nil {
@@ -547,13 +560,9 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 		return value.String(out), nil
 	case value.KindList, value.KindTuple:
 		s, _ := base.Seq()
-		begin, stride, count, err := value.SliceSpan(s.Len(), start, stop, step)
+		items, err := sliceSeq(s, start, stop, step)
 		if err != nil {
 			return value.Undefined, err
-		}
-		items := make([]value.Value, count)
-		for i := range count {
-			items[i] = s.At(begin + i*stride)
 		}
 		if base.Kind() == value.KindTuple {
 			return value.NewTuple(items...), nil
@@ -567,6 +576,18 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 	case value.KindObject:
 		if sl, ok := base.Interface().(value.Slicer); ok {
 			return sl.Slice(start, stop, step)
+		}
+		// A tuple subclass slices through tuple's own __getitem__, so
+		// the result is a tuple. It is asked after Slicer because a
+		// type that answers slices for itself is not going through
+		// tuple at all. Every other sequence slices to a list.
+		if tv, ok := base.Interface().(value.TupleView); ok {
+			s, _ := tv.AsTuple().Seq()
+			items, err := sliceSeq(s, start, stop, step)
+			if err != nil {
+				return value.Undefined, err
+			}
+			return value.NewTuple(items...), nil
 		}
 		if seq, ok := base.Interface().(value.Sequence); ok {
 			begin, stride, count, err := value.SliceSpan(seq.Len(), start, stop, step)

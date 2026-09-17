@@ -335,6 +335,30 @@ case("errshape/indent_types", "{{ nope|indent(2) }}")
 case("errshape/indent_tuple", "{{ (1, 2)|indent(2) }}")
 case("errshape/truncate_list", "{{ long|truncate(3) }}", long=list("abcdefghijklmnopqrst"))
 case("errshape/groupby_tuple", "{% for g in users|groupby('city') %}[{{ g.grouper }}:{{ g.list|length }}]{% endfor %}|{{ users|groupby('city') }}", **USERS)
+# A tuple subclass -- what |groupby yields -- behaves as the tuple it stands
+# for wherever the tuple type is what decides: concatenation, repetition,
+# slicing, tuple's own methods, the argument tuple of %, and ordering. It is
+# still named _GroupTuple by everything that reports a type.
+GROUP = "{% set g = users|groupby('city')|first %}"
+case("grouptuple/concat", GROUP + "{{ g + (1,) }}|{{ (1,) + g }}|{{ g + () }}|{{ g + g }}", **USERS)
+case("grouptuple/repeat", GROUP + "{{ g * 2 }}|{{ 2 * g }}|{{ g * 0 }}|{{ g * true }}", **USERS)
+case("grouptuple/slice", GROUP + "{{ g[:1] }}|{{ g[::-1] }}|{{ g[1:] }}|{{ g[0] }}|{{ g[0:2:1] }}", **USERS)
+case("grouptuple/methods", GROUP + "{{ g.index(g.list) }}|{{ g.count('Lisbon') }}|{{ g.grouper }}", **USERS)
+case("grouptuple/percent", GROUP + '{{ "%s/%s" % g }}|{{ "%r" % g[0] }}', **USERS)
+case("grouptuple/order", GROUP + "{{ g < ('Lisbon', []) }}|{{ ('Lisbon', []) < g }}|{{ g == ('x',) }}", **USERS)
+case("grouptuple/equality", GROUP + "{{ g == ('Lisbon', users[:1] + users[2:]) }}|{{ ('Lisbon', []) == g }}|{{ g == ['Lisbon'] }}|{{ g in [('Lisbon', users[:1] + users[2:])] }}", **USERS)
+case("grouptuple/sum_start", GROUP + "{{ [g]|sum(start=()) }}", **USERS)
+
+case("errshape/grouptuple_concat_str", GROUP + '{{ g + "s" }}', **USERS)
+case("errshape/grouptuple_concat_list", GROUP + "{{ g + [1] }}", **USERS)
+case("errshape/grouptuple_list_concat", GROUP + "{{ [1] + g }}", **USERS)
+case("errshape/grouptuple_repeat_str", GROUP + '{{ g * "s" }}', **USERS)
+case("errshape/grouptuple_str_repeat", GROUP + '{{ "s" * g }}', **USERS)
+case("errshape/grouptuple_repeat_float", GROUP + "{{ 2.0 * g }}", **USERS)
+case("errshape/grouptuple_order_str", GROUP + '{{ "s" < g }}', **USERS)
+case("errshape/grouptuple_order_reflected", GROUP + "{{ (1,) < g }}", **USERS)
+case("errshape/grouptuple_percent_extra", GROUP + '{{ "%s" % g }}', **USERS)
+case("errshape/grouptuple_indent", GROUP + "{{ g|indent(2) }}", **USERS)
 case("errshape/range_slice", "{{ range(3)[::2] }}|{{ range(10)[2:8:3] }}|{{ range(0,10,2)[1:4] }}")
 case("errshape/format_char", "{{ '%S' % 'a' }}")
 case("errshape/callable_arity", "{{ 1 is callable(2) }}")
