@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "sv": "a<b",
+  "mk": "<i>"
+}
+---
+{{ (sv ~ mk|safe)|pprint }}|{{ sv ~ mk|safe }}|{{ (mk|safe ~ sv)|pprint }}

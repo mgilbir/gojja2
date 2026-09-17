@@ -214,12 +214,33 @@ type generator struct {
 	depth int
 }
 
-// GenerateTemplate builds a template from fuzzer input.
-func GenerateTemplate(input []byte) string {
-	g := &generator{c: &chooser{b: input}}
-	g.template()
-	return g.b.String()
+// GeneratedCase is a template together with the environment it is meant to
+// render in.
+//
+// Autoescaping is part of the case and not of the template, because it changes
+// what five filters do and what the compiler is allowed to fold, and a
+// template alone cannot say which it wanted. Leaving it off meant that whole
+// half of the engine was never compared: every escaping divergence found so
+// far was found by hand, because no seed could reach one.
+type GeneratedCase struct {
+	Source     string
+	Autoescape bool
 }
+
+// GenerateCase builds a template and the environment it renders under.
+func GenerateCase(input []byte) GeneratedCase {
+	g := &generator{c: &chooser{b: input}}
+	// Drawn before the template so that one byte decides it, and so that
+	// the same bytes after it generate the same template either way --
+	// which is what makes shrinking a diverging case keep its setting.
+	autoescape := g.c.chance(3)
+	g.template()
+	return GeneratedCase{Source: g.b.String(), Autoescape: autoescape}
+}
+
+// GenerateTemplate builds a template from fuzzer input, for callers that do
+// not care which environment it was meant for.
+func GenerateTemplate(input []byte) string { return GenerateCase(input).Source }
 
 const (
 	maxExprDepth = 4
@@ -288,7 +309,7 @@ func (g *generator) stmt(depth int) {
 		g.b.WriteString("x")
 		return
 	}
-	switch g.c.intn(14) {
+	switch g.c.intn(15) {
 	case 0:
 		g.b.WriteString(g.c.pick([]string{"text ", "\n", " ", "a\nb", "<p>", "  "}))
 	case 1, 2, 3:
@@ -322,11 +343,28 @@ func (g *generator) stmt(depth int) {
 			"{% import 'mac.txt' as mm %}{{ mm.m(1) }}{{ mm.ex }}",
 			"{% from 'mac.txt' import m %}{{ m(1, 3) }}",
 		}))
+	case 13:
+		g.autoescapeStmt(depth)
 	default:
 		g.open("{{")
 		g.b.WriteString(g.expr(2))
 		g.close("}}")
 	}
+}
+
+// autoescapeStmt emits `{% autoescape %}`, which moves the escaping for its
+// body -- and, given a name rather than a literal, leaves it unknowable until
+// the render, so nothing inside may be folded. Both are worth generating: the
+// two engines have to agree on which filter escaped and on what was folded
+// under which setting.
+func (g *generator) autoescapeStmt(depth int) {
+	g.open("{%")
+	g.b.WriteString("autoescape " + g.c.pick([]string{
+		"true", "false", "yes", "n", "blank", "nil", "not no",
+	}))
+	g.close("%}")
+	g.body(depth - 1)
+	g.b.WriteString("{% endautoescape %}")
 }
 
 func (g *generator) ifStmt(depth int) {

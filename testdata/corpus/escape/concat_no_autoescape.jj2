@@ -1,0 +1,6 @@
+{
+  "sv": "a<b",
+  "mk": "<i>"
+}
+---
+{{ (sv ~ mk|safe)|pprint }}|{{ sv ~ mk|safe }}
