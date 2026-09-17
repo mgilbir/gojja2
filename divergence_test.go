@@ -235,3 +235,59 @@ func mustParseInt(t *testing.T, s string) int64 {
 	}
 	return n
 }
+
+// TestRepeatCountIndexOverflow: sequence repetition asks its count for
+// __index__ before it repeats anything, so a count outside Py_ssize_t raises
+// an OverflowError there -- whatever the count's sign, and however short the
+// sequence is. gojja2 answered the "can't multiply sequence by non-int"
+// TypeError instead, because a bignum arrives as an int whose Int64 does not
+// fit and so was taken for a non-integer.
+func TestRepeatCountIndexOverflow(t *testing.T) {
+	const want = "cannot fit 'int' into an index-sized integer"
+	for _, expr := range []string{
+		`["-"] * 10000000000000000000000`,
+		`10000000000000000000000 * ["-"]`,
+		`"-" * 10000000000000000000000`,
+		`(1, 2) * 10000000000000000000000`,
+		// Markup multiplies through __index__ too, and overflows there
+		// rather than reporting the count as uninterpretable.
+		`"x"|safe * 10000000000000000000000`,
+		// A negative count would have produced an empty sequence had it
+		// fit; __index__ refuses before the sign is ever consulted.
+		`["-"] * -10000000000000000000000`,
+		// One past int64 is already past the index.
+		`["-"] * 9223372036854775808`,
+	} {
+		out, err := render(t, "{{ "+expr+" }}")
+		if err == nil {
+			t.Errorf("%s = %q, want an OverflowError", expr, out)
+			continue
+		}
+		if kind := errs.KindOf(err); kind != errs.OverflowError {
+			t.Errorf("%s: got %v (%v), want OverflowError", expr, kind, err)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %q, want %q", expr, err, want)
+		}
+	}
+
+	// The overflow must not swallow the case it sits next to: a count of
+	// the wrong *type* still gets sequence.__mul__'s own message, and a
+	// count that fits is still simply repeated.
+	for _, tc := range []struct{ expr, want string }{
+		{`["-"] * "z"`, "can't multiply sequence by non-int of type 'str'"},
+		{`["-"] * 2.5`, "can't multiply sequence by non-int of type 'float'"},
+		{`["-"] * none`, "can't multiply sequence by non-int of type 'NoneType'"},
+	} {
+		_, err := render(t, "{{ "+tc.expr+" }}")
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want %q", tc.expr, err, tc.want)
+		}
+	}
+	if got := mustRender(t, `{{ ["-"] * 3 }}`); got != "['-', '-', '-']" {
+		t.Errorf(`["-"] * 3 = %s`, got)
+	}
+	if got := mustRender(t, `{{ ["-"] * -3 }}`); got != "[]" {
+		t.Errorf(`["-"] * -3 = %s`, got)
+	}
+}
