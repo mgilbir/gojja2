@@ -74,3 +74,54 @@ func TestWrapAndIndentFollowPythonsOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestNegativeConstantPowerFollowsTheGeneratedSource pins a sign that depends
+// on whether the power was constant-folded.
+//
+// jinja2 writes a constant into its generated Python as the constant's repr,
+// and a negative number's repr starts with a minus -- so `{{ (-8) ** m }}`
+// becomes the source `-8 ** m`, which Python reads as `-(8 ** m)` because unary
+// minus binds looser than `**`. The parentheses the template author wrote are
+// gone. A power jinja2 can fold never reaches that stage and keeps them, so the
+// same expression answers differently depending only on whether the exponent is
+// a literal.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestNegativeConstantPowerFollowsTheGeneratedSource(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// Folded: the grouping survives.
+		{`{{ (-8) ** 2 }}`, "64"},
+		{`{{ -8 ** 2 }}`, "64"},
+		{`{{ (-2) ** 3 }}`, "-8"},
+		// Not folded: the minus escapes the power.
+		{`{% set m = 2 %}{{ (-8) ** m }}`, "-64"},
+		{`{% set m = 2 %}{{ (-8.5) ** m }}`, "-72.25"},
+		{`{% set m = 2 %}{{ (0-8) ** m }}`, "-64"},
+		{`{% set m = 2 %}{{ (-8) ** -m }}`, "-0.015625"},
+		// A base that is not a literal keeps its parentheses in the
+		// generated source, so nothing escapes.
+		{`{% set m = 2 %}{% set x = -8 %}{{ x ** m }}`, "64"},
+		{`{% set m = 2 %}{% set y = 8 %}{{ (-y) ** m }}`, "64"},
+		// The exponent absorbs a test, which is what made this
+		// reachable from a template nobody would write on purpose.
+		{`{{ '[%o]' % -8 ** 0 is eq(n) }}`, "[-1]"},
+	} {
+		got, err := renderVars(t, env, tc.src, nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.src, got, tc.want)
+		}
+	}
+
+	// And the fold that refuses stays refused: a negative base with a
+	// fractional exponent is a complex number in CPython, which gojja2
+	// does not have, and answering a real one instead would be a wrong
+	// number rather than a refusal. See docs/divergences.md.
+	if _, err := renderVars(t, env, `{{ (-8) ** 1.5 }}`, nil); err == nil {
+		t.Error("(-8) ** 1.5 rendered; want the documented ValueError")
+	}
+}
