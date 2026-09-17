@@ -104,16 +104,72 @@ type constFolder struct {
 // foldable reports whether a constant result can stand in for the expression
 // that produced it.
 //
-// Containers qualify, as they do in jinja2, because evaluating a folded
-// constant copies it -- so nothing is shared between renders. Undefined does
-// not: jinja2's optimizer refuses it, and the difference is observable in
-// which errors survive.
-func foldable(v value.Value) bool {
+// This is jinja2's has_safe_repr, and it looks *inside* a container: a list is
+// foldable only when every element is, a dict only when every key and value
+// are. The types it accepts are exact, so a tuple subclass -- what |groupby
+// yields -- is not one of them, and neither is anything else an object.
+//
+// The recursion is not decoration. A list holding group tuples reads as a
+// perfectly ordinary list from the outside, and folding it swallowed a
+// TypeError that jinja2 raises:
+//
+//	{% with w = blank if (-1)[-2:] else d|batch(2)|list|groupby('c')|list %}
+//
+// jinja2 cannot fold the else branch, so it evaluates the condition at run
+// time, where a slice of an int is a plain Python subscript and raises.
+// Folding it here answered the else branch and rendered nothing at all.
+//
+// Undefined is absent for the same reason it is there: jinja2's optimizer
+// refuses it, and which errors survive depends on it.
+func foldable(v value.Value) bool { return foldableDepth(v, 0) }
+
+// maxFoldableDepth bounds the walk. A constant is built from literals, so its
+// depth is the parser's nesting depth, but the bound belongs here rather than
+// resting on that.
+const maxFoldableDepth = 64
+
+func foldableDepth(v value.Value, depth int) bool {
+	if depth > maxFoldableDepth {
+		return false
+	}
 	switch v.Kind() {
 	case value.KindNone, value.KindBool, value.KindInt, value.KindFloat,
-		value.KindString, value.KindBytes,
-		value.KindList, value.KindTuple, value.KindDict:
+		value.KindString:
+		// A Markup is a str subclass Python names, and it is on the
+		// list. Bytes is not: nothing writes a bytes literal in a
+		// template, and jinja2 would refuse one.
 		return true
+	case value.KindList, value.KindTuple:
+		s, ok := v.Seq()
+		if !ok {
+			return false
+		}
+		for i := range s.Len() {
+			if !foldableDepth(s.At(i), depth+1) {
+				return false
+			}
+		}
+		return true
+	case value.KindDict:
+		d, ok := v.Dict()
+		if !ok {
+			return false
+		}
+		for _, k := range d.Keys() {
+			item, found, err := d.Get(k)
+			if err != nil || !found {
+				return false
+			}
+			if !foldableDepth(k, depth+1) || !foldableDepth(item, depth+1) {
+				return false
+			}
+		}
+		return true
+	case value.KindObject:
+		// range is the one object Python can write back as a literal,
+		// and jinja2 lists it.
+		_, isRange := v.Interface().(*rangeObject)
+		return isRange
 	}
 	return false
 }

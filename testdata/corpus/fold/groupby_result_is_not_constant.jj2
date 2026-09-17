@@ -1,0 +1,5 @@
+{
+  "blank": ""
+}
+---
+{% with w = blank if (-1)[-2:] else {1: 'a', 2: 'b'}|batch(2)|list|groupby('city')|list %}{% endwith %}

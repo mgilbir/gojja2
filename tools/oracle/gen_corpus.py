@@ -276,6 +276,15 @@ case("escape/replace_no_autoescape", "{{ (s|replace(o, n))|pprint }}|{{ s|replac
 case("escape/replace_constant", '{{ ("a&<b"|replace("&", "+"))|pprint }}|{{ "a&<b"|replace("&", "+") }}',
      __settings__={"autoescape": True})
 
+# What may be folded is decided by looking inside the value, not at its type:
+# jinja2's has_safe_repr recurses through a list and a dict and accepts only
+# exact types, so a list of |groupby pairs is not foldable even though a list
+# is. Folding one anyway answers a branch that jinja2 evaluates, and swallows
+# the error that evaluating it raises.
+case("fold/groupby_result_is_not_constant", "{% with w = blank if (-1)[-2:] else {1: 'a', 2: 'b'}|batch(2)|list|groupby('city')|list %}{% endwith %}",
+     blank="")
+case("fold/nested_constant_still_folds", "{% with w = 1 if (-1)[-2:] else [[1, {'k': (2, 'x')}]] %}{{ w }}{% endwith %}")
+
 # `~` inside a volatile {% autoescape %} concatenates plainly whatever the
 # setting says: jinja2 picks the join with `markup_join if
 # context.eval_ctx.volatile else str_join`, and an eval context is only ever
