@@ -417,11 +417,13 @@ func (g *generator) expr(depth int) string {
 	if depth <= 0 || g.c.exhausted() {
 		return g.atom()
 	}
-	switch g.c.intn(14) {
+	switch g.c.intn(15) {
 	case 0, 1, 2, 3:
 		return g.atom()
 	case 4:
 		return g.binary(depth)
+	case 14:
+		return g.percentFormat()
 	case 5:
 		return g.c.pick([]string{"not ", "-", "+"}) + g.expr(depth-1)
 	case 6:
@@ -452,6 +454,67 @@ func (g *generator) binary(depth int) string {
 		return g.expr(depth-1) + " * " + g.c.pick(smallInts)
 	}
 	return g.expr(depth-1) + " " + op + " " + g.expr(depth-1)
+}
+
+// percentFormat builds a printf-style conversion and an argument that suits it.
+//
+// `%` between two generated expressions almost never puts a real conversion on
+// the left, so the whole surface -- flags, width, precision, verb -- went
+// uncovered by the corpus and by the generator alike. It diverged from CPython
+// in thousands of combinations while the pass rate stayed at 99.8%, which is
+// what §4.4 of the audit is about: the rate measures agreement on the cases
+// that exist.
+//
+// The widths are deliberately small. A soak runs millions of these and must
+// not ask for a gigabyte of padding.
+func (g *generator) percentFormat() string {
+	spec := percentSpecs[g.c.intn(len(percentSpecs))]
+	return "'[" + spec.format + "]' % " + g.c.pick(spec.args)
+}
+
+// percentSpecs pairs a format string with the arguments Python accepts for it.
+var percentSpecs = []struct {
+	format string
+	args   []string
+}{
+	{"%s", []string{"'ab'", "1", "1.5", "none", "true", "lst", "d", "'é'"}},
+	{"%r", []string{"'ab'", "1", "1.5", "none", "lst"}},
+	{"%a", []string{"'é'", "'ab'", "1.5"}},
+	{"%05s", []string{"'x'", "1", "none"}},
+	{"%-8s|", []string{"'x'", "lst"}},
+	{"%.2s", []string{"'abcdef'", "'éüö'"}},
+	{"%8.3s|", []string{"'abcdef'"}},
+	{"%d", []string{"42", "-42", "0", "1.7", "-1.7", "true", "2**70"}},
+	{"%i", []string{"42", "-42", "1.7"}},
+	{"%05d", []string{"42", "-42", "0"}},
+	{"%+d", []string{"42", "-42"}},
+	{"% d", []string{"42", "-42"}},
+	{"%-6d|", []string{"42", "-42"}},
+	{"%.4d", []string{"42", "0", "-7"}},
+	{"%.0d", []string{"0", "5"}},
+	{"%x", []string{"255", "-255", "0", "true", "2**70"}},
+	{"%X", []string{"255", "-255"}},
+	{"%o", []string{"8", "-8", "0"}},
+	{"%#x", []string{"255", "0"}},
+	{"%#o", []string{"8", "0"}},
+	{"%#010X", []string{"255"}},
+	{"%f", []string{"1.5", "-1.5", "0.0", "42", "1e-7"}},
+	{"%.3f", []string{"1.5", "-1.5", "2.675"}},
+	{"%08.2f", []string{"1.5", "-1.5"}},
+	{"%+08.3f", []string{"1.5", "-1.5"}},
+	{"%e", []string{"1.5", "-1.5", "0.0"}},
+	{"%E", []string{"123456.789"}},
+	{"%g", []string{"1.5", "1e-7", "123456789.0"}},
+	{"%G", []string{"1e-7"}},
+	{"%c", []string{"65", "97", "'x'", "0"}},
+	{"%5c|", []string{"65"}},
+	{"%%", []string{"()"}},
+	{"%s-%s", []string{"('a', 'b')", "(1, lst)"}},
+	{"%(a)s", []string{"d", "dict(a=1)"}},
+	{"%(a)-6.2f|", []string{"dict(a=1.5)"}},
+	{"%*s|", []string{"(4, 'x')", "(-4, 'x')"}},
+	{"%.*f", []string{"(3, 1.5)", "(0, 1.5)"}},
+	{"%*.*f|", []string{"(8, 2, 1.5)"}},
 }
 
 func (g *generator) comparison(depth int) string {

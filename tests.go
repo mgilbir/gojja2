@@ -169,8 +169,8 @@ func allCased(want, other func(rune) bool) func(value.Value) bool {
 // printf formatting, not as a type mismatch. Going through the same operator
 // inherits that for free.
 func intParity(want int64) Test {
-	return func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
-		rem, err := value.Mod(v, value.Int(2))
+	return func(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
+		rem, err := value.Mod(v, value.Int(2), s)
 		if err != nil {
 			return false, err
 		}
@@ -178,12 +178,12 @@ func intParity(want int64) Test {
 	}
 }
 
-func testDivisibleBy(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
+func testDivisibleBy(s *State, v value.Value, args *value.CallArgs) (bool, error) {
 	divisor, ok := args.Arg(0)
 	if !ok {
 		return false, errs.New(errs.TypeError, "divisibleby requires an argument")
 	}
-	rem, err := value.Mod(v, divisor)
+	rem, err := value.Mod(v, divisor, s)
 	if err != nil {
 		return false, err
 	}

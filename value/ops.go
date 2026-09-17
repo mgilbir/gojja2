@@ -276,7 +276,13 @@ func Sub(a, b Value) (Value, error) {
 
 // Mul implements `*`: numeric multiplication, and repetition of a str, list or
 // tuple by an integer count. A non-positive count yields an empty result.
-func Mul(a, b Value) (Value, error) {
+//
+// A repetition is charged against budget before it is made, not after: the cap
+// repeat() applies is on one result, and a repetition just under it is still
+// gigabytes. Charging here rather than at the call site is what makes the two
+// callers -- the evaluator and the constant folder -- obey the same rule
+// without each having to remember it.
+func Mul(a, b Value, budget Budget) (Value, error) {
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}
@@ -299,6 +305,9 @@ func Mul(a, b Value) (Value, error) {
 	}
 	// Repetition is commutative in Python: "ab" * 2 and 2 * "ab" agree.
 	if seq, n, ok := repeatOperands(a, b); ok {
+		if err := chargeRepeat(seq, n, budget); err != nil {
+			return Undefined, err
+		}
 		return repeat(seq, n)
 	}
 	// Once one operand is a sequence, the failure comes from
@@ -365,25 +374,18 @@ func repeatOperands(a, b Value) (seq Value, n int64, ok bool) {
 	return a, count, true
 }
 
-// RepeatSize reports what `a * b` would allocate, when it is a repetition:
-// bytes for a string, elements for a sequence. ok is false for any other
-// multiplication.
-//
-// It lets the caller charge the allocation against a budget *before* it
-// happens. The limit repeat() enforces is on the size of a single result;
-// nothing here knows what a whole render has already spent, and a repetition
-// just under that limit is still gigabytes.
-func RepeatSize(a, b Value) (size int64, isBytes bool, ok bool) {
-	seq, n, ok := repeatOperands(a, b)
-	if !ok || n <= 0 {
-		return 0, false, ok
+// repeatSize reports what repeating seq n times would allocate: bytes for a
+// string, elements for a sequence.
+func repeatSize(seq Value, n int64) (size int64, isBytes bool) {
+	if n <= 0 {
+		return 0, seq.kind == KindString || seq.kind == KindBytes
 	}
 	switch seq.kind {
 	case KindString, KindBytes:
-		return saturatingMul(int64(len(seq.str)), n), true, true
+		return saturatingMul(int64(len(seq.str)), n), true
 	default:
 		s, _ := seq.Seq()
-		return saturatingMul(int64(s.Len()), n), false, true
+		return saturatingMul(int64(s.Len()), n), false
 	}
 }
 
@@ -400,13 +402,35 @@ func saturatingMul(a, n int64) int64 {
 	return a * n
 }
 
+// chargeRepeat reserves what a repetition is about to allocate: bytes for a
+// string against the output budget, elements for a sequence against the
+// iteration budget, so each lands on the bound that measures the same unit.
+//
+// The hard ceiling is left to repeat(), which refuses a result past it in
+// CPython's own words -- "repeated string is too long". Reporting the ceiling
+// from here instead would replace that message with one of ours for the only
+// case CPython also rejects.
+func chargeRepeat(seq Value, n int64, budget Budget) error {
+	size, isBytes := repeatSize(seq, n)
+	if size > MaxAllocBytes {
+		// repeat() refuses this outright and says so in CPython's
+		// words; reporting the ceiling from here would replace that
+		// message with one of ours.
+		return nil
+	}
+	if isBytes {
+		return chargeBytes(budget, size)
+	}
+	return chargeItems(budget, size)
+}
+
 func repeat(v Value, n int64) (Value, error) {
 	if n < 0 {
 		n = 0
 	}
 	switch v.kind {
 	case KindString, KindBytes:
-		if n > 0 && int64(len(v.str))*n > math.MaxInt32 {
+		if n > 0 && saturatingMul(int64(len(v.str)), n) > MaxAllocBytes {
 			return Undefined, errs.New(errs.OverflowError, "repeated string is too long")
 		}
 		out := Value{kind: v.kind, safe: v.safe}
@@ -420,7 +444,7 @@ func repeat(v Value, n int64) (Value, error) {
 		return out, nil
 	default:
 		s, _ := v.Seq()
-		if n > 0 && int64(s.Len())*n > math.MaxInt32 {
+		if n > 0 && saturatingMul(int64(s.Len()), n) > MaxAllocBytes {
 			return Undefined, errs.New(errs.OverflowError, "repeated sequence is too long")
 		}
 		items := make([]Value, 0, s.Len()*int(n))
@@ -556,11 +580,15 @@ func FloorDiv(a, b Value) (Value, error) {
 
 // Mod implements `%`: Python modulo on numbers, whose result takes the sign of
 // the divisor, and printf-style formatting on strings.
-func Mod(a, b Value) (Value, error) {
+//
+// budget bounds the string path, where a width the template chose sizes the
+// result: it may be nil, which means nobody is counting but the hard ceiling
+// still applies.
+func Mod(a, b Value, budget Budget) (Value, error) {
 	if a.kind == KindString {
 		// `"%s" % nope` formats the undefined as "", so the operand
 		// check must not run before the string path.
-		return FormatPercent(a, b)
+		return FormatPercent(a, b, budget)
 	}
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
