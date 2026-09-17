@@ -550,26 +550,16 @@ func sliceSeq(s *value.Seq, start, stop, step *int) ([]value.Value, error) {
 }
 
 func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
-	bound := func(e ast.Expr) (*int, error) {
+	bound := func(e ast.Expr) (value.Value, error) {
 		if e == nil {
-			return nil, nil
+			return value.None, nil
 		}
-		v, err := ex.eval(e)
-		if err != nil {
-			return nil, err
-		}
-		if v.IsNone() {
-			return nil, nil
-		}
-		i, ok := v.Int64()
-		if !ok {
-			return nil, errs.New(errs.TypeError,
-				"slice indices must be integers or None, not %s", v.TypeName())
-		}
-		idx := int(i)
-		return &idx, nil
+		return ex.eval(e)
 	}
-
+	// The operands are evaluated here and converted later: Python builds
+	// the slice object out of whatever they are -- slice(1.5, None) is a
+	// perfectly good object -- and only the subscript that uses it
+	// complains. So a base that cannot be sliced at all says so first.
 	start, err := bound(n.Start)
 	if err != nil {
 		return value.Undefined, err
@@ -582,9 +572,55 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
+	return sliceOf(base, start, stop, step)
+}
 
+// sliceIndex converts one slice operand, which only the branches that index
+// with it may do -- see evalSlice.
+func sliceIndex(v value.Value) (*int, error) {
+	if v.IsNone() {
+		return nil, nil
+	}
+	i, ok := v.Int64()
+	if !ok {
+		return nil, errs.New(errs.TypeError,
+			"slice indices must be integers or None or have an __index__ method")
+	}
+	idx := int(i)
+	return &idx, nil
+}
+
+// sliceBounds converts all three operands together.
+func sliceBounds(start, stop, step value.Value) (a, b, c *int, err error) {
+	if a, err = sliceIndex(start); err != nil {
+		return nil, nil, nil, err
+	}
+	if b, err = sliceIndex(stop); err != nil {
+		return nil, nil, nil, err
+	}
+	if c, err = sliceIndex(step); err != nil {
+		return nil, nil, nil, err
+	}
+	return a, b, c, nil
+}
+
+// sliceOf applies a resolved slice to a value.
+//
+// The evaluator and the constant folder both need this, and they used to have
+// one implementation each. They drifted: only the evaluator learned that a
+// tuple subclass slices as a tuple, so `{{ (x|groupby(k)|first)[::2] }}` was a
+// tuple at run time and nothing at all when the whole expression was constant
+// and therefore folded.
+func sliceOf(base value.Value, startV, stopV, stepV value.Value) (value.Value, error) {
+	// Converted per branch rather than up front, so that a base with no
+	// subscript at all answers before the operands are judged.
+	indices := func() (*int, *int, *int, error) { return sliceBounds(startV, stopV, stepV) }
 	switch base.Kind() {
 	case value.KindString:
+		start, stop, step, err := indices()
+		if err != nil {
+			return value.Undefined, err
+		}
 		out, err := value.StrSlice(base.AsString(), start, stop, step)
 		if err != nil {
 			return value.Undefined, err
@@ -596,6 +632,10 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 		}
 		return value.String(out), nil
 	case value.KindList, value.KindTuple:
+		start, stop, step, err := indices()
+		if err != nil {
+			return value.Undefined, err
+		}
 		s, _ := base.Seq()
 		items, err := sliceSeq(s, start, stop, step)
 		if err != nil {
@@ -612,6 +652,10 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 		return value.Undefined, base.UndefinedError()
 	case value.KindObject:
 		if sl, ok := base.Interface().(value.Slicer); ok {
+			start, stop, step, err := indices()
+			if err != nil {
+				return value.Undefined, err
+			}
 			return sl.Slice(start, stop, step)
 		}
 		// A tuple subclass slices through tuple's own __getitem__, so
@@ -619,6 +663,10 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 		// type that answers slices for itself is not going through
 		// tuple at all. Every other sequence slices to a list.
 		if tv, ok := base.Interface().(value.TupleView); ok {
+			start, stop, step, err := indices()
+			if err != nil {
+				return value.Undefined, err
+			}
 			s, _ := tv.AsTuple().Seq()
 			items, err := sliceSeq(s, start, stop, step)
 			if err != nil {
@@ -627,6 +675,10 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 			return value.NewTuple(items...), nil
 		}
 		if seq, ok := base.Interface().(value.Sequence); ok {
+			start, stop, step, err := indices()
+			if err != nil {
+				return value.Undefined, err
+			}
 			begin, stride, count, err := value.SliceSpan(seq.Len(), start, stop, step)
 			if err != nil {
 				return value.Undefined, err

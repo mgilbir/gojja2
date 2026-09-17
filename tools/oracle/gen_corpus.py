@@ -329,6 +329,18 @@ case("loops/loop_join_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|join
 case("loops/loop_map_applies_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|map('string')|list }}]{% endfor %}")
 case("loops/loop_in_dict", "{% for i in [1,2,3] %}[{{ dict(loop, extra=2) }}]{% endfor %}")
 
+# A slice asks the base before it judges its operands: Python builds
+# slice(1.5, None) happily and leaves the complaining to __getitem__, so a base
+# with no subscript says so first and a dict calls the slice unhashable. The
+# evaluator and the constant folder share one implementation of all this, which
+# is why a folded slice of a |groupby pair is the tuple the unfolded one is.
+case("errshape/slice_index_types", "{% set q = 'abcdef' %}{{ q[1.5:] }}")
+case("errshape/slice_of_a_dict", "{% set q = {'a': 1} %}{{ q['x':] }}")
+case("errshape/slice_of_an_int", "{% set q = 3 %}{{ q[1.5:] }}")
+case("errshape/slice_step_zero", "{{ 'abcdef'[::0] }}")
+case("errshape/slice_step_zero_runtime", "{% set q = 'abcdef' %}{{ q[::0] }}")
+case("filters/slice_of_a_group_tuple", "{{ ([2.675]|groupby('age')|list|max)[::2] }}|{{ (users|groupby('city')|first)[::2] }}", **USERS)
+
 # |urlencode builds each pair as it takes it -- `"&".join(f"..." for k, v in
 # items)` -- which shows when the input is an iterator something else is also
 # walking.
