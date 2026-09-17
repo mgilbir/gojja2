@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"errors"
+	"iter"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -260,10 +261,6 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		return err
 	}
 
-	if src.Len() == 0 {
-		return ex.execBody(n.Else)
-	}
-
 	loop := &loopObject{src: src, depth: depth}
 	if n.Recursive {
 		loop.recurse = func(items value.Value, depth int) (value.Value, error) {
@@ -288,10 +285,15 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 	// The cursor lives on the loop object rather than in this loop, because
 	// `loop` is the iterator: a body that consumes it -- `{{ loop|list }}`
 	// -- advances this walk, and the walk has to see that.
-	for loop.index = 0; loop.index < src.Len(); loop.index++ {
+	ran := false
+	for loop.index = 0; src.has(loop.index); loop.index++ {
+		if err := src.err(); err != nil {
+			return err
+		}
 		if err := ex.st.budget.step(); err != nil {
 			return err
 		}
+		ran = true
 		// Each iteration gets a fresh scope, so a `{% set %}` in the
 		// body does not carry into the next pass -- jinja2 rebinds
 		// every body-assigned symbol from the enclosing scope at the
@@ -301,7 +303,7 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		body.sc.set("loop", loopValue)
 		declareFrameLocals(body.sc, ex.st, n.Body, body.sc.parent)
 
-		if err := body.assign(n.Target, src.At(loop.index)); err != nil {
+		if err := body.assign(n.Target, src.at(loop.index)); err != nil {
 			return err
 		}
 		err := body.execBody(n.Body)
@@ -313,6 +315,16 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		case err != nil:
 			return err
 		}
+	}
+	// A filter that failed part way stops the loop rather than ending it.
+	if err := src.err(); err != nil {
+		return err
+	}
+	// The else branch runs when nothing did, which is what jinja2 tracks
+	// rather than asking the source how long it is -- asking would run a
+	// filtered loop's test over every item before the first pass.
+	if !ran {
+		return ex.execBody(n.Else)
 	}
 	return nil
 }
@@ -328,39 +340,49 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 	if err != nil {
 		return nil, err
 	}
-	var kept []value.Value
-	for item := range seq {
-		if err := ex.st.budget.step(); err != nil {
-			return nil, err
-		}
-		filterScope := ex.child(newScope(ex.sc))
-		if err := filterScope.assign(n.Target, item); err != nil {
-			return nil, err
-		}
-		ok, err := filterScope.truth(n.Test)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			// jinja2 compiles a filtered loop into a function that
-			// unpacks the target and yields it straight back:
-			// `for a, b in fiter: if cond: yield (a, b)`. So with a
-			// tuple target the loop walks tuples, whatever the
-			// source held -- which is what `loop.previtem` reports
-			// and what an operator on it names. Without a filter
-			// there is no such function and the items are the
-			// source's own.
-			if _, unpacks := n.Target.(*ast.Tuple); unpacks {
-				repacked, err := filterScope.eval(n.Target)
-				if err != nil {
-					return nil, err
-				}
-				item = repacked
+	// Pulled one item at a time, as jinja2's filter generator is: the test
+	// runs between the body's passes and therefore sees what the body did.
+	nextItem, stop := iter.Pull(seq)
+	_ = stop
+	next := func() (value.Value, bool, error) {
+		for {
+			item, ok := nextItem()
+			if !ok {
+				return value.Undefined, false, nil
 			}
-			kept = append(kept, item)
+			if err := ex.st.budget.step(); err != nil {
+				return value.Undefined, false, err
+			}
+			filterScope := ex.child(newScope(ex.sc))
+			if err := filterScope.assign(n.Target, item); err != nil {
+				return value.Undefined, false, err
+			}
+			ok, err := filterScope.truth(n.Test)
+			if err != nil {
+				return value.Undefined, false, err
+			}
+			if ok {
+				// jinja2 compiles a filtered loop into a
+				// function that unpacks the target and yields
+				// it straight back: `for a, b in fiter: if
+				// cond: yield (a, b)`. So with a tuple target
+				// the loop walks tuples, whatever the source
+				// held -- which is what `loop.previtem`
+				// reports and what an operator on it names.
+				// Without a filter there is no such function
+				// and the items are the source's own.
+				if _, unpacks := n.Target.(*ast.Tuple); unpacks {
+					repacked, err := filterScope.eval(n.Target)
+					if err != nil {
+						return value.Undefined, false, err
+					}
+					item = repacked
+				}
+				return item, true, nil
+			}
 		}
 	}
-	return sliceSource(kept), nil
+	return &filteredSource{next: next}, nil
 }
 
 func (ex *exec) execAssign(n *ast.Assign) error {

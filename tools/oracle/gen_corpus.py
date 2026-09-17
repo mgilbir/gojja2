@@ -329,6 +329,14 @@ case("loops/loop_join_renders_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|join
 case("loops/loop_map_applies_as_it_walks", "{% for i in [1,2,3] %}[{{ loop|map('string')|list }}]{% endfor %}")
 case("loops/loop_in_dict", "{% for i in [1,2,3] %}[{{ dict(loop, extra=2) }}]{% endfor %}")
 
+# A loop's `if` runs as the loop walks, not before it starts: jinja2 compiles
+# it into a generator the LoopContext consumes an item at a time, so a test
+# that reads what the body writes sees the writes.
+case("loops/filter_runs_as_it_walks", "{% set ns = namespace(n=0) %}{% for i in [1,2,3] if ns.n == 0 %}{% set ns.n = 1 %}{{ i }}{% endfor %}")
+case("loops/filter_state_across_recursion", "{% for a in [1,2] %}{% for i in [7,8] if loop.changed(i) recursive %}{{ loop([i]) }}x{% endfor %}{% endfor %}")
+case("loops/filtered_length_still_counts", "{% for i in [1,2,3] if i > 1 %}{{ loop.length }}{{ loop.revindex }}{{ loop.last }}{% endfor %}")
+case("loops/filtered_else", "{% for i in [1,2,3] if false %}x{% else %}none{% endfor %}")
+
 # A slice asks the base before it judges its operands: Python builds
 # slice(1.5, None) happily and leaves the complaining to __getitem__, so a base
 # with no subscript says so first and a dict calls the slice unhashable. The

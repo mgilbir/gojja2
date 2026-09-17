@@ -20,23 +20,87 @@ import (
 // Keeping it indexable rather than materialising every iterable means
 // `{% for i in range(10000000000) %}` costs nothing until the body runs, and
 // that `loop.length` is answerable without consuming anything.
+//
+// has() and length() are separate questions because a filtered loop answers
+// them at different moments: whether there is an item at i can be settled by
+// pulling one more, while the total cannot -- and the filter is only run as
+// far as the template makes it run, because jinja2's is a generator the loop
+// consumes an item at a time.
 type loopSource interface {
-	Len() int
-	At(i int) value.Value
+	// has reports whether there is an item at i, pulling one more when it
+	// has to.
+	has(i int) bool
+	at(i int) value.Value
+	// length is the total, which for a filtered source means running the
+	// filter over the rest of the input.
+	length() int
+	// err reports a failure met while pulling. The loop checks it before
+	// each pass, so a filter that raises stops the loop where it raised.
+	err() error
 }
 
 type sliceSource []value.Value
 
-func (s sliceSource) Len() int             { return len(s) }
-func (s sliceSource) At(i int) value.Value { return s[i] }
+func (s sliceSource) has(i int) bool       { return i >= 0 && i < len(s) }
+func (s sliceSource) at(i int) value.Value { return s[i] }
+func (s sliceSource) length() int          { return len(s) }
+func (s sliceSource) err() error           { return nil }
+
+// filteredSource applies a loop's `if` as the loop walks it.
+//
+// Filtering up front is the same answer whenever the test is pure, and a
+// different one when it is not: a test that reads what the body writes --
+// `{% for i in xs if ns.found == 0 %}` over a body that sets ns.found -- sees
+// the writes in jinja2 and saw none here, because every test had already run.
+type filteredSource struct {
+	next  func() (value.Value, bool, error)
+	items []value.Value
+	done  bool
+	fail  error
+}
+
+func (s *filteredSource) pull() bool {
+	if s.done || s.fail != nil {
+		return false
+	}
+	v, ok, err := s.next()
+	switch {
+	case err != nil:
+		s.fail, s.done = err, true
+		return false
+	case !ok:
+		s.done = true
+		return false
+	}
+	s.items = append(s.items, v)
+	return true
+}
+
+func (s *filteredSource) has(i int) bool {
+	for len(s.items) <= i && s.pull() {
+	}
+	return i >= 0 && i < len(s.items)
+}
+
+func (s *filteredSource) at(i int) value.Value { return s.items[i] }
+
+func (s *filteredSource) length() int {
+	for s.pull() {
+	}
+	return len(s.items)
+}
+
+func (s *filteredSource) err() error { return s.fail }
 
 // objectSource adapts a value.Sequence, which knows its length and can be
 // indexed without being copied.
 type objectSource struct{ seq value.Sequence }
 
-func (s objectSource) Len() int { return s.seq.Len() }
+func (s objectSource) length() int    { return s.seq.Len() }
+func (s objectSource) has(i int) bool { return i >= 0 && i < s.seq.Len() }
+func (s objectSource) err() error     { return nil }
 
-func (s objectSource) At(i int) value.Value {
+func (s objectSource) at(i int) value.Value {
 	v, ok := s.seq.GetIndex(i)
 	if !ok {
 		return value.Undefined
@@ -92,22 +156,26 @@ type loopObject struct {
 }
 
 func (l *loopObject) GetAttr(name string) (value.Value, bool) {
-	n := l.src.Len()
+	// The total is asked for only where it is needed: `loop.index` does
+	// not run a filtered loop's test over the rest of the input, and
+	// `loop.length` does -- which is the difference between jinja2 asking
+	// its LoopContext for an index and asking it for a length.
+	n := func() int { return l.src.length() }
 	switch name {
 	case "index":
 		return value.Int(int64(l.index + 1)), true
 	case "index0":
 		return value.Int(int64(l.index)), true
 	case "revindex":
-		return value.Int(int64(n - l.index)), true
+		return value.Int(int64(n() - l.index)), true
 	case "revindex0":
-		return value.Int(int64(n - l.index - 1)), true
+		return value.Int(int64(n() - l.index - 1)), true
 	case "first":
 		return value.Bool(l.index == 0), true
 	case "last":
-		return value.Bool(l.index == n-1), true
+		return value.Bool(l.index == n()-1), true
 	case "length":
-		return value.Int(int64(n)), true
+		return value.Int(int64(n())), true
 	case "depth":
 		return value.Int(int64(l.depth)), true
 	case "depth0":
@@ -116,12 +184,12 @@ func (l *loopObject) GetAttr(name string) (value.Value, bool) {
 		if l.index == 0 {
 			return value.UndefinedHint("there is no previous item"), true
 		}
-		return l.src.At(l.index - 1), true
+		return l.src.at(l.index - 1), true
 	case "nextitem":
-		if l.index+1 >= n {
+		if !l.src.has(l.index + 1) {
 			return value.UndefinedHint("there is no next item"), true
 		}
-		return l.src.At(l.index + 1), true
+		return l.src.at(l.index + 1), true
 	case "cycle":
 		return value.FromObject(&builtinFunc{name: "cycle", fn: stateless(l.cycle)}), true
 	case "changed":
@@ -165,7 +233,7 @@ func (l *loopObject) Call(args *value.CallArgs) (value.Value, error) {
 //
 // It is a length without indexing: jinja2's LoopContext defines __len__ and no
 // __getitem__, so `{{ loop|length }}` answers and `loop is sequence` does not.
-func (l *loopObject) Len() int { return l.src.Len() }
+func (l *loopObject) Len() int { return l.src.length() }
 
 // Iterate consumes the loop the body is running inside.
 //
@@ -182,9 +250,9 @@ func (l *loopObject) Len() int { return l.src.Len() }
 // and was {'extra': 2} here.
 func (l *loopObject) Iterate() iter.Seq[value.Value] {
 	return func(yield func(value.Value) bool) {
-		for l.index+1 < l.src.Len() {
+		for l.src.has(l.index + 1) {
 			l.index++
-			if !yield(value.NewTuple(l.src.At(l.index), value.FromObject(l))) {
+			if !yield(value.NewTuple(l.src.at(l.index), value.FromObject(l))) {
 				return
 			}
 		}
@@ -196,7 +264,7 @@ func (l *loopObject) TypeName() string { return "LoopContext" }
 func (l *loopObject) QualifiedName() string { return "jinja2.runtime.LoopContext" }
 
 func (l *loopObject) Repr() string {
-	return fmt.Sprintf("<LoopContext %d/%d>", l.index+1, l.src.Len())
+	return fmt.Sprintf("<LoopContext %d/%d>", l.index+1, l.src.length())
 }
 
 // --- callables ---------------------------------------------------------------
