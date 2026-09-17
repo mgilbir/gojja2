@@ -1,0 +1,4 @@
+{}
+---
+{{ '	
+'.encode() }}|{{ "it's".encode() }}|{{ 'say "hi"'.encode() }}|{{ ''.encode() }}

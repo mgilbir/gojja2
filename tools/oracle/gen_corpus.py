@@ -533,6 +533,15 @@ case("filters/striptags_partial", "{{ '<'|striptags }}|{{ '<b'|striptags }}|{{ '
 case("filters/format", "{{ '%s-%d'|format('a', 5) }}|{{ '%(x)s'|format(x=1) }}")
 case("filters/filesizeformat", "{{ 1|filesizeformat }}|{{ 1000|filesizeformat }}|{{ 1000000|filesizeformat }}|{{ 1024|filesizeformat(true) }}")
 case("filters/urlencode", "{{ 'a b/c?d'|urlencode }}|{{ {'a':'1 2'}|urlencode }}")
+# bytes.__repr__ escapes one byte at a time and has no \u or \U form, so a
+# character outside ASCII is one escape per UTF-8 byte -- not the single escape
+# the str repr writes for the rune those bytes decode to.
+case("repr/bytes_escape_per_byte",
+     "{{ 'é'.encode() }}|{{ '€'.encode() }}|{{ 'héllo'.encode() }}|{{ 'ab~'.encode() }}")
+case("repr/bytes_inside_a_container",
+     "{{ ['é'.encode()] }}|{{ {'k': '€'.encode()} }}|{{ 'é'.encode()|pprint }}|{{ '%r' % 'é'.encode() }}")
+case("repr/bytes_short_escapes_and_quotes",
+     "{{ '\t\n'.encode() }}|{{ \"it's\".encode() }}|{{ 'say \"hi\"'.encode() }}|{{ ''.encode() }}")
 case("filters/urlize", "{{ 'see http://example.com/a?b=1, and www.x.org. mail me@example.com'|urlize }}")
 case("filters/urlize_args", "{{ 'go to http://example.com now'|urlize(10, target='_blank') }}")
 case("filters/tojson", "{{ {'b':1,'a':[1,2],'c':'<x>'}|tojson }}|{{ [1,2]|tojson(indent=2) }}")
