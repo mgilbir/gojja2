@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "autoescape": true
+  }
+}
+---
+{{ ("a&<b"|replace("&", "+"))|pprint }}|{{ "a&<b"|replace("&", "+") }}

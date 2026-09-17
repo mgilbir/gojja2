@@ -224,6 +224,26 @@ case("escape/off", "{{ v }}|{{ v|escape }}|{{ v|safe }}", v="<b>&'\"")
 case("escape/on", "{{ v }}|{{ v|escape }}|{{ v|safe }}|{{ v|safe|escape }}|{{ v|safe|forceescape }}",
      __settings__={"autoescape": True}, v="<b>&'\"")
 case("escape/concat", "{{ a ~ b }}|{{ [a, b]|join('-') }}", __settings__={"autoescape": True}, a="<x>", b="<y>")
+# do_replace's autoescaping rule is finer than "escape everything": `old` is
+# matched verbatim, `new` is escaped only when the subject it replaces into is
+# Markup, and a plain subject with plain arguments stays a plain string. The
+# subject is escaped only when a Markup `old` -- or a Markup `new` against a
+# plain subject -- means the result has to be Markup.
+case("escape/replace_plain", "{{ (s|replace(o, n))|pprint }}|{{ (s|replace(o, n)) is escaped }}|{{ s|replace(o, n) }}",
+     __settings__={"autoescape": True}, s="a&<b", o="&", n="+")
+case("escape/replace_markup_subject", "{{ (s|safe|replace(o, n))|pprint }}|{{ s|safe|replace(o, n) }}",
+     __settings__={"autoescape": True}, s="a&<b", o="&", n="<i>")
+case("escape/replace_markup_old", "{{ (s|replace(o|safe, n))|pprint }}|{{ s|replace(o|safe, n) }}",
+     __settings__={"autoescape": True}, s="a&<b", o="&", n="<i>")
+case("escape/replace_markup_new", "{{ (s|replace(o, n|safe))|pprint }}|{{ s|replace(o, n|safe) }}",
+     __settings__={"autoescape": True}, s="a&<b", o="a", n="<i>")
+case("escape/replace_markup_both", "{{ (s|safe|replace(o, n|safe))|pprint }}|{{ s|safe|replace(o, n|safe) }}",
+     __settings__={"autoescape": True}, s="a&<b", o="a", n="<i>")
+case("escape/replace_no_autoescape", "{{ (s|replace(o, n))|pprint }}|{{ s|replace(o, n) }}",
+     s="a&<b", o="&", n="<i>")
+case("escape/replace_constant", '{{ ("a&<b"|replace("&", "+"))|pprint }}|{{ "a&<b"|replace("&", "+") }}',
+     __settings__={"autoescape": True})
+
 # do_join only coerces to Markup when there is markup to preserve. With none,
 # an autoescaping join is a plain string of str()s and the escaping happens at
 # output -- which is invisible in `{{ xs|join(",") }}` and decides everything
