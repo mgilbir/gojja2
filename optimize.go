@@ -4,6 +4,9 @@
 package gojja2
 
 import (
+	"errors"
+
+	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/internal/ast"
 	"github.com/mgilbir/gojja2/value"
 )
@@ -892,62 +895,57 @@ func constIndex(base, key value.Value) (value.Value, bool) {
 }
 
 func (c *constEvaluator) constGetSlice(base value.Value, slice *ast.Slice) (value.Value, bool) {
-	bound := func(e ast.Expr) (*int, bool, bool) {
+	bound := func(e ast.Expr) (value.Value, bool) {
 		if e == nil {
-			return nil, true, true
+			return value.None, true
 		}
-		v, ok := c.constEval(e)
-		if !ok {
-			return nil, false, false
-		}
-		if v.IsNone() {
-			return nil, true, true
-		}
-		i, fits := v.Int64()
-		if !fits {
-			return nil, false, true
-		}
-		idx := int(i)
-		return &idx, true, true
+		return c.constEval(e)
 	}
-	start, okStart, constStart := bound(slice.Start)
-	stop, okStop, constStop := bound(slice.Stop)
-	step, okStep, constStep := bound(slice.Step)
+	start, constStart := bound(slice.Start)
+	stop, constStop := bound(slice.Stop)
+	step, constStep := bound(slice.Step)
 	if !constStart || !constStop || !constStep {
 		return value.Undefined, false
 	}
-	if !okStart || !okStop || !okStep {
-		return value.UndefinedHint("invalid slice"), true
-	}
 
-	switch base.Kind() {
-	case value.KindString:
-		out, err := value.StrSlice(base.AsString(), start, stop, step)
-		if err != nil {
-			return value.UndefinedHint("invalid slice"), true
-		}
-		if base.IsSafe() {
-			return value.Safe(out), true
-		}
-		return value.String(out), true
-	case value.KindList, value.KindTuple:
-		s, _ := base.Seq()
-		begin, stride, count, err := value.SliceSpan(s.Len(), start, stop, step)
-		if err != nil {
-			return value.UndefinedHint("invalid slice"), true
-		}
-		items := make([]value.Value, count)
-		for i := range count {
-			items[i] = s.At(begin + i*stride)
-		}
-		if base.Kind() == value.KindTuple {
-			return value.NewTuple(items...), true
-		}
-		return value.NewList(items...), true
+	// The same slicing the evaluator does, so that folding an expression
+	// and running it cannot answer differently -- they had a copy each and
+	// the copies drifted. A value the slice does not apply to fails the
+	// subscript, which Environment.getitem turns into undefined.
+	if base.Kind() == value.KindUndefined || base.Kind() == value.KindDict ||
+		!sliceable(base) {
+		return value.UndefinedHint("%s is not subscriptable", value.ObjectTypeRepr(base)), true
 	}
-	// Everything else -- an int, a float, a dict -- fails the subscript,
-	// and Environment.getitem turns that into undefined.
-	return value.UndefinedHint("%s is not subscriptable", value.ObjectTypeRepr(base)), true
+	out, err := sliceOf(base, start, stop, step)
+	switch {
+	case err == nil:
+		return out, true
+	case errors.Is(err, errs.TypeError), errors.Is(err, errs.LookupError):
+		// What Environment.getitem swallows, it swallows here too.
+		return value.UndefinedHint("invalid slice"), true
+	default:
+		// Anything else -- a step of zero is a ValueError -- comes back
+		// out of getitem and reaches the template, so the fold is
+		// refused and the expression is left for the render. jinja2
+		// does the same by catching every exception around its own
+		// output folding and falling back to run time.
+		return value.Undefined, false
+	}
+}
+
+// sliceable reports whether sliceOf has a rule for this value, which is what
+// constGetSlice needs to tell "no rule" from "the rule said no".
+func sliceable(v value.Value) bool {
+	switch v.Kind() {
+	case value.KindString, value.KindBytes, value.KindList, value.KindTuple:
+		return true
+	case value.KindObject:
+		switch v.Interface().(type) {
+		case value.Slicer, value.TupleView, value.Sequence:
+			return true
+		}
+	}
+	return false
 }
 
 // walkOutputs visits every print tag in a template body, reporting the
