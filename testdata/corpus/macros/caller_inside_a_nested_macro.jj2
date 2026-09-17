@@ -1,0 +1,3 @@
+{}
+---
+{% macro mm(x) %}{% macro nn() %}{{ caller() }}{% endmacro %}{% call nn() %}I{% endcall %}{% endmacro %}{% call mm(1) %}B{% endcall %}

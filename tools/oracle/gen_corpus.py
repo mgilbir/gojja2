@@ -317,6 +317,12 @@ case("escape/volatile_folds_constant_escaping", "{% autoescape blank %}{{ {'a': 
      __settings__={"autoescape": True}, blank="")
 case("escape/constant_block_folds_with_its_own", "{% autoescape true %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}")
 
+# A nested macro is not a boundary for `caller`: jinja2's search does not stop
+# at closure frames, so mentioning it inside one makes the enclosing macro
+# accept a caller as well.
+case("macros/caller_inside_a_nested_macro", "{% macro mm(x) %}{% macro nn() %}{{ caller() }}{% endmacro %}{% call nn() %}I{% endcall %}{% endmacro %}{% call mm(1) %}B{% endcall %}")
+case("macros/caller_nested_unused", "{% macro mm(x) %}{% macro nn() %}{{ caller() }}{% endmacro %}{% endmacro %}{% call mm(1) %}B{% endcall %}")
+
 # A {% block %} body is compiled as a standalone function resolving against
 # the context, so the context is not an enclosing frame for it: a name the
 # block assigns late is undefined inside it beforehand, even when it was passed

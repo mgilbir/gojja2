@@ -212,6 +212,17 @@ type generator struct {
 	c     *chooser
 	b     strings.Builder
 	depth int
+	// inLoop counts the {% for %} bodies open around the current point, so
+	// `loop` is only written where it resolves. Outside one it is an
+	// undefined name, which is a far less interesting template than one
+	// that asks a real loop for its index.
+	inLoop int
+	// inBlock marks a {% block %} body, where super() and self.<name>()
+	// resolve.
+	inBlock bool
+	// recursive marks a {% for ... recursive %} body, where loop() calls
+	// the loop again.
+	recursive bool
 }
 
 // GeneratedCase is a template together with the environment it is meant to
@@ -259,7 +270,9 @@ func (g *generator) template() {
 				continue
 			}
 			g.b.WriteString("{% block " + block + " %}")
+			g.inBlock = true
 			g.body(1)
+			g.inBlock = false
 			g.b.WriteString("{% endblock %}")
 		}
 		return
@@ -398,8 +411,24 @@ func (g *generator) forStmt(depth int) {
 	if g.c.chance(4) {
 		g.b.WriteString(" if " + g.expr(1))
 	}
+	// A recursive loop is its own shape: the body may call loop() to
+	// descend, and `loop.depth` only moves in one.
+	recursive := g.c.chance(6)
+	if recursive {
+		g.b.WriteString(" recursive")
+	}
 	g.close("%}")
+
+	g.inLoop++
+	wasRecursive := g.recursive
+	g.recursive = g.recursive || recursive
+	if recursive && g.c.chance(2) {
+		g.b.WriteString("{{ loop(" + g.c.pick([]string{"[]", "lst", "i", "[i]"}) + ") }}")
+	}
 	g.body(depth - 1)
+	g.recursive = wasRecursive
+	g.inLoop--
+
 	if g.c.chance(4) {
 		g.b.WriteString("{% else %}empty")
 	}
@@ -438,6 +467,14 @@ func (g *generator) macroStmt(depth int) {
 
 	if g.c.chance(3) {
 		g.b.WriteString("{% call mm(1) %}called{% endcall %}")
+		return
+	}
+	// A macro that renders its caller, which is the other half of {% call %}
+	// and reaches jinja2's caller machinery rather than a plain macro call.
+	if g.c.chance(4) {
+		g.b.WriteString("{% macro wrap() %}<{{ caller() }}>{% endmacro %}" +
+			"{% call wrap() %}" + g.c.pick([]string{"body", "{{ x|default('d') }}", ""}) +
+			"{% endcall %}")
 		return
 	}
 	g.b.WriteString("{{ mm(" + g.c.pick([]string{"1", "'a'", "lst", "1, 2"}) + ") }}")
@@ -660,7 +697,7 @@ func (g *generator) subscript(depth int) string {
 }
 
 func (g *generator) atom() string {
-	switch g.c.intn(10) {
+	switch g.c.intn(11) {
 	case 0:
 		return g.c.pick(intLiterals)
 	case 1:
@@ -685,9 +722,28 @@ func (g *generator) atom() string {
 			"{'a': 1}", "{}", "{1: 'a', 2: 'b'}", "{'a': 1, 'b': [1,2]}",
 			"{1: 'a', 1.0: 'b'}", "{(1,2): 'x'}",
 		})
+	case 9:
+		if g.inLoop > 0 {
+			return g.c.pick(loopAttrs)
+		}
+		if g.inBlock {
+			return g.c.pick([]string{"self.a()", "self.b()", "super()"})
+		}
+		return g.c.pick(globals)
 	default:
 		return g.c.pick(globals)
 	}
+}
+
+// loopAttrs are what `loop` offers inside a {% for %}. cycle and changed are
+// calls rather than attributes, and previtem and nextitem are undefined at the
+// ends -- which is the part worth generating.
+var loopAttrs = []string{
+	"loop.index", "loop.index0", "loop.revindex", "loop.revindex0",
+	"loop.first", "loop.last", "loop.length", "loop.depth", "loop.depth0",
+	"loop.previtem", "loop.nextitem", "loop.cycle('a', 'b')",
+	"loop.cycle(1, 2, 3)", "loop.changed(i)", "loop.changed(1)",
+	"loop", "loop|string",
 }
 
 func (g *generator) list(n int) string {

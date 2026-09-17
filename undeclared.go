@@ -81,7 +81,22 @@ func (v *undeclaredVisitor) stmt(stmt ast.Stmt) {
 		v.exprs(n.Targets)
 		v.stmts(n.Body)
 	case *ast.Macro:
-		// A nested macro has its own varargs and kwargs.
+		// A nested macro is *not* a boundary here. jinja2's
+		// UndeclaredNameVisitor stops at a block and at nothing else --
+		// "it will not stop at closure frames", as its docstring puts
+		// it -- so `caller` mentioned inside a nested macro makes the
+		// enclosing one accept a caller too, and {% call %} on the
+		// outer one works. Treating the nested macro as its own scope
+		// left the outer one refusing the caller it was handed.
+		//
+		// Its parameters are visited first and, being stores, take
+		// their names out of the search: a nested macro that declares
+		// `caller` itself settles the name for everything after it.
+		for _, arg := range n.Args {
+			v.name(arg)
+		}
+		v.exprs(n.Defaults)
+		v.stmts(n.Body)
 	case *ast.CallBlock:
 		v.expr(n.Call)
 		v.stmts(n.Body)
