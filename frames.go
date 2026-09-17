@@ -239,11 +239,28 @@ func (v *frameVisitor) args(a ast.Args) {
 // instead -- jinja2 aliases to the outer binding in exactly that case. The
 // render arguments are not a frame, which is why the root declares
 // unconditionally and shadows them.
-func declareFrameLocals(sc *scope, st *State, body []ast.Stmt) {
-	isRoot := sc == st.ctx
+// declareFrameLocals gives a frame the names it owns before it runs.
+//
+// A name an *enclosing frame* owns is not cleared: jinja2 aliases the
+// enclosing frame's binding into the new one, so a macro body sees what the
+// template had assigned by the time it was called. A name nothing above owns
+// starts undefined, which is what makes a loop inside the frame see nothing
+// until the assignment runs.
+//
+// enclosing is the frame this one nests inside. It is nil for the two that
+// nest inside none: the template's own frame, and a {% block %} body -- which
+// jinja2 compiles as a standalone function resolving against the context. The
+// context is not an enclosing frame, so a value passed in does *not* survive
+// the block owning the name, and a block that assigns `x` late reads nothing
+// for it early even when `x` was an argument.
+func declareFrameLocals(sc *scope, st *State, body []ast.Stmt, enclosing *scope) {
 	for _, name := range frameLocals(body) {
-		if !isRoot && sc.parent != nil {
-			if _, found := sc.parent.lookupUntil(name, st.ctx); found {
+		if enclosing != nil {
+			if v, found := enclosing.lookupUntil(name, st.ctx); found {
+				// Aliased at entry, as jinja2 does it, so a
+				// later change to the enclosing binding does
+				// not reach in here.
+				sc.set(name, v)
 				continue
 			}
 		}

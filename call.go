@@ -214,7 +214,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 		sc.set(param.Name, ex.st.Undefined(value.NewUndefined(param.Name)))
 	}
 
-	declareFrameLocals(sc, ex.st, m.node.Body)
+	declareFrameLocals(sc, ex.st, m.node.Body, sc.parent)
 
 	// The two halves of a macro's escaping come from different places, and
 	// jinja2 says why in Macro.__call__: "whether a macro is safe depends

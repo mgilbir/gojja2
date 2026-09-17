@@ -1,0 +1,5 @@
+{
+  "m": 10
+}
+---
+{% macro qq() %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 2 %}{% endmacro %}{{ qq() }}

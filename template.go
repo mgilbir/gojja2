@@ -319,7 +319,7 @@ func (t *Template) newState(vars map[string]value.Value, depth int, b *budget) *
 	}
 	st.escapeDefault = t.env.escapes(t.name, t.fromString)
 	st.autoescape = st.escapeDefault
-	declareFrameLocals(ctx, st, t.tree.Body)
+	declareFrameLocals(ctx, st, t.tree.Body, nil)
 	return st
 }
 

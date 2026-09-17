@@ -297,7 +297,7 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		body := ex.child(newScope(ex.sc))
 		body.loop = loopValue
 		body.sc.set("loop", loopValue)
-		declareFrameLocals(body.sc, ex.st, n.Body)
+		declareFrameLocals(body.sc, ex.st, n.Body, body.sc.parent)
 
 		if err := body.assign(n.Target, src.At(i)); err != nil {
 			return err
@@ -356,7 +356,7 @@ func (ex *exec) execAssign(n *ast.Assign) error {
 
 func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 	inner := newScope(ex.sc)
-	declareFrameLocals(inner, ex.st, n.Body)
+	declareFrameLocals(inner, ex.st, n.Body, inner.parent)
 	text, err := ex.capture(inner, func(sub *exec) error {
 		return sub.execBody(n.Body)
 	})
@@ -379,7 +379,7 @@ func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 func (ex *exec) execWith(n *ast.With) error {
 	inner := newScope(ex.sc)
 	sub := ex.child(inner)
-	declareFrameLocals(inner, ex.st, n.Body)
+	declareFrameLocals(inner, ex.st, n.Body, inner.parent)
 	for i, target := range n.Targets {
 		// Values are evaluated in the enclosing scope, so
 		// `{% with a = a %}` refers to the outer a.
@@ -463,7 +463,7 @@ func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaul
 
 func (ex *exec) execFilterBlock(n *ast.FilterBlock) error {
 	inner := newScope(ex.sc)
-	declareFrameLocals(inner, ex.st, n.Body)
+	declareFrameLocals(inner, ex.st, n.Body, inner.parent)
 	text, err := ex.capture(inner, func(sub *exec) error {
 		return sub.execBody(n.Body)
 	})
