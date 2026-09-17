@@ -192,9 +192,18 @@ type State struct {
 	// root frame has shadowed but not yet assigned.
 	contextVars *scope
 
-	blocks     map[string][]blockEntry
+	blocks map[string][]blockEntry
+	// autoescape is the escaping in force *now*: {% autoescape %} moves it
+	// for the dynamic extent of its body, so a filter called from inside
+	// one -- including through a macro or a block defined elsewhere --
+	// reads the block's setting, which is what jinja2's eval context does.
 	autoescape bool
-	parent     *Template
+	// escapeDefault is the template's own setting, which never moves. A
+	// {% block %} body is compiled against a fresh eval context built from
+	// the environment, so the text it prints escapes by this and not by an
+	// {% autoescape %} it happens to sit inside.
+	escapeDefault bool
+	parent        *Template
 
 	// exports holds the names a top-level binding made visible, which is
 	// what `{% import %}` exposes and what `{% from %}` looks in.
@@ -305,10 +314,11 @@ func (t *Template) newState(vars map[string]value.Value, depth int, b *budget) *
 		ctx:         ctx,
 		contextVars: arguments,
 		blocks:      blocks,
-		autoescape:  t.env.escapes(t.name, t.fromString),
 		depth:       depth,
 		budget:      b,
 	}
+	st.escapeDefault = t.env.escapes(t.name, t.fromString)
+	st.autoescape = st.escapeDefault
 	declareFrameLocals(ctx, st, t.tree.Body)
 	return st
 }

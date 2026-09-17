@@ -430,11 +430,16 @@ func (b *blockReference) render() (value.Value, error) {
 	declareFrameLocals(sc, b.st, entry.node.Body)
 	var out strings.Builder
 	ex := &exec{
-		st:         b.st,
-		sc:         sc,
-		out:        &out,
-		stream:     &out,
-		autoescape: b.st.autoescape,
+		st:     b.st,
+		sc:     sc,
+		out:    &out,
+		stream: &out,
+		// The body escapes by the template's own setting, not by an
+		// {% autoescape %} the reference sits inside: jinja2 compiles
+		// each block against a fresh eval context. Whether the *result*
+		// is trusted is decided at the call instead, below, exactly as
+		// a macro's is.
+		autoescape: b.st.escapeDefault,
 		blockName:  b.name,
 		blockIndex: b.index,
 	}
