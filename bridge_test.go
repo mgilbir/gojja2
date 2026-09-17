@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -229,4 +230,58 @@ func mustRenderVars(t *testing.T, env *Environment, src string, vars map[string]
 		t.Fatalf("render %q: %v", src, err)
 	}
 	return out
+}
+
+// hostErrors exercises the Go shapes a host method can have. A method whose
+// only result is an error is how a validating accessor is written, and it was
+// the one shape whose failure did not reach the template.
+type hostErrors struct{ Name string }
+
+func (h hostErrors) Greet() string              { return "hi " + h.Name }
+func (h hostErrors) Fail() error                { return errors.New("boom") }
+func (h hostErrors) Fine() error                { return nil }
+func (h hostErrors) Pair() (string, error)      { return "", errors.New("kaboom") }
+func (h hostErrors) PairOK() (string, error)    { return "ok", nil }
+func (h hostErrors) Nothing()                   {}
+func (h hostErrors) Two() (string, string)      { return "a", "b" }
+func (h hostErrors) NotAnError() (string, bool) { return "v", false }
+
+// TestHostMethodErrorReachesTheTemplate pins that a method's trailing error is
+// surfaced whatever its arity.
+//
+// The check used to run only for two results or more, so a method returning
+// just an error had its failure reflected into an object and rendered as
+// "<errors.errorString object>" -- with the render reporting success.
+func TestHostMethodErrorReachesTheTemplate(t *testing.T) {
+	env := New()
+	h := map[string]any{"h": hostErrors{"bob"}}
+
+	for _, tc := range []struct {
+		src     string
+		want    string
+		wantErr string
+	}{
+		{`{{ h.Greet() }}`, "hi bob", ""},
+		{`{{ h.Fail() }}`, "", "boom"},
+		{`{{ h.Pair() }}`, "", "kaboom"},
+		{`{{ h.PairOK() }}`, "ok", ""},
+		// A nil error is not a failure, and renders as None does.
+		{`{{ h.Fine() }}`, "None", ""},
+		{`{{ h.Nothing() }}`, "None", ""},
+		// A trailing result that is not an error is left alone.
+		{`{{ h.Two() }}`, "a", ""},
+		{`{{ h.NotAnError() }}`, "v", ""},
+	} {
+		got, err := renderVars(t, env, tc.src, h)
+		switch {
+		case tc.wantErr == "" && err != nil:
+			t.Errorf("%s: %v", tc.src, err)
+		case tc.wantErr != "" && err == nil:
+			t.Errorf("%s rendered %q, want the error %q", tc.src, got, tc.wantErr)
+		case tc.wantErr != "" && err.Error() != tc.wantErr:
+			t.Errorf("%s: got %q, want %q", tc.src, err, tc.wantErr)
+		case tc.wantErr == "" && got != tc.want:
+			t.Errorf("%s = %q, want %q", tc.src, got, tc.want)
+		}
+	}
 }

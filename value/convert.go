@@ -453,18 +453,31 @@ func (m *methodObject) Call(args *CallArgs) (Value, error) {
 	if err != nil {
 		return Undefined, err
 	}
-	switch len(out) {
-	case 0:
+	if len(out) == 0 {
 		return None, nil
-	case 1:
-		return FromGoWith(out[0].Interface(), m.expose), nil
 	}
-	// A (value, error) pair is the idiomatic Go shape; surface the error.
-	if err, ok := out[len(out)-1].Interface().(error); ok && err != nil {
-		return Undefined, err
+	// A trailing error is the idiomatic Go shape and is surfaced whatever
+	// the arity. Checking it only for two results or more meant a method
+	// whose *only* result is an error -- which is how a validating
+	// accessor is written -- had its failure reflected into an object and
+	// rendered as "<errors.errorString object>", with the render reporting
+	// success.
+	if last := out[len(out)-1]; last.Type() == errorType {
+		if e, _ := last.Interface().(error); e != nil {
+			return Undefined, e
+		}
+		if len(out) == 1 {
+			// The method returned only an error, and it was nil.
+			return None, nil
+		}
 	}
 	return FromGoWith(out[0].Interface(), m.expose), nil
 }
+
+// errorType is the error interface, for recognising a method's trailing
+// result. Comparing the static type rather than type-asserting the value is
+// what tells a nil error apart from a result that merely happens to be nil.
+var errorType = reflect.TypeOf((*error)(nil)).Elem()
 
 // call invokes the method, turning a panic into an error.
 //
