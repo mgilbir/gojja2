@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "sv": "a<b",
+  "n": 5
+}
+---
+{{ (sv ~ n)|pprint }}|{{ (sv ~ n) is escaped }}|{{ (sv ~ n)|length }}|{{ sv ~ n }}

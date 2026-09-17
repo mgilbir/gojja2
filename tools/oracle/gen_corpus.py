@@ -276,6 +276,15 @@ case("escape/replace_no_autoescape", "{{ (s|replace(o, n))|pprint }}|{{ s|replac
 case("escape/replace_constant", '{{ ("a&<b"|replace("&", "+"))|pprint }}|{{ "a&<b"|replace("&", "+") }}',
      __settings__={"autoescape": True})
 
+# `~` is markup_join, which only switches to joining as Markup once it meets an
+# operand that already is. With none it concatenates the str()s into a plain
+# string, and the escaping happens at output like any other value.
+case("escape/concat_plain", "{{ (sv ~ n)|pprint }}|{{ (sv ~ n) is escaped }}|{{ (sv ~ n)|length }}|{{ sv ~ n }}",
+     __settings__={"autoescape": True}, sv="a<b", n=5)
+case("escape/concat_markup", "{{ (sv ~ mk|safe)|pprint }}|{{ sv ~ mk|safe }}|{{ (mk|safe ~ sv)|pprint }}",
+     __settings__={"autoescape": True}, sv="a<b", mk="<i>")
+case("escape/concat_no_autoescape", "{{ (sv ~ mk|safe)|pprint }}|{{ sv ~ mk|safe }}", sv="a<b", mk="<i>")
+
 # do_join only coerces to Markup when there is markup to preserve. With none,
 # an autoescaping join is a plain string of str()s and the escaping happens at
 # output -- which is invisible in `{{ xs|join(",") }}` and decides everything

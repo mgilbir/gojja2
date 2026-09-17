@@ -62,12 +62,12 @@ const fuzzTemplateName = "fuzz.txt"
 
 // renderGojja2 renders with gojja2, turning a panic into a reportable result
 // rather than taking the test process down mid-run.
-func (h *harness) renderGojja2(src string) (out string, panicked string, err error) {
+func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicked string, err error) {
 	sources := make(map[string]string, len(h.templates)+1)
 	for name, text := range h.templates {
 		sources[name] = text
 	}
-	sources[fuzzTemplateName] = src
+	sources[fuzzTemplateName] = c.Source
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -75,7 +75,10 @@ func (h *harness) renderGojja2(src string) (out string, panicked string, err err
 		}
 	}()
 
-	env := gojja2.New(gojja2.WithLoader(gojja2.DictLoader(sources)))
+	env := gojja2.New(
+		gojja2.WithLoader(gojja2.DictLoader(sources)),
+		gojja2.WithAutoescape(c.Autoescape),
+	)
 	tmpl, err := env.GetTemplate(fuzzTemplateName)
 	if err != nil {
 		return "", "", err
@@ -93,11 +96,16 @@ func (h *harness) renderGojja2(src string) (out string, panicked string, err err
 
 // check compares one template, returning nil when the two agree or when the
 // case cannot be graded.
-func (h *harness) check(t testing.TB, src string) *conformance.Divergence {
+func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.Divergence {
+	var settings map[string]any
+	if c.Autoescape {
+		settings = map[string]any{"autoescape": true}
+	}
 	want, err := h.oracle.Render(conformance.OracleRequest{
 		Name:      fuzzTemplateName,
-		Source:    src,
+		Source:    c.Source,
 		Context:   h.rawCtx,
+		Settings:  settings,
 		Templates: h.templates,
 	})
 	if err != nil {
@@ -107,7 +115,7 @@ func (h *harness) check(t testing.TB, src string) *conformance.Divergence {
 		return nil
 	}
 
-	out, panicked, renderErr := h.renderGojja2(src)
+	out, panicked, renderErr := h.renderGojja2(c)
 	if panicked != "" {
 		return &conformance.Divergence{Kind: conformance.KindPanic, Detail: panicked}
 	}
@@ -127,14 +135,19 @@ func (h *harness) check(t testing.TB, src string) *conformance.Divergence {
 // actively misleading: reduction only preserves the *kind*, so the detail --
 // which outputs differed, which exception was raised -- has to be taken from
 // the template that is actually printed.
-func (h *harness) minimize(t testing.TB, src string, budget int) (string, *conformance.Divergence) {
-	minimal := conformance.Shrink(src, budget, func(candidate string) *conformance.Divergence {
-		return h.check(t, candidate)
-	})
+func (h *harness) minimize(t testing.TB, c conformance.GeneratedCase, budget int) (conformance.GeneratedCase, *conformance.Divergence) {
+	// Only the source shrinks: the environment is part of what diverged,
+	// so changing it would reduce a different case.
+	with := func(source string) conformance.GeneratedCase {
+		return conformance.GeneratedCase{Source: source, Autoescape: c.Autoescape}
+	}
+	minimal := with(conformance.Shrink(c.Source, budget, func(candidate string) *conformance.Divergence {
+		return h.check(t, with(candidate))
+	}))
 	d := h.check(t, minimal)
 	if d == nil {
 		// Reduction lost the divergence; report what was actually seen.
-		return src, h.check(t, src)
+		return c, h.check(t, c)
 	}
 	return minimal, d
 }
@@ -142,13 +155,17 @@ func (h *harness) minimize(t testing.TB, src string, budget int) (string, *confo
 // report prints a divergence compactly: the kind, what each side did, and the
 // minimised template. The shared context is a constant, so it is named rather
 // than dumped -- a hundred lines of JSON per finding buries the finding.
-func report(t testing.TB, src string, d *conformance.Divergence) {
+func report(t testing.TB, c conformance.GeneratedCase, d *conformance.Divergence) {
 	t.Helper()
 	if d == nil {
 		return
 	}
-	t.Errorf("[%s] %s\n%s\n  (context: conformance.FuzzContextJSON)",
-		d.Kind, strconv.Quote(src), indent(d.Detail))
+	env := ""
+	if c.Autoescape {
+		env = ", autoescape"
+	}
+	t.Errorf("[%s] %s\n%s\n  (context: conformance.FuzzContextJSON%s)",
+		d.Kind, strconv.Quote(c.Source), indent(d.Detail), env)
 }
 
 // FuzzTemplate is the coverage-guided target. Input bytes are the generator's
@@ -172,12 +189,12 @@ func FuzzTemplate(f *testing.F) {
 		if len(input) > 512 {
 			input = input[:512]
 		}
-		src := conformance.GenerateTemplate(input)
-		d := h.check(t, src)
+		c := conformance.GenerateCase(input)
+		d := h.check(t, c)
 		if d == nil {
 			return
 		}
-		min, minD := h.minimize(t, src, 300)
+		min, minD := h.minimize(t, c, 300)
 		report(t, min, minD)
 	})
 }
@@ -195,21 +212,24 @@ func TestDifferential(t *testing.T) {
 	seed := uint64(envInt(t, "GOJJA2_FUZZ_SEED", 20260916))
 	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
 
-	var checked, skipped int
+	var checked, skipped, escaping int
 	var failures int
 	for range count {
 		input := make([]byte, 1+rng.IntN(96))
 		for i := range input {
 			input[i] = byte(rng.UintN(256))
 		}
-		src := conformance.GenerateTemplate(input)
-		if strings.TrimSpace(src) == "" {
+		c := conformance.GenerateCase(input)
+		if strings.TrimSpace(c.Source) == "" {
 			skipped++
 			continue
 		}
 		checked++
+		if c.Autoescape {
+			escaping++
+		}
 
-		d := h.check(t, src)
+		d := h.check(t, c)
 		if d == nil {
 			continue
 		}
@@ -218,11 +238,11 @@ func TestDifferential(t *testing.T) {
 			t.Errorf("... stopping after 10 divergences")
 			break
 		}
-		min, minD := h.minimize(t, src, 200)
+		min, minD := h.minimize(t, c, 200)
 		report(t, min, minD)
 	}
-	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), %d empty",
-		checked, seed, skipped)
+	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), "+
+		"%d autoescaping, %d empty", checked, seed, escaping, skipped)
 }
 
 func envInt(t testing.TB, name string, def int) int {
