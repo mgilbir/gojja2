@@ -390,6 +390,20 @@ case("layout/indent_empty", "[{{ ''|indent(2, true) }}]")
 # --- error shapes -------------------------------------------------------------
 case("errshape/sort_mixed", "{{ mix|sort }}", mix=[1, "a", 2.5, True, None])
 case("errshape/sort_mixed_reverse", "{{ mix|sort(true) }}", mix=[1, "a", 2.5, True, None])
+# textwrap and do_indent look at their arguments in an order a template can
+# see: the width is only used once there is a line to wrap, the wrapstring's
+# join is resolved before the value is read at all, and the indent is sized
+# before the value is touched. A bad argument beside an undefined value
+# therefore decides which error comes out.
+case("filters/wordwrap_lines", "{{ text|wordwrap(12) }}|{{ 'a\rb\r\nc'|wordwrap(9) }}|{{ ''|wordwrap('z') }}", **TEXT)
+case("filters/wordwrap_float_width", "{{ 'ab cd ef'|wordwrap(2.5) }}|{{ 'abcd'|wordwrap(0.5) }}|{{ 'abcd'|wordwrap(2.5, false) }}")
+case("filters/indent_carriage_return", "{{ 'a\rb\r\nc'|indent(2, true) }}")
+case("errshape/wordwrap_undefined_wrapstring", "{{ nope|wordwrap(1, 2, 3) }}")
+case("errshape/wordwrap_undefined_width", "{{ nope|wordwrap('z') }}")
+case("errshape/wordwrap_width_type", "{{ 'ab cd'|wordwrap('z') }}")
+case("errshape/wordwrap_width_float_slice", "{{ 'abcd'|wordwrap(2.5) }}")
+case("errshape/indent_undefined_width", "{{ nope|indent(1.5) }}")
+case("errshape/indent_width_type", "{{ 'a'|indent([1]) }}")
 case("errshape/indent_types", "{{ nope|indent(2) }}")
 case("errshape/indent_tuple", "{{ (1, 2)|indent(2) }}")
 case("errshape/truncate_list", "{{ long|truncate(3) }}", long=list("abcdefghijklmnopqrst"))

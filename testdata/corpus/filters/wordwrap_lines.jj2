@@ -1,0 +1,6 @@
+{
+  "text": "  the quick brown fox jumps over the lazy dog  "
+}
+---
+{{ text|wordwrap(12) }}|{{ 'ab
+c'|wordwrap(9) }}|{{ ''|wordwrap('z') }}
