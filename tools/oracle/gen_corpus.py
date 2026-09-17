@@ -438,6 +438,16 @@ case("errshape/sort_mixed_reverse", "{{ mix|sort(true) }}", mix=[1, "a", 2.5, Tr
 # two letters before, or a letter-hyphen-letter; and a letter, an optional
 # hyphen and a letter after. Two or more hyphens are an em-dash instead, and
 # become a chunk of their own.
+# |striptags ends in Python's html.unescape, which resolves every HTML 5 named
+# reference -- the uppercase spellings included, which is what an upper-cased
+# entity becomes -- and numeric ones with the standard's rules for the invalid
+# ones. The whitespace is collapsed before any of that, so a reference standing
+# for a space survives as a character.
+case("filters/striptags_entities", "{{ html|upper|striptags }}|{{ '<b>&copy;</b> &reg; &Yacute;'|striptags }}", html="<b>a &amp; b</b>")
+case("filters/striptags_numeric", "{{ '&#38;|&#x26;|&#X26;|&#0000038;|&#128;|&#13;|&#55296;|&#1114112;'|striptags }}")
+case("filters/striptags_partial", "{{ '&notit;|&notit|&not|&amp|&ampx|&#;|&;|&'|striptags }}")
+case("filters/striptags_spacing", "{{ 'a&nbsp;b'|striptags }}|{{ 'a &nbsp; b'|striptags }}|{{ '&#32;a&#32;'|striptags }}|{{ 'a&Tab;b'|striptags }}")
+
 case("filters/wordwrap_hyphens", "{{ 'well-known a-b ab-cd a-b-c-d co-op-er-ate'|wordwrap(6) }}")
 case("filters/wordwrap_hyphen_runs", "{{ 'a--b ab--cd x--y--z a-1-b _a-_b'|wordwrap(5) }}")
 case("filters/wordwrap_hyphen_chain", "{{ joined|wordwrap(12, false) }}|{{ joined|wordwrap(12) }}",
