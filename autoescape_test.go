@@ -412,3 +412,44 @@ func TestConcatIsMarkupOnlyWhenMarkupIsInvolved(t *testing.T) {
 		}
 	}
 }
+
+// TestVolatileAutoescapeFoldsAndDefers pins what a {% autoescape %} with a
+// non-constant argument does to what is inside it.
+//
+// The block leaves the escaping unknowable until the render -- jinja2 calls
+// that a volatile eval context -- and the two halves of one block then
+// disagree. A constant print is still folded, and folded with the setting the
+// block was supposed to replace, because a volatile context carries no value
+// of its own. A filter is not folded at all: Filter.as_const refuses outright,
+// so it runs at the render under the block's own setting.
+//
+// Expectations from CPython jinja2 3.1.6.
+func TestVolatileAutoescapeFoldsAndDefers(t *testing.T) {
+	vars := map[string]any{"yes": true, "blank": ""}
+	for _, tc := range []struct {
+		env  bool
+		src  string
+		want string
+	}{
+		// Environment off, block on: the constant keeps the
+		// environment's setting, the filter follows the block.
+		{false, `{% autoescape yes %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}`,
+			`{'a': 1}|&lt;X&gt;`},
+		// Environment on, block off: the mirror image.
+		{true, `{% autoescape blank %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}`,
+			`{&#39;a&#39;: 1}|<X>`},
+		// A constant argument is not volatile, so both halves follow
+		// the block and agree.
+		{false, `{% autoescape true %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}`,
+			`{&#39;a&#39;: 1}|&lt;X&gt;`},
+	} {
+		got, err := renderVars(t, New(WithAutoescape(tc.env)), tc.src, vars)
+		if err != nil {
+			t.Errorf("env=%v %s: %v", tc.env, tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("env=%v %s\n  = %q\n want %q", tc.env, tc.src, got, tc.want)
+		}
+	}
+}
