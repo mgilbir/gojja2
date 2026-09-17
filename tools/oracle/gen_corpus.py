@@ -224,6 +224,21 @@ case("escape/off", "{{ v }}|{{ v|escape }}|{{ v|safe }}", v="<b>&'\"")
 case("escape/on", "{{ v }}|{{ v|escape }}|{{ v|safe }}|{{ v|safe|escape }}|{{ v|safe|forceescape }}",
      __settings__={"autoescape": True}, v="<b>&'\"")
 case("escape/concat", "{{ a ~ b }}|{{ [a, b]|join('-') }}", __settings__={"autoescape": True}, a="<x>", b="<y>")
+# do_join only coerces to Markup when there is markup to preserve. With none,
+# an autoescaping join is a plain string of str()s and the escaping happens at
+# output -- which is invisible in `{{ xs|join(",") }}` and decides everything
+# else the result is used for. The context supplies the operands so that
+# constant folding cannot answer these instead.
+case("escape/join_plain", "{{ (xs|join(sep))|pprint }}|{{ (xs|join(sep)) is escaped }}|{{ xs|join(sep)|length }}|{{ xs|join(sep) }}",
+     __settings__={"autoescape": True}, xs=["a'", "<i>"], sep="&")
+case("escape/join_markup_item", "{{ ([a, b|safe]|join(sep))|pprint }}|{{ ([a, b|safe]|join(sep)) is escaped }}|{{ [a, b|safe]|join(sep) }}",
+     __settings__={"autoescape": True}, a="a'", b="<i>", sep="&")
+case("escape/join_markup_sep", "{{ ([a, b]|join(sep|safe))|pprint }}|{{ [a, b]|join(sep|safe) }}",
+     __settings__={"autoescape": True}, a="a'", b="<i>", sep="&")
+case("escape/join_no_autoescape", "{{ ([a, b|safe]|join(sep))|pprint }}|{{ [a, b|safe]|join(sep) }}",
+     a="a'", b="<i>", sep="&")
+case("escape/join_attribute", "{{ (users|join(sep, attribute='city'))|pprint }}",
+     __settings__={"autoescape": True}, sep="&", **USERS)
 case("escape/block", "{% autoescape true %}{{ v }}{% endautoescape %}{{ v }}", v="<b>")
 case("escape/block_off", "{% autoescape false %}{{ v }}{% endautoescape %}{{ v }}",
      __settings__={"autoescape": True}, v="<b>")

@@ -136,6 +136,27 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	if d, ok := arg(args, 0, "d"); ok {
 		sepValue = d
 	}
+	// Autoescape alone does not make this Markup. do_join only coerces
+	// when there is markup to preserve -- a safe delimiter, or a safe item
+	// -- and otherwise joins the str()s into a plain string, leaving the
+	// escaping to the output. Escaping here regardless looked identical in
+	// `{{ xs|join(",") }}` and was wrong for every other use of the
+	// result: `{{ ["a", "'"]|join("")|length }}` counted the five
+	// characters of `&#39;` and answered 6 where CPython answers 2.
+	markup := sepValue.IsSafe()
+	for _, item := range items {
+		if item.IsSafe() {
+			markup = true
+		}
+	}
+	if !markup {
+		for i, item := range items {
+			parts[i] = value.Str(item)
+		}
+		return value.String(strings.Join(parts, sep)), nil
+	}
+	// With markup involved the delimiter is escaped too, and every item
+	// that is not already safe -- which is Markup.join's own rule.
 	for i, item := range items {
 		parts[i] = value.Str(escapeIfNeeded(item))
 	}
