@@ -45,6 +45,9 @@ const (
 	StopIteration
 	RecursionError
 	ArithmeticError
+	// AssertionError is what a bare `assert` in jinja2 raises, which is
+	// how do_truncate rejects a length shorter than its ellipsis.
+	AssertionError
 	Exception
 )
 
@@ -71,6 +74,7 @@ var kindNames = [...]string{
 	StopIteration:          "StopIteration",
 	RecursionError:         "RecursionError",
 	ArithmeticError:        "ArithmeticError",
+	AssertionError:         "AssertionError",
 	Exception:              "Exception",
 }
 
@@ -98,6 +102,7 @@ var parent = [...]Kind{
 	NameError:              Exception,
 	StopIteration:          Exception,
 	RecursionError:         Exception,
+	AssertionError:         Exception,
 }
 
 func (k Kind) String() string {

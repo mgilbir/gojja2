@@ -27,31 +27,23 @@ func registerDefaultTests(env *Environment) {
 		"false":     func(v value.Value) bool { return v.Kind() == value.KindBool && !v.AsBool() },
 		"sequence":  isSequenceValue,
 		"iterable":  isIterableValue,
-		// "callable" is registered separately: jinja2 maps it straight
-		// to Python's builtin, which words its arity error differently.
-		"lower": allCased(unicode.IsLower, unicode.IsUpper),
-		"upper": allCased(unicode.IsUpper, unicode.IsLower),
+		"lower":     allCased(unicode.IsLower, unicode.IsUpper),
+		"upper":     allCased(unicode.IsUpper, unicode.IsLower),
 	}
 	simple["callable"] = isCallableValue
 	for name, fn := range simple {
-		addTest(env, name, "test_"+name, 0,
-			func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
-				return fn(v), nil
-			})
-	}
-	// Re-register with the builtin's own name so its arity error matches.
-	addTest(env, "callable", "callable", 0,
-		func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
-			return isCallableValue(v), nil
+		addTest(env, name, func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
+			return fn(v), nil
 		})
+	}
 
-	addTest(env, "odd", "test_odd", 0, intParity(1))
-	addTest(env, "even", "test_even", 0, intParity(0))
-	addTest(env, "divisibleby", "test_divisibleby", 1, testDivisibleBy)
-	addTest(env, "sameas", "test_sameas", 1, testSameAs)
-	addTest(env, "in", "test_in", 1, testIn)
-	addTest(env, "filter", "test_filter", 0, testHasFilter)
-	addTest(env, "test", "test_test", 0, testHasTest)
+	addTest(env, "odd", intParity(1))
+	addTest(env, "even", intParity(0))
+	addTest(env, "divisibleby", testDivisibleBy)
+	addTest(env, "sameas", testSameAs)
+	addTest(env, "in", testIn)
+	addTest(env, "filter", testHasFilter)
+	addTest(env, "test", testHasTest)
 
 	// The comparison tests take their operand as the single argument.
 	for name, op := range map[string]string{
@@ -66,27 +58,13 @@ func registerDefaultTests(env *Environment) {
 	}
 }
 
-// addTest registers a test that refuses more positional arguments than the
-// jinja2 function of the same name accepts.
+// addTest registers a test.
 //
-// The message names the Python function and counts the tested value as the
-// first argument, because that is what CPython reports and a template author
-// comparing the two would otherwise see a different error.
-func addTest(env *Environment, name, pyName string, maxArgs int, fn Test) {
-	env.AddTest(name, func(s *State, v value.Value, args *value.CallArgs) (bool, error) {
-		if len(args.Pos) > maxArgs {
-			if pyName == "callable" {
-				// A C builtin phrases this its own way.
-				return false, errs.New(errs.TypeError,
-					"callable() takes exactly one argument (%d given)", len(args.Pos)+1)
-			}
-			return false, errs.New(errs.TypeError,
-				"%s() takes %d positional argument%s but %d were given",
-				pyName, maxArgs+1, plural(maxArgs+1), len(args.Pos)+1)
-		}
-		return fn(s, v, args)
-	})
-}
+// It used to carry a hand-written argument count per test, and the arity
+// message that went with it -- the only such check in the engine, since
+// filters had none at all. Both now come from jinja2's own signatures; see
+// arity.go and tools/oracle/gen_arity.py.
+func addTest(env *Environment, name string, fn Test) { env.AddTest(name, fn) }
 
 func plural(n int) string {
 	if n == 1 {

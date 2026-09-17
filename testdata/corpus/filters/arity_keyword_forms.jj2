@@ -1,0 +1,3 @@
+{}
+---
+{{ "x"|center(width=3) }}|{{ "ab"|replace(old="a", new="b") }}|{{ "x"|indent(width=2, first=true) }}|{{ 1|round(precision=1, method="ceil") }}|{{ "x"|format(zzzz=1) }}|{{ [1,2]|sum(start=3) }}

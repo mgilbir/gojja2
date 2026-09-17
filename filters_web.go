@@ -160,6 +160,13 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	// asked, and the environment's urlize.rel policy -- which defaults to
 	// "noopener", so every generated link carries it unless the policy is
 	// cleared. The parts are sorted, as jinja2 sorts the set.
+	// jinja2 writes `rel.split()`, so a rel that is not a string fails as a
+	// missing attribute rather than being stringified. target is only
+	// interpolated, so anything goes there.
+	if !rel.IsUndefined() && !rel.IsNone() && !rel.IsString() {
+		return value.Undefined, errs.New(errs.AttributeError,
+			"'%s' object has no attribute 'split'", rel.TypeName())
+	}
 	relParts := map[string]bool{}
 	for _, part := range strings.Fields(attrText(rel)) {
 		relParts[part] = true
