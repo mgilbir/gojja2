@@ -1,0 +1,3 @@
+{}
+---
+{{ '{!r}'.format('ab') }}|{{ '{!s}'.format('ab') }}|{{ '{!a}'.format('é') }}|{{ '[{!r:>8}]'.format('ab') }}|{{ '{!r}'.format(none) }}
