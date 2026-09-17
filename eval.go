@@ -547,13 +547,13 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 		return value.String(out), nil
 	case value.KindList, value.KindTuple:
 		s, _ := base.Seq()
-		idx, err := value.SliceIndices(s.Len(), start, stop, step)
+		begin, stride, count, err := value.SliceSpan(s.Len(), start, stop, step)
 		if err != nil {
 			return value.Undefined, err
 		}
-		items := make([]value.Value, len(idx))
-		for i, j := range idx {
-			items[i] = s.At(j)
+		items := make([]value.Value, count)
+		for i := range count {
+			items[i] = s.At(begin + i*stride)
 		}
 		if base.Kind() == value.KindTuple {
 			return value.NewTuple(items...), nil
@@ -569,13 +569,13 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 			return sl.Slice(start, stop, step)
 		}
 		if seq, ok := base.Interface().(value.Sequence); ok {
-			idx, err := value.SliceIndices(seq.Len(), start, stop, step)
+			begin, stride, count, err := value.SliceSpan(seq.Len(), start, stop, step)
 			if err != nil {
 				return value.Undefined, err
 			}
-			items := make([]value.Value, len(idx))
-			for i, j := range idx {
-				items[i], _ = seq.GetIndex(j)
+			items := make([]value.Value, count)
+			for i := range count {
+				items[i], _ = seq.GetIndex(begin + i*stride)
 			}
 			return value.NewList(items...), nil
 		}

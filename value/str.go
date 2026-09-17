@@ -25,14 +25,22 @@ func runeLen(s string, isBytes bool) int {
 // StrLen is Python's len() for a str.
 func StrLen(s string) int { return utf8.RuneCountInString(s) }
 
-// runeOffsets returns the byte offset of every rune in s, plus len(s) as a
-// final sentinel, so a rune index range maps to a byte range.
-func runeOffsets(s string) []int {
-	offsets := make([]int, 0, len(s)+1)
-	for i := range s {
-		offsets = append(offsets, i)
+// byteOffsetOfRune returns the byte offset of rune index i, which must be in
+// [0, rune count]. It walks rather than indexing a table: building one costs
+// eight bytes for every byte of the string, which is how slicing a hundred
+// megabytes to a single character came to allocate eight hundred.
+func byteOffsetOfRune(s string, i int) int {
+	if i <= 0 {
+		return 0
 	}
-	return append(offsets, len(s))
+	n := 0
+	for at := range s {
+		if n == i {
+			return at
+		}
+		n++
+	}
+	return len(s)
 }
 
 // StrIndex returns the one-character string at code-point index i, which may
@@ -47,32 +55,79 @@ func StrIndex(s string, i int) (string, bool) {
 		}
 		return s[i : i+1], true
 	}
-	offsets := runeOffsets(s)
-	n := len(offsets) - 1
+	n := utf8.RuneCountInString(s)
 	if i < 0 {
 		i += n
 	}
 	if i < 0 || i >= n {
 		return "", false
 	}
-	return s[offsets[i]:offsets[i+1]], true
+	at := byteOffsetOfRune(s, i)
+	_, size := utf8.DecodeRuneInString(s[at:])
+	return s[at : at+size], true
 }
 
 // StrSlice applies a Python slice to a str. A nil bound means "omitted".
+//
+// Nothing here is proportional to the length of the input beyond the result
+// itself: the walk carries a cursor rather than a table of every rune's
+// offset. A forward unit-step slice does not even copy, because it is a
+// contiguous span of the original.
 func StrSlice(s string, start, stop, step *int) (string, error) {
-	offsets := runeOffsets(s)
-	n := len(offsets) - 1
-	idx, err := SliceIndices(n, start, stop, step)
+	n := utf8.RuneCountInString(s)
+	begin, st, count, err := SliceSpan(n, start, stop, step)
 	if err != nil {
 		return "", err
 	}
-	// A forward, unit-step slice is contiguous, so it can be taken whole.
-	if len(idx) > 0 && idx[len(idx)-1]-idx[0] == len(idx)-1 {
-		return s[offsets[idx[0]]:offsets[idx[len(idx)-1]+1]], nil
+	if count == 0 {
+		return "", nil
 	}
+
+	from := byteOffsetOfRune(s, begin)
+	if st == 1 {
+		// Contiguous and forward: the span of the original.
+		return s[from:byteOffsetOfRune(s, begin+count)], nil
+	}
+
 	var b strings.Builder
-	for _, i := range idx {
-		b.WriteString(s[offsets[i]:offsets[i+1]])
+	// Reserve for the result, not for the input: sizing the buffer from
+	// what is left to walk allocates in the length of the string even when
+	// the slice selects one character out of it.
+	b.Grow(min(count*utf8.UTFMax, len(s)))
+	if st > 0 {
+		rest := s[from:]
+		for range count {
+			_, size := utf8.DecodeRuneInString(rest)
+			b.WriteString(rest[:size])
+			rest = rest[size:]
+			// Skip st-1 runes, or run out.
+			for range st - 1 {
+				if rest == "" {
+					break
+				}
+				_, skip := utf8.DecodeRuneInString(rest)
+				rest = rest[skip:]
+			}
+		}
+		return b.String(), nil
+	}
+
+	// A negative step walks back from the starting rune, decoding from the
+	// end of the prefix each time -- still a cursor, not a table.
+	head := s[:from]
+	for k := 0; ; k++ {
+		_, size := utf8.DecodeRuneInString(s[len(head):])
+		b.WriteString(s[len(head) : len(head)+size])
+		if k == count-1 {
+			break
+		}
+		for range -st {
+			if head == "" {
+				break
+			}
+			_, back := utf8.DecodeLastRuneInString(head)
+			head = head[:len(head)-back]
+		}
 	}
 	return b.String(), nil
 }
@@ -130,67 +185,29 @@ func SliceBounds(length int, start, stop, step *int) (begin, end, st int, err er
 	return begin, end, st, nil
 }
 
-// SliceIndices resolves a Python slice against a sequence of the given length
-// and returns the indices it selects, in order.
+// SliceSpan resolves a Python slice and reports the indices it selects as a
+// starting point, a stride and a count, so a caller can walk them without
+// materialising them.
 //
-// This is slice.indices() plus the walk: omitted bounds default by direction,
-// negative bounds count from the end, and out-of-range bounds clamp instead of
-// failing -- which is why `"abc"[1:99]` is "bc" and not an error.
-func SliceIndices(length int, start, stop, step *int) ([]int, error) {
-	st := 1
-	if step != nil {
-		st = *step
+// This is slice.indices(): omitted bounds default by direction, negative bounds
+// count from the end, and out-of-range bounds clamp instead of failing -- which
+// is why `"abc"[1:99]` is "bc" and not an error. The clamping itself lives in
+// SliceBounds and is not repeated here; it used to be written out twice,
+// character for character, in two functions that had to agree.
+func SliceSpan(length int, start, stop, step *int) (begin, stride, count int, err error) {
+	begin, end, stride, err := SliceBounds(length, start, stop, step)
+	if err != nil {
+		return 0, 0, 0, err
 	}
-	if st == 0 {
-		return nil, errs.New(errs.ValueError, "slice step cannot be zero")
+	span := end - begin
+	if (stride > 0 && span <= 0) || (stride < 0 && span >= 0) {
+		return begin, stride, 0, nil
 	}
-
-	var lower, upper int
-	if st > 0 {
-		lower, upper = 0, length
+	// Round the span up, away from zero, to count the final partial step.
+	if stride > 0 {
+		count = (span + stride - 1) / stride
 	} else {
-		lower, upper = -1, length-1
+		count = (span + stride + 1) / stride
 	}
-
-	clamp := func(v int) int {
-		if v < 0 {
-			v += length
-			if v < lower {
-				return lower
-			}
-			return v
-		}
-		if v > upper {
-			return upper
-		}
-		return v
-	}
-
-	begin := lower
-	if st < 0 {
-		begin = upper
-	}
-	if start != nil {
-		begin = clamp(*start)
-	}
-
-	end := upper
-	if st < 0 {
-		end = lower
-	}
-	if stop != nil {
-		end = clamp(*stop)
-	}
-
-	var out []int
-	if st > 0 {
-		for i := begin; i < end; i += st {
-			out = append(out, i)
-		}
-	} else {
-		for i := begin; i > end; i += st {
-			out = append(out, i)
-		}
-	}
-	return out, nil
+	return begin, stride, count, nil
 }

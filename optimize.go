@@ -757,13 +757,13 @@ func (c *constEvaluator) constGetSlice(base value.Value, slice *ast.Slice) (valu
 		return value.String(out), true
 	case value.KindList, value.KindTuple:
 		s, _ := base.Seq()
-		idx, err := value.SliceIndices(s.Len(), start, stop, step)
+		begin, stride, count, err := value.SliceSpan(s.Len(), start, stop, step)
 		if err != nil {
 			return value.UndefinedHint("invalid slice"), true
 		}
-		items := make([]value.Value, len(idx))
-		for i, j := range idx {
-			items[i] = s.At(j)
+		items := make([]value.Value, count)
+		for i := range count {
+			items[i] = s.At(begin + i*stride)
 		}
 		if base.Kind() == value.KindTuple {
 			return value.NewTuple(items...), true
