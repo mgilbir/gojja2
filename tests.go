@@ -156,8 +156,12 @@ func intParity(want int64) Test {
 	}
 }
 
+// The parameter names here are jinja2's own, and a template may use them:
+// `{{ 4 is divisibleby(num=2) }}` is the same call as `divisibleby(2)`. They
+// are the names arity.go carries, which is what a wrong one is checked
+// against.
 func testDivisibleBy(s *State, v value.Value, args *value.CallArgs) (bool, error) {
-	divisor, ok := args.Arg(0)
+	divisor, ok := arg(args, 0, "num")
 	if !ok {
 		return false, errs.New(errs.TypeError, "divisibleby requires an argument")
 	}
@@ -176,7 +180,7 @@ func testDivisibleBy(s *State, v value.Value, args *value.CallArgs) (bool, error
 // types have an identity; for everything else jinja2's answer coincides with
 // equality of value and type.
 func testSameAs(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
-	other, ok := args.Arg(0)
+	other, ok := arg(args, 0, "other")
 	if !ok {
 		return false, errs.New(errs.TypeError, "sameas requires an argument")
 	}
@@ -197,7 +201,7 @@ func testSameAs(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
 }
 
 func testIn(s *State, v value.Value, args *value.CallArgs) (bool, error) {
-	container, ok := args.Arg(0)
+	container, ok := arg(args, 0, "seq")
 	if !ok {
 		return false, errs.New(errs.TypeError, "in requires an argument")
 	}
