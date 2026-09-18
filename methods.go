@@ -126,14 +126,27 @@ func arg(args *value.CallArgs, i int, name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
-func strArg(args *value.CallArgs, i int, name, method string) (string, error) {
-	v, ok := arg(args, i, name)
-	if !ok {
-		return "", errs.New(errs.TypeError, "%s() missing required argument", method)
-	}
+// bareStr is the check CPython's string searches and partitions make on their
+// first argument. Its message names neither the method nor the parameter --
+// "must be str, not int" is the whole of it -- because CPython raises it from a
+// helper shared by all of them.
+//
+// The argument is always there: the arity check runs first and every one of
+// these takes at least one.
+// clinicStrArg is the numbered form the argument parser generates for a method
+// that declares more than one str: "replace() argument 2 must be str, not int".
+func clinicStrArg(args *value.CallArgs, i int, method string, position int) (string, error) {
+	v, _ := args.Arg(i)
 	if v.Kind() != value.KindString {
 		return "", errs.New(errs.TypeError,
-			"%s() argument must be str, not %s", method, v.TypeName())
+			"%s() argument %d must be str, not %s", method, position, clinicTypeName(v))
+	}
+	return v.AsString(), nil
+}
+
+func bareStr(v value.Value) (string, error) {
+	if v.Kind() != value.KindString {
+		return "", errs.New(errs.TypeError, "must be str, not %s", v.TypeName())
 	}
 	return v.AsString(), nil
 }
@@ -221,17 +234,17 @@ func init() {
 			return value.String(strings.ToLower(r.AsString())), nil
 		},
 
-		"strip":  trimMethod(strings.Trim, strings.TrimFunc),
-		"lstrip": trimMethod(strings.TrimLeft, strings.TrimLeftFunc),
-		"rstrip": trimMethod(strings.TrimRight, strings.TrimRightFunc),
+		"strip":  trimMethod("strip", strings.Trim, strings.TrimFunc),
+		"lstrip": trimMethod("lstrip", strings.TrimLeft, strings.TrimLeftFunc),
+		"rstrip": trimMethod("rstrip", strings.TrimRight, strings.TrimRightFunc),
 
 		"split":      splitMethod(false),
 		"rsplit":     splitMethod(true),
 		"splitlines": methodSplitlines,
 		"join":       methodJoin,
 		"replace":    methodReplace,
-		"startswith": affixMethod(strings.HasPrefix),
-		"endswith":   affixMethod(strings.HasSuffix),
+		"startswith": affixMethod("startswith", strings.HasPrefix),
+		"endswith":   affixMethod("endswith", strings.HasSuffix),
 		"count":      methodStrCount,
 		"find":       findMethod(strings.Index),
 		"rfind":      findMethod(strings.LastIndex),
@@ -273,8 +286,8 @@ func init() {
 		"translate":    methodTranslate,
 		"partition":    partitionMethod(false),
 		"rpartition":   partitionMethod(true),
-		"removeprefix": affixCutMethod(strings.HasPrefix, func(s, a string) string { return s[len(a):] }),
-		"removesuffix": affixCutMethod(strings.HasSuffix, func(s, a string) string { return s[:len(s)-len(a)] }),
+		"removeprefix": affixCutMethod("removeprefix", strings.HasPrefix, func(s, a string) string { return s[len(a):] }),
+		"removesuffix": affixCutMethod("removesuffix", strings.HasSuffix, func(s, a string) string { return s[:len(s)-len(a)] }),
 	}
 }
 
@@ -306,11 +319,22 @@ func methodMaketrans(_ *State, _ value.Value, args *value.CallArgs) (value.Value
 			}
 		}
 	case 2, 3:
-		from, to := []rune(value.Str(args.Pos[0])), []rune(value.Str(args.Pos[1]))
-		if !args.Pos[0].IsString() || !args.Pos[1].IsString() {
-			return value.Undefined, errs.New(errs.TypeError,
-				"maketrans arguments must be strings")
+		// The parser converts the second and third arguments, and only
+		// then does the body look at the first -- so a call with two
+		// wrong arguments reports the *second*, and the first has a
+		// complaint of its own rather than the parser's.
+		for i := 1; i < len(args.Pos); i++ {
+			if !args.Pos[i].IsString() {
+				return value.Undefined, errs.New(errs.TypeError,
+					"maketrans() argument %d must be str, not %s",
+					i+1, clinicTypeName(args.Pos[i]))
+			}
 		}
+		if !args.Pos[0].IsString() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"first maketrans argument must be a string if there is a second argument")
+		}
+		from, to := []rune(value.Str(args.Pos[0])), []rune(value.Str(args.Pos[1]))
 		if len(from) != len(to) {
 			return value.Undefined, errs.New(errs.ValueError,
 				"the first two maketrans arguments must have equal length")
@@ -356,6 +380,36 @@ func transKey(k value.Value) (value.Value, error) {
 		"keys in translate table must be strings or integers")
 }
 
+// translateLookup is `table[ord(c)]` with LookupError meaning "leave this
+// character alone", which is what str.translate does per character.
+func translateLookup(table value.Value, c rune) (value.Value, bool, error) {
+	key := value.Int(int64(c))
+	switch table.Kind() {
+	case value.KindDict:
+		d, _ := table.Dict()
+		return d.Get(key)
+	case value.KindString, value.KindBytes:
+		if ch, in := value.StrIndex(table.AsString(), int(c)); in {
+			return value.String(ch), true, nil
+		}
+		return value.Undefined, false, nil
+	case value.KindList, value.KindTuple:
+		seq, _ := table.Seq()
+		if int(c) < seq.Len() {
+			return seq.At(int(c)), true, nil
+		}
+		return value.Undefined, false, nil
+	}
+	if v, ok := lookupItem(table, key); ok {
+		return v, true, nil
+	}
+	if table.Kind() == value.KindObject {
+		return value.Undefined, false, nil
+	}
+	return value.Undefined, false, errs.New(errs.TypeError,
+		"'%s' object is not subscriptable", table.TypeName())
+}
+
 // methodTranslate is str.translate: every character is looked up by ordinal and
 // replaced by a string, by another ordinal, or by nothing at all when the entry
 // is None. A character the table does not mention is left exactly as it was,
@@ -366,14 +420,15 @@ func methodTranslate(s *State, r value.Value, args *value.CallArgs) (value.Value
 		return value.Undefined, errs.New(errs.TypeError,
 			"translate() takes exactly one argument (0 given)")
 	}
-	d, ok := table.Dict()
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"'%s' object is not subscriptable", table.TypeName())
-	}
+	// str.translate is `table[ord(c)]` per character, catching LookupError
+	// -- so the table is not converted and not even looked at for an empty
+	// string. Anything subscriptable by an integer will do: a str, a list
+	// and a tuple all answer for the code points they are long enough to
+	// index and leave the rest alone, where requiring a dict refused them
+	// outright.
 	var b strings.Builder
 	for _, c := range r.AsString() {
-		repl, found, err := d.Get(value.Int(int64(c)))
+		repl, found, err := translateLookup(table, c)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -543,11 +598,8 @@ func methodExpandtabs(s *State, r value.Value, args *value.CallArgs) (value.Valu
 // empty strings go on whichever side the search came from when it was not.
 func partitionMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		name := "partition"
-		if fromRight {
-			name = "rpartition"
-		}
-		sep, err := strArg(args, 0, "sep", name)
+		v, _ := arg(args, 0, "sep")
+		sep, err := bareStr(v)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -578,12 +630,16 @@ func partitionMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) 
 // affixCutMethod is str.removeprefix and str.removesuffix, which return the
 // string unchanged when the affix is absent -- and an empty affix is always
 // present, so it is not an error the way partition's is.
-func affixCutMethod(has func(string, string) bool, cut func(string, string) string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+func affixCutMethod(name string, has func(string, string) bool, cut func(string, string) string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		affix, err := strArg(args, 0, "affix", "removeprefix")
-		if err != nil {
-			return value.Undefined, err
+		// Each names itself, and the message comes from the argument
+		// parser, which calls the None singleton "None".
+		v, _ := arg(args, 0, "affix")
+		if v.Kind() != value.KindString {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s() argument must be str, not %s", name, clinicTypeName(v))
 		}
+		affix := v.AsString()
 		s := r.AsString()
 		if has(s, affix) {
 			s = cut(s, affix)
@@ -595,12 +651,14 @@ func affixCutMethod(has func(string, string) bool, cut func(string, string) stri
 	}
 }
 
-func trimMethod(withCutset func(string, string) string, withFunc func(string, func(rune) bool) string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+func trimMethod(name string, withCutset func(string, string) string, withFunc func(string, func(rune) bool) string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		if v, ok := arg(args, 0, "chars"); ok && !v.IsNone() {
+			// Hand-written in CPython, so it names the method and
+			// not the type it was given.
 			if v.Kind() != value.KindString {
 				return value.Undefined, errs.New(errs.TypeError,
-					"strip argument must be str or None, not %s", v.TypeName())
+					"%s arg must be None or str", name)
 			}
 			return value.String(withCutset(r.AsString(), v.AsString())), nil
 		}
@@ -709,7 +767,9 @@ func methodJoin(st *State, r value.Value, args *value.CallArgs) (value.Value, er
 	}
 	seq, err := value.Iterate(v)
 	if err != nil {
-		return value.Undefined, err
+		// str.join says this and nothing about the type, because it
+		// checks by asking for an iterator rather than by type.
+		return value.Undefined, errs.New(errs.TypeError, "can only join an iterable")
 	}
 	var parts []string
 	sep := r.AsString()
@@ -734,11 +794,13 @@ func methodJoin(st *State, r value.Value, args *value.CallArgs) (value.Value, er
 }
 
 func methodReplace(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	old, err := strArg(args, 0, "old", "replace")
+	// replace numbers its arguments, and the parser's message calls the
+	// None singleton "None".
+	old, err := clinicStrArg(args, 0, "replace", 1)
 	if err != nil {
 		return value.Undefined, err
 	}
-	new, err := strArg(args, 1, "new", "replace")
+	new, err := clinicStrArg(args, 1, "replace", 2)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -773,7 +835,7 @@ func chargeReplace(st *State, src, old, new string, count int) error {
 
 // affixMethod implements startswith and endswith, which accept a tuple of
 // candidates as well as a single string.
-func affixMethod(match func(string, string) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+func affixMethod(name string, match func(string, string) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		v, ok := arg(args, 0, "prefix")
 		if !ok {
@@ -793,7 +855,8 @@ func affixMethod(match func(string, string) bool) func(*State, value.Value, *val
 		}
 		if v.Kind() != value.KindString {
 			return value.Undefined, errs.New(errs.TypeError,
-				"argument must be str or a tuple of str, not %s", v.TypeName())
+				"%s first arg must be str or a tuple of str, not %s",
+				name, v.TypeName())
 		}
 		return value.Bool(match(within, v.AsString())), nil
 	}
@@ -851,11 +914,15 @@ func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, err
 }
 
 func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	sub, err := strArg(args, 0, "sub", "count")
+	// The bounds are converted while the call is parsed, so they are
+	// refused before the substring is looked at: `"ab".count(1, 1.5)` is
+	// about the 1.5.
+	within, _, err := strSliceBounds(r.AsString(), args, 1)
 	if err != nil {
 		return value.Undefined, err
 	}
-	within, _, err := strSliceBounds(r.AsString(), args, 1)
+	v, _ := arg(args, 0, "sub")
+	sub, err := bareStr(v)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -865,11 +932,12 @@ func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value,
 // findMethod returns a code-point index, or -1, the way str.find does.
 func findMethod(search func(string, string) int) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		sub, err := strArg(args, 0, "sub", "find")
+		within, offset, err := strSliceBounds(r.AsString(), args, 1)
 		if err != nil {
 			return value.Undefined, err
 		}
-		within, offset, err := strSliceBounds(r.AsString(), args, 1)
+		v, _ := arg(args, 0, "sub")
+		sub, err := bareStr(v)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -905,6 +973,17 @@ func indexMethod(search func(string, string) int, name string) func(*State, valu
 // renders the escaped "<x>" rather than raw markup, so marking a *template*
 // safe does not mark its arguments safe.
 func methodFormat(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	return formatWith(st, r, func(name string, auto *int) (value.Value, error) {
+		return resolveFieldBase(name, args, auto)
+	})
+}
+
+// fieldBase resolves what the base of a replacement field names, before any
+// `.attr` or `[key]` steps. str.format reads it out of the call's arguments;
+// str.format_map subscripts the one mapping it was handed.
+type fieldBase func(name string, auto *int) (value.Value, error)
+
+func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 	var b strings.Builder
 	s := r.AsString()
 	safe := r.IsSafe()
@@ -923,7 +1002,7 @@ func methodFormat(st *State, r value.Value, args *value.CallArgs) (value.Value, 
 				return value.Undefined, err
 			}
 			i = next
-			v, err := resolveFormatField(field, args, &auto)
+			v, err := resolveFormatField(field, base, &auto)
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -931,7 +1010,7 @@ func methodFormat(st *State, r value.Value, args *value.CallArgs) (value.Value, 
 			// -- which are resolved against the same arguments before
 			// the spec is read.
 			if strings.IndexByte(spec, '{') >= 0 {
-				spec, err = expandSpec(spec, args, &auto)
+				spec, err = expandSpec(spec, base, &auto)
 				if err != nil {
 					return value.Undefined, err
 				}
@@ -1032,7 +1111,7 @@ split:
 
 // expandSpec resolves the replacement fields inside a format spec, so the width
 // and precision in `{:{w}.{p}f}` can come from the arguments.
-func expandSpec(spec string, args *value.CallArgs, auto *int) (string, error) {
+func expandSpec(spec string, base fieldBase, auto *int) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(spec); {
 		if spec[i] != '{' {
@@ -1044,7 +1123,7 @@ func expandSpec(spec string, args *value.CallArgs, auto *int) (string, error) {
 		if end < 0 {
 			return "", errs.New(errs.ValueError, "unmatched '{' in format spec")
 		}
-		v, err := resolveFormatField(spec[i+1:i+end], args, auto)
+		v, err := resolveFormatField(spec[i+1:i+end], base, auto)
 		if err != nil {
 			return "", err
 		}
@@ -1081,16 +1160,21 @@ func methodFormatMap(s *State, r value.Value, args *value.CallArgs) (value.Value
 		return value.Undefined, errs.New(errs.TypeError,
 			"format_map() takes exactly one argument (0 given)")
 	}
-	d, ok := mapping.Dict()
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"format_map() argument must be a mapping, not %s", mapping.TypeName())
-	}
-	kwargs := make([]value.Kwarg, 0, d.Len())
-	for _, e := range d.Entries() {
-		kwargs = append(kwargs, value.Kwarg{Name: value.Str(e.Key), Value: e.Value})
-	}
-	return methodFormat(s, r, &value.CallArgs{Kwargs: kwargs})
+	// format_map does not convert its argument. It subscripts it once per
+	// *named* field, so a string with no fields never touches it at all --
+	// `{{ "ab".format_map(none) }}` is "ab" -- and one that is not a
+	// mapping fails as a subscript of that value would, which is not the
+	// same complaint for a list, a str and a None.
+	//
+	// A positional field is refused before any of that: format_map has no
+	// positional arguments to number.
+	return formatWith(s, r, func(name string, _ *int) (value.Value, error) {
+		if name == "" || isAllDigits(name) {
+			return value.Undefined, errs.New(errs.ValueError,
+				"Format string contains positional fields")
+		}
+		return fieldSubscript(mapping, name)
+	})
 }
 
 // resolveFormatField resolves one replacement field.
@@ -1099,10 +1183,10 @@ func methodFormatMap(s *State, r value.Value, args *value.CallArgs) (value.Value
 // accessors: "{0.name}", "{user[id]}", "{0.a[1].b}". The attribute form is a
 // real attribute lookup with no fall-back to items, which is why
 // `"{0.foo}".format({"foo": 42})` raises rather than finding the entry.
-func resolveFormatField(field string, args *value.CallArgs, auto *int) (value.Value, error) {
+func resolveFormatField(field string, base fieldBase, auto *int) (value.Value, error) {
 	name, accessors := splitFieldName(field)
 
-	v, err := resolveFieldBase(name, args, auto)
+	v, err := base(name, auto)
 	if err != nil {
 		return value.Undefined, err
 	}

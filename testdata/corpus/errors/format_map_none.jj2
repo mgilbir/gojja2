@@ -1,0 +1,3 @@
+{}
+---
+{{ 'x{a}'.format_map(none) }}

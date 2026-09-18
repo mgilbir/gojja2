@@ -1,0 +1,3 @@
+{}
+---
+[{{ ''.translate(1) }}]|{{ 'a'.translate('xyz') }}|{{ 'a'.translate(['z']) }}|{{ 'a'.translate({97: 'Z'}) }}|{{ 'ab'.translate({98: 'Z'}) }}
