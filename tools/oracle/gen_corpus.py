@@ -1126,6 +1126,26 @@ case("errors/wordwrap_wrapstring", '{{ 0|wordwrap(1, 2, 3) }}')
 case("errors/truncate_end_length", '{{ "abc"|truncate(1,2,3) }}')
 case("errors/truncate_too_short", '{{ "abc"|truncate(1) }}')
 case("filters/truncate_unicode_end", '{{ "abcdefghij"|truncate(6, true, "éé") }}')
+
+# |truncate never converts its arguments. It asserts `length >= len(end)` and
+# `leeway >= 0` with Python's own comparison -- so a float compares and only has
+# to be whole at the slice, a non-number refuses by naming the operator, and the
+# assertion reports the value as Python prints it (True, not 1). The end is
+# concatenated, not formatted, so a list end on a string input is a TypeError.
+case("filters/truncate_float_args",
+     '{{ t|truncate(10, false, "...", 1.5) }}|{{ "abc"|truncate(5.5) }}|'
+     '{{ t|truncate(10, false, "...", none) }}|{{ t|truncate(true, false, "") }}',
+     t="  the quick brown fox jumps over the lazy dog  ")
+case("errors/truncate_length_none", "{{ 'abc'|truncate(none) }}")
+case("errors/truncate_length_str", "{{ 'abc'|truncate('x') }}")
+case("errors/truncate_length_bool", "{{ 'abc'|truncate(true) }}")
+case("errors/truncate_length_float", "{{ 'abc'|truncate(2.0) }}")
+case("errors/truncate_length_unwhole",
+     '{{ t|truncate(3.0) }}', t="  the quick brown fox jumps over the lazy dog  ")
+case("errors/truncate_leeway_negative",
+     '{{ t|truncate(10, false, "...", -1) }}', t="  the quick brown fox jumps over the lazy dog  ")
+case("errors/truncate_end_concat",
+     '{{ t|truncate(10, true, ["z"]) }}', t="  the quick brown fox jumps over the lazy dog  ")
 case("errors/urlize_rel_type", '{{ "x"|urlize(rel=4) }}')
 case("filters/urlize_attrs", '{{ "http://a.com"|urlize(rel="me") }}|{{ "http://a.com"|urlize(target="_b") }}')
 

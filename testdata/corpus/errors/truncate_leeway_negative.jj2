@@ -1,0 +1,5 @@
+{
+  "t": "  the quick brown fox jumps over the lazy dog  "
+}
+---
+{{ t|truncate(10, false, "...", -1) }}

@@ -721,15 +721,26 @@ func splitLines(s string, keepEnds bool) []string {
 }
 
 func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	length, err := intArg(args, 0, "length", 255)
-	if err != nil {
-		return value.Undefined, err
+	// The length and the leeway are carried as values rather than converted
+	// here, because jinja2 never converts them. It asserts `length >=
+	// len(end)` and `leeway >= 0` -- Python's own comparison, which numbers
+	// pass and everything else refuses by naming the operator -- and only
+	// slices by the length once the text is long enough to cut. So a float
+	// compares happily and fails at the slice, a string never gets that
+	// far, and a value short enough to keep is returned without the length
+	// being looked at as a number at all.
+	length := value.Int(255)
+	if l, ok := arg(args, 0, "length"); ok {
+		length = l
 	}
 	killwords, err := boolArg(args, 1, "killwords", false)
 	if err != nil {
 		return value.Undefined, err
 	}
-	end, endLen := "...", 3
+	// The end is carried as a value too. jinja2 concatenates it rather than
+	// formatting it, so a list end is a TypeError on a string input where
+	// stringifying it would have appended "['z']" and said nothing.
+	end, endLen := value.String("..."), 3
 	if e, ok := arg(args, 2, "end"); ok {
 		// jinja2 asserts `length >= len(end)`, so an end with no length
 		// -- a number, say -- fails as len() does rather than being
@@ -739,18 +750,31 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 		if err != nil {
 			return value.Undefined, err
 		}
-		end, endLen = value.Str(e), n
+		end, endLen = e, n
 	}
-	leeway, err := intArg(args, 3, "leeway", s.env.policies.TruncateLeeway)
-	if err != nil {
+	// leeway is the one argument jinja2 does read None for: its default is
+	// None and it stands in the policy, so `truncate(10, false, "...",
+	// none)` is the policy's leeway where `truncate(none)` is an error.
+	leeway := value.Int(int64(s.env.policies.TruncateLeeway))
+	if l, ok := arg(args, 3, "leeway"); ok && !l.IsNone() {
+		leeway = l
+	}
+
+	// Both of these are bare asserts in jinja2, so the class is
+	// AssertionError rather than the ValueError the wording suggests, and
+	// the value is reported as Python prints it -- `truncate(true)` says
+	// "got True", not "got 1".
+	if ok, err := value.Ordered(">=", length, value.Int(int64(endLen))); err != nil {
 		return value.Undefined, err
-	}
-	if length < endLen {
-		// jinja2 spells this as a bare assert, so the class is
-		// AssertionError rather than the ValueError the wording
-		// suggests.
+	} else if !ok {
 		return value.Undefined, errs.New(errs.AssertionError,
-			"expected length >= %d, got %d", endLen, length)
+			"expected length >= %d, got %s", endLen, value.Str(length))
+	}
+	if ok, err := value.Ordered(">=", leeway, value.Int(0)); err != nil {
+		return value.Undefined, err
+	} else if !ok {
+		return value.Undefined, errs.New(errs.AssertionError,
+			"expected leeway >= 0, got %s", value.Str(leeway))
 	}
 
 	// jinja2 measures len(s) on the value itself, not on its string form,
@@ -762,34 +786,64 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	if size <= length+leeway {
+	room, err := value.Add(length, leeway)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if fits, err := value.Ordered("<=", value.Int(int64(size)), room); err != nil {
+		return value.Undefined, err
+	} else if fits {
 		return v, nil
 	}
+
+	// Only now is the length an index, and only now does a float refuse.
+	cut, err := truncPoint(length, endLen)
+	if err != nil {
+		return value.Undefined, err
+	}
+
 	text := value.Str(v)
 	// Past the length check jinja2 slices the value and then, unless
 	// killwords, calls rsplit on it -- so a non-string gets this far and
 	// fails on one of those rather than on being the wrong kind of input.
 	if !v.IsString() {
 		if killwords {
-			sliced, err := sliceValue(v, length-value.StrLen(end))
+			sliced, err := sliceValue(v, cut)
 			if err != nil {
 				return value.Undefined, err
 			}
-			_, err = value.Add(sliced, value.String(end))
-			return value.Undefined, err
+			// A list end really does append to a list input, so
+			// this is a result and not only a way to fail.
+			return value.Add(sliced, end)
 		}
 		return value.Undefined, errs.New(errs.AttributeError,
 			"'%s' object has no attribute 'rsplit'", v.TypeName())
 	}
 
-	head, _ := value.StrSlice(text, nil, ptr(length-value.StrLen(end)), nil)
-	if killwords {
-		return keepSafe(v, head+end), nil
+	head, _ := value.StrSlice(text, nil, ptr(cut), nil)
+	if !killwords {
+		if i := strings.LastIndexByte(head, ' '); i >= 0 {
+			head = head[:i]
+		}
 	}
-	if i := strings.LastIndexByte(head, ' '); i >= 0 {
-		head = head[:i]
+	if !end.IsString() {
+		// str + non-str, which is where jinja2 fails.
+		return value.Add(value.String(head), end)
 	}
-	return keepSafe(v, head+end), nil
+	return keepSafe(v, head+value.Str(end)), nil
+}
+
+// truncPoint is `length - len(end)`, the index jinja2 cuts at. Working it out
+// here is what refuses a float: the length is only ever an index at the slice,
+// so `truncate(3.0)` compares its way past both assertions and fails on the
+// cut, which is where Python fails too.
+func truncPoint(length value.Value, endLen int) (int, error) {
+	n, ok := length.Int64()
+	if !ok {
+		return 0, errs.New(errs.TypeError,
+			"slice indices must be integers or None or have an __index__ method")
+	}
+	return int(n) - endLen, nil
 }
 
 func ptr[T any](v T) *T { return &v }
