@@ -1721,6 +1721,13 @@ func pyParseInt(text string, base int) (*big.Int, bool) {
 	if s != "" && (s[0] == '+' || s[0] == '-') {
 		neg, s = s[0] == '-', s[1:]
 	}
+	// Python takes exactly one sign. big.Int.SetString reads one of its
+	// own, so without this "--4" came out as 4 and "-+4" as -4, where
+	// int("--4") is a ValueError -- and `|int` answers its default rather
+	// than raising, so a template got a plausible number and no signal.
+	if s != "" && (s[0] == '+' || s[0] == '-') {
+		return nil, false
+	}
 	// A prefix selects the base when none was given, and is allowed -- but
 	// not required -- when it matches the one that was. It is matched
 	// case-insensitively, so 0X and 0x are the same.
