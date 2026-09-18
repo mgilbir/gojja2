@@ -1,0 +1,3 @@
+{}
+---
+{{ 'ab'.count('a', none) }}|{{ 'ab'.find('a', none) }}|{{ 'ab'.startswith('a', none) }}|{{ 'ab'.endswith('b', 0, none) }}|{{ 'ab'.splitlines(1) }}

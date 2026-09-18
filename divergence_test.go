@@ -194,12 +194,18 @@ func TestFillCharAcceptsExactlyOne(t *testing.T) {
 		{`{{ "a".rjust(3, "x") }}`, "xxa"},
 		{`{{ "a".center(5, "é") }}`, "ééaéé"},
 		{`{{ "a".center(5) }}`, "  a  "},
-		{`{{ "a".center(10, none) }}`, "    a     "},
 	}
 	for _, tc := range cases {
 		if got := mustRender(t, tc.src); got != tc.want {
 			t.Errorf("%s = %q, want %q", tc.src, got, tc.want)
 		}
+	}
+	// An explicit None is not the default. Only an argument that was not
+	// written is; a None reaches the check like any other value, and the
+	// check is hand-written in CPython, so it names the type plainly.
+	if _, err := render(t, `{{ "a".center(10, none) }}`); err == nil ||
+		err.Error() != "The fill character must be a unicode character, not NoneType" {
+		t.Errorf("center(10, none): got %v", err)
 	}
 }
 

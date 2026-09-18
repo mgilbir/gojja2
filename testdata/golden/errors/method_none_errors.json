@@ -1,0 +1,14 @@
+{
+  "case": "errors/method_none_errors.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "encode() argument 'errors' must be str, not None"
+  }
+}
