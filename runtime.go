@@ -199,6 +199,11 @@ func (l *loopObject) GetAttr(name string) (value.Value, bool) {
 }
 
 func (l *loopObject) cycle(args *value.CallArgs) (value.Value, error) {
+	// cycle takes *args and no keywords, and Python refuses one before the
+	// body's empty-cycle check runs.
+	if err := bindArgs(runtimeSignatures["LoopContext.cycle"], args, 1); err != nil {
+		return value.Undefined, err
+	}
 	if len(args.Pos) == 0 {
 		return value.Undefined, errs.New(errs.TypeError, "no items for cycling given")
 	}
@@ -208,6 +213,9 @@ func (l *loopObject) cycle(args *value.CallArgs) (value.Value, error) {
 // changed reports whether its arguments differ from the previous call's, which
 // is how templates group consecutive rows.
 func (l *loopObject) changed(args *value.CallArgs) (value.Value, error) {
+	if err := bindArgs(runtimeSignatures["LoopContext.changed"], args, 1); err != nil {
+		return value.Undefined, err
+	}
 	current := value.NewTuple(args.Pos...)
 	if l.hasLastValue && value.Equal(l.lastChanged, current) {
 		return value.False, nil
@@ -217,16 +225,22 @@ func (l *loopObject) changed(args *value.CallArgs) (value.Value, error) {
 }
 
 // Call makes `loop(...)` work inside a recursive loop.
+//
+// LoopContext.__call__ takes one iterable, so Python binds the call before the
+// body can complain about the missing marker: `{{ loop() }}` in a plain loop is
+// a missing argument, not the marker. The parameter is named, so
+// `loop(iterable=x)` binds too.
 func (l *loopObject) Call(args *value.CallArgs) (value.Value, error) {
+	if err := bindArgs(runtimeSignatures["LoopContext.__call__"], args, 1); err != nil {
+		return value.Undefined, err
+	}
 	if l.recurse == nil {
 		return value.Undefined, errs.New(errs.TypeError,
-			"the loop must have the 'recursive' marker to be called")
+			"The loop must have the 'recursive' marker to be called recursively.")
 	}
-	if len(args.Pos) != 1 {
-		return value.Undefined, errs.New(errs.TypeError,
-			"loop() takes exactly one argument, got %d", len(args.Pos))
-	}
-	return l.recurse(args.Pos[0], l.depth+1)
+	// Bound, so there is exactly one argument -- positionally or by name.
+	iterable, _ := arg(args, 0, "iterable")
+	return l.recurse(iterable, l.depth+1)
 }
 
 // Len is the number of items the loop walks, which is `loop.length`.
@@ -386,9 +400,11 @@ func (m *macroObject) TypeName() string { return "Macro" }
 
 func (m *macroObject) QualifiedName() string { return "jinja2.runtime.Macro" }
 
+// Repr is jinja2's `<{type} {name}>`, where an unnamed macro -- the one a
+// `{% call %}` block builds -- is spelled "anonymous" rather than left out.
 func (m *macroObject) Repr() string {
 	if m.name == "" {
-		return "<Macro>"
+		return "<Macro anonymous>"
 	}
 	return "<Macro " + value.Repr(value.String(m.name)) + ">"
 }
@@ -483,9 +499,11 @@ func (b *blockReference) Repr() string {
 }
 
 func (b *blockReference) Call(args *value.CallArgs) (value.Value, error) {
-	if len(args.Pos) > 0 || len(args.Kwargs) > 0 {
-		return value.Undefined, errs.New(errs.TypeError,
-			"block %s takes no arguments", value.Repr(value.String(b.name)))
+	// BlockReference.__call__ takes nothing but self, and says so the way
+	// any Python method does -- naming itself and counting self, not naming
+	// the block.
+	if err := bindArgs(runtimeSignatures["BlockReference.__call__"], args, 1); err != nil {
+		return value.Undefined, err
 	}
 	return b.render()
 }

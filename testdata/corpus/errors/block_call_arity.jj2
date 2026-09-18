@@ -1,0 +1,3 @@
+{}
+---
+{% block b %}x{% endblock %}{{ self.b(1) }}

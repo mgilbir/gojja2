@@ -9,10 +9,11 @@ jinja2.tests or jinja2.utils. Transcribing 48 signatures by hand is exactly the
 kind of work that is done once, drifts, and is never checked again -- so they
 are read out of the pinned jinja2 with inspect.signature instead.
 
-The globals are the same story one level down: `cycler` and `joiner` are
-classes, so the call a template writes is bound against __init__ with self
-counted among the positional arguments, which is why CPython says "takes from 1
-to 2 positional arguments but 3 were given" for `joiner('-','x')`.
+The globals and the runtime objects are the same story one level down:
+`cycler`, `joiner`, `loop` and a block reference are all classes, so the call a
+template writes is bound against a method with self counted among the
+positional arguments, which is why CPython says "takes from 1 to 2 positional
+arguments but 3 were given" for `joiner('-','x')`.
 
 The counts here are Python's, so the messages can be too: a filter called with
 too many arguments reports the numbers CPython would, injected first parameter
@@ -29,6 +30,7 @@ from pathlib import Path
 import jinja2
 from jinja2.filters import FILTERS
 from jinja2.tests import TESTS
+from jinja2.runtime import BlockReference, LoopContext
 from jinja2.utils import Cycler, Joiner, generate_lorem_ipsum
 from jinja2.utils import pass_eval_context  # noqa: F401  (import proves the API shape)
 
@@ -93,12 +95,13 @@ var filterSignatures = map[string]signature{{
 var testSignatures = map[string]signature{{
 {tests}}}
 
-// globalSignatures covers the callables jinja2 puts in every template's
-// namespace, and the methods reachable on what they return. They are keyed by
-// the name CPython puts in the error rather than by the template's name,
-// because one global -- cycler -- is a class whose __init__, next and reset
-// each bind separately.
-var globalSignatures = map[string]signature{{
+// runtimeSignatures covers the callables a template reaches that are neither
+// filters nor tests: the globals, the methods on what they return, and the
+// objects the renderer itself puts in scope -- loop and a block reference.
+// They are keyed by the name CPython puts in the error rather than by the
+// template's name, because several are classes whose methods each bind
+// separately.
+var runtimeSignatures = map[string]signature{{
 {globals}}}
 
 // range is a C function with two wordings for a wrong count rather than one,
@@ -306,23 +309,28 @@ def rows_for(kind: str, table: dict, qualified: bool = False) -> tuple[str, int]
     return "".join(rows), len(rows)
 
 
-# GLOBALS are the callables a template reaches without importing anything, and
-# the methods on what they return. A class is listed by its __init__ because
-# that is what a call to the class binds against.
-GLOBALS = {
+# RUNTIME are the callables a template reaches that are neither filters nor
+# tests: the globals, the methods on what they return, and the objects the
+# renderer puts in scope. A class is listed by its __init__ because that is
+# what a call to the class binds against.
+RUNTIME = {
     "generate_lorem_ipsum": generate_lorem_ipsum,
     "Cycler.__init__": Cycler.__init__,
     "Cycler.next": Cycler.next,
     "Cycler.reset": Cycler.reset,
     "Joiner.__init__": Joiner.__init__,
     "Joiner.__call__": Joiner.__call__,
+    "LoopContext.__call__": LoopContext.__call__,
+    "LoopContext.cycle": LoopContext.cycle,
+    "LoopContext.changed": LoopContext.changed,
+    "BlockReference.__call__": BlockReference.__call__,
 }
 
 
 def main() -> int:
     filters, nf = rows_for("filter", FILTERS)
     tests, nt = rows_for("test", TESTS)
-    globals_, ng = rows_for("global", GLOBALS, qualified=True)
+    globals_, ng = rows_for("runtime", RUNTIME, qualified=True)
     few, many, kw = range_messages()
     DST.write_text(
         HEADER.format(
@@ -337,7 +345,7 @@ def main() -> int:
         encoding="utf-8",
     )
     print(
-        f"wrote {nf} filter, {nt} test and {ng} global signatures "
+        f"wrote {nf} filter, {nt} test and {ng} runtime signatures "
         f"into {DST.relative_to(ROOT)}",
         file=sys.stderr,
     )
