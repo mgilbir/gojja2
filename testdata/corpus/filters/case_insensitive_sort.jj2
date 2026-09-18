@@ -1,0 +1,3 @@
+{}
+---
+{{ ["ß","B","a"]|sort(case_sensitive=false) }}

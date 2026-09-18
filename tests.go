@@ -5,7 +5,6 @@ package gojja2
 
 import (
 	"math"
-	"unicode"
 
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/value"
@@ -27,8 +26,8 @@ func registerDefaultTests(env *Environment) {
 		"false":     func(v value.Value) bool { return v.Kind() == value.KindBool && !v.AsBool() },
 		"sequence":  isSequenceValue,
 		"iterable":  isIterableValue,
-		"lower":     allCased(unicode.IsLower, unicode.IsUpper),
-		"upper":     allCased(unicode.IsUpper, unicode.IsLower),
+		"lower":     stringCased(isLowerString),
+		"upper":     stringCased(isUpperString),
 	}
 	simple["callable"] = isCallableValue
 	for name, fn := range simple {
@@ -122,22 +121,15 @@ func isCallableValue(v value.Value) bool {
 	return ok
 }
 
-// allCased implements `is lower` and `is upper`, which jinja2 writes as
+// stringCased implements `is lower` and `is upper`, which jinja2 writes as
 // str(value).islower(). The stringification matters: a list is tested by its
 // repr, so `['a'] is lower` is true.
-func allCased(want, other func(rune) bool) func(value.Value) bool {
-	return func(v value.Value) bool {
-		seen := false
-		for _, r := range value.Str(v) {
-			if other(r) {
-				return false
-			}
-			if want(r) {
-				seen = true
-			}
-		}
-		return seen
-	}
+//
+// The predicate itself is the one str.islower uses, so the test and the method
+// cannot disagree -- they did, because this rolled its own loop over Go's
+// category predicates while the method used another.
+func stringCased(f func(string) bool) func(value.Value) bool {
+	return func(v value.Value) bool { return f(value.Str(v)) }
 }
 
 // intParity implements `is odd` and `is even`.

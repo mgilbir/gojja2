@@ -1593,6 +1593,32 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- full case mapping and cased characters -----------------------------------
+# Python's case operations are full mappings over cased characters; Go's are
+# simple mappings over general categories. Both halves differed. "\u00df".upper()
+# is "SS" and was "\u00df"; casefold was implemented as lower, which is wrong for
+# 298 code points; and islower/isupper rest on Unicode's Cased property, which
+# Go's IsLower/IsUpper do not carry, so 370 code points answered wrongly.
+case("methods/case_full_upper", '{{ "\u00df".upper() }}|{{ "\ufb03".upper() }}|{{ "\u0390".upper() }}|{{ "\u0587".upper() }}')
+case("methods/case_full_lower", '{{ "\u0130".lower() }}|{{ "\u0130"|lower }}')
+case("methods/case_full_title", '{{ "\u00df".title() }}|{{ "\u00dfx y\u00df".title() }}')
+case("methods/case_full_capitalize", '{{ "\u00df".capitalize() }}|{{ "\ufb03".capitalize() }}')
+case("methods/case_full_swapcase", '{{ "\u00df".swapcase() }}|{{ "\u0130".swapcase() }}')
+# casefold is not lowercase: it folds for caseless comparison.
+case("methods/case_casefold", '{{ "\u00df".casefold() }}|{{ "\u03c2".casefold() }}|{{ "\u00b5".casefold() }}|{{ "\u017f".casefold() }}|{{ "\u0130".casefold() }}')
+# Cased beyond Lu/Ll: the ordinals, the modifier letters, the Roman numerals.
+case("methods/case_cased_predicates",
+     '{{ "\u00aa".islower() }}|{{ "\u02b0".islower() }}|{{ "\u0345".islower() }}'
+     '|{{ "\u2160".isupper() }}|{{ "\u24b6".isupper() }}|{{ "\u2160".istitle() }}')
+case("tests/case_is_lower_upper", '{{ "\u00aa" is lower }}|{{ "\u2160" is upper }}|{{ "\u01c5" is upper }}')
+# A word boundary in title() is an uncased character, not a non-letter.
+case("methods/title_boundary_is_cased", '{{ "a1b".title() }}|{{ "2nd place".title() }}|{{ "x-ray".title() }}')
+# jinja2's |title is not str.title(): it uses upper() on the first character
+# where the method uses the titlecase mapping, and for the sharp s they differ.
+case("filters/title_filter_is_not_str_title", '{{ "\u00df"|title }}|{{ "\u00df".title() }}|{{ "\u00dfx y\u00df"|title }}')
+# The case-insensitive collation paths go through lower() too.
+case("filters/case_insensitive_sort", '{{ ["\u00df","B","a"]|sort(case_sensitive=false) }}')
+
 # --- importing a template that extends another --------------------------------
 # A TemplateModule's str() is what the imported template rendered, and a
 # template that extends renders through its parent -- so an extending module is
