@@ -203,7 +203,27 @@ A resource error from the oracle's sandbox — `MemoryError`, `RecursionError`,
 a timeout — says the *server* ran out of room, not that the template is wrong,
 so it is excluded rather than graded. jinja2 has no bounds: `{{ "x" * 2**40 }}`
 allocates until something outside the process stops it, and an unguarded oracle
-takes the machine with it.
+takes the machine with it. Both entry points run under those limits now — the
+batch tool that writes goldens as much as the server, since generating goldens
+is exactly when nobody is watching.
+
+**`OverflowError` is not one of them.** `Python int too large to convert to C
+ssize_t` is what CPython says about an *argument*, on any machine and every
+time; it is the answer, not a symptom of how much room this process had. It
+was listed as a resource error, so the fuzzer and the soak discarded every case
+that raised it — while the batch tool, which classified nothing, recorded the
+same exception as the expected answer and graded it. One exception was the
+specification on one path and noise on the other, and the gap was where a whole
+family of integer-argument divergences lived: a 36-case sweep reported 2
+divergences with it listed and 23 without.
+
+What counts as a resource error is defined once, in `tools/oracle/jinjaoracle.py`,
+and both entry points import it. Writing a golden asks a narrower question —
+`MemoryError` and a timeout are this machine's answer and can never be recorded,
+while a `RecursionError` from a template that recurses infinitely is CPython's
+and two committed goldens hold it. That is reproducible only because both paths
+now pin the same recursion limit; the server used 3,000 and the batch tool
+CPython's default 1,000.
 
 ## Reproducing any of this
 

@@ -10,6 +10,10 @@ questions a second.
 
 from __future__ import annotations
 
+import resource
+import signal
+import sys
+
 import jinja2
 
 import profiles
@@ -47,6 +51,98 @@ EXTENSION_MODULES = {
     "do": "jinja2.ext.do",
     "loopcontrols": "jinja2.ext.loopcontrols",
 }
+
+
+# --- resource limits ----------------------------------------------------------
+#
+# A template can ask jinja2 for unbounded work -- `{{ "x" * 2**40 }}`, or a
+# `range()` it walks forever -- and jinja2 has no bounds of its own, so the
+# question has to be bounded here. Both entry points apply these: the batch
+# tool that writes goldens as well as the server that answers a fuzzer. The
+# batch tool having none is what let a hostile case take the machine down while
+# goldens were being generated.
+MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+RENDER_TIMEOUT_SECONDS = 5.0
+RECURSION_LIMIT = 3000
+
+
+class RenderTimeout(Exception):
+    """A render that exceeded the per-case wall clock."""
+
+
+# Failures that mean "this interpreter ran out of room", not "this template is
+# wrong". A result produced by hitting a limit says nothing about conformance,
+# so it is neither graded nor recorded as a golden.
+#
+# OverflowError is deliberately NOT in this set. "Python int too large to
+# convert to C ssize_t" is what CPython says about an *argument*, on any machine
+# and every time -- it is the answer, not a symptom of this process's limits.
+# Listing it hid a whole family of divergences from the fuzzer and the soak,
+# while the batch tool, which never classified anything, recorded the same
+# exception as the expected answer and graded it. The two paths disagreed about
+# what one exception meant, so this set now has one definition and both import
+# it. A 36-case sweep of integer arguments reported 2 divergences with
+# OverflowError listed here and 23 without.
+RESOURCE_ERRORS = {"MemoryError", "RecursionError", "RenderTimeout"}
+
+# The narrower question the batch tool asks: can this be written down as the
+# expected answer?
+#
+# RecursionError is in RESOURCE_ERRORS but not here, and the difference is
+# real. A *generated* template of accidental depth raises it only on this
+# machine, so a fuzzer must discard it -- but a template that recurses
+# infinitely, `{% extends "self.txt" %}`, raises it on every machine, and two
+# committed goldens say so. It is reproducible only because apply_limits pins
+# the recursion limit, which the batch tool did not do before: the server ran
+# at 3000 and the batch tool at CPython's default 1000, so the two disagreed
+# about how deep is too deep.
+UNRECORDABLE_ERRORS = {"MemoryError", "RenderTimeout"}
+
+
+def _on_alarm(signum, frame):  # noqa: ARG001 - signal handler signature
+    raise RenderTimeout("render exceeded the time limit")
+
+
+def apply_limits() -> None:
+    """Bound this process's address space, arm the per-case alarm, and pin the
+    recursion limit so that both entry points agree about depth."""
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    limit = MEMORY_LIMIT_BYTES if hard == resource.RLIM_INFINITY else min(MEMORY_LIMIT_BYTES, hard)
+    resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
+    signal.signal(signal.SIGALRM, _on_alarm)
+    # A deep template recurses in the compiler as well as at render time.
+    sys.setrecursionlimit(RECURSION_LIMIT)
+
+
+def is_resource_error(result: dict) -> bool:
+    """Report whether a result came from hitting a limit rather than from the
+    template's own terms."""
+    return not result["ok"] and result["error"]["type"] in RESOURCE_ERRORS
+
+
+def is_unrecordable(result: dict) -> bool:
+    """Report whether a result is this machine's answer rather than CPython's,
+    and so must never become a golden."""
+    return not result["ok"] and result["error"]["type"] in UNRECORDABLE_ERRORS
+
+
+def guarded(fn) -> dict:
+    """Run one render under the per-case alarm, turning a limit into a result.
+
+    RenderTimeout, MemoryError and RecursionError can fire inside an `except`
+    clause and escape the caller's own handling, so they are caught here and
+    reported rather than allowed to end the process.
+    """
+    signal.setitimer(signal.ITIMER_REAL, RENDER_TIMEOUT_SECONDS)
+    try:
+        return fn()
+    except (RenderTimeout, MemoryError, RecursionError, CaseError) as exc:
+        # Marked here rather than left to is_resource_error, because a
+        # CaseError is a malformed case rather than a listed exception type
+        # and must not be graded either.
+        return {"ok": False, "error": describe(exc), "resource": True}
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 class CaseError(Exception):

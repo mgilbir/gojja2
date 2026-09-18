@@ -16,50 +16,22 @@ Response (one line of JSON):
 A request that kills the render -- a runaway allocation, an endless loop -- must
 not kill the server, so each one runs under a wall-clock alarm and the whole
 process under an address-space limit. Both are reported as ordinary failures.
+The limits, and what counts as hitting one, live in jinjaoracle so that this
+and the batch tool cannot disagree about it.
 """
 
 from __future__ import annotations
 
 import json
-import resource
-import signal
 import sys
 
-from jinjaoracle import CaseError, describe, render
-
-# A template that wants more than this is a generator bug, not a conformance
-# question. Keeping the limit here means a bad input degrades to an error
-# instead of taking the machine down.
-MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
-RENDER_TIMEOUT_SECONDS = 5.0
-
-
-class RenderTimeout(Exception):
-    pass
-
-
-def _on_alarm(signum, frame):  # noqa: ARG001 - signal handler signature
-    raise RenderTimeout("render exceeded the time limit")
-
-
-def apply_limits() -> None:
-    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-    limit = MEMORY_LIMIT_BYTES if hard == resource.RLIM_INFINITY else min(MEMORY_LIMIT_BYTES, hard)
-    resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
-    signal.signal(signal.SIGALRM, _on_alarm)
-
-
-# Failures that mean "this server ran out of room", not "this template is
-# wrong". A result produced by hitting a sandbox limit says nothing about
-# conformance and must not be graded.
-RESOURCE_ERRORS = {"MemoryError", "RecursionError", "RenderTimeout", "OverflowError"}
+from jinjaoracle import apply_limits, guarded, is_resource_error, render
 
 
 def handle(request: dict) -> dict:
     name = request.get("name") or "<fuzz>"
-    signal.setitimer(signal.ITIMER_REAL, RENDER_TIMEOUT_SECONDS)
-    try:
-        result = render(
+    result = guarded(
+        lambda: render(
             name,
             request.get("src", ""),
             request.get("ctx") or {},
@@ -67,23 +39,17 @@ def handle(request: dict) -> dict:
             request.get("templates") or {},
             request.get("profile"),
         )
-        # render() catches everything, so a limit hit comes back as an
-        # ordinary failure and has to be recognised here.
-        if not result["ok"] and result["error"]["type"] in RESOURCE_ERRORS:
-            result["resource"] = True
-        return result
-    except (RenderTimeout, MemoryError, RecursionError, CaseError) as exc:
-        # These escape render() because they can fire inside its own except
-        # clause; report them rather than letting the server die.
-        return {"ok": False, "error": describe(exc), "resource": True}
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+    )
+    # render() catches everything, so a limit hit comes back as an ordinary
+    # failure and has to be recognised. What counts as one is defined once, in
+    # jinjaoracle, because the batch tool has to agree with this.
+    if is_resource_error(result):
+        result["resource"] = True
+    return result
 
 
 def main() -> int:
     apply_limits()
-    # A deep template recurses in the compiler as well as at render time.
-    sys.setrecursionlimit(3000)
 
     for line in sys.stdin:
         line = line.strip()
