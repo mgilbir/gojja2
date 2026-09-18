@@ -26,6 +26,15 @@ func FormatValue(v Value, spec string, budget Budget) (string, error) {
 	if spec == "" {
 		return Str(v), nil
 	}
+	// A type with no __format__ of its own inherits object's, which takes
+	// the empty spec and nothing else -- and never looks at what the spec
+	// says. So `{:,n}` on None is about None, not about the comma.
+	switch v.kind {
+	case KindString, KindInt, KindBool, KindFloat:
+	default:
+		return "", errs.New(errs.TypeError,
+			"unsupported format string passed to %s.__format__", v.TypeName())
+	}
 	f, err := parseFormatSpec(spec, v)
 	if err != nil {
 		return "", err
@@ -59,9 +68,10 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 
 	// A fill character is only a fill when an alignment follows it, so ">8"
 	// is align-8 and "*>8" is fill-align-8.
+	fillGiven := false
 	if len(r) >= 2 && isAlign(r[1]) {
 		f.fill, f.align = r[0], byte(r[1])
-		i = 2
+		fillGiven, i = true, 2
 	} else if len(r) >= 1 && isAlign(r[0]) {
 		f.align = byte(r[0])
 		i = 1
@@ -75,11 +85,22 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 		i++
 	}
 	if i < len(r) && r[i] == '0' {
-		// A leading zero is fill '0' and align '=', unless an explicit
-		// alignment already said otherwise.
+		// A leading zero is fill '0', and align '=' as well -- but only
+		// for a value that aligns right by default, which is to say a
+		// number. On a string it is a fill and nothing more, which is
+		// why `{:0.0s}` is an empty string and not an alignment error.
 		f.zero = true
-		if f.align == 0 {
-			f.fill, f.align = '0', '='
+		// The fill is set whenever the spec did not name one, whatever
+		// the alignment says -- `{:>06}` pads with zeros. The alignment
+		// only follows when none was given *and* the value aligns right
+		// by default, which is to say a number: on a string the zero is
+		// a fill and nothing more, which is why `{:0.0s}` is an empty
+		// string and not an alignment error.
+		if !fillGiven {
+			f.fill = '0'
+		}
+		if f.align == 0 && v.IsNumber() {
+			f.align = '='
 		}
 		i++
 	}
@@ -121,7 +142,33 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 		// More than one character left is never a type, whatever it is.
 		return f, invalidSpec(spec, v)
 	}
+
+	// Whether a grouping option is allowed at all depends on the format
+	// code and nothing else, so CPython settles it here -- before the value
+	// is looked at. That is why `{:,x}` on a float is about the comma and
+	// `{:x}` on the same float is about the code.
+	//
+	// Underscore is allowed in the power-of-two bases where a comma is not,
+	// and separates every four digits there rather than every three.
+	if f.grouping != 0 {
+		switch f.typ {
+		case 0, 'd', 'e', 'E', 'f', 'F', 'g', 'G', '%':
+		case 'b', 'o', 'x', 'X':
+			if f.grouping != '_' {
+				return f, cannotGroup(f.grouping, f.typ)
+			}
+		default:
+			return f, cannotGroup(f.grouping, f.typ)
+		}
+	}
 	return f, nil
+}
+
+// cannotGroup is the complaint a grouping option makes about the code it was
+// written with. The code is the one in the spec, or the type's own default when
+// the spec left it out -- which is how `{:,}` on a string says "with 's'".
+func cannotGroup(sep, typ byte) error {
+	return errs.New(errs.ValueError, "Cannot specify '%c' with '%c'.", sep, typ)
 }
 
 func isAlign(r rune) bool {
@@ -178,16 +225,26 @@ func (f formatSpec) formatString(v Value) (string, bool, error) {
 	if f.typ != 0 && f.typ != 's' {
 		return "", false, unknownCode(f.typ, v)
 	}
-	if f.align == '=' {
+	// The order is CPython's, and every step of it is reachable: a spec
+	// carrying two of these reports the first, not the last.
+	if f.grouping != 0 {
+		return "", false, cannotGroup(f.grouping, 's')
+	}
+	if f.sign == ' ' {
 		return "", false, errs.New(errs.ValueError,
-			"'=' alignment not allowed in string format specifier")
+			"Space not allowed in string format specifier")
 	}
 	if f.sign != 0 {
 		return "", false, errs.New(errs.ValueError,
 			"Sign not allowed in string format specifier")
 	}
-	if f.grouping != 0 {
-		return "", false, unknownCode(f.grouping, v)
+	if f.alt {
+		return "", false, errs.New(errs.ValueError,
+			"Alternate form (#) not allowed in string format specifier")
+	}
+	if f.align == '=' {
+		return "", false, errs.New(errs.ValueError,
+			"'=' alignment not allowed in string format specifier")
 	}
 	s := v.str
 	if f.hasPrec {
@@ -206,20 +263,10 @@ func (f formatSpec) formatInt(b *big.Int, v Value) (string, error) {
 	case 'e', 'E', 'f', 'F', 'g', 'G', '%':
 		x, _ := new(big.Float).SetInt(b).Float64()
 		return f.formatFloat(x, v)
-	case 'c':
-		if f.sign != 0 {
-			return "", errs.New(errs.ValueError,
-				"Sign not allowed with integer format specifier 'c'")
-		}
-		n := b.Int64()
-		if !b.IsInt64() || n < 0 || n > 0x10FFFF {
-			return "", errs.New(errs.OverflowError, "%%c arg not in range(0x110000)")
-		}
-		return string(rune(n)), nil
 	}
 	base, prefix := 10, ""
 	switch f.typ {
-	case 0, 'd', 'n':
+	case 0, 'd', 'n', 'c':
 	case 'b':
 		base, prefix = 2, "0b"
 	case 'o':
@@ -231,9 +278,32 @@ func (f formatSpec) formatInt(b *big.Int, v Value) (string, error) {
 	default:
 		return "", unknownCode(f.typ, v)
 	}
+	// Precision is refused for every integer code, 'c' included, and before
+	// anything 'c' has to say for itself.
 	if f.hasPrec {
 		return "", errs.New(errs.ValueError,
 			"Precision not allowed in integer format specifier")
+	}
+	if f.typ == 'c' {
+		if f.sign != 0 {
+			return "", errs.New(errs.ValueError,
+				"Sign not allowed with integer format specifier 'c'")
+		}
+		if f.alt {
+			return "", errs.New(errs.ValueError,
+				"Alternate form (#) not allowed with integer format specifier 'c'")
+		}
+		// Past a C long the conversion itself fails, before anything
+		// asks whether the number is a code point.
+		if !b.IsInt64() {
+			return "", errs.New(errs.OverflowError,
+				"Python int too large to convert to C long")
+		}
+		n := b.Int64()
+		if n < 0 || n > 0x10FFFF {
+			return "", errs.New(errs.OverflowError, "%%c arg not in range(0x110000)")
+		}
+		return string(rune(n)), nil
 	}
 	digits := new(big.Int).Abs(b).Text(base)
 	if f.typ == 'X' {
@@ -246,6 +316,55 @@ func (f formatSpec) formatInt(b *big.Int, v Value) (string, error) {
 		digits = group(digits, f.grouping, groupSize(base))
 	}
 	return f.withSign(b.Sign() < 0, prefix, digits), nil
+}
+
+// groupWidth is how many digits this spec's separator goes between: four in the
+// power-of-two bases, which only '_' reaches, and three everywhere else.
+func (f formatSpec) groupWidth() int {
+	if f.grouping == '_' {
+		switch f.typ {
+		case 'b', 'o', 'x', 'X':
+			return 4
+		}
+	}
+	return 3
+}
+
+// padGrouped left-pads a number's digits with zeros and regroups the result, so
+// that the padding is separated like the rest of the number and the whole body
+// still reaches the width.
+//
+// The digit run ends at the decimal point or the exponent; everything after it
+// is carried along and counted, but not padded.
+func padGrouped(rest string, need int, sep byte, size int) string {
+	end := 0
+	for end < len(rest) {
+		c := rest[end]
+		if c == '.' {
+			break
+		}
+		if (c == 'e' || c == 'E') && end+1 < len(rest) &&
+			(rest[end+1] == '+' || rest[end+1] == '-') {
+			break
+		}
+		if c == sep || (c >= '0' && c <= '9') ||
+			(c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			end++
+			continue
+		}
+		break
+	}
+	tail := rest[end:]
+	digits := strings.ReplaceAll(rest[:end], string(sep), "")
+	want := need - StrLen(tail)
+	n := len(digits)
+	for n+(n-1)/size < want {
+		n++
+	}
+	if n > len(digits) {
+		digits = strings.Repeat("0", n-len(digits)) + digits
+	}
+	return group(digits, sep, size) + tail
 }
 
 // groupSize is how many digits a separator goes between: three in base ten,
@@ -280,37 +399,87 @@ func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
 		prec = 6
 	}
 	var body string
+	percent := false
 	switch f.typ {
 	case 'f', 'F':
 		body = strconv.FormatFloat(math.Abs(x), 'f', prec, 64)
 	case 'e', 'E':
 		body = expForm(math.Abs(x), prec, f.typ == 'E')
 	case 'g', 'G', 'n':
-		body = generalForm(math.Abs(x), prec, f.typ == 'G', f.alt)
+		body = generalForm(math.Abs(x), prec, f.typ == 'G', f.alt, false)
 	case '%':
-		body = strconv.FormatFloat(math.Abs(x)*100, 'f', prec, 64) + "%"
+		// The sign goes on after the grouping: appending it here let the
+		// separator fall between the last digits and the '%' itself.
+		body = strconv.FormatFloat(math.Abs(x)*100, 'f', prec, 64)
+		percent = true
 	case 0:
 		// No type at all is str(float) laid out, not %g: it keeps the
 		// shortest round-tripping digits rather than six of them.
-		body = FormatFloat(math.Abs(x))
+		//
+		// An explicit precision changes that -- it becomes 'g' -- but
+		// not quite into 'g': the flag this type carries moves the
+		// threshold between fixed and exponential one place down and
+		// keeps a ".0" on a result that would otherwise be all digits.
+		// So `{:.0}` on 1.5 is "2e+00" where `{:.0g}` is "2".
+		if f.hasPrec {
+			body = generalForm(math.Abs(x), prec, false, f.alt, true)
+		} else {
+			body = FormatFloat(math.Abs(x))
+		}
 	default:
 		return "", unknownCode(f.typ, v)
 	}
 	if math.IsInf(x, 0) || math.IsNaN(x) {
+		// An infinity has no digits to lay out, so neither the
+		// alternate form nor the grouping has anything to do -- but the
+		// percent sign still goes on.
 		body = strings.TrimPrefix(FormatFloat(math.Abs(x)), "-")
 		if f.typ == 'E' || f.typ == 'G' || f.typ == 'F' {
 			body = strings.ToUpper(body)
 		}
-	} else if f.grouping != 0 {
-		intPart, rest, found := strings.Cut(body, ".")
-		intPart = group(intPart, f.grouping, 3)
-		if found {
-			body = intPart + "." + rest
-		} else {
-			body = intPart
+	} else {
+		if f.alt {
+			body = withAltPoint(body)
+		}
+		if f.grouping != 0 {
+			body = groupMantissa(body, f.grouping)
 		}
 	}
+	if percent {
+		body += "%"
+	}
 	return f.withSign(math.Signbit(x), "", body), nil
+}
+
+// splitExponent separates the mantissa from the exponent, which is where both
+// the alternate form and the grouping stop: `{:,.0E}` on 1 is "1E+00", not
+// "1E,+00".
+func splitExponent(body string) (head, exp string) {
+	if i := strings.IndexAny(body, "eE"); i >= 0 {
+		return body[:i], body[i:]
+	}
+	return body, ""
+}
+
+// withAltPoint is Python's alternate form for a float: the result always
+// carries a decimal point, so `{:#.0f}` on 1.5 is "2." and not "2".
+func withAltPoint(body string) string {
+	head, exp := splitExponent(body)
+	if !strings.Contains(head, ".") {
+		head += "."
+	}
+	return head + exp
+}
+
+// groupMantissa separates the digits before the point, and only those.
+func groupMantissa(body string, sep byte) string {
+	head, exp := splitExponent(body)
+	intPart, rest, found := strings.Cut(head, ".")
+	intPart = group(intPart, sep, 3)
+	if found {
+		return intPart + "." + rest + exp
+	}
+	return intPart + exp
 }
 
 // expForm is Python's 'e': a two-digit exponent at minimum, where Go writes as
@@ -336,9 +505,17 @@ func expForm(x float64, prec int, upper bool) string {
 // generalForm is Python's 'g': exponential when the exponent is below -4 or at
 // least the precision, fixed otherwise, with trailing zeros removed unless '#'
 // asked for them.
-func generalForm(x float64, prec int, upper, alt bool) string {
+//
+// dotZero is the flag the *typeless* spec carries. It moves the threshold one
+// place down and keeps a ".0" on an otherwise all-digit result, which is what
+// makes `{:.0}` and `{:.0g}` different answers for the same number.
+func generalForm(x float64, prec int, upper, alt, dotZero bool) string {
 	if prec == 0 {
 		prec = 1
+	}
+	threshold := prec
+	if dotZero {
+		threshold = prec - 1
 	}
 	exp := 0
 	if x != 0 {
@@ -350,7 +527,7 @@ func generalForm(x float64, prec int, upper, alt bool) string {
 		}
 	}
 	var out string
-	if exp < -4 || exp >= prec {
+	if exp < -4 || exp >= threshold {
 		out = expForm(x, prec-1, false)
 		if !alt {
 			mant, e, _ := strings.Cut(out, "e")
@@ -361,6 +538,9 @@ func generalForm(x float64, prec int, upper, alt bool) string {
 		if !alt {
 			out = trimZeros(out)
 		}
+	}
+	if dotZero && !strings.ContainsAny(out, ".eE") {
+		out += ".0"
 	}
 	if upper {
 		return strings.ToUpper(out)
@@ -431,6 +611,13 @@ func (f formatSpec) pad(body string, numeric bool, budget Budget) (string, error
 		if len(body) >= i+2 && body[i] == '0' &&
 			strings.IndexByte("bBoOxX", body[i+1]) >= 0 {
 			i += 2
+		}
+		if f.grouping != 0 && f.fill == '0' {
+			// Zeros written into a grouped number join it rather
+			// than sitting in front of it, so they take separators
+			// of their own: `{:06,}` on 1 is "00,001".
+			return body[:i] + padGrouped(body[i:], f.width-StrLen(body[:i]),
+				f.grouping, f.groupWidth()), nil
 		}
 		return body[:i] + pad + body[i:], nil
 	default:
