@@ -6,6 +6,7 @@ package value
 import (
 	"math"
 	"math/big"
+	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
 )
@@ -504,32 +505,48 @@ func chargeRepeat(seq Value, n int64, budget Budget) error {
 	return chargeItems(budget, size)
 }
 
+// repeat builds `v * n`, and does it in the size of the result rather than in
+// the count.
+//
+// Those differ exactly when the unit is empty, and that is the whole defect:
+// `"" * 10000000000` is the empty string, but copying nothing ten billion times
+// to establish that took seventeen seconds. Nothing stopped it. The budget is
+// charged the size of the result, which is zero, so there was nothing to
+// charge; the loop consults no context, so no deadline reached it; and the
+// expression is constant, so the work happened in FromString, where the
+// caller's deadline does not apply at all. Twenty-two characters of template.
+//
+// State.repeatStringN, which is this operation on the engine's side, has always
+// returned early on an empty unit.
 func repeat(v Value, n int64) (Value, error) {
 	if n < 0 {
 		n = 0
 	}
 	switch v.kind {
 	case KindString, KindBytes:
-		if n > 0 && saturatingMul(int64(len(v.str)), n) > MaxAllocBytes {
+		size := saturatingMul(int64(len(v.str)), n)
+		if size > MaxAllocBytes {
 			return Undefined, errs.New(errs.OverflowError, "repeated string is too long")
 		}
 		out := Value{kind: v.kind, safe: v.safe}
-		if n > 0 {
-			buf := make([]byte, 0, len(v.str)*int(n))
-			for i := int64(0); i < n; i++ {
-				buf = append(buf, v.str...)
-			}
-			out.str = string(buf)
+		if size > 0 {
+			// n fits an int here: the unit is at least one byte, so
+			// the size ceiling has already bounded the count.
+			out.str = strings.Repeat(v.str, int(n))
 		}
 		return out, nil
 	default:
 		s, _ := v.Seq()
-		if n > 0 && saturatingMul(int64(s.Len()), n) > MaxAllocBytes {
+		total := saturatingMul(int64(s.Len()), n)
+		if total > MaxAllocBytes {
 			return Undefined, errs.New(errs.OverflowError, "repeated sequence is too long")
 		}
-		items := make([]Value, 0, s.Len()*int(n))
-		for i := int64(0); i < n; i++ {
-			items = append(items, s.items...)
+		var items []Value
+		if total > 0 {
+			items = make([]Value, 0, total)
+			for int64(len(items)) < total {
+				items = append(items, s.items...)
+			}
 		}
 		if v.kind == KindTuple {
 			return NewTuple(items...), nil

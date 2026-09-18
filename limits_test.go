@@ -468,3 +468,41 @@ func TestSustainedFiltersStopWhenCancelled(t *testing.T) {
 		})
 	}
 }
+
+// A template that repeats nothing a great many times compiles and renders at
+// once, whatever the count.
+//
+// This is the same defect as value.TestRepeatingNothingIsFree reached the way a
+// caller would, and the reason it matters: the expression is constant, so the
+// work happened inside FromString. No render existed, so no context deadline
+// applied, and the fold's own budget is charged the size of the result, which
+// is nothing. Twenty-two characters compiled for as long as the count said.
+func TestRepeatingNothingDoesNotHangTheCompiler(t *testing.T) {
+	for _, src := range []string{
+		`{{ "" * 4611686018427387904 }}`,
+		`{{ 4611686018427387904 * "" }}`,
+		`{{ ([] * 4611686018427387904)|length }}`,
+		`{{ (() * 4611686018427387904)|length }}`,
+		`{% set x = "" %}{{ (x * 4611686018427387904)|length }}`,
+	} {
+		done := make(chan error, 1)
+		go func() {
+			tmpl, err := gojja2.New().FromString(src)
+			if err != nil {
+				done <- err
+				return
+			}
+			_, err = tmpl.RenderString(context.Background(), nil)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("%s: %v", src, err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s did not finish; the repetition is counted rather "+
+				"than the result", src)
+		}
+	}
+}
