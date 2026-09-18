@@ -1000,6 +1000,27 @@ case("globals/joiner_non_string_sep",
      "{% set k = joiner(none) %}{{ k() }}|{{ k() }}|"
      "{% set m = joiner([1,2]) %}{{ m() }}|{{ m() }}")
 
+# loop, a block reference and the macro a {% call %} block builds are Python
+# objects too, so a call to one binds against a method with self counted --
+# before the body gets to complain about a missing 'recursive' marker or an
+# empty cycle. The caller macro has no name, and CPython prints that as None.
+case("errors/loop_cycle_keyword", "{% for i in [1,2] %}{{ loop.cycle(a=1) }}{% endfor %}")
+case("errors/loop_changed_keyword", "{% for i in [1,2] %}{{ loop.changed(a=1) }}{% endfor %}")
+case("errors/loop_call_missing", "{% for i in [1,2] %}{{ loop() }}{% endfor %}")
+case("errors/loop_call_too_many", "{% for i in [1,2] %}{{ loop(i,i) }}{% endfor %}")
+case("errors/loop_call_not_recursive", "{% for i in [1,2] %}{{ loop(i) }}{% endfor %}")
+case("errors/block_call_arity", "{% block b %}x{% endblock %}{{ self.b(1) }}")
+case("errors/block_call_keyword", "{% block b %}x{% endblock %}{{ self.b(a=1) }}")
+case("errors/caller_too_many",
+     "{% macro m() %}{{ caller(1) }}{% endmacro %}{% call m() %}x{% endcall %}")
+case("errors/caller_keyword",
+     "{% macro m() %}{{ caller(a=1) }}{% endmacro %}{% call m() %}x{% endcall %}")
+case("runtime/loop_call_keyword",
+     "{% for i in [[1],[2]] recursive %}{{ loop(iterable=i) if i is sequence else i }}{% endfor %}")
+case("runtime/macro_repr",
+     "{% macro m() %}{{ caller }}{% endmacro %}{% call m() %}x{% endcall %}|"
+     "{% macro n() %}{% endmacro %}{{ n }}")
+
 # --- string methods -----------------------------------------------------------
 case("methods/string", "{{ 'a,b,c'.split(',') }}|{{ ' a  b '.split() }}|{{ '-'.join(['a','b']) }}|{{ 'abc'.startswith('a') }}|{{ 'abc'.find('b') }}")
 # str.format's replacement fields take attribute and index accessors, and the

@@ -291,14 +291,14 @@ func (c *cyclerObject) GetAttr(name string) (value.Value, bool) {
 		return c.items[c.pos], true
 	case "next":
 		return Func("next", func(_ *State, a *value.CallArgs) (value.Value, error) {
-			if err := bindArgs(globalSignatures["Cycler.next"], a, 1); err != nil {
+			if err := bindArgs(runtimeSignatures["Cycler.next"], a, 1); err != nil {
 				return value.Undefined, err
 			}
 			return c.next()
 		}), true
 	case "reset":
 		return Func("reset", func(_ *State, a *value.CallArgs) (value.Value, error) {
-			if err := bindArgs(globalSignatures["Cycler.reset"], a, 1); err != nil {
+			if err := bindArgs(runtimeSignatures["Cycler.reset"], a, 1); err != nil {
 				return value.Undefined, err
 			}
 			c.pos = 0
@@ -328,7 +328,7 @@ func (c *cyclerObject) Repr() string          { return "<Cycler>" }
 func globalCycler(s *State, args *value.CallArgs) (value.Value, error) {
 	// Python binds the call before __init__ runs, so a keyword beats the
 	// empty-cycle RuntimeError that the body raises.
-	if err := bindArgs(globalSignatures["Cycler.__init__"], args, 1); err != nil {
+	if err := bindArgs(runtimeSignatures["Cycler.__init__"], args, 1); err != nil {
 		return value.Undefined, err
 	}
 	if len(args.Pos) == 0 {
@@ -354,7 +354,7 @@ func (j *joinerObject) QualifiedName() string              { return "jinja2.util
 func (j *joinerObject) Repr() string                       { return "<Joiner>" }
 
 func (j *joinerObject) Call(args *value.CallArgs) (value.Value, error) {
-	if err := bindArgs(globalSignatures["Joiner.__call__"], args, 1); err != nil {
+	if err := bindArgs(runtimeSignatures["Joiner.__call__"], args, 1); err != nil {
 		return value.Undefined, err
 	}
 	if !j.used {
@@ -365,7 +365,7 @@ func (j *joinerObject) Call(args *value.CallArgs) (value.Value, error) {
 }
 
 func globalJoiner(s *State, args *value.CallArgs) (value.Value, error) {
-	if err := bindArgs(globalSignatures["Joiner.__init__"], args, 1); err != nil {
+	if err := bindArgs(runtimeSignatures["Joiner.__init__"], args, 1); err != nil {
 		return value.Undefined, err
 	}
 	sep := value.String(", ")
@@ -401,7 +401,7 @@ func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 	// A plain Python function, so the binding is the ordinary one: an
 	// unexpected keyword first, then one a positional already filled, then
 	// too many positionals.
-	if err := bindArgs(globalSignatures["generate_lorem_ipsum"], args, 0); err != nil {
+	if err := bindArgs(runtimeSignatures["generate_lorem_ipsum"], args, 0); err != nil {
 		return value.Undefined, err
 	}
 	n, err := intArg(args, 0, "n", 5)

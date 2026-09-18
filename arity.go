@@ -149,18 +149,23 @@ var testSignatures = map[string]signature{
 	"upper":       {pyName: "test_upper", pyCallName: "jinja2.tests.test_upper()", params: []string{"value"}, injected: 0, required: 1, total: 1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
 }
 
-// globalSignatures covers the callables jinja2 puts in every template's
-// namespace, and the methods reachable on what they return. They are keyed by
-// the name CPython puts in the error rather than by the template's name,
-// because one global -- cycler -- is a class whose __init__, next and reset
-// each bind separately.
-var globalSignatures = map[string]signature{
-	"Cycler.__init__":      {pyName: "Cycler.__init__", pyCallName: "jinja2.utils.Cycler.__init__()", params: []string{"self"}, injected: 0, required: 1, total: -1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
-	"Cycler.next":          {pyName: "Cycler.next", pyCallName: "jinja2.utils.Cycler.next()", params: []string{"self"}, injected: 0, required: 1, total: 1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
-	"Cycler.reset":         {pyName: "Cycler.reset", pyCallName: "jinja2.utils.Cycler.reset()", params: []string{"self"}, injected: 0, required: 1, total: 1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
-	"Joiner.__call__":      {pyName: "Joiner.__call__", pyCallName: "jinja2.utils.Joiner.__call__()", params: []string{"self"}, injected: 0, required: 1, total: 1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
-	"Joiner.__init__":      {pyName: "Joiner.__init__", pyCallName: "jinja2.utils.Joiner.__init__()", params: []string{"self", "sep"}, injected: 0, required: 1, total: 2, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
-	"generate_lorem_ipsum": {pyName: "generate_lorem_ipsum", pyCallName: "jinja2.utils.generate_lorem_ipsum()", params: []string{"n", "html", "min", "max"}, injected: 0, required: 0, total: 4, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+// runtimeSignatures covers the callables a template reaches that are neither
+// filters nor tests: the globals, the methods on what they return, and the
+// objects the renderer itself puts in scope -- loop and a block reference.
+// They are keyed by the name CPython puts in the error rather than by the
+// template's name, because several are classes whose methods each bind
+// separately.
+var runtimeSignatures = map[string]signature{
+	"BlockReference.__call__": {pyName: "BlockReference.__call__", pyCallName: "jinja2.runtime.BlockReference.__call__()", params: []string{"self"}, injected: 0, required: 1, total: 1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+	"Cycler.__init__":         {pyName: "Cycler.__init__", pyCallName: "jinja2.utils.Cycler.__init__()", params: []string{"self"}, injected: 0, required: 1, total: -1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+	"Cycler.next":             {pyName: "Cycler.next", pyCallName: "jinja2.utils.Cycler.next()", params: []string{"self"}, injected: 0, required: 1, total: 1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+	"Cycler.reset":            {pyName: "Cycler.reset", pyCallName: "jinja2.utils.Cycler.reset()", params: []string{"self"}, injected: 0, required: 1, total: 1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+	"Joiner.__call__":         {pyName: "Joiner.__call__", pyCallName: "jinja2.utils.Joiner.__call__()", params: []string{"self"}, injected: 0, required: 1, total: 1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+	"Joiner.__init__":         {pyName: "Joiner.__init__", pyCallName: "jinja2.utils.Joiner.__init__()", params: []string{"self", "sep"}, injected: 0, required: 1, total: 2, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+	"LoopContext.__call__":    {pyName: "LoopContext.__call__", pyCallName: "jinja2.runtime.LoopContext.__call__()", params: []string{"self", "iterable"}, injected: 0, required: 2, total: 2, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+	"LoopContext.changed":     {pyName: "LoopContext.changed", pyCallName: "jinja2.runtime.LoopContext.changed()", params: []string{"self"}, injected: 0, required: 1, total: -1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+	"LoopContext.cycle":       {pyName: "LoopContext.cycle", pyCallName: "jinja2.runtime.LoopContext.cycle()", params: []string{"self"}, injected: 0, required: 1, total: -1, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
+	"generate_lorem_ipsum":    {pyName: "generate_lorem_ipsum", pyCallName: "jinja2.utils.generate_lorem_ipsum()", params: []string{"n", "html", "min", "max"}, injected: 0, required: 0, total: 4, varKw: false, builtin: false, countMessage: "", kwMessage: ""},
 }
 
 // range is a C function with two wordings for a wrong count rather than one,

@@ -15,6 +15,16 @@ import (
 // names. A filter or a test is called directly and names itself.
 const contextCall = "jinja2.runtime.Context.call()"
 
+// macroNameRepr is how jinja2 prints a macro in an argument error: `{name!r}`,
+// where the name of the macro a `{% call %}` block builds is None rather than a
+// string. Reporting it as ” named a macro that has no name at all.
+func macroNameRepr(name string) string {
+	if name == "" {
+		return "None"
+	}
+	return value.Repr(value.String(name))
+}
+
 // filterCallee is the callable CPython would name for this filter.
 //
 // A host filter has no Python function behind it, and the template's own name
@@ -214,12 +224,12 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 				return value.Undefined, errs.New(errs.TypeError,
 					"macro %s was invoked with two values for the special"+
 						" caller argument. This is most likely a bug.",
-					value.Repr(value.String(m.name)))
+					macroNameRepr(m.name))
 			}
 		}
 		return value.Undefined, errs.New(errs.TypeError,
 			"macro %s takes no keyword argument %s",
-			value.Repr(value.String(m.name)),
+			macroNameRepr(m.name),
 			value.Repr(value.String(remaining[0].Name)))
 	}
 
@@ -228,7 +238,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 	} else if len(args.Pos) > len(params) {
 		return value.Undefined, errs.New(errs.TypeError,
 			"macro %s takes not more than %d argument(s)",
-			value.Repr(value.String(m.name)), len(params))
+			macroNameRepr(m.name), len(params))
 	}
 
 	// Defaults fill the parameters still unbound; the rest stay undefined.
