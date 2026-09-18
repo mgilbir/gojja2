@@ -406,7 +406,7 @@ func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 	if err := bindArgs(runtimeSignatures["generate_lorem_ipsum"], args, 0); err != nil {
 		return value.Undefined, err
 	}
-	n, err := intArg(args, 0, "n", 5)
+	n, err := intArg(args, 0, "n", 5, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -418,11 +418,11 @@ func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 		}
 		html = on
 	}
-	lo, err := intArg(args, 2, "min", 20)
+	lo, err := intArg(args, 2, "min", 20, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}
-	hi, err := intArg(args, 3, "max", 100)
+	hi, err := intArg(args, 3, "max", 100, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}

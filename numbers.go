@@ -177,7 +177,7 @@ func floatRatio(x float64) (value.Value, error) {
 
 // intToBytes is int.to_bytes(length, byteorder, *, signed=False).
 func intToBytes(st *State, b *big.Int, args *value.CallArgs) (value.Value, error) {
-	length, err := intArg(args, 0, "length", 1)
+	length, err := intArg(args, 0, "length", 1, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}

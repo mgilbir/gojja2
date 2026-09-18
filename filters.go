@@ -555,7 +555,7 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		return value.Undefined, errs.New(errs.FilterArgumentError,
 			"replace() missing required argument 'new'")
 	}
-	count, err := intArg(args, 2, "count", -1)
+	count, err := intArg(args, 2, "count", -1, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -605,7 +605,7 @@ func filterCenter(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	// str.center's width has no None to fall back on: 80 is the filter's
 	// default for an argument that was not written, and an explicit None
 	// reaches str.center and is refused.
-	width, err := indexArg(args, 0, "width", 80)
+	width, err := indexArg(args, 0, "width", 80, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}
