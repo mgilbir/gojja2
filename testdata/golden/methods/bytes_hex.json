@@ -1,0 +1,11 @@
+{
+  "case": "methods/bytes_hex.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "6162|61-6263-6465|6162-6364-65"
+}

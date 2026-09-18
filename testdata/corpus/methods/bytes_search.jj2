@@ -1,0 +1,3 @@
+{}
+---
+{{ "aBc dEf".encode().find("c".encode()) }}|{{ "aBc dEf".encode().find(66) }}|{{ "aBc dEf".encode().count("c".encode()) }}|{{ "aBc dEf".encode().rfind("z".encode()) }}

@@ -1,0 +1,3 @@
+{}
+---
+{{ "abc".encode().translate(none, "b".encode()) }}|{{ "abc".encode().translate("x".encode().maketrans("abc".encode(), "xyz".encode())) }}

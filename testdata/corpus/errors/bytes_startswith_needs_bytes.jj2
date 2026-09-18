@@ -1,0 +1,3 @@
+{}
+---
+{{ "ab".encode().startswith("a") }}

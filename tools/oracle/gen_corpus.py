@@ -1593,6 +1593,45 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- the bytes methods --------------------------------------------------------
+# bytes had one method, decode, so the other forty-one were attribute errors on
+# a type the engine otherwise supports fully. They are not the str methods:
+# case and classification are ASCII only, positions are bytes, and arguments
+# must be bytes-like -- several taking an integer as a byte value.
+case("methods/bytes_case_is_ascii_only",
+     '{{ "aBc dEf".encode().upper() }}|{{ "aBc dEf".encode().title() }}'
+     '|{{ "éß".encode().upper() }}|{{ "éß".encode().swapcase() }}')
+case("methods/bytes_title_boundary", '{{ "a1b".encode().title() }}|{{ "aBc dEf".encode().capitalize() }}')
+case("methods/bytes_classification",
+     '{{ "abc".encode().isalpha() }}|{{ "é".encode().isalpha() }}|{{ "".encode().isalpha() }}'
+     '|{{ "".encode().isascii() }}|{{ "é".encode().isascii() }}|{{ "Ab".encode().istitle() }}')
+case("methods/bytes_search",
+     '{{ "aBc dEf".encode().find("c".encode()) }}|{{ "aBc dEf".encode().find(66) }}'
+     '|{{ "aBc dEf".encode().count("c".encode()) }}|{{ "aBc dEf".encode().rfind("z".encode()) }}')
+# The start is resolved but not clamped up: past the end nothing is found.
+case("methods/bytes_search_bounds",
+     '{{ "abc".encode().find("".encode(), 3) }}|{{ "abc".encode().find("".encode(), 4) }}'
+     '|{{ "abc".encode().count("".encode()) }}|{{ "abc".encode().startswith("".encode(), 4) }}')
+case("errors/bytes_index_not_found", '{{ "ab".encode().index("zz".encode()) }}')
+case("errors/bytes_needs_bytes", '{{ "ab".encode().replace("a", "X") }}')
+case("errors/bytes_startswith_needs_bytes", '{{ "ab".encode().startswith("a") }}')
+case("methods/bytes_split_and_strip",
+     '{{ "a b  c".encode().split() }}|{{ "a,b,,c".encode().split(",".encode()) }}'
+     '|{{ "  xy  ".encode().strip() }}|{{ "a,b".encode().partition(",".encode()) }}')
+case("methods/bytes_splitlines", '{{ "l1\nl2\r\nl3".encode().splitlines() }}|{{ "l1\nl2".encode().splitlines(true) }}')
+case("methods/bytes_pad", '{{ "ab".encode().center(7, "*".encode()) }}|{{ "42".encode().zfill(5) }}|{{ "a\tb".encode().expandtabs(4) }}')
+case("methods/bytes_join", '{{ "-".encode().join(["a".encode(), "b".encode()]) }}')
+case("errors/bytes_join_item", '{{ "-".encode().join(["a", "b"]) }}')
+case("methods/bytes_hex", '{{ "ab".encode().hex() }}|{{ "abcde".encode().hex("-", 2) }}|{{ "abcde".encode().hex("-", -2) }}')
+case("methods/bytes_translate",
+     '{{ "abc".encode().translate(none, "b".encode()) }}'
+     '|{{ "abc".encode().translate("x".encode().maketrans("abc".encode(), "xyz".encode())) }}')
+case("methods/int_from_bytes",
+     '{{ (0).from_bytes("a".encode(), "big") }}|{{ (0).from_bytes("ab".encode(), "little") }}'
+     '|{{ (0).from_bytes("ÿ".encode(), "big", signed=true) }}')
+case("methods/float_fromhex", '{{ (0.0).fromhex("0x1.8p+0") }}|{{ (0.0).fromhex("1.8") }}|{{ (0.0).fromhex("-0x1.8p-1") }}')
+case("errors/float_fromhex_bad", '{{ (0.0).fromhex("zz") }}')
+
 # --- where center puts the odd character --------------------------------------
 # On the left when the margin and the width are both odd, and on the right
 # otherwise: CPython computes it as `marg / 2 + (marg & width & 1)`. gojja2 read

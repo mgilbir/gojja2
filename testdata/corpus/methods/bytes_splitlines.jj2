@@ -1,0 +1,6 @@
+{}
+---
+{{ "l1
+l2
+l3".encode().splitlines() }}|{{ "l1
+l2".encode().splitlines(true) }}

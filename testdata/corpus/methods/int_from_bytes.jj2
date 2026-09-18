@@ -1,0 +1,3 @@
+{}
+---
+{{ (0).from_bytes("a".encode(), "big") }}|{{ (0).from_bytes("ab".encode(), "little") }}|{{ (0).from_bytes("ÿ".encode(), "big", signed=true) }}

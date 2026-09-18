@@ -1,0 +1,3 @@
+{}
+---
+{{ "ab".encode().hex() }}|{{ "abcde".encode().hex("-", 2) }}|{{ "abcde".encode().hex("-", -2) }}

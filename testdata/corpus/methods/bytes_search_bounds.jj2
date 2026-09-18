@@ -1,0 +1,3 @@
+{}
+---
+{{ "abc".encode().find("".encode(), 3) }}|{{ "abc".encode().find("".encode(), 4) }}|{{ "abc".encode().count("".encode()) }}|{{ "abc".encode().startswith("".encode(), 4) }}

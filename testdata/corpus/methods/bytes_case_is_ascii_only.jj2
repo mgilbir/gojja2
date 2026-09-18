@@ -1,0 +1,3 @@
+{}
+---
+{{ "aBc dEf".encode().upper() }}|{{ "aBc dEf".encode().title() }}|{{ "éß".encode().upper() }}|{{ "éß".encode().swapcase() }}
