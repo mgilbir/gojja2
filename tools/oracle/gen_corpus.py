@@ -1265,6 +1265,18 @@ case("errors/random_mapping_index", "{{ {'a':1}|random }}")
 case("filters/random_empty",
      "[{{ []|random }}][{{ {}|random }}][{{ ''|random }}][{{ nope|random }}]")
 case("filters/random_single", "{{ [7]|random }}|{{ 'q'|random }}|{{ {0:'z'}|random }}")
+
+# make_attrgetter substitutes its default with `if default is not None`, so an
+# explicit None is no default at all: the undefined stays, and whatever it does
+# next is what happens. 0 and "" are not None, and still stand in.
+ROWS = {"rows": [{"a": 1}, {}]}
+case("errors/groupby_none_default", "{{ rows|groupby('a', none)|list }}", **ROWS)
+case("errors/groupby_none_default_index", "{{ [1,2]|groupby(1, none)|list }}")
+case("filters/groupby_zero_default", "{{ rows|groupby('a', 0)|list }}", **ROWS)
+case("filters/map_none_default",
+     "{{ [1,2]|map(attribute='x', default=none)|list }}|"
+     "{{ [1,2]|map(attribute='x')|list }}|"
+     "{{ [1,2]|map(attribute='x', default='d')|list }}")
 # Keyword problems beat count problems, and count problems beat missing ones;
 # among keywords the first one in the call wins.
 case("errors/arity_keyword_beats_count", '{{ "x"|upper(1, zzzz=2) }}')

@@ -641,7 +641,13 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		return value.Undefined, errs.New(errs.FilterArgumentError,
 			"groupby() missing required argument 'attribute'")
 	}
+	// make_attrgetter substitutes the default with `if default is not None`,
+	// so an explicit None is no default at all: the undefined stays, and
+	// what happens next is whatever the undefined does. gojja2 substituted
+	// it, which turned `{{ xs|groupby("nope", none) }}` from the attribute
+	// error jinja2 raises into a comparison of two Nones.
 	def, hasDef := arg(args, 1, "default")
+	hasDef = hasDef && !def.IsNone()
 	caseSensitive, err := boolArg(args, 2, "case_sensitive", false)
 	if err != nil {
 		return value.Undefined, err
@@ -739,7 +745,9 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 	}
 
 	if attribute, ok := args.Kwarg("attribute"); ok {
+		// The same rule as groupby's: `default is not None`.
 		def, hasDef := args.Kwarg("default")
+		hasDef = hasDef && !def.IsNone()
 		parts := attrParts(attribute)
 		out, err := walk(func(item value.Value) (value.Value, error) {
 			got, err := attrPath(s, item, parts)
