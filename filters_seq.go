@@ -114,12 +114,13 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 		return value.Undefined, errs.New(errs.TypeError,
 			"'%s' object is not reversible", v.TypeName())
 	}
-	items, err := materialize(s, v)
+	// jinja2 takes the last item with reversed(), so a value that cannot be
+	// walked names reversibility rather than iterability. A render that ran
+	// out of time or budget still reports that.
+	items, err := materializeOr(s, v, errs.New(errs.TypeError,
+		"'%s' object is not reversible", v.TypeName()))
 	if err != nil {
-		// jinja2 takes the last item with reversed(), so the failure
-		// names reversibility rather than iterability.
-		return value.Undefined, errs.New(errs.TypeError,
-			"'%s' object is not reversible", v.TypeName())
+		return value.Undefined, err
 	}
 	if len(items) == 0 {
 		return s.Undefined(value.UndefinedHint("No last item, sequence was empty.")), nil
@@ -271,9 +272,10 @@ func filterReverse(s *State, v value.Value, _ *value.CallArgs) (value.Value, err
 		}
 		return value.String(out), nil
 	}
-	items, err := materialize(s, v)
+	items, err := materializeOr(s, v, errs.New(errs.FilterArgumentError,
+		"argument must be iterable"))
 	if err != nil {
-		return value.Undefined, errs.New(errs.FilterArgumentError, "argument must be iterable")
+		return value.Undefined, err
 	}
 	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
 		items[i], items[j] = items[j], items[i]
@@ -445,9 +447,10 @@ func filterMinMax(wantMax bool) Filter {
 			return value.Undefined, err
 		}
 		for _, item := range items[1:] {
-			if err := s.Poll(); err != nil {
-				return value.Undefined, err
-			}
+			// The yield for this loop is in the key function, which
+			// is called once per item just below; a second one here
+			// could be deleted without any test noticing, which is
+			// how it was found.
 			k, err := key(item)
 			if err != nil {
 				return value.Undefined, err

@@ -6,6 +6,7 @@ package gojja2
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"math"
 	"math/big"
 	"reflect"
@@ -155,6 +156,34 @@ func materialize(s *State, v value.Value) ([]value.Value, error) {
 	if err != nil {
 		return nil, err
 	}
+	return collect(s, seq)
+}
+
+// materializeOr is materialize with a filter's own wording for a value that
+// cannot be iterated at all.
+//
+// The two ways materialising fails are not alike. The value may not be
+// iterable, which is the template's mistake and is what a filter wants to
+// reword -- jinja2's |last says "not reversible" rather than "not iterable",
+// because it is reversed() that fails there. Or the render may have run out of
+// time, output or iterations, which says nothing about the value and has to
+// reach the caller unchanged.
+//
+// Replacing both with one message is the shape this exists to prevent: |reverse
+// and |last did exactly that, so a render cancelled while walking a perfectly
+// good sequence reported "argument must be iterable" and a deadline arrived
+// looking like a type error. Only the first failure can be reworded here, so
+// the second cannot be swallowed by a caller who did not think about it.
+func materializeOr(s *State, v value.Value, notIterable error) ([]value.Value, error) {
+	seq, err := value.Iterate(v)
+	if err != nil {
+		return nil, notIterable
+	}
+	return collect(s, seq)
+}
+
+// collect walks an iterator into a slice, charging as it goes.
+func collect(s *State, seq iter.Seq[value.Value]) ([]value.Value, error) {
 	var out []value.Value
 	for item := range seq {
 		// Charged before the append, so the slice never grows past
@@ -291,11 +320,25 @@ func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 		}
 		return v
 	}
+	// The key is computed once per item, by filters that walk a sequence of
+	// the caller's length, so this is the yield point for all of them. It
+	// belongs here rather than in each loop: |min and |max polled and
+	// |unique did not, and the difference was invisible until 300,000
+	// distinct items held a render 200ms past a 39ms deadline. A filter
+	// added later gets it by using the key function at all.
 	if attribute.IsUndefined() || attribute.IsNone() {
-		return func(v value.Value) (value.Value, error) { return fold(v), nil }
+		return func(v value.Value) (value.Value, error) {
+			if err := s.Poll(); err != nil {
+				return value.Undefined, err
+			}
+			return fold(v), nil
+		}
 	}
 	parts := attrParts(trimSpec(attribute))
 	return func(v value.Value) (value.Value, error) {
+		if err := s.Poll(); err != nil {
+			return value.Undefined, err
+		}
 		k, err := attrPath(s, v, parts)
 		if err != nil {
 			return value.Undefined, err
