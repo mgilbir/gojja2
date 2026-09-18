@@ -23,8 +23,14 @@ tmpl, err := env.GetTemplate("page.html")
 | `ChoiceLoader{a, b}` | each in turn, first hit wins |
 
 A loader of your own implements `Load(name string) (string, error)`. **Report a
-miss as `ErrNotFound`, or an error wrapping it**, never as an empty template —
-otherwise `{% include ... ignore missing %}` cannot tell the two apart.
+miss as anything `errors.Is(err, ErrNotFound)` matches** — the sentinel itself,
+or an error wrapping it with `%w` — never as an empty template. Otherwise
+`{% include ... ignore missing %}`, `ChoiceLoader`'s fallthrough and
+`select_template`'s cannot tell a miss from a failure.
+
+Any other error stops the search and reaches you unchanged, which is the point
+of the distinction: a loader whose backing store is failing must not read as
+"not here" and let the next loader quietly answer in its place.
 
 `FSLoader` refuses a name with a `..` segment rather than cleaning it into
 something else. A template that asks for a file outside its root gets

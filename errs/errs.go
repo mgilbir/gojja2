@@ -10,6 +10,7 @@
 package errs
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -175,6 +176,16 @@ func (e *Error) Is(target error) bool {
 // Error makes Kind usable as an errors.Is target.
 func (k Kind) Error() string { return k.String() }
 
+// Is lets a bare Kind answer errors.Is by the class hierarchy, the way an
+// *Error does. errors.Is compares for equality first, which settles the exact
+// match; this is what makes a subclass match its parent, so the sentinel
+// errs.TemplatesNotFound is caught by a test for errs.TemplateNotFound exactly
+// as `except TemplateNotFound` would catch it in CPython.
+func (k Kind) Is(target error) bool {
+	t, ok := target.(Kind)
+	return ok && k.DerivesFrom(t)
+}
+
 // Detail renders the error the way a human debugging a template wants it:
 // class, message and location.
 func (e *Error) Detail() string {
@@ -209,8 +220,8 @@ func New(kind Kind, format string, args ...any) *Error {
 // nearest where it was raised, and every frame outside that one must leave the
 // location alone.
 func At(err error, name string, line int) error {
-	e, ok := err.(*Error)
-	if !ok {
+	var e *Error
+	if !errors.As(err, &e) {
 		return err
 	}
 	if e.Line == 0 {
@@ -219,13 +230,30 @@ func At(err error, name string, line int) error {
 	if e.Name == "" {
 		e.Name = name
 	}
-	return e
+	// err, not e: the location is attached in place, and returning the
+	// unwrapped *Error would throw away whatever a caller wrapped it with.
+	return err
 }
 
 // KindOf reports the exception class err would have had in CPython.
 func KindOf(err error) Kind {
-	if e, ok := err.(*Error); ok {
+	// errors.As rather than a type assertion: these errors travel through
+	// callers -- a Loader is the obvious one -- and an error that has been
+	// wrapped even once is not an *Error any more. Classifying it as
+	// unknownKind is the worst available answer, because DerivesFrom says
+	// false for unknownKind whatever it is asked, so every "is this a
+	// miss?" test downstream answered no.
+	var e *Error
+	if errors.As(err, &e) {
 		return e.Kind
+	}
+	// A bare Kind is an error in its own right, and the exported sentinels
+	// are exactly that: gojja2.ErrNotFound is errs.TemplateNotFound, not an
+	// *Error wrapping it. A Loader returning the sentinel the interface doc
+	// names has to classify as what it says it is.
+	var k Kind
+	if errors.As(err, &k) {
+		return k
 	}
 	return unknownKind
 }
