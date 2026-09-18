@@ -206,9 +206,12 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	// `{{ xs|join(",") }}` and was wrong for every other use of the
 	// result: `{{ ["a", "'"]|join("")|length }}` counted the five
 	// characters of `&#39;` and answered 6 where CPython answers 2.
-	markup := sepValue.IsSafe()
+	// do_join asks `hasattr(x, "__html__")`, not "is this Markup", so a
+	// value carrying its own escaped form counts here the same way a Markup
+	// string does.
+	markup := isEscaped(sepValue)
 	for _, item := range items {
-		if item.IsSafe() {
+		if isEscaped(item) {
 			markup = true
 		}
 	}

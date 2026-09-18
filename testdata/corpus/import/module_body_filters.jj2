@@ -1,0 +1,11 @@
+{
+  "__templates__": {
+    "body.html": "<b>{{ w|default('?') }}</b>",
+    "mac.html": "{% macro f(x) %}<{{x}}>{% endmacro %}{% set exported = 'E' %}"
+  },
+  "__settings__": {
+    "autoescape": true
+  }
+}
+---
+{% import "body.html" as m %}{{ m|safe }}|{{ m|escape }}|{{ [m]|join("-") }}|{{ m is escaped }}|{{ "" ~ m }}

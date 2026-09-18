@@ -191,6 +191,24 @@ case("import/module", "{% import 'mac.html' as m %}{{ m.f(1) }}{{ m.exported }}"
 case("import/from", "{% from 'mac.html' import f, f as g %}{{ f(1) }}{{ g(2) }}", __templates__=INC)
 case("import/from_missing", "{% from 'mac.html' import nope %}{{ nope }}", __templates__=INC)
 
+# A TemplateModule's str() is what the imported template rendered, and its
+# __html__ is the same string -- the body was produced under that template's own
+# escaping, so it is markup already and is not escaped a second time. `~` is not
+# __html__: markup_join soft_strs its operands first, so the result is a plain
+# string escaped as a whole. And an error names the template the name was asked
+# *of*, with its module path.
+BODY = {"body.html": "<b>{{ w|default('?') }}</b>", "mac.html": INC["mac.html"]}
+case("import/module_body", '{% import "body.html" as m %}{{ m }}', __templates__=BODY)
+case("import/module_body_escaped", '{% import "body.html" as m %}{{ m }}',
+     __templates__=BODY, __settings__={"autoescape": True})
+case("import/module_body_filters",
+     '{% import "body.html" as m %}{{ m|safe }}|{{ m|escape }}|{{ [m]|join("-") }}|'
+     '{{ m is escaped }}|{{ "" ~ m }}',
+     __templates__=BODY, __settings__={"autoescape": True})
+case("import/module_body_empty", '[{% import "mac.html" as m %}{{ m }}]', __templates__=BODY)
+case("import/module_repr", '{% import "mac.html" as m %}{{ m|pprint }}', __templates__=BODY)
+case("errors/module_attribute", '{% import "mac.html" as m %}{{ m.nope.x }}', __templates__=BODY)
+
 # --- context-free includes ----------------------------------------------------
 # `{% include ... without context %}` yields into the enclosing function's
 # output in jinja2, bypassing any {% filter %} or block {% set %} buffer around

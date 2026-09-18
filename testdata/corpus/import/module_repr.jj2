@@ -1,0 +1,8 @@
+{
+  "__templates__": {
+    "body.html": "<b>{{ w|default('?') }}</b>",
+    "mac.html": "{% macro f(x) %}<{{x}}>{% endmacro %}{% set exported = 'E' %}"
+  }
+}
+---
+{% import "mac.html" as m %}{{ m|pprint }}

@@ -89,6 +89,14 @@ type Strer interface {
 	Str() string
 }
 
+// HTMLer is an Object that carries its own escaped form, which is Python's
+// __html__. markupsafe's escape() asks for that rather than escaping str(obj),
+// and jinja2's `escaped` test is exactly "has one". A str says the same thing
+// by being Markup, so only an Object needs the interface.
+type HTMLer interface {
+	HTML() string
+}
+
 // BigLener is an Object whose length can exceed an int.
 //
 // Python's range can: range(-2**63, 2**63-1) holds 2**64-1 elements, more than

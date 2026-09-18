@@ -1614,6 +1614,11 @@ func markSeen(seen map[any]bool, key any) map[any]bool {
 // --- escaping filters --------------------------------------------------------
 
 func filterSafe(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	// Markup(x) asks x for its own escaped form when it has one, which is
+	// how `{{ module|safe }}` is the module's body and not its repr.
+	if html, ok := value.HTML(v); ok {
+		return value.Safe(html), nil
+	}
 	return value.Safe(value.Str(v)), nil
 }
 
