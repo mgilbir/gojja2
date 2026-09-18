@@ -556,7 +556,7 @@ func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 			if nextCapitalized {
 				// str.capitalize also lowers the rest, which
 				// these words already are.
-				word = strings.ToUpper(word[:1]) + word[1:]
+				word = pyUpperString(word[:1]) + word[1:]
 				nextCapitalized = false
 			}
 			if idx-(3+rand.IntN(5)) > lastComma {

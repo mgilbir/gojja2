@@ -23,15 +23,15 @@ func registerDefaultFilters(env *Environment) {
 	add := func(name string, f Filter) { env.AddFilter(name, f) }
 
 	// text
-	add("upper", stringFilter(strings.ToUpper))
-	add("lower", stringFilter(strings.ToLower))
+	add("upper", stringFilter(pyUpperString))
+	add("lower", stringFilter(pyLowerString))
 	// title is the one case filter that does not preserve Markup: jinja2
 	// assembles it with "".join(...), and joining on a plain str gives a
 	// plain str.
 	add("title", func(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 		return value.String(jinjaTitle(value.Str(v))), nil
 	})
-	add("capitalize", stringFilter(pythonCapitalize))
+	add("capitalize", stringFilter(pyCapitalizeString))
 	add("trim", filterTrim)
 	add("string", filterString)
 	add("replace", filterReplace)
@@ -287,7 +287,7 @@ func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 			// by changing its case. Dropping that here made a
 			// comparison error inside a sort name 'str' where
 			// CPython names 'Markup'.
-			return keepSafe(v, strings.ToLower(v.AsString()))
+			return keepSafe(v, pyLowerString(v.AsString()))
 		}
 		return v
 	}
@@ -313,7 +313,7 @@ func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 			// by changing its case. Dropping that here made a
 			// comparison error inside a sort name 'str' where
 			// CPython names 'Markup'.
-			return keepSafe(v, strings.ToLower(v.AsString()))
+			return keepSafe(v, pyLowerString(v.AsString()))
 		}
 		return v
 	}
@@ -2278,10 +2278,11 @@ func jinjaTitle(s string) string {
 			i++
 		}
 		word := runes[start:i]
-		b.WriteRune(unicode.ToUpper(word[0]))
-		for _, r := range word[1:] {
-			b.WriteRune(unicode.ToLower(r))
-		}
+		// jinja2 builds this as `item[0].upper() + item[1:].lower()`,
+		// which are full case mappings over *slices* -- so the first
+		// character of a word may become several.
+		b.WriteString(pyUpperString(string(word[0])))
+		b.WriteString(pyLowerString(string(word[1:])))
 	}
 	return b.String()
 }

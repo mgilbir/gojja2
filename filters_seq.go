@@ -369,7 +369,7 @@ func filterDictsort(s *State, v value.Value, args *value.CallArgs) (value.Value,
 		s, _ := item.Seq()
 		k := s.At(pos)
 		if !caseSensitive && k.IsString() {
-			return value.String(strings.ToLower(k.AsString())), nil
+			return value.String(pyLowerString(k.AsString())), nil
 		}
 		return k, nil
 	}
@@ -679,7 +679,7 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 			return value.Undefined, err
 		}
 		if !caseSensitive && k.IsString() {
-			return value.String(strings.ToLower(k.AsString())), nil
+			return value.String(pyLowerString(k.AsString())), nil
 		}
 		return k, nil
 	}

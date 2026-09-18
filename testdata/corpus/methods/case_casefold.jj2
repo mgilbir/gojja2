@@ -1,0 +1,3 @@
+{}
+---
+{{ "ß".casefold() }}|{{ "ς".casefold() }}|{{ "µ".casefold() }}|{{ "ſ".casefold() }}|{{ "İ".casefold() }}

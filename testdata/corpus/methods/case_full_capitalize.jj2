@@ -1,0 +1,3 @@
+{}
+---
+{{ "ß".capitalize() }}|{{ "ﬃ".capitalize() }}

@@ -1,0 +1,3 @@
+{}
+---
+{{ "ª" is lower }}|{{ "Ⅰ" is upper }}|{{ "ǅ" is upper }}

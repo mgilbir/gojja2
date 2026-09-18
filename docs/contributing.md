@@ -101,9 +101,16 @@ which regenerates the corpus *and* re-records every golden from CPython. Check
 the diff: a golden that changed for a case you did not touch means something
 else moved, and that is the interesting part.
 
-`make oracle` also regenerates four files from CPython itself — `arity.go`,
-`method_arity.go`, `entities.go`, `strclass.go`. Do not hand-edit those; change
-the generator.
+`make oracle` also regenerates five files from CPython itself — `arity.go`,
+`method_arity.go`, `entities.go`, `strclass.go`, `casemap.go`. Do not hand-edit
+those; change the generator.
+
+`casemap.go` is the one with a tripwire. It records only where Python's case
+mapping differs from Go's, which is safe while the two agree everywhere else —
+they do today, on Unicode 14.0.0 against 15.0.0, but a Go release may move a
+mapping. `TestCaseMappingMatchesCPython` recomputes a digest over every code
+point, so that shows up as a test failure rather than as one wrong character.
+If it fails after a toolchain upgrade, run `make casemap` and read the diff.
 
 If your case changes the corpus count, `TestConformance` will tell you the exact
 table row it wants. Paste it into `docs/conformance.md`; the README's headline

@@ -260,22 +260,22 @@ var stringMethods map[string]func(*State, value.Value, *value.CallArgs) (value.V
 func init() {
 	stringMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
 		"upper": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(strings.ToUpper(r.AsString())), nil
+			return value.String(pyUpperString(r.AsString())), nil
 		},
 		"lower": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(strings.ToLower(r.AsString())), nil
+			return value.String(pyLowerString(r.AsString())), nil
 		},
 		"title": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(pythonTitle(r.AsString())), nil
+			return value.String(pyTitleString(r.AsString())), nil
 		},
 		"capitalize": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(pythonCapitalize(r.AsString())), nil
+			return value.String(pyCapitalizeString(r.AsString())), nil
 		},
 		"swapcase": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(swapCase(r.AsString())), nil
+			return value.String(pySwapcaseString(r.AsString())), nil
 		},
 		"casefold": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(strings.ToLower(r.AsString())), nil
+			return value.String(pyCasefold(r.AsString())), nil
 		},
 
 		"strip":  trimMethod("strip", strings.Trim, strings.TrimFunc),
@@ -316,8 +316,8 @@ func init() {
 			return unicode.IsLetter(r) || pyIsNumeric(r)
 		}),
 		"isspace": classifyMethod(unicode.IsSpace),
-		"isupper": caseMethod(unicode.IsUpper, unicode.IsLower),
-		"islower": caseMethod(unicode.IsLower, unicode.IsUpper),
+		"isupper": stringPredicate(isUpperString),
+		"islower": stringPredicate(isLowerString),
 		// isascii and isprintable are the two that answer True for the
 		// empty string, so neither can go through classifyMethod.
 		"isascii":      methodIsASCII,
@@ -548,24 +548,7 @@ func methodIsPrintable(_ *State, r value.Value, _ *value.CallArgs) (value.Value,
 // one cased character present. Titlecase counts as upper here, which is what
 // makes a digraph like U+01C8 titlecase rather than a failure.
 func methodIsTitle(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-	cased, prevCased := false, false
-	for _, c := range r.AsString() {
-		switch {
-		case unicode.IsUpper(c) || unicode.IsTitle(c):
-			if prevCased {
-				return value.False, nil
-			}
-			cased, prevCased = true, true
-		case unicode.IsLower(c):
-			if !prevCased {
-				return value.False, nil
-			}
-			cased, prevCased = true, true
-		default:
-			prevCased = false
-		}
-	}
-	return value.Bool(cased), nil
+	return value.Bool(isTitleString(r.AsString())), nil
 }
 
 // methodIsIdentifier is str.isidentifier, which asks the same question the
@@ -1579,65 +1562,11 @@ func classifyMethod(pred func(rune) bool) func(*State, value.Value, *value.CallA
 
 // caseMethod implements isupper and islower: at least one cased character, and
 // no character of the opposite case.
-func caseMethod(want, other func(rune) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+// stringPredicate wraps one of the whole-string case predicates as a method.
+func stringPredicate(f func(string) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-		seen := false
-		for _, c := range r.AsString() {
-			if other(c) {
-				return value.False, nil
-			}
-			if want(c) {
-				seen = true
-			}
-		}
-		return value.Bool(seen), nil
+		return value.Bool(f(r.AsString())), nil
 	}
-}
-
-// pythonTitle uppercases the first letter of each run of letters, so
-// "hello world's" becomes "Hello World'S" exactly as Python does.
-func pythonTitle(s string) string {
-	var b strings.Builder
-	inWord := false
-	for _, r := range s {
-		isLetter := unicode.IsLetter(r) || unicode.IsDigit(r)
-		switch {
-		case !isLetter:
-			b.WriteRune(r)
-			inWord = false
-		case inWord:
-			b.WriteRune(unicode.ToLower(r))
-		default:
-			b.WriteRune(unicode.ToUpper(r))
-			inWord = true
-		}
-	}
-	return b.String()
-}
-
-func pythonCapitalize(s string) string {
-	if s == "" {
-		return s
-	}
-	runes := []rune(s)
-	out := make([]rune, len(runes))
-	out[0] = unicode.ToUpper(runes[0])
-	for i := 1; i < len(runes); i++ {
-		out[i] = unicode.ToLower(runes[i])
-	}
-	return string(out)
-}
-
-func swapCase(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case unicode.IsUpper(r):
-			return unicode.ToLower(r)
-		case unicode.IsLower(r):
-			return unicode.ToUpper(r)
-		}
-		return r
-	}, s)
 }
 
 // --- dict methods ------------------------------------------------------------
