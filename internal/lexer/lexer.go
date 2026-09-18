@@ -436,6 +436,16 @@ func (l *lexer) lexLineComment() error {
 // lexRaw consumes a raw block verbatim up to its endraw tag.
 func (l *lexer) lexRaw() error {
 	startLine := l.line
+	// A raw tag with nothing after it at all is not an error in jinja2.
+	// Its lexer looks for the body with a regex that requires one, so an
+	// empty remainder never reaches the "missing end" branch and the
+	// tokenizer simply stops -- `{% raw %}` renders "" while
+	// `{% raw %}abc` raises. That is an accident of the regex rather than
+	// a rule, but it is the specification, and the two differ only on a
+	// template that is already broken.
+	if l.pos >= len(l.src) {
+		return nil
+	}
 	search := l.pos
 	for {
 		i := strings.Index(l.src[search:], l.syn.BlockStart)
