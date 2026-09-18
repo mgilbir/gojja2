@@ -24,25 +24,73 @@ func registerDefaultGlobals(env *Environment) {
 
 // rangeObject is Python's range: a sequence with a known length that holds no
 // elements, so `{% for i in range(10000000) %}` costs nothing to set up.
+//
+// The bounds are arbitrary precision, because a template can observe them
+// exactly even when the range is far too long to walk: `{{ range(2**70) }}`
+// prints them, `{{ 3 in range(2**70) }}` decides by arithmetic, and
+// `{{ range(2**70)|first }}` wants one element. Narrowing them to an int64
+// refused all three.
+//
+// They are *stored* as an int64 whenever all three fit, which is every range
+// anyone writes on purpose, so that indexing and iteration stay arithmetic on
+// machine integers and allocate nothing.
 type rangeObject struct {
+	// start, stop and step are the bounds, valid when wide is nil.
 	start, stop, step int64
+	// wide carries them when any one of them does not fit an int64.
+	wide *wideRange
+	// length is the element count, computed once. A range is immutable and
+	// a loop asks Len() once per element, so deriving it on demand cost
+	// several big.Int allocations for every iteration of every loop.
+	length *big.Int
+	// n is length clamped into an int, which is what indexing needs.
+	n int
 }
 
-// bigLen is the exact element count, computed the way CPython computes it:
+// wideRange holds bounds too large for an int64. Its fields are shared with
+// the values they came from and must never be mutated in place.
+type wideRange struct{ start, stop, step *big.Int }
+
+// newRange builds a range from exact bounds, choosing the representation and
+// computing the length once.
+func newRange(start, stop, step *big.Int) *rangeObject {
+	r := &rangeObject{length: rangeLen(start, stop, step)}
+	if start.IsInt64() && stop.IsInt64() && step.IsInt64() {
+		r.start, r.stop, r.step = start.Int64(), stop.Int64(), step.Int64()
+	} else {
+		r.wide = &wideRange{start: start, stop: stop, step: step}
+	}
+	// A range longer than maxInt cannot be walked under any budget, so the
+	// clamp is unobservable except through len(), which uses BigLen.
+	if r.length.IsInt64() && r.length.Int64() <= int64(math.MaxInt) {
+		r.n = int(r.length.Int64())
+	} else {
+		r.n = math.MaxInt
+	}
+	return r
+}
+
+// bounds returns the bounds as big.Ints. For a narrow range they are freshly
+// allocated; for a wide one they are the stored pointers, which callers read
+// and never mutate.
+func (r *rangeObject) bounds() (start, stop, step *big.Int) {
+	if r.wide != nil {
+		return r.wide.start, r.wide.stop, r.wide.step
+	}
+	return big.NewInt(r.start), big.NewInt(r.stop), big.NewInt(r.step)
+}
+
+// rangeLen is the exact element count, computed the way CPython computes it:
 // (stop - start + step -+ 1) // step, clamped at zero.
 //
 // It has to be arbitrary precision. `range(-2**63, 2**63-1)` holds 2**64-1
 // elements, and the obvious int64 form of this expression overflows and wraps
 // negative -- which read as a length of -1, made `|length` render -1 and made
 // the loop run zero times.
-func (r *rangeObject) bigLen() *big.Int {
-	start := big.NewInt(r.start)
-	stop := big.NewInt(r.stop)
-	step := big.NewInt(r.step)
-
+func rangeLen(start, stop, step *big.Int) *big.Int {
 	span := new(big.Int).Sub(stop, start)
 	adjust := big.NewInt(-1)
-	if r.step < 0 {
+	if step.Sign() < 0 {
 		adjust = big.NewInt(1)
 	}
 	// span + step - sign(step), then truncated division by step.
@@ -60,34 +108,42 @@ func (r *rangeObject) bigLen() *big.Int {
 
 // BigLen reports the exact length, which len() must render even when it does
 // not fit in an int.
-func (r *rangeObject) BigLen() *big.Int { return r.bigLen() }
+func (r *rangeObject) BigLen() *big.Int { return r.length }
 
 // Len is the length clamped into an int, which is what indexing and iteration
-// need. A range longer than maxInt cannot be walked under any budget, so the
-// clamp is unobservable except through len(), which uses BigLen instead.
-func (r *rangeObject) Len() int {
-	n := r.bigLen()
-	if !n.IsInt64() || n.Int64() > int64(math.MaxInt) {
-		return math.MaxInt
-	}
-	return int(n.Int64())
-}
+// need.
+func (r *rangeObject) Len() int { return r.n }
 
 func (r *rangeObject) GetIndex(i int) (value.Value, bool) {
-	if i < 0 || i >= r.Len() {
+	if i < 0 || i >= r.n {
 		return value.Undefined, false
 	}
-	return value.Int(r.start + int64(i)*r.step), true
+	if r.wide == nil {
+		// i < n and every element lies between start and stop, so this
+		// cannot overflow.
+		return value.Int(r.start + int64(i)*r.step), true
+	}
+	e := new(big.Int).Mul(r.wide.step, big.NewInt(int64(i)))
+	return value.BigInt(e.Add(e, r.wide.start)), true
+}
+
+// bound returns one of the three bounds as a value, which is what the start,
+// stop and step attributes answer.
+func (r *rangeObject) bound(narrow int64, wide func(*wideRange) *big.Int) value.Value {
+	if r.wide == nil {
+		return value.Int(narrow)
+	}
+	return value.BigInt(wide(r.wide))
 }
 
 func (r *rangeObject) GetAttr(name string) (value.Value, bool) {
 	switch name {
 	case "start":
-		return value.Int(r.start), true
+		return r.bound(r.start, func(w *wideRange) *big.Int { return w.start }), true
 	case "stop":
-		return value.Int(r.stop), true
+		return r.bound(r.stop, func(w *wideRange) *big.Int { return w.stop }), true
 	case "step":
-		return value.Int(r.step), true
+		return r.bound(r.step, func(w *wideRange) *big.Int { return w.step }), true
 	}
 	return value.Undefined, false
 }
@@ -96,17 +152,20 @@ func (r *rangeObject) GetAttr(name string) (value.Value, bool) {
 // yields another range rather than a list, so `range(3)[1:]` renders
 // "range(1, 3)" and not "[1, 2]".
 func (r *rangeObject) Slice(start, stop, step *int) (value.Value, error) {
-	begin, end, st, err := value.SliceBounds(r.Len(), start, stop, step)
+	begin, end, st, err := value.SliceBounds(r.n, start, stop, step)
 	if err != nil {
 		return value.Undefined, err
 	}
 	// The bounds are positions within this range, so they map back onto
-	// the original start and step.
-	return value.FromObject(&rangeObject{
-		start: r.start + int64(begin)*r.step,
-		stop:  r.start + int64(end)*r.step,
-		step:  r.step * int64(st),
-	}), nil
+	// the original start and step: position p stands for start + p*step.
+	bs, _, bstep := r.bounds()
+	at := func(pos int) *big.Int {
+		v := new(big.Int).Mul(bstep, big.NewInt(int64(pos)))
+		return v.Add(v, bs)
+	}
+	return value.FromObject(newRange(
+		at(begin), at(end), new(big.Int).Mul(bstep, big.NewInt(int64(st))),
+	)), nil
 }
 
 // Contains decides `x in range(...)` by arithmetic, as Python's range does.
@@ -127,15 +186,15 @@ func (r *rangeObject) Contains(item value.Value) (found, known bool) {
 		// None of them can equal an element of a range.
 		return false, true
 	}
-	step := big.NewInt(r.step)
-	offset := new(big.Int).Sub(n, big.NewInt(r.start))
+	start, stop, step := r.bounds()
+	offset := new(big.Int).Sub(n, start)
 	// Before the start, or at or past the stop, in the step's direction.
-	if r.step > 0 {
-		if offset.Sign() < 0 || n.Cmp(big.NewInt(r.stop)) >= 0 {
+	if step.Sign() > 0 {
+		if offset.Sign() < 0 || n.Cmp(stop) >= 0 {
 			return false, true
 		}
 	} else {
-		if offset.Sign() > 0 || n.Cmp(big.NewInt(r.stop)) <= 0 {
+		if offset.Sign() > 0 || n.Cmp(stop) <= 0 {
 			return false, true
 		}
 	}
@@ -166,30 +225,35 @@ func (r *rangeObject) Equals(other value.Value) (bool, bool) {
 	if !ok {
 		return false, other.Kind() == value.KindObject || other.Kind() == value.KindList
 	}
-	n := r.Len()
-	if n != o.Len() {
+	// By the sequence, so the exact length decides rather than the clamped
+	// one: two ranges longer than an int are not equal merely because both
+	// clamp to the same maximum.
+	if r.length.Cmp(o.length) != 0 {
 		return false, true
 	}
-	if n == 0 {
+	if r.length.Sign() == 0 {
 		return true, true
 	}
-	if r.start != o.start {
+	rStart, _, rStep := r.bounds()
+	oStart, _, oStep := o.bounds()
+	if rStart.Cmp(oStart) != 0 {
 		return false, true
 	}
-	return n == 1 || r.step == o.step, true
+	return r.length.Cmp(big.NewInt(1)) == 0 || rStep.Cmp(oStep) == 0, true
 }
 
 func (r *rangeObject) TypeName() string { return "range" }
 
 func (r *rangeObject) Repr() string {
+	start, stop, step := r.bounds()
 	var b strings.Builder
 	b.WriteString("range(")
-	b.WriteString(value.Repr(value.Int(r.start)))
+	b.WriteString(value.Repr(value.BigInt(start)))
 	b.WriteString(", ")
-	b.WriteString(value.Repr(value.Int(r.stop)))
-	if r.step != 1 {
+	b.WriteString(value.Repr(value.BigInt(stop)))
+	if step.Cmp(big.NewInt(1)) != 0 {
 		b.WriteString(", ")
-		b.WriteString(value.Repr(value.Int(r.step)))
+		b.WriteString(value.Repr(value.BigInt(step)))
 	}
 	b.WriteByte(')')
 	return b.String()
@@ -211,28 +275,31 @@ func globalRange(s *State, args *value.CallArgs) (value.Value, error) {
 	case len(args.Pos) > 3:
 		return value.Undefined, errs.New(errs.TypeError, rangeManyMessage, len(args.Pos))
 	}
-	nums := make([]int64, 0, 3)
+	// The bounds are kept exactly. range() is a C function, but the object
+	// it builds holds Python ints, so `range(2**70)` is a legal range whose
+	// repr and membership are exact -- it simply cannot be walked far.
+	nums := make([]*big.Int, 0, 3)
 	for _, v := range args.Pos {
-		n, ok := v.Int64()
+		n, ok := v.BigInt()
 		if !ok {
 			return value.Undefined, errs.New(errs.TypeError,
 				"'%s' object cannot be interpreted as an integer", v.TypeName())
 		}
 		nums = append(nums, n)
 	}
-	r := &rangeObject{step: 1}
+	start, stop, step := big.NewInt(0), big.NewInt(0), big.NewInt(1)
 	switch len(nums) {
 	case 1:
-		r.stop = nums[0]
+		stop = nums[0]
 	case 2:
-		r.start, r.stop = nums[0], nums[1]
+		start, stop = nums[0], nums[1]
 	case 3:
-		r.start, r.stop, r.step = nums[0], nums[1], nums[2]
-		if r.step == 0 {
+		start, stop, step = nums[0], nums[1], nums[2]
+		if step.Sign() == 0 {
 			return value.Undefined, errs.New(errs.ValueError, "range() arg 3 must not be zero")
 		}
 	}
-	return value.FromObject(r), nil
+	return value.FromObject(newRange(start, stop, step)), nil
 }
 
 // globalDict builds a dict from an optional mapping plus keyword arguments,

@@ -96,6 +96,18 @@ func BenchmarkRenderLoop(b *testing.B) {
 	benchRender(b, `{% for u in users %}{{ u.name }}:{{ u.age }};{% endfor %}`, benchVars())
 }
 
+// range is the most-used global and the only sequence that produces its
+// elements by arithmetic rather than holding them, so a loop over one measures
+// GetIndex directly -- which is what pays for the bounds being arbitrary
+// precision.
+func BenchmarkRenderRangeLoop(b *testing.B) {
+	benchRender(b, `{% for i in range(1000) %}{{ i }};{% endfor %}`, nil)
+}
+
+func BenchmarkRenderRangeLoopStepped(b *testing.B) {
+	benchRender(b, `{% for i in range(5, 5000, 7) %}{{ i }};{% endfor %}`, nil)
+}
+
 func BenchmarkRenderLoopWithAttributes(b *testing.B) {
 	benchRender(b, `{% for u in users %}<li>{{ u.name }} ({{ u.age }}) {{ u.city }}</li>{% endfor %}`, benchVars())
 }
