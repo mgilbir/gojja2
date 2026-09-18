@@ -117,3 +117,83 @@ func TestToJSONStringIndent(t *testing.T) {
 		}
 	}
 }
+
+// An indent too wide for an index is an OverflowError, not a differently
+// indented document.
+//
+// resolve() narrowed the argument with `n, _ := j.raw.Int64()` and dropped the
+// ok. An integer past int64 narrowed to zero, so tojson silently produced the
+// *broken-up* form with no leading spaces -- a different document from the one
+// the template asked for, and no error to say so. A wrong answer is worse than
+// a wrong error, and this was the only place in the engine still doing it.
+//
+// The fix is not another size check. The argument means `" " * indent`, which
+// is what json.dumps does, so the multiplication does it: an index-sized
+// overflow, a non-int, the charge for the width and the empty result for a
+// negative all come from the one operator rather than from a reimplementation
+// of it beside it.
+func TestToJSONIndentOverflows(t *testing.T) {
+	const indexOverflow = "cannot fit 'int' into an index-sized integer"
+	for _, tc := range []struct{ src, want string }{
+		{`{{ [1,2]|tojson(indent=1180591620717411303424) }}`, indexOverflow},
+		{`{{ [1,2]|tojson(indent=9223372036854775808) }}`, indexOverflow},
+		{`{{ 1|tojson(indent=9223372036854775808) }}`, indexOverflow},
+		// CPython asks for the index before it looks at the sign, so a
+		// negative too wide is the same error and not the empty indent
+		// the sign alone would have given.
+		{`{{ [1,2]|tojson(indent=-1180591620717411303424) }}`, indexOverflow},
+		{`{{ 1|tojson(indent=-1180591620717411303424) }}`, indexOverflow},
+	} {
+		tmpl, err := New().FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err == nil {
+			t.Errorf("%s: rendered %q, want %q", tc.src, got, tc.want)
+			continue
+		}
+		if err.Error() != tc.want {
+			t.Errorf("%s:\n  got  %q\n  want %q", tc.src, err.Error(), tc.want)
+		}
+	}
+}
+
+// Everything the indent already did keeps doing it, including the two shapes
+// that never resolve the argument at all.
+func TestToJSONIndentUnchangedElsewhere(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`{{ [1,2]|tojson(indent=0) }}`, "[\n1,\n2\n]"},
+		{`{{ [1,2]|tojson(indent=2) }}`, "[\n  1,\n  2\n]"},
+		{`{{ [1,2]|tojson(indent=-1) }}`, "[\n1,\n2\n]"},
+		{`{{ [1,2]|tojson(indent=none) }}`, "[1, 2]"},
+		{`{{ [1,2]|tojson(indent=true) }}`, "[\n 1,\n 2\n]"},
+		{`{{ [1,2]|tojson(indent=false) }}`, "[\n1,\n2\n]"},
+		{`{{ [1,2]|tojson(indent="\t") }}`, "[\n\t1,\n\t2\n]"},
+		// A string receiver is encoded before any indentation is built,
+		// so the argument is never looked at -- however hostile it is.
+		{`{{ "s"|tojson(indent=1180591620717411303424) }}`, `"s"`},
+		{`{{ "s"|tojson(indent=1.5) }}`, `"s"`},
+	} {
+		tmpl, err := New().FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil || got != tc.want {
+			t.Errorf("%s = %q, %v; want %q", tc.src, got, err, tc.want)
+		}
+	}
+	// A non-integer is reported by the multiplication, as json.dumps does.
+	for _, tc := range []struct{ src, want string }{
+		{`{{ [1,2]|tojson(indent=1.5) }}`, "can't multiply sequence by non-int of type 'float'"},
+		{`{{ 1|tojson(indent=[1]) }}`, "can't multiply sequence by non-int of type 'list'"},
+	} {
+		tmpl, _ := New().FromString(tc.src)
+		if _, err := tmpl.RenderString(context.Background(), nil); err == nil || err.Error() != tc.want {
+			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
+		}
+	}
+}

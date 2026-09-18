@@ -1593,6 +1593,22 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- tojson's indent is a repetition, and fails like one ----------------------
+# json.dumps builds the indent unit as `" " * indent`, so the multiplication is
+# where a hostile argument is refused. An index-sized overflow fires whatever
+# the sign -- CPython asks for the index before it looks at the sign -- and a
+# non-int is reported as the multiplication it is.
+#
+# gojja2 narrowed the argument and dropped the "does it fit" answer, so an
+# indent past int64 became zero and the document came out broken up with no
+# leading spaces: a different document, silently.
+case("filters/tojson_indent_overflows", "{{ [1,2]|tojson(indent=1180591620717411303424) }}")
+case("filters/tojson_indent_overflows_negative", "{{ [1,2]|tojson(indent=-1180591620717411303424) }}")
+case("filters/tojson_indent_overflows_scalar", "{{ 1|tojson(indent=9223372036854775808) }}")
+# A string is encoded before any indentation is built, so its argument is never
+# looked at however hostile it is.
+case("filters/tojson_indent_unused_by_a_string", '{{ "s"|tojson(indent=1180591620717411303424) }}|{{ "s"|tojson(indent=1.5) }}')
+
 # --- integer arguments and the C type they convert to -------------------------
 # An argument used as an integer is converted by CPython's argument parser to a
 # specific C type, and a template can see both halves of that: the range, and
