@@ -5,6 +5,7 @@ template language, built to be behaviourally identical to CPython's `jinja2`.
 
 [Documentation index](docs/README.md) ·
 [Divergences](docs/divergences.md) ·
+[Guide](docs/guide.md) ·
 [Limits](docs/limits.md) ·
 [Extending](docs/extending.md) ·
 [Scope](docs/scope.md) ·
@@ -25,63 +26,32 @@ if err != nil {
 return tmpl.Render(ctx, w, map[string]any{"user": user, "items": items})
 ```
 
-Output is streamed to `w` as the template produces it, except where a construct
-has to hold its own body before it can hand it on. Six do: `{% include %}`
-renders the included template in full before writing it out, `{% filter %}` and
-a block `{% set %}` buffer their bodies so a filter or an assignment can be
-applied to the finished text, a macro body and a `{% block %}` body are captured
-because each is a function that returns its output, and a recursive `{% for %}`
-captures each level so `loop()` can return it. Peak memory tracks the largest of
-those, not the write buffer. `tmpl.RenderString(ctx, vars)` returns the whole
-document instead, and returns nothing at all when the render fails.
+Five things worth knowing before the sixth line:
 
-Go values cross into templates by reflection: structs expose their exported
-fields (by name or by `json` tag) and their methods that take no arguments,
-whether the receiver is a value or a pointer; slices become lists, and maps
-become dicts. Errors carry the Python exception class jinja2 would have raised,
-so `errors.Is(err, errs.UndefinedError)` works.
+- **Go values cross by reflection.** A struct exposes its exported fields, by
+  name or `json` tag, and its methods that take no arguments; slices become
+  lists, maps become dicts. A method that *takes* arguments is not exposed by
+  default, because calling one lets the template choose what a host method is
+  invoked with.
+- **Errors carry the Python exception class** jinja2 would have raised, so
+  `errors.Is(err, errs.UndefinedError)` works, and `errors.Is(err,
+  errs.LookupError)` catches a `KeyError` exactly as `except` would.
+- **A template compiled with `FromString` is escaped**, because it has no name
+  to decide by. Defaulting it to *unescaped* is how an escaped-by-configuration
+  project ends up emitting raw user input.
+- **A render cannot mutate what you passed it**, and cannot outrun its
+  `context.Context` — or, behind that, ten million loop iterations and 256 MiB
+  of output. Zero means "the default" for every limit option, so a configuration
+  nobody filled in is the safe one.
+- **`FSLoader` refuses any name with a `..` segment** rather than cleaning it
+  into something else: a template that asks for a file outside its root gets
+  "not found", and not a different file.
 
-A method is reached as Python reaches one, so `{{ user.Name }}` is the bound
-method and `{{ user.Name() }}` is what it returns -- printing the first gives
-`<bound method Name>`, as it does in jinja2. A trailing `error` result fails the
-render whatever else the method returns, including when it is the only result.
-
-A template name given to `FSLoader` is refused if any segment of it is `..`,
-rather than being cleaned into something else: a template that asks for a file
-outside its root gets "not found" and not a different file.
-
-A method that *takes* arguments is not exposed by default, because calling one
-means the template chooses what a host method is invoked with.
-`WithMethodPolicy(value.AllMethods)` opts in, for templates as trusted as the
-Go code they call into.
-
-A value that refers to itself is fine to pass: it converts once and is shared,
-so it terminates rather than expanding forever, and `{{ n.self.self.k }}`
-resolves however deep it is followed. A self-referential *map* prints the way
-Python prints one, `{'k': 'v', 'self': {...}}`; a *struct* prints as the object
-it is, in the `<pkg.Type object>` form, because that is what printing a struct
-gives whether or not it is cyclic.
-
-`SelectAutoescape` follows jinja2's `select_autoescape`: matching ignores case
-and a leading dot is optional, and a template compiled with `FromString` is
-escaped -- it has no name to decide by, and defaulting it to *unescaped* is how
-an escaped-by-configuration project ends up emitting raw user input.
-`SelectAutoescapeWith` takes the disabled-extension and default settings as
-well.
-
-Every render takes a `context.Context` and stops when it is cancelled -- at the
-next loop iteration, output write, or filter yield point, which is where the
-context is read. Behind
-it, a render is bounded by default to ten million loop iterations and 256 MiB
-of output, and anything a template sizes from a number it chose -- a pad width,
-an indent, a rounding precision -- is charged against that budget before it is
-allocated. Zero means "the default" for every limit option; removing a bound
-takes `WithoutLimits()`, so a configuration nobody filled in is the safe one.
-Every bound, its default and the option that adjusts it are tabulated in
-[docs/limits.md](docs/limits.md).
-
-Compiled templates are cached in a bounded LRU of 400, as jinja2 does;
-`WithCacheSize` adjusts it and `ClearCache` picks up an edited template.
+[docs/guide.md](docs/guide.md) has the rest under headings you can link to:
+loaders, rendering and what buffers, the Go bridge, errors, the four undefined
+behaviours, autoescaping, the syntax options, and concurrency.
+[docs/extending.md](docs/extending.md) covers adding a filter, a test or a
+global, and exposing a type on its own terms.
 
 ## Ground truth
 

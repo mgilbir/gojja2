@@ -5,6 +5,7 @@ Start from the question, not the filename.
 | If you are asking… | Read |
 |---|---|
 | What is this, and how do I render a template? | [../README.md](../README.md) |
+| How do I configure loaders, autoescaping, syntax, undefined values? | [guide.md](guide.md) |
 | Will my jinja2 templates render the same here? | [divergences.md](divergences.md) — one divergence can change what a working template renders, and it is named in the first paragraph |
 | Does it support *X*? Async? `{% trans %}`? The sandbox? | [scope.md](scope.md) |
 | How correct is it, and how is that measured? | [../README.md#conformance](../README.md#conformance) |
