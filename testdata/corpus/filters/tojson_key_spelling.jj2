@@ -1,0 +1,3 @@
+{}
+---
+{{ {true: 1}|tojson }}|{{ {false: 1}|tojson }}|{{ {none: 1}|tojson }}|{{ {true: 1, false: 2}|tojson }}

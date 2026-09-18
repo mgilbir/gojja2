@@ -1,0 +1,11 @@
+{
+  "case": "filters/tojson_key_spelling.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "{\"true\": 1}|{\"false\": 1}|{\"null\": 1}|{\"false\": 2, \"true\": 1}"
+}
