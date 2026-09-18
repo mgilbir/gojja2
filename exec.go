@@ -597,7 +597,7 @@ func (ex *exec) execExtends(n *ast.Extends) error {
 func (ex *exec) execInclude(n *ast.Include) error {
 	tmpl, err := ex.loadTemplateExpr(n.Template)
 	if err != nil {
-		if n.IgnoreMissing && errs.KindOf(err).DerivesFrom(errs.TemplateNotFound) {
+		if n.IgnoreMissing && errors.Is(err, errs.TemplateNotFound) {
 			return nil
 		}
 		return err

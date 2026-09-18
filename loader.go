@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path"
@@ -14,9 +15,15 @@ import (
 
 // Loader finds template source by name.
 //
-// A miss must be reported as ErrNotFound (or an error wrapping it) rather than
-// as an empty template, so that `{% include ... ignore missing %}` can tell the
-// two apart.
+// A miss must be reported as an error satisfying errors.Is(err, ErrNotFound)
+// rather than as an empty template, so that `{% include ... ignore missing %}`,
+// ChoiceLoader's fallthrough and select_template's can tell a miss from a
+// failure. Returning ErrNotFound itself, or anything wrapping it with %w, does
+// that; so does any error carrying a kind that derives from it.
+//
+// Any other error stops the search and reaches the caller unchanged. That
+// distinction is the whole point: a loader whose disk is failing must not read
+// as "not here" and let the next loader quietly answer instead.
 type Loader interface {
 	Load(name string) (source string, err error)
 }
@@ -118,7 +125,7 @@ func (c ChoiceLoader) Load(name string) (string, error) {
 		if err == nil {
 			return src, nil
 		}
-		if !errs.KindOf(err).DerivesFrom(errs.TemplateNotFound) {
+		if !errors.Is(err, errs.TemplateNotFound) {
 			return "", err
 		}
 	}

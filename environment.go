@@ -6,6 +6,7 @@
 package gojja2
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -534,7 +535,7 @@ func (e *Environment) selectTemplateValue(v value.Value) (*Template, error) {
 	}
 	tmpl, err := e.selectTemplateValues(names)
 	if err != nil && v.Kind() == value.KindDict &&
-		errs.KindOf(err).DerivesFrom(errs.TemplatesNotFound) {
+		errors.Is(err, errs.TemplatesNotFound) {
 		// TemplatesNotFound builds its `name` as `names and names[-1]`,
 		// which subscripts what it was handed. A mapping iterates its
 		// keys happily and then has no key -1, so CPython's own
@@ -567,7 +568,7 @@ func (e *Environment) selectTemplateValues(names []value.Value) (*Template, erro
 		if err == nil {
 			return tmpl, nil
 		}
-		if !errs.KindOf(err).DerivesFrom(errs.TemplateNotFound) {
+		if !errors.Is(err, errs.TemplateNotFound) {
 			return nil, err
 		}
 	}
