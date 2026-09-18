@@ -60,6 +60,48 @@ type converter struct {
 	// any render budget existed to stop it.
 	seen   map[containerID]Value
 	expose MethodPolicy
+	// b bounds the walk. A slice or map is converted in full, so a render
+	// argument of the caller's choosing decides how long that takes; with
+	// nothing charged and nothing polled, the walk was a region no deadline
+	// could reach. `{{ big|length }}` over a million-element argument ran
+	// for a second and *returned success* with an already-cancelled
+	// context, because length never iterates and so nothing downstream ever
+	// looked at the clock.
+	b Budget
+	// err is the first refusal, after which the walk unwinds. The partial
+	// Value it returns is not usable, which is why every entry point that
+	// takes a Budget reports the error rather than the value alone.
+	err error
+}
+
+// charge reserves n elements and reports whether the walk may continue.
+func (c *converter) charge(n int) bool {
+	if c.err != nil {
+		return false
+	}
+	if err := chargeItems(c.b, int64(n)); err != nil {
+		c.err = err
+		return false
+	}
+	return true
+}
+
+// step is charge for a single element that has already been counted.
+//
+// The container's length is charged before the slice holding it is allocated,
+// so charging again per element would count the same memory twice. What the
+// walk still needs is a yield point: the elements are converted one at a time,
+// and a million of them is a million recursive calls between one charge and the
+// next.
+func (c *converter) step() bool {
+	if c.err != nil {
+		return false
+	}
+	if err := poll(c.b); err != nil {
+		c.err = err
+		return false
+	}
+	return true
 }
 
 func (c *converter) memo(id containerID, v Value) {
@@ -103,6 +145,25 @@ func FromGo(v any) Value { return (&converter{}).fromAny(v) }
 // FromGoWith is [FromGo] under an explicit method policy.
 func FromGoWith(v any, expose MethodPolicy) Value {
 	return (&converter{expose: expose}).fromAny(v)
+}
+
+// FromGoBudget is [FromGoWith] with the walk charged to b and stopped when b
+// says to stop.
+//
+// A slice or map converts in full, so how long a conversion takes is decided by
+// the value handed in rather than by the template that mentions it. Without a
+// budget that is work no deadline can interrupt and no bound can count, and it
+// happens before the template does anything a bound would notice.
+//
+// The returned Value is only meaningful when the error is nil; a refused walk
+// hands back what it had built so far.
+func FromGoBudget(v any, expose MethodPolicy, b Budget) (Value, error) {
+	c := &converter{expose: expose, b: b}
+	out := c.fromAny(v)
+	if c.err != nil {
+		return Undefined, c.err
+	}
+	return out, nil
 }
 
 func (c *converter) fromAny(v any) Value {
@@ -175,16 +236,28 @@ func (c *converter) fromAny(v any) Value {
 			if seen, hit := c.seen[id]; hit {
 				return seen
 			}
+			if !c.charge(len(v)) {
+				return NewList()
+			}
 			list := NewList(make([]Value, 0, len(v))...)
 			c.memo(id, list)
 			seq, _ := list.Seq()
 			for _, item := range v {
+				if !c.step() {
+					return list
+				}
 				seq.Append(c.fromAny(item))
 			}
 			return list
 		}
+		if !c.charge(len(v)) {
+			return NewList()
+		}
 		items := make([]Value, len(v))
 		for i, item := range v {
+			if !c.step() {
+				return NewList(items[:i]...)
+			}
 			items[i] = c.fromAny(item)
 		}
 		return NewList(items...)
@@ -193,6 +266,10 @@ func (c *converter) fromAny(v any) Value {
 }
 
 func (c *converter) fillStringMap(d Value, m map[string]any) {
+	// Charged before the key slice and the dict behind it are sized.
+	if !c.charge(len(m)) {
+		return
+	}
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -201,6 +278,9 @@ func (c *converter) fillStringMap(d Value, m map[string]any) {
 	dict, _ := d.Dict()
 	dict.Reserve(len(keys))
 	for _, k := range keys {
+		if !c.step() {
+			return
+		}
 		dict.SetString(k, c.fromAny(m[k]))
 	}
 }
@@ -220,7 +300,7 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 			// set, which in Go is where methods usually live. That
 			// made a documented feature absent for exactly the
 			// receiver style most code uses.
-			return FromObject(&structObject{rv: rv, expose: c.expose})
+			return FromObject(&structObject{rv: rv, expose: c.expose, b: c.b})
 		}
 		return c.fromReflect(rv.Elem())
 
@@ -245,12 +325,18 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 				return seen
 			}
 		}
+		if !c.charge(rv.Len()) {
+			return NewList()
+		}
 		list := NewList(make([]Value, 0, rv.Len())...)
 		if cyclable {
 			c.memo(id, list)
 		}
 		seq, _ := list.Seq()
 		for i := range rv.Len() {
+			if !c.step() {
+				return list
+			}
 			seq.Append(c.fromAny(rv.Index(i).Interface()))
 		}
 		return list
@@ -266,14 +352,24 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 		if cyclable {
 			c.memo(id, d)
 		}
+		if !c.charge(rv.Len()) {
+			return d
+		}
 		keys := rv.MapKeys()
 		// Sorting by rendered key gives a stable order for any key type.
+		// Each comparison converts both keys, so the sort is n log n
+		// conversions on top of the walk itself and needs a yield point
+		// of its own.
 		slices.SortFunc(keys, func(a, b reflect.Value) int {
+			c.step()
 			return compareReflectKeys(a, b)
 		})
 		dict, _ := d.Dict()
 		dict.Reserve(len(keys))
 		for _, k := range keys {
+			if !c.step() {
+				return d
+			}
 			if err := dict.Set(c.fromAny(k.Interface()), c.fromAny(rv.MapIndex(k).Interface())); err != nil {
 				// An unhashable key cannot occur: Go map keys are
 				// always comparable, so this is unreachable.
@@ -283,7 +379,7 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 		return d
 
 	case reflect.Struct:
-		return FromObject(&structObject{rv: rv, expose: c.expose})
+		return FromObject(&structObject{rv: rv, expose: c.expose, b: c.b})
 
 	case reflect.Func:
 		if rv.IsNil() {
@@ -317,6 +413,21 @@ type structObject struct {
 	// that the pointer's method set stays reachable.
 	rv     reflect.Value
 	expose MethodPolicy
+	// b is the budget of the conversion this wrapper came out of.
+	//
+	// Wrapping a struct lazily defers part of one conversion rather than
+	// finishing it, so reading a field later is the same walk resumed, and
+	// it is charged where the rest of the walk was. Without this a field
+	// holding a large slice was a way to reach an unbounded conversion from
+	// inside a render that had a budget: `{{ h.Items|length }}` behaved
+	// exactly like the render argument it was reached through.
+	//
+	// It is the budget of the render that built the wrapper. That is the
+	// render the wrapper belongs to: it is memoised into that render's
+	// scope and does not outlive it. A wrapper built outside a render --
+	// from FromGo, or a global registered before any render -- has none,
+	// and is bounded by the hard ceiling alone, as it was before.
+	b Budget
 }
 
 // fields returns the struct value whose fields are being read, following one
@@ -341,7 +452,15 @@ func (o *structObject) GetAttr(name string) (Value, bool) {
 			// undefined it would get for any missing name.
 			return Undefined, false
 		}
-		return FromGoWith(fv.Interface(), o.expose), true
+		v, err := FromGoBudget(fv.Interface(), o.expose, o.b)
+		if err != nil {
+			// GetAttr has nowhere to put an error. The refusal
+			// came from the budget, which remembers it, so the
+			// render fails on its next charge rather than on this
+			// undefined; see the Budget contract.
+			return Undefined, false
+		}
+		return v, true
 	}
 	if m, ok := o.method(name); ok {
 		return m, true
@@ -502,7 +621,7 @@ func (o *structObject) method(name string) (Value, bool) {
 	}) {
 		return Undefined, false
 	}
-	return FromObject(&methodObject{fn: m, name: name, expose: o.expose}), true
+	return FromObject(&methodObject{fn: m, name: name, expose: o.expose, b: o.b}), true
 }
 
 func tagName(f reflect.StructField) string {
@@ -560,6 +679,10 @@ type methodObject struct {
 	fn     reflect.Value
 	name   string
 	expose MethodPolicy
+	// b is the budget of the conversion this wrapper came out of; see
+	// structObject.b. A method's result is converted when it is called,
+	// which is as unbounded as any other conversion and happens mid-render.
+	b Budget
 }
 
 func (m *methodObject) GetAttr(string) (Value, bool) { return Undefined, false }
@@ -602,7 +725,7 @@ func (m *methodObject) Call(args *CallArgs) (Value, error) {
 			return None, nil
 		}
 	}
-	return FromGoWith(out[0].Interface(), m.expose), nil
+	return FromGoBudget(out[0].Interface(), m.expose, m.b)
 }
 
 // errorType is the error interface, for recognising a method's trailing

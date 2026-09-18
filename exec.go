@@ -153,7 +153,9 @@ func (ex *exec) execStmtInner(stmt ast.Stmt) error {
 		return err
 	case *ast.Scope:
 		inner := newScope(ex.sc)
-		declareFrameLocals(inner, ex.st, n, n.Body, inner.parent)
+		if err := declareFrameLocals(inner, ex.st, n, n.Body, inner.parent); err != nil {
+			return err
+		}
 		return ex.child(inner).execBody(n.Body)
 	case *ast.AutoescapeBlock:
 		return ex.execAutoescape(n)
@@ -306,7 +308,9 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		body := ex.child(newScope(ex.sc))
 		body.loop = loopValue
 		body.sc.set("loop", loopValue)
-		declareFrameLocals(body.sc, ex.st, n, n.Body, body.sc.parent)
+		if err := declareFrameLocals(body.sc, ex.st, n, n.Body, body.sc.parent); err != nil {
+			return err
+		}
 
 		if err := body.assign(n.Target, src.at(loop.index)); err != nil {
 			return err
@@ -400,7 +404,9 @@ func (ex *exec) execAssign(n *ast.Assign) error {
 
 func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 	inner := newScope(ex.sc)
-	declareFrameLocals(inner, ex.st, n, n.Body, inner.parent)
+	if err := declareFrameLocals(inner, ex.st, n, n.Body, inner.parent); err != nil {
+		return err
+	}
 	text, err := ex.capture(inner, func(sub *exec) error {
 		return sub.execBody(n.Body)
 	})
@@ -423,7 +429,9 @@ func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 func (ex *exec) execWith(n *ast.With) error {
 	inner := newScope(ex.sc)
 	sub := ex.child(inner)
-	declareFrameLocals(inner, ex.st, n, n.Body, inner.parent)
+	if err := declareFrameLocals(inner, ex.st, n, n.Body, inner.parent); err != nil {
+		return err
+	}
 	for i, target := range n.Targets {
 		// Values are evaluated in the enclosing scope, so
 		// `{% with a = a %}` refers to the outer a.
@@ -450,7 +458,9 @@ func (ex *exec) execAutoescape(n *ast.AutoescapeBlock) error {
 	// to the context. Without this, `{% autoescape x %}{% for a in xs if m %}
 	// {% endfor %}{% from "t" import m %}{% endautoescape %}` read the
 	// context's m in the loop and ran it, where jinja2 reads nothing.
-	declareFrameLocals(inner, ex.st, n, n.Body, inner.parent)
+	if err := declareFrameLocals(inner, ex.st, n, n.Body, inner.parent); err != nil {
+		return err
+	}
 	sub := ex.child(inner)
 	sub.autoescape = on
 	if _, constant := n.Value.(*ast.Const); !constant {
@@ -515,7 +525,9 @@ func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaul
 
 func (ex *exec) execFilterBlock(n *ast.FilterBlock) error {
 	inner := newScope(ex.sc)
-	declareFrameLocals(inner, ex.st, n, n.Body, inner.parent)
+	if err := declareFrameLocals(inner, ex.st, n, n.Body, inner.parent); err != nil {
+		return err
+	}
 	text, err := ex.capture(inner, func(sub *exec) error {
 		return sub.execBody(n.Body)
 	})
@@ -611,7 +623,10 @@ func (ex *exec) execInclude(n *ast.Include) error {
 	if n.WithContext {
 		// An include sees the including template's whole frame, loop
 		// variables included, not just its top-level context.
-		vars = ex.sc.flatten()
+		var err error
+		if vars, err = ex.sc.flatten(); err != nil {
+			return err
+		}
 	}
 	var buf strings.Builder
 	if err := tmpl.renderInto(&buf, vars, ex.st.depth, ex.st.budget); err != nil {
@@ -723,7 +738,10 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 
 	var vars map[string]value.Value
 	if withContext {
-		vars = ex.sc.flatten()
+		var err error
+		if vars, err = ex.sc.flatten(); err != nil {
+			return value.Undefined, err
+		}
 	}
 	// The budget crosses this boundary exactly as it does an include's:
 	// share it, or the imported template renders with no bound and no

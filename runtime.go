@@ -565,7 +565,7 @@ func (b *blockReference) render() (value.Value, error) {
 		// context.vars rather than against the root frame's locals.
 		sc = newScope(b.st.contextVars)
 	}
-	declareFrameLocals(sc, b.st, entry.node, entry.node.Body, nil)
+	declareRootLocals(sc, b.st, entry.node, entry.node.Body)
 	var out strings.Builder
 	ex := &exec{
 		st:     b.st,

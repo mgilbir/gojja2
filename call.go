@@ -266,7 +266,9 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 		sc.set(param.Name, ex.st.Undefined(value.NewUndefined(param.Name)))
 	}
 
-	declareFrameLocals(sc, ex.st, m.node, m.node.Body, sc.parent)
+	if err := declareFrameLocals(sc, ex.st, m.node, m.node.Body, sc.parent); err != nil {
+		return value.Undefined, err
+	}
 
 	// The two halves of a macro's escaping come from different places, and
 	// jinja2 says why in Macro.__call__: "whether a macro is safe depends
@@ -447,7 +449,10 @@ func (ex *exec) assign(target ast.Expr, v value.Value) error {
 		// resolves to undefined reports the namespace error rather than
 		// the undefined one -- the fix is to create a namespace either
 		// way, and that is what the message should say.
-		base, _ := ex.sc.lookup(t.Name)
+		base, _, err := ex.sc.lookup(t.Name)
+		if err != nil {
+			return err
+		}
 		ns, ok := base.Interface().(*namespaceObject)
 		if !ok {
 			return errs.New(errs.TemplateRuntimeError,
