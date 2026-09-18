@@ -42,7 +42,8 @@ cannot start a fresh allowance.
 If you are writing a filter, a test or a global of your own, the budget is your
 responsibility too: charge a template-chosen size with `State.ChargeBytes` or
 `State.ChargeItems` *before* you allocate it, and call `State.Poll` in any loop
-that does sustained work without writing output.
+that does sustained work without writing output. [extending.md](extending.md)
+has the contract in full, with runnable examples.
 
 ---
 
