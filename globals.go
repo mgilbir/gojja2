@@ -323,7 +323,9 @@ func (c *cyclerObject) next() (value.Value, error) {
 // other implementation.
 func (c *cyclerObject) TypeName() string      { return "Cycler" }
 func (c *cyclerObject) QualifiedName() string { return "jinja2.utils.Cycler" }
-func (c *cyclerObject) Repr() string          { return "<Cycler>" }
+
+// A Cycler defines no __repr__, so it prints as any bare Python object does.
+func (c *cyclerObject) Repr() string { return pyObjectRepr(c.QualifiedName(), c) }
 
 func globalCycler(s *State, args *value.CallArgs) (value.Value, error) {
 	// Python binds the call before __init__ runs, so a keyword beats the
@@ -351,7 +353,7 @@ type joinerObject struct {
 func (j *joinerObject) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
 func (j *joinerObject) TypeName() string                   { return "Joiner" }
 func (j *joinerObject) QualifiedName() string              { return "jinja2.utils.Joiner" }
-func (j *joinerObject) Repr() string                       { return "<Joiner>" }
+func (j *joinerObject) Repr() string                       { return pyObjectRepr(j.QualifiedName(), j) }
 
 func (j *joinerObject) Call(args *value.CallArgs) (value.Value, error) {
 	if err := bindArgs(runtimeSignatures["Joiner.__call__"], args, 1); err != nil {

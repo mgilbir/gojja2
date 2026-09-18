@@ -473,8 +473,19 @@ func (r *templateReference) TypeName() string { return "TemplateReference" }
 
 func (r *templateReference) QualifiedName() string { return "jinja2.runtime.TemplateReference" }
 
+// Repr is `<TemplateReference {context.name!r}>`, and a template compiled from
+// a string has no name -- which Python prints as None, not as ”.
 func (r *templateReference) Repr() string {
-	return "<TemplateReference " + value.Repr(value.String(r.st.root.name)) + ">"
+	return "<TemplateReference " + templateNameRepr(r.st.root.name) + ">"
+}
+
+// templateNameRepr is `{name!r}` for a template name, where a template with
+// none carries None rather than the empty string.
+func templateNameRepr(name string) string {
+	if name == "" {
+		return "None"
+	}
+	return value.Repr(value.String(name))
 }
 
 // blockReference renders one definition of a block. It is what `self.name` and
@@ -488,15 +499,34 @@ type blockReference struct {
 	sc *scope
 }
 
-func (b *blockReference) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
+// GetAttr answers `super`, which is the next definition of the same block --
+// what `{{ self.body.super() }}` reaches. It is a property, so it is the
+// reference itself and not a method returning one, and past the end of the
+// chain it is an undefined that says so when it is used.
+func (b *blockReference) GetAttr(name string) (value.Value, bool) {
+	if name != "super" {
+		return value.Undefined, false
+	}
+	if b.index+1 >= len(b.st.blocks[b.name]) {
+		return b.st.Undefined(value.UndefinedHint(
+			"there is no parent block called %s.",
+			value.Repr(value.String(b.name)))), true
+	}
+	return value.FromObject(&blockReference{
+		st: b.st, name: b.name, index: b.index + 1, sc: b.sc,
+	}), true
+}
 
 func (b *blockReference) TypeName() string { return "BlockReference" }
 
 func (b *blockReference) QualifiedName() string { return "jinja2.runtime.BlockReference" }
 
-func (b *blockReference) Repr() string {
-	return "<BlockReference " + value.Repr(value.String(b.name)) + ">"
-}
+// A BlockReference defines no __str__ and no __repr__. gojja2 gave it a Str
+// that rendered the block, so `{{ self.body }}` printed the block's output
+// where jinja2 prints the object -- and, because printing it re-entered the
+// block, `{% block x %}{{ self.x }}{% endblock %}` was a RecursionError where
+// jinja2 prints one line. Only a call renders.
+func (b *blockReference) Repr() string { return pyObjectRepr(b.QualifiedName(), b) }
 
 func (b *blockReference) Call(args *value.CallArgs) (value.Value, error) {
 	// BlockReference.__call__ takes nothing but self, and says so the way
@@ -559,22 +589,6 @@ func (b *blockReference) render() (value.Value, error) {
 		return value.Undefined, err
 	}
 	return markup(out.String(), b.st.autoescape), nil
-}
-
-// Str makes `{{ self.body }}` render the block without an explicit call, which
-// is how jinja2's BlockReference behaves.
-//
-// Rendering can fail and Str cannot say so, so the error is parked on the
-// render state and raised by the statement loop. Discarding it rendered the
-// block as "" and reported success -- a ZeroDivisionError inside a block
-// reached through `self` simply vanished.
-func (b *blockReference) Str() string {
-	v, err := b.render()
-	if err != nil {
-		b.st.deferError(err)
-		return ""
-	}
-	return value.Str(v)
 }
 
 // markup marks rendered output safe when autoescaping, so that embedding it

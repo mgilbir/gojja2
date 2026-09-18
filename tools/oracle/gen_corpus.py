@@ -180,6 +180,18 @@ case("inherit/block_in_loop", "{% for i in [1,2] %}{% block b %}[{{ i|default('-
 case("inherit/block_in_loop_scoped", "{% for i in [1,2] %}{% block b scoped %}[{{ i }}]{% endblock %}{% endfor %}")
 case("inherit/endblock_name", "{% block b %}x{% endblock b %}")
 
+# A BlockReference defines no __str__, so only a call renders a block: printing
+# `self.body` prints the object. `super` is a property on the reference, which
+# is undefined past the end of the chain and says so when it is used. The
+# objects themselves carry an address and are ungradable, so what is pinned here
+# is everything around them.
+case("inherit/self_call", "{% block b %}hi{% endblock %}|{{ self.b() }}")
+case("inherit/self_super_undefined", "{% block b %}hi{% endblock %}[{{ self.b.super }}]")
+case("errors/self_super_past_end", "{% block b %}hi{% endblock %}{{ self.b.super() }}")
+case("inherit/self_print_does_not_render",
+     "{% block b %}hi{% endblock %}{{ self.b|string|length > 20 }}")
+case("inherit/template_reference_repr", "{% block b %}{% endblock %}{{ self }}")
+
 # --- include and import -------------------------------------------------------
 INC = {"inc.html": "[{{ v|default('none') }}]", "mac.html": "{% macro f(x) %}<{{x}}>{% endmacro %}{% set exported = 'E' %}"}
 case("include/basic", "{% set v = 'V' %}{% include 'inc.html' %}", __templates__=INC)

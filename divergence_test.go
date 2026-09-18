@@ -32,14 +32,30 @@ func mustRender(t *testing.T, source string) string {
 	return out
 }
 
+// TestBlockReferencePrintsAsAnObject: jinja2's BlockReference defines no
+// __str__ and no __repr__, so printing one prints the object. gojja2 rendered
+// the block instead, which made `{{ self.body }}` produce the block's output
+// where jinja2 produces "<jinja2.runtime.BlockReference object at 0x...>" --
+// and made `{% block x %}{{ self.x }}{% endblock %}` a RecursionError where
+// jinja2 prints one line. Only a call renders.
+func TestBlockReferencePrintsAsAnObject(t *testing.T) {
+	out := mustRender(t, `[{{ self.b }}]{% block b %}hi{% endblock %}`)
+	const want = "<jinja2.runtime.BlockReference object at 0x"
+	if !strings.HasPrefix(out, "["+want) || !strings.HasSuffix(out, ">]hi") {
+		t.Errorf("got %q, want [%s...>]hi", out, want)
+	}
+	// Printing it does not render it, so a block that prints itself
+	// terminates.
+	if got := mustRender(t, `{% block x %}[{{ self.x }}]{% endblock %}`); !strings.HasPrefix(got, "[<") {
+		t.Errorf("a self-printing block did not terminate cleanly: %q", got)
+	}
+}
+
 // TestBlockReferenceErrorIsNotSwallowed pins that an error raised while
-// rendering a block through `self` reaches the caller.
-//
-// Str() cannot return an error, so the failure used to be discarded: the block
-// rendered as "" and the render reported success. The block is parked inside a
-// false branch so that only the `self` reference renders it.
+// rendering a block through `self` reaches the caller. The block is parked
+// inside a false branch so that only the `self` reference renders it.
 func TestBlockReferenceErrorIsNotSwallowed(t *testing.T) {
-	const src = `[{{ self.b }}]{% if false %}{% block b %}{{ 1/0 }}{% endblock %}{% endif %}`
+	const src = `[{{ self.b() }}]{% if false %}{% block b %}{{ 1/0 }}{% endblock %}{% endif %}`
 	out, err := render(t, src)
 	if err == nil {
 		t.Fatalf("expected the block's error to surface, got out=%q err=nil", out)
@@ -52,11 +68,10 @@ func TestBlockReferenceErrorIsNotSwallowed(t *testing.T) {
 	}
 }
 
-// TestBlockReferenceErrorThroughFilter pins that the deferred error is caught
-// however the block was stringified, not only by a print tag. A filter calls
-// value.Str itself, well away from the print path.
+// TestBlockReferenceErrorThroughFilter pins the same through a filter, which
+// calls value.Str itself, well away from the print path.
 func TestBlockReferenceErrorThroughFilter(t *testing.T) {
-	const src = `{{ self.b|upper }}{% if false %}{% block b %}{{ 1/0 }}{% endblock %}{% endif %}`
+	const src = `{{ self.b()|upper }}{% if false %}{% block b %}{{ 1/0 }}{% endblock %}{% endif %}`
 	if _, err := render(t, src); err == nil {
 		t.Fatal("expected the block's error to surface through a filter, got nil")
 	}
@@ -65,11 +80,18 @@ func TestBlockReferenceErrorThroughFilter(t *testing.T) {
 // TestBlockReferenceStillRenders guards the fix against over-reach: a block
 // reached through self that does NOT fail must still render normally.
 func TestBlockReferenceStillRenders(t *testing.T) {
-	if got := mustRender(t, `[{{ self.b }}]{% block b %}hi{% endblock %}`); got != "[hi]hi" {
-		t.Errorf("got %q, want %q", got, "[hi]hi")
-	}
 	if got := mustRender(t, `[{{ self.b() }}]{% block b %}hi{% endblock %}`); got != "[hi]hi" {
 		t.Errorf("got %q, want %q", got, "[hi]hi")
+	}
+	// And `super` is a property on the reference, which is what
+	// `{{ self.body.super() }}` reaches -- undefined past the end of the
+	// chain, saying so only when it is used.
+	if got := mustRender(t, `{% block b %}hi{% endblock %}[{{ self.b.super }}]`); got != "hi[]" {
+		t.Errorf("got %q, want %q", got, "hi[]")
+	}
+	if _, err := render(t, `{% block b %}hi{% endblock %}{{ self.b.super() }}`); err == nil ||
+		err.Error() != "there is no parent block called 'b'." {
+		t.Errorf("super past the end of the chain: got %v", err)
 	}
 }
 

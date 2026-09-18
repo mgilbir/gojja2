@@ -86,16 +86,18 @@ func TestDeepNonCyclicOrderingRaises(t *testing.T) {
 
 // TestSelfReferentialBlockRaises: rendering a block is entering another
 // template function, so it is bounded by the same counter as include, extends
-// and a macro call. Without that, `{{ self.x }}` inside block x recursed until
-// the process died.
+// and a macro call. Without that, `{{ self.x() }}` inside block x recursed
+// until the process died.
+//
+// Only a *call* renders. `{{ self.x }}` prints the reference and recurses
+// nowhere, which is why every case here writes the parentheses.
 func TestSelfReferentialBlockRaises(t *testing.T) {
 	for name, src := range map[string]string{
-		"printed":    `{% block x %}{{ self.x }}{% endblock %}`,
 		"called":     `{% block x %}{{ self.x() }}{% endblock %}`,
-		"mutual":     `{% block a %}{{ self.b }}{% endblock %}{% block b %}{{ self.a }}{% endblock %}`,
-		"via macro":  `{% macro m() %}{{ self.x }}{% endmacro %}{% block x %}{{ m() }}{% endblock %}`,
-		"via filter": `{% block x %}{{ self.x|upper }}{% endblock %}`,
-		"in a set":   `{% block x %}{% set t = self.x %}{{ t }}{% endblock %}`,
+		"mutual":     `{% block a %}{{ self.b() }}{% endblock %}{% block b %}{{ self.a() }}{% endblock %}`,
+		"via macro":  `{% macro m() %}{{ self.x() }}{% endmacro %}{% block x %}{{ m() }}{% endblock %}`,
+		"via filter": `{% block x %}{{ self.x()|upper }}{% endblock %}`,
+		"in a set":   `{% block x %}{% set t = self.x() %}{{ t }}{% endblock %}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			env := gojja2.New()
@@ -116,9 +118,9 @@ func TestBlockRecursionAllowsRealTemplates(t *testing.T) {
 	})
 	for name, tc := range map[string]struct{ src, want string }{
 		"nested blocks":  {`{% block a %}A{% block b %}B{% endblock %}{% endblock %}`, "AB"},
-		"self by name":   {`{% block a %}A{% endblock %}-{{ self.a }}`, "A-A"},
+		"self by name":   {`{% block a %}A{% endblock %}-{{ self.a() }}`, "A-A"},
 		"super chain":    {`{% extends "mid.html" %}{% block inner %}c{{ super() }}{% endblock %}`, "[ocmi]"},
-		"sibling blocks": {`{% block a %}A{% endblock %}{% block b %}{{ self.a }}B{% endblock %}`, "AAB"},
+		"sibling blocks": {`{% block a %}A{% endblock %}{% block b %}{{ self.a() }}B{% endblock %}`, "AAB"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			env := gojja2.New(gojja2.WithLoader(loader))
