@@ -10,6 +10,8 @@ Start from the question, not the filename.
 | How correct is it, and how is that measured? | [../README.md#conformance](../README.md#conformance) |
 | Why did my render fail with `ErrOutputTooLarge`, or stop early? | [limits.md](limits.md) |
 | How do I bound a render of a template I do not trust? | [limits.md](limits.md) |
+| How does a template get from source to output? | [architecture.md](architecture.md) |
+| I am about to change the engine — what shape is it? | [architecture.md](architecture.md) |
 | What did an adversarial read of the code find? | [audits/](audits/README.md) — snapshots, not current state |
 
 The Go API itself is documented in the source, as godoc. `go doc
@@ -31,6 +33,7 @@ tell which one lost.
 | What bounds a render, and which option adjusts it | [limits.md](limits.md) |
 | The conformance corpora, the oracle, and the numbers | [../README.md](../README.md) |
 | Which upstream projects are consulted, and under what licence | [../NOTICE](../NOTICE) |
+| How the pieces fit, and what nesting must not drop | [architecture.md](architecture.md) |
 | The signature and contract of anything exported | godoc |
 | Which revision a generated corpus was built from | that corpus's own `SOURCES.md` |
 
