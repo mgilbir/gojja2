@@ -176,6 +176,17 @@ func TestIntFilterBaseParsing(t *testing.T) {
 		{`{{ '0x'|int(-1,16) }}|{{ '0x'|int(-1,36) }}`, `-1|33`},
 		// Base 0 refuses a leading zero, and the float fallback answers.
 		{`{{ '010'|int(-1,0) }}|{{ '010'|int(-1,8) }}`, `10|8`},
+		// Exactly one sign. big.Int reads one of its own, so a
+		// repeated one used to cancel out and answer a number: "--4"
+		// came back 4 and "-+4" came back -4, where int() raises and
+		// |int therefore answers its default.
+		{`{{ '--4'|int(-1) }}|{{ '++4'|int(-1) }}`, `-1|-1`},
+		{`{{ '+-4'|int(-1) }}|{{ '-+4'|int(-1) }}`, `-1|-1`},
+		{`{{ '--4'|int(-1,16) }}|{{ '--0x10'|int(-1,16) }}`, `-1|-1`},
+		{`{{ '-4'|int(-1) }}|{{ '+4'|int(-1) }}|{{ ' -4 '|int(-1) }}`, `-4|4|-4`},
+		// And the case the differential sweep turned it up on: a join
+		// that produces a double sign is not a number.
+		{`{{ ('-4'|join(d='-'))|int }}`, `0`},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {

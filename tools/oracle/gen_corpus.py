@@ -609,6 +609,16 @@ case("filters/round_keeps_the_type",
 case("filters/int_base_prefixes",
      "{{ '0x1f'|int(-1,0) }}|{{ '0X1F'|int(-1,0) }}|{{ '0b11'|int(-1,0) }}|"
      "{{ '0o17'|int(-1,0) }}|{{ '0x1f'|int(-1,16) }}|{{ '0B11'|int(-1,16) }}")
+
+# int() takes exactly one sign. big.Int reads one of its own, so a repeated one
+# cancelled out and answered a number -- and because |int falls back to its
+# default rather than raising, a template got a plausible answer and no signal.
+case("filters/int_double_sign",
+     "{{ '--4'|int(-1) }}|{{ '++4'|int(-1) }}|{{ '+-4'|int(-1) }}|{{ '-+4'|int(-1) }}|"
+     "{{ '-4'|int(-1) }}|{{ '+4'|int(-1) }}")
+case("filters/int_double_sign_base",
+     "{{ '--4'|int(-1,16) }}|{{ '--0x10'|int(-1,16) }}|{{ '-0x10'|int(-1,16) }}")
+case("filters/int_from_join_sign", "{{ ('-4'|join(d='-'))|int }}")
 case("filters/int_base_signs_and_underscores",
      "{{ '-0x10'|int(-1,16) }}|{{ '+0x10'|int(-1,0) }}|{{ '1_0'|int(-1,16) }}|"
      "{{ '0x_1f'|int(-1,16) }}|{{ '1__0'|int(-1,16) }}|{{ '_10'|int(-1,16) }}")
