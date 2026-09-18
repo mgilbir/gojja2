@@ -1167,6 +1167,23 @@ case("errors/urlize_rel_truthy", "{{ u|urlize(none, false, none, [1]) }}", **URL
 case("errors/urlize_scheme_invalid", "{{ u|urlize(none, false, none, none, ['ftp']) }}", **URLTEXT)
 case("errors/urlize_scheme_type", "{{ u|urlize(none, false, none, none, [1]) }}", **URLTEXT)
 
+# urlize is built out of \w, \d and \s, and all three mean more in Python than
+# in Go: a URL with a non-ASCII host or path is linked, an address written with
+# Arabic-Indic digits is an address, and a word after a non-breaking space --
+# or a separator control, or NEL -- is a word of its own.
+case("filters/urlize_unicode_host",
+     "{{ a|urlize }}|{{ b|urlize }}|{{ c|urlize }}",
+     a="https://ex\u00e4mple.com/path", b="www.f\u00f6o.org",
+     c="https://\u4e2d\u6587.cn/\u8def\u5f84")
+case("filters/urlize_unicode_mail",
+     "{{ a|urlize }}|{{ b|urlize }}",
+     a="b\u00f6b@ex\u00e4mple.com", b="mailto:b\u00f6b@ex\u00e4mple.com")
+case("filters/urlize_unicode_digits", "{{ a|urlize }}", a="http://\u0661\u0662\u0663.1.1.1")
+case("filters/urlize_unicode_space",
+     "{{ a|urlize }}|{{ b|urlize }}|{{ c|urlize }}|{{ d|urlize }}",
+     a="a.com\u00a0http://b.org", b="http://g.org/p\u00a0q",
+     c="http://e.org\u001cnext", d="http://f.org\u0085next")
+
 
 # --- what a module exports ----------------------------------------------------
 # jinja2 exports the names a top-level binding actually made, recorded as the

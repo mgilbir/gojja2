@@ -1,0 +1,6 @@
+{
+  "a": "böb@exämple.com",
+  "b": "mailto:böb@exämple.com"
+}
+---
+{{ a|urlize }}|{{ b|urlize }}

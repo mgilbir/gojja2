@@ -1,0 +1,8 @@
+{
+  "a": "a.com http://b.org",
+  "b": "http://g.org/p q",
+  "c": "http://e.org\u001cnext",
+  "d": "http://f.orgnext"
+}
+---
+{{ a|urlize }}|{{ b|urlize }}|{{ c|urlize }}|{{ d|urlize }}

@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -95,6 +96,74 @@ func TestURLizeArguments(t *testing.T) {
 		}
 		if err.Error() != tc.want {
 			t.Errorf("%s\n got %q\nwant %q", tc.src, err.Error(), tc.want)
+		}
+	}
+}
+
+// TestURLizeUnicodeClasses: urlize is built out of \w, \d and \s, and all
+// three mean more in Python than they do in Go. Go's \w and \d are ASCII-only
+// and Go's \s leaves out the separator controls and NEL, so a URL with a
+// non-ASCII host or path was left as plain text, an address written with
+// Arabic-Indic digits was not an address, and a word after a non-breaking space
+// was glued to the one before it.
+//
+// The characters are spelled as code points so that no editor or terminal can
+// quietly normalise one of them into another.
+func TestURLizeUnicodeClasses(t *testing.T) {
+	var (
+		ae   = string(rune(0xE4))                    // a-umlaut
+		oe   = string(rune(0xF6))                    // o-umlaut
+		ee   = strings.Repeat(string(rune(0xE9)), 2) // e-acute, twice
+		han  = string([]rune{0x4E2D, 0x6587})        // CJK
+		path = string([]rune{0x8DEF, 0x5F84})        // CJK
+		arab = string([]rune{0x661, 0x662, 0x663})   // Arabic-Indic digits
+		nbsp = string(rune(0xA0))                    // no-break space
+		fsep = string(rune(0x1C))                    // file separator
+		nel  = string(rune(0x85))                    // next line
+	)
+	link := func(href, shown string) string {
+		return `<a href="` + href + `" rel="noopener">` + shown + `</a>`
+	}
+	mail := func(addr string) string {
+		return `<a href="mailto:` + addr + `">` + addr + `</a>`
+	}
+
+	env := New()
+	tmpl, err := env.FromString(`{{ u|urlize }}`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	for _, tc := range []struct{ text, want string }{
+		// A non-ASCII host, with a scheme, with www, and bare.
+		{"https://ex" + ae + "mple.com/path",
+			link("https://ex"+ae+"mple.com/path", "https://ex"+ae+"mple.com/path")},
+		{"www.f" + oe + "o.org", link("https://www.f"+oe+"o.org", "www.f"+oe+"o.org")},
+		{ee + ".com", link("https://"+ee+".com", ee+".com")},
+		{"https://" + han + ".cn/" + path,
+			link("https://"+han+".cn/"+path, "https://"+han+".cn/"+path)},
+		// A non-ASCII local part or domain in an address.
+		{"b" + oe + "b@ex" + ae + "mple.com", mail("b" + oe + "b@ex" + ae + "mple.com")},
+		{"mailto:b" + oe + "b@ex" + ae + "mple.com", mail("b" + oe + "b@ex" + ae + "mple.com")},
+		// \d is Unicode decimal digits, so this is an IPv4 address.
+		{"http://" + arab + ".1.1.1", link("http://"+arab+".1.1.1", "http://"+arab+".1.1.1")},
+		// A non-breaking space separates words, so what follows is its
+		// own word and what precedes it ends there.
+		{"a.com" + nbsp + "http://b.org",
+			"a.com" + nbsp + link("http://b.org", "http://b.org")},
+		// And it ends a path, because \S stops at it.
+		{"http://g.org/p" + nbsp + "q",
+			link("http://g.org/p", "http://g.org/p") + nbsp + "q"},
+		// The separator controls and NEL count as whitespace too.
+		{"http://e.org" + fsep + "next", link("http://e.org", "http://e.org") + fsep + "next"},
+		{"http://f.org" + nel + "next", link("http://f.org", "http://f.org") + nel + "next"},
+	} {
+		got, err := tmpl.RenderString(context.Background(), map[string]any{"u": tc.text})
+		if err != nil {
+			t.Errorf("%q: %v", tc.text, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%q\n got %q\nwant %q", tc.text, got, tc.want)
 		}
 	}
 }
