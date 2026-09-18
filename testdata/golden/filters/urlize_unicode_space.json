@@ -1,0 +1,11 @@
+{
+  "case": "filters/urlize_unicode_space.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "a.com <a href=\"http://b.org\" rel=\"noopener\">http://b.org</a>|<a href=\"http://g.org/p\" rel=\"noopener\">http://g.org/p</a> q|<a href=\"http://e.org\" rel=\"noopener\">http://e.org</a>\u001cnext|<a href=\"http://f.org\" rel=\"noopener\">http://f.org</a>next"
+}

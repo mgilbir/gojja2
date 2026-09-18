@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/value"
@@ -125,16 +127,34 @@ func quoteURL(st *State, s string, keepSlash bool) (string, error) {
 	return b.String(), nil
 }
 
+// Python's \w and \d mean more than Go's do, and urlize is built out of both:
+// Go's are ASCII-only, so a URL with a non-ASCII host or path was left as plain
+// text and `http://١٢٣.1.1.1` was not an address.
+//
+// \S is left as Go's, because it cannot differ here: the text is split on
+// Python whitespace before any of this runs, so a word has none of it left to
+// disagree about.
+//
+// The Unicode tables behind \p{L} and \p{N} are Go's, which are newer than the
+// pinned CPython's -- so a handful of code points added since Unicode 14 count
+// as word characters here and not there. That tail moves with the Python
+// version too, and it is letters and digits of recently encoded scripts.
+const (
+	pyWord  = `\p{L}\p{N}_`
+	pyDigit = `\p{Nd}`
+)
+
 // httpRe recognises the URL shapes jinja2 links: a scheme or www prefix with
 // a TLD, a bare domain under a handful of generic TLDs, or a scheme with a
 // literal IPv4 or IPv6 address, each with an optional port, path and fragment.
 var httpRe = regexp.MustCompile(`(?is)^(` +
-	`(https?://|www\.)(([\w%-]+\.)+)?([a-z]{2,63}|xn--[\w%]{2,59})` +
-	`|([\w%-]{2,63}\.)+(com|net|int|edu|gov|org|info|mil)` +
-	`|(https?://)((([\d]{1,3})(\.[\d]{1,3}){3})|(\[([\da-f]{0,4}:){2}([\da-f]{0,4}:?){1,6}\]))` +
-	`)(:[\d]{1,5})?([/?#]\S*)?$`)
+	`(https?://|www\.)(([` + pyWord + `%-]+\.)+)?([a-z]{2,63}|xn--[` + pyWord + `%]{2,59})` +
+	`|([` + pyWord + `%-]{2,63}\.)+(com|net|int|edu|gov|org|info|mil)` +
+	`|(https?://)((([` + pyDigit + `]{1,3})(\.[` + pyDigit + `]{1,3}){3})` +
+	`|(\[([` + pyDigit + `a-f]{0,4}:){2}([` + pyDigit + `a-f]{0,4}:?){1,6}\]))` +
+	`)(:[` + pyDigit + `]{1,5})?([/?#]\S*)?$`)
 
-var emailRe = regexp.MustCompile(`^\S+@\w[\w.-]*\.\w+$`)
+var emailRe = regexp.MustCompile(`^\S+@[` + pyWord + `][` + pyWord + `.-]*\.[` + pyWord + `]+$`)
 
 var urlizeLeadRe = regexp.MustCompile(`^([(<]|&lt;)+`)
 var urlizeTailRe = regexp.MustCompile(`([)>.,\n]|&gt;)+$`)
@@ -330,27 +350,34 @@ func attrText(v value.Value) string {
 }
 
 // splitKeepingSpace splits on whitespace runs but keeps them, so rejoining
-// reproduces the original spacing exactly.
+// reproduces the original spacing exactly. jinja2 writes `re.split(r"(\s+)",
+// ...)`, so the runs are Python's whitespace and not only the ASCII kind: a
+// word after a non-breaking space is a word of its own, and was not one while
+// this walked bytes.
 func splitKeepingSpace(s string) []string {
 	var out []string
 	i := 0
 	for i < len(s) {
 		start := i
-		inSpace := isASCIISpace(s[i])
-		for i < len(s) && isASCIISpace(s[i]) == inSpace {
-			i++
+		first, _ := utf8.DecodeRuneInString(s[i:])
+		inSpace := isPySpace(first)
+		for i < len(s) {
+			r, n := utf8.DecodeRuneInString(s[i:])
+			if isPySpace(r) != inSpace {
+				break
+			}
+			i += n
 		}
 		out = append(out, s[start:i])
 	}
 	return out
 }
 
-func isASCIISpace(b byte) bool {
-	switch b {
-	case ' ', '\t', '\n', '\r', '\v', '\f':
-		return true
-	}
-	return false
+// isPySpace is Python's \s for str patterns. Go's unicode.IsSpace is the
+// Unicode White_Space property, which Python matches except that Python also
+// counts the four separator controls.
+func isPySpace(r rune) bool {
+	return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f)
 }
 
 // peelPunctuation splits leading openers and trailing punctuation off a word,

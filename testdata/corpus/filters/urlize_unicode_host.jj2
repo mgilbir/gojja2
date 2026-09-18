@@ -1,0 +1,7 @@
+{
+  "a": "https://exämple.com/path",
+  "b": "www.föo.org",
+  "c": "https://中文.cn/路径"
+}
+---
+{{ a|urlize }}|{{ b|urlize }}|{{ c|urlize }}
