@@ -31,7 +31,7 @@ are safety controls rather than behavioural choices, and they live in
 |---|---|---|
 | [Lazy sequence filters](#lazy-sequence-filters) | sequence filters return lists, not generators | **Yes** -- and toward what the author meant |
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
-| [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | the macro compiles; jinja2 raises a Python `SyntaxError` | No -- the template is broken under CPython |
+| [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
 | [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | No -- it fails either way |
@@ -135,8 +135,24 @@ jinja2's code generator to report an error about it -- so this is the kind of
 Python-specific artefact [scope.md](scope.md) excludes rather than a behaviour
 to match.
 
-gojja2 compiles the macro. The later parameter wins, as it would in any
-signature where a name is given twice.
+gojja2 refuses the template too, from its own parser, with
+
+```
+TemplateSyntaxError: duplicate argument 'a' in function definition
+```
+
+which is CPython's wording with the parameter the template actually wrote.
+
+Only the message differs now. It used to be more than that: gojja2 compiled the
+macro and let the later parameter win, so a macro written against gojja2 worked
+here and failed when the template was run under CPython — the one direction of
+divergence that costs a template author something. The decision matches; the
+identifier cannot.
+
+The duplicate is refused in a *signature* and nowhere else, which is also
+jinja2's rule: `{% for a, a in ... %}`, `{% set a, a = 1, 2 %}` and
+`{% with a = 1, a = 2 %}` all let the later binding win, and a macro may be
+redefined.
 
 ### Complex numbers
 

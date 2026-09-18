@@ -224,6 +224,9 @@ func (p *parser) expect(r rule) lexer.Token {
 // token names in its messages.
 func quote(s string) string { return value.Repr(value.String(s)) }
 
+// pyQuote renders a name the way CPython quotes one inside an error message.
+func pyQuote(s string) string { return "'" + s + "'" }
+
 func (p *parser) fail(format string, args ...any) {
 	p.failAt(p.current().Line, format, args...)
 }
@@ -575,13 +578,34 @@ func (p *parser) parseFrom() *ast.FromImport {
 }
 
 // parseSignature reads a macro or call-block parameter list.
+//
+// Two things are refused here that Python refuses of a function signature, and
+// they are refused in different places there. jinja2's own parser catches a
+// non-default after a default and raises TemplateSyntaxError; a *duplicate*
+// parameter it does not look at, so the duplicate reaches the Python compiler
+// when jinja2 compiles the macro to a function, and comes out as a Python
+// SyntaxError naming the identifier jinja2 generated -- `l_1_a` for a parameter
+// the template called `a`.
+//
+// That generated name cannot be reproduced here and there is nothing to gain by
+// trying: scope.md excludes the artefacts of compiling to Python. What matters
+// is that the template is refused rather than quietly compiled with the later
+// parameter winning, because a macro written here and ported to jinja2 would
+// fail there. So the refusal is gojja2's own, in CPython's wording with the
+// template's own name for the parameter.
 func (p *parser) parseSignature() (args []*ast.Name, defaults []ast.Expr) {
 	p.expect(kindRule(lexer.LParen))
+	seen := map[string]bool{}
 	for p.current().Kind != lexer.RParen {
 		if len(args) > 0 {
 			p.expect(kindRule(lexer.Comma))
 		}
 		arg := p.parseAssignTarget(assignOpts{nameOnly: true}).(*ast.Name)
+		if seen[arg.Name] {
+			p.failAt(arg.Line(), "duplicate argument %s in function definition",
+				pyQuote(arg.Name))
+		}
+		seen[arg.Name] = true
 		if p.skipIf(kindRule(lexer.Assign)) {
 			defaults = append(defaults, p.parseExpression(true))
 		} else if len(defaults) > 0 {
