@@ -196,9 +196,9 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 	}
 	switch n.Op {
 	case ast.OpAdd:
-		return value.Add(left, right)
+		return value.Add(left, right, ex.st)
 	case ast.OpSub:
-		return value.Sub(left, right)
+		return value.Sub(left, right, ex.st)
 	case ast.OpMul:
 		return value.Mul(left, right, ex.st)
 	case ast.OpDiv:
@@ -208,7 +208,7 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 	case ast.OpMod:
 		return value.Mod(left, right, ex.st)
 	case ast.OpPow:
-		return value.Pow(left, right)
+		return value.Pow(left, right, ex.st)
 	}
 	return value.Undefined, errs.New(errs.TemplateRuntimeError, "unknown operator %s", n.Op)
 }

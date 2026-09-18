@@ -46,17 +46,17 @@ func pool() []value.Value {
 
 // binaryOps maps each operator to the gojja2 entry point that implements it.
 //
-// The two that take a budget are given none: this corpus is about what each
+// The ones that take a budget are given none: this corpus is about what each
 // operator computes, and a nil budget leaves only the hard ceiling, which no
 // case here comes near.
 var binaryOps = map[string]func(a, b value.Value) (value.Value, error){
-	"+":  value.Add,
-	"-":  value.Sub,
+	"+":  func(a, b value.Value) (value.Value, error) { return value.Add(a, b, nil) },
+	"-":  func(a, b value.Value) (value.Value, error) { return value.Sub(a, b, nil) },
 	"*":  func(a, b value.Value) (value.Value, error) { return value.Mul(a, b, nil) },
 	"/":  value.Div,
 	"//": value.FloorDiv,
 	"%":  func(a, b value.Value) (value.Value, error) { return value.Mod(a, b, nil) },
-	"**": value.Pow,
+	"**": func(a, b value.Value) (value.Value, error) { return value.Pow(a, b, nil) },
 	"==": func(a, b value.Value) (value.Value, error) { return value.Bool(value.Equal(a, b)), nil },
 	"!=": func(a, b value.Value) (value.Value, error) { return value.Bool(!value.Equal(a, b)), nil },
 	"<":  ordered("<"),

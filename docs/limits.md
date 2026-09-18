@@ -25,7 +25,7 @@ that is what this page records.
 | output bytes | 256 MiB | `WithMaxOutputBytes` | `ErrOutputTooLarge` |
 | include/extends/macro/block nesting | 100 | `WithMaxRecursion` | `RecursionError` |
 | parse-tree nesting | 1,000 | fixed | `TemplateSyntaxError` |
-| width of a `**` result | 2**20 bits | fixed | `OverflowError` |
+| width of a computed integer | 2**20 bits | fixed | `OverflowError` |
 | size of one repetition | 2**31 elements | fixed | `OverflowError` |
 | any template-chosen allocation | 2**31 bytes or elements | fixed | `OverflowError` |
 | a constant the optimizer will fold | 64 KiB | fixed | no error; the fold is declined and the work moves to render time, where the budget applies |
@@ -49,17 +49,38 @@ has the contract in full, with runnable examples.
 
 ## Limits on allocation
 
-### A width limit on `**`
+### A width limit on computed integers
 
 ```jinja
 {{ 2 ** 100000000 }}
+{% set ns = namespace(x = 2 ** 500000) %}
+{% for i in range(12) %}{% set ns.x = ns.x * ns.x %}{% endfor %}
 ```
 
-CPython will try to materialise the integer. gojja2 refuses with `OverflowError`
-once the result would exceed 2**20 bits (128 KiB), because an exponent in a
-template is frequently attacker-influenced and the honest answer is a
-denial-of-service. Integers below that limit are exact and unbounded by machine
-word size, so `{{ 2 ** 100 }}` still renders all 31 digits.
+CPython will try to materialise both. gojja2 refuses with `OverflowError` once a
+computed integer would exceed 2**20 bits (128 KiB, about 315,653 decimal
+digits), because a magnitude in a template is frequently attacker-influenced and
+the honest answer is a denial-of-service. Integers below that limit are exact
+and unbounded by machine word size, so `{{ 2 ** 100 }}` still renders all 31
+digits.
+
+**The limit is on integers, not on one operator.** It was on `**` alone to begin
+with, which made it decorative: `x ** 2` was refused past the width and `x * x`
+-- the same number, one character shorter -- was not. That mattered more than a
+missing special case, because multiplication *doubles* the operand width, so the
+second template above grows exponentially while staying the same size. Twelve
+iterations and four bytes of output were enough to exhaust the machine with
+`WithMaxIterations` and `WithMaxOutputBytes` both set, since neither of those
+counts the memory a `big.Int` occupies.
+
+Every operation that can widen an integer -- `+`, `-`, `*`, `**` -- now asks the
+same question before it allocates, so an operator added later inherits the bound
+instead of reopening the hole.
+
+The width is also charged against the output budget, like any other allocation a
+template sizes for itself. A render that computes a 128 KiB integer has
+committed 128 KiB whether or not it ever prints it, so a tight
+`WithMaxOutputBytes` refuses it earlier than the hard ceiling does.
 
 ### A length limit on repetition
 

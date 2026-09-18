@@ -15,7 +15,6 @@ import (
 // CPython has no such limit and will happily try to materialise 2**(1<<40).
 // Refusing is a deliberate divergence: an unbounded exponent in a template is
 // a denial-of-service vector, and no real template needs a 128 KiB integer.
-const maxPowBits = 1 << 20
 
 // IsTrue is Python truthiness.
 //
@@ -176,7 +175,7 @@ func mulInt64(a, b int64) (int64, bool) {
 
 // Add implements `+`: numeric addition, string concatenation, and sequence
 // concatenation between two lists or two tuples.
-func Add(a, b Value) (Value, error) {
+func Add(a, b Value, budget Budget) (Value, error) {
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}
@@ -202,6 +201,9 @@ func Add(a, b Value) (Value, error) {
 		}
 		bx, _ := a.BigInt()
 		by, _ := b.BigInt()
+		if err := chargeIntBits(budget, "+", sumBits(bx, by)); err != nil {
+			return Undefined, err
+		}
 		return BigInt(new(big.Int).Add(bx, by)), nil
 
 	case a.kind == KindString:
@@ -267,7 +269,7 @@ func markupText(v Value) string {
 }
 
 // Sub implements `-`, which is numeric only.
-func Sub(a, b Value) (Value, error) {
+func Sub(a, b Value, budget Budget) (Value, error) {
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}
@@ -288,6 +290,9 @@ func Sub(a, b Value) (Value, error) {
 	}
 	bx, _ := a.BigInt()
 	by, _ := b.BigInt()
+	if err := chargeIntBits(budget, "-", sumBits(bx, by)); err != nil {
+		return Undefined, err
+	}
 	return BigInt(new(big.Int).Sub(bx, by)), nil
 }
 
@@ -327,6 +332,13 @@ func Mul(a, b Value, budget Budget) (Value, error) {
 		}
 		bx, _ := a.BigInt()
 		by, _ := b.BigInt()
+		// A product is as wide as its operands together, which is what
+		// makes repeated multiplication the fastest way to build an
+		// integer too large to hold.
+		if err := chargeIntBits(budget, "*",
+			int64(bx.BitLen())+int64(by.BitLen())); err != nil {
+			return Undefined, err
+		}
 		return BigInt(new(big.Int).Mul(bx, by)), nil
 	}
 	// A tuple subclass repeats as the tuple it stands for, and does so from
@@ -697,7 +709,7 @@ func Mod(a, b Value, budget Budget) (Value, error) {
 // exponent falls to float, as it does in Python. A negative base with a
 // fractional exponent yields a complex number in Python -- a type with no
 // place in a template -- so that case is rejected rather than approximated.
-func Pow(a, b Value) (Value, error) {
+func Pow(a, b Value, budget Budget) (Value, error) {
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}
@@ -714,9 +726,9 @@ func Pow(a, b Value) (Value, error) {
 				return Undefined, errs.New(errs.OverflowError, "exponent too large")
 			}
 			bx, _ := a.BigInt()
-			if bits := estimatePowBits(bx, by.Int64()); bits > maxPowBits {
-				return Undefined, errs.New(errs.OverflowError,
-					"result of ** would be %d bits wide, over the %d bit limit", bits, maxPowBits)
+			if err := chargeIntBits(budget, "**",
+				estimatePowBits(bx, by.Int64())); err != nil {
+				return Undefined, err
 			}
 			return BigInt(new(big.Int).Exp(bx, by, nil)), nil
 		}
@@ -748,10 +760,20 @@ func estimatePowBits(base *big.Int, exp int64) int64 {
 	if bits <= 1 {
 		return 1 // 0 and +/-1 never grow
 	}
-	if exp > maxPowBits {
+	if exp > MaxIntBits {
 		return math.MaxInt64
 	}
 	return bits * exp
+}
+
+// sumBits bounds the width of a sum or difference: carrying out of the wider
+// operand adds at most one bit.
+func sumBits(x, y *big.Int) int64 {
+	bits := int64(x.BitLen())
+	if b := int64(y.BitLen()); b > bits {
+		bits = b
+	}
+	return bits + 1
 }
 
 // Neg implements unary `-`.
