@@ -975,6 +975,31 @@ case("globals/namespace", "{% set ns = namespace(a=1) %}{{ ns.a }}{{ ns.missing 
 case("globals/cycler", "{% set c = cycler('a','b') %}{{ c.next() }}{{ c.next() }}{{ c.current }}{{ c.next() }}")
 case("globals/joiner", "{% set j = joiner('; ') %}{% for x in [1,2,3] %}{{ j() }}{{ x }}{% endfor %}")
 
+# The globals are ordinary Python callables, and a call to one is bound the way
+# Python binds it. range is a C function: it refuses keywords outright, and
+# words too few and too many differently. cycler and joiner are classes, so the
+# call binds against __init__ with self counted -- which is why joiner('-','x')
+# reports three positional arguments where two were written. A Cycler is not
+# callable at all, and a Joiner hands back the separator it was given rather
+# than a string made of it.
+case("errors/range_no_args", "{{ range() }}")
+case("errors/range_too_many", "{{ range(1,2,3,4) }}")
+case("errors/range_keyword", "{{ range(1,a=2) }}")
+case("errors/range_count_before_type", "{{ range('x',1,2,3) }}")
+case("errors/lipsum_too_many", "{{ lipsum(1,2,3,4,5) }}")
+case("errors/lipsum_unexpected_kw", "{{ lipsum(1,2,3,4,5,a=1) }}")
+case("errors/lipsum_multiple_values", "{{ lipsum(1,n=2) }}")
+case("errors/cycler_keyword", "{{ cycler(1,a=2) }}")
+case("errors/cycler_not_callable", "{% set c = cycler(1,2) %}{{ c() }}")
+case("errors/cycler_next_arity", "{% set c = cycler(1,2) %}{{ c.next(1) }}")
+case("errors/joiner_too_many", "{{ joiner('-','x') }}")
+case("errors/joiner_keyword", "{{ joiner(1,sep=2) }}")
+case("errors/joiner_call_arity", "{% set j = joiner('-') %}{{ j(1) }}")
+case("globals/joiner_non_string_sep",
+     "{% set j = joiner(1) %}{{ j() }}|{{ j() }}|"
+     "{% set k = joiner(none) %}{{ k() }}|{{ k() }}|"
+     "{% set m = joiner([1,2]) %}{{ m() }}|{{ m() }}")
+
 # --- string methods -----------------------------------------------------------
 case("methods/string", "{{ 'a,b,c'.split(',') }}|{{ ' a  b '.split() }}|{{ '-'.join(['a','b']) }}|{{ 'abc'.startswith('a') }}|{{ 'abc'.find('b') }}")
 # str.format's replacement fields take attribute and index accessors, and the

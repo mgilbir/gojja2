@@ -43,10 +43,19 @@ func checkInnerArity(sigs map[string]signature, stock map[string]bool,
 }
 
 // checkArity reports the error CPython's argument binding would raise for a
-// call of this shape, or nil.
-//
-// name is what the template wrote; sig is what jinja2 declares for it.
+// filter or test call of this shape, or nil. The filtered or tested value fills
+// the first parameter, so one is already bound before the written arguments
+// are placed.
 func checkArity(sig signature, args *value.CallArgs) error {
+	return bindArgs(sig, args, 1)
+}
+
+// bindArgs is the same binding for any callable. preBound is how many leading
+// parameters something other than the written arguments has already filled: the
+// value for a filter or a test, self for a method, and nothing for a plain
+// function. Python counts them among the positional arguments, which is why
+// `joiner('-','x')` is "3 were given" where two were written.
+func bindArgs(sig signature, args *value.CallArgs, preBound int) error {
 	// The order the three failures are reported in is CPython's, and it is
 	// not the order they are checked in: a keyword problem beats a count
 	// problem, and a count problem beats a missing argument. `x|upper(1,
@@ -55,16 +64,17 @@ func checkArity(sig signature, args *value.CallArgs) error {
 	//
 	// Python counts the value being filtered or tested, and whatever jinja2
 	// injects ahead of it, among the positional arguments.
-	given := sig.injected + 1 + len(args.Pos)
+	given := sig.injected + preBound + len(args.Pos)
 
-	// Bind positionally: the value takes params[0], the rest follow.
+	// Bind positionally: what is already bound takes the leading
+	// parameters, the written arguments follow.
 	bound := make([]bool, len(sig.params))
-	if len(bound) > 0 {
-		bound[0] = true
+	for i := 0; i < preBound && i < len(bound); i++ {
+		bound[i] = true
 	}
 	for i := range args.Pos {
-		if i+1 < len(bound) {
-			bound[i+1] = true
+		if i+preBound < len(bound) {
+			bound[i+preBound] = true
 		}
 	}
 
@@ -117,7 +127,7 @@ func checkArity(sig signature, args *value.CallArgs) error {
 	// required count includes the injected parameter, which is never
 	// missing, so it is discounted first.
 	var missing []string
-	for i := 1; i < len(sig.params) && i < sig.required-sig.injected; i++ {
+	for i := preBound; i < len(sig.params) && i < sig.required-sig.injected; i++ {
 		if !bound[i] {
 			missing = append(missing, "'"+sig.params[i]+"'")
 		}

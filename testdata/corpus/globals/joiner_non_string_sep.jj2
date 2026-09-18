@@ -1,0 +1,3 @@
+{}
+---
+{% set j = joiner(1) %}{{ j() }}|{{ j() }}|{% set k = joiner(none) %}{{ k() }}|{{ k() }}|{% set m = joiner([1,2]) %}{{ m() }}|{{ m() }}
