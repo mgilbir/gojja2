@@ -276,3 +276,46 @@ func TestNoGodocLinkSyntaxInMarkdown(t *testing.T) {
 		}
 	}
 }
+
+// goBlockRe captures the body of a ```go fence.
+var goBlockRe = regexp.MustCompile("(?s)```go\n(.*?)```")
+
+// TestExtendingDocExamplesAreReal requires every full definition shown in
+// docs/extending.md to exist, character for character, in example_test.go.
+//
+// Documentation that shows how to write a filter is worth having only if the
+// filter shown compiles. Pinning the text to a file `go test` executes means a
+// signature change breaks the build rather than the reader.
+func TestExtendingDocExamplesAreReal(t *testing.T) {
+	const doc = "docs/extending.md"
+	b, err := os.ReadFile(doc)
+	if err != nil {
+		t.Fatalf("reading %s: %v", doc, err)
+	}
+	src, err := os.ReadFile("example_test.go")
+	if err != nil {
+		t.Fatalf("reading example_test.go: %v", err)
+	}
+	examples := string(src)
+
+	checked := 0
+	for _, m := range goBlockRe.FindAllStringSubmatch(string(b), -1) {
+		block := strings.TrimRight(m[1], "\n")
+		// Only whole definitions are pinned; fragments illustrating an API
+		// are not meant to stand alone.
+		if !strings.HasPrefix(block, "func ") && !strings.HasPrefix(block, "type ") {
+			continue
+		}
+		checked++
+		if !strings.Contains(examples, block) {
+			first, _, _ := strings.Cut(block, "\n")
+			t.Errorf("%s shows a definition that is not in example_test.go verbatim:\n"+
+				"  starts: %s\n"+
+				"  Keep the two in step -- the doc is quoting a test that runs.", doc, first)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("pinned no definitions; the extractor is wrong")
+	}
+	t.Logf("pinned %d definitions against example_test.go", checked)
+}

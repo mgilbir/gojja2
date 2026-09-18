@@ -38,7 +38,7 @@ flowchart TD
 ```
 
 `value/` and `errs/` are importable because a caller writing a filter or a custom
-object needs them. `internal/` is not: the token stream and the parse tree are
+object needs them — see [extending.md](extending.md). `internal/` is not: the token stream and the parse tree are
 graded against jinja2's own, which makes them a specification to conform to
 rather than an API to depend on.
 

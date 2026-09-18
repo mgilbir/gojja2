@@ -6,6 +6,7 @@ template language, built to be behaviourally identical to CPython's `jinja2`.
 [Documentation index](docs/README.md) ·
 [Divergences](docs/divergences.md) ·
 [Limits](docs/limits.md) ·
+[Extending](docs/extending.md) ·
 [Scope](docs/scope.md) ·
 [Audits](docs/audits/README.md)
 
