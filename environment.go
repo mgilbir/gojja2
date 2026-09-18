@@ -353,8 +353,9 @@ func WithMaxRecursion(n int) Option {
 	}
 }
 
-// WithMaxIterations bounds the loop iterations one render may take, counting
-// every {% for %} pass and every item a filter pulls out of a sequence.
+// WithMaxIterations bounds the units of work one render may take, counting
+// every {% for %} pass, every item a filter pulls out of a sequence, and every
+// element of a render argument converted from Go.
 // Exceeding it fails the render with an error wrapping [ErrTooManyIterations].
 //
 // Zero restores the default. To remove the bound entirely, pass a negative n or

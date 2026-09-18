@@ -21,7 +21,7 @@ that is what this page records.
 | what | default | how to change it | what you get |
 |---|---|---|---|
 | wall clock, cancellation | none | the `context.Context` every render takes | error wrapping `ctx.Err()` |
-| loop iterations | 10,000,000 | `WithMaxIterations` | `ErrTooManyIterations` |
+| units of work: loop passes, items pulled from a sequence, elements of a render argument converted from Go | 10,000,000 | `WithMaxIterations` | `ErrTooManyIterations` |
 | output bytes | 256 MiB | `WithMaxOutputBytes` | `ErrOutputTooLarge` |
 | include/extends/macro/block nesting | 100 | `WithMaxRecursion` | `RecursionError` |
 | parse-tree nesting | 1,000 | fixed | `TemplateSyntaxError` |
@@ -300,7 +300,8 @@ because it expects the caller to be running templates it wrote itself.
 
 gojja2 bounds one render three ways. The `context.Context` every render takes
 is the precise tool -- cancel it or give it a deadline and the render stops at
-the next loop pass or output write, returning an error wrapping `ctx.Err()`.
+the next loop pass, output write or converted argument, returning an error
+wrapping `ctx.Err()`.
 Behind it sit two backstops for a caller who passes `context.Background()`:
 10,000,000 loop iterations (`WithMaxIterations`, `ErrTooManyIterations`) and
 256 MiB of output (`WithMaxOutputBytes`, `ErrOutputTooLarge`). Both are
@@ -318,6 +319,17 @@ iterable %}` and `list.extend` all charge as they go, so none of them can
 allocate its way past the bound before the bound is consulted. It is shared
 across `{% include %}` and `{% extends %}`, so a nested render cannot start a
 fresh allowance.
+
+It also counts the walk that happens *before* the template does anything:
+converting a render argument from Go. A slice or a map is converted in full, so
+its cost is set by the value you pass rather than by the template that names it,
+and a large one used to be a region no deadline could reach. `{{ big|length }}`
+over a million-element argument ran for a second and then returned *success*
+against an already-cancelled context -- `length` never iterates, so nothing
+after the conversion ever consulted the clock. Conversion now charges per
+element and yields, whether it is reached as a render argument, through a
+struct field, or from a Go method's result; the last two are converted lazily,
+and a lazy conversion is charged to the render that resumes it.
 
 Output is counted wherever it lands, including text captured by
 `{% filter %}`, a block `{% set %}` or a macro body. Text that passes through

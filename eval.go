@@ -91,7 +91,11 @@ func (ex *exec) evalAll(items []ast.Expr) ([]value.Value, error) {
 }
 
 func (ex *exec) evalName(n *ast.Name) (value.Value, error) {
-	if v, ok := ex.sc.lookup(n.Name); ok {
+	v, ok, err := ex.sc.lookup(n.Name)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if ok {
 		return v, nil
 	}
 	switch n.Name {
@@ -110,7 +114,10 @@ func (ex *exec) evalName(n *ast.Name) (value.Value, error) {
 }
 
 func (ex *exec) evalNSRef(n *ast.NSRef) (value.Value, error) {
-	base, ok := ex.sc.lookup(n.Name)
+	base, ok, err := ex.sc.lookup(n.Name)
+	if err != nil {
+		return value.Undefined, err
+	}
 	if !ok {
 		return ex.st.Undefined(value.NewUndefined(n.Name)), nil
 	}

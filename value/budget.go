@@ -120,6 +120,28 @@ func chargeIntBits(b Budget, op string, bits int64) error {
 	return chargeBytes(b, (bits+7)/8)
 }
 
+// Poller is a Budget that can be asked whether the work it bounds should stop,
+// without being charged for anything.
+//
+// Optional, as IntBitLimiter is. It exists for a walk whose cost is not an
+// allocation it can charge for: converting a Go value hands back one Value per
+// element, and the elements are already counted, so the walk has nothing left
+// to charge yet still has to be interruptible. A render's State satisfies it.
+type Poller interface {
+	// Poll reports that the work this budget bounds should stop, because a
+	// deadline passed, a context was cancelled or the budget is spent.
+	Poll() error
+}
+
+// poll asks b whether to stop. A nil budget, or one that cannot be polled,
+// never says so.
+func poll(b Budget) error {
+	if p, ok := b.(Poller); ok {
+		return p.Poll()
+	}
+	return nil
+}
+
 // chargeItems reserves n elements against b, which may be nil.
 func chargeItems(b Budget, n int64) error {
 	if n <= 0 {

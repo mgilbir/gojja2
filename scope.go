@@ -26,6 +26,9 @@ type scope struct {
 	// converted on first lookup instead, and memoised into vars.
 	raw    map[string]any
 	expose value.MethodPolicy
+	// budget bounds the conversion, which is proportional to the argument
+	// rather than to the template that names it. See scope.convert.
+	budget value.Budget
 
 	// refs are the names this frame mentions at its own level, recorded by
 	// declareFrameLocals. A frame nested inside this one consults them to
@@ -43,58 +46,78 @@ func newScope(parent *scope) *scope {
 	return &scope{parent: parent}
 }
 
-func (s *scope) lookup(name string) (value.Value, bool) {
+func (s *scope) lookup(name string) (value.Value, bool, error) {
 	for cur := s; cur != nil; cur = cur.parent {
 		if v, ok := cur.vars[name]; ok {
-			return v, true
+			return v, true, nil
 		}
-		if v, ok := cur.convert(name); ok {
-			return v, true
+		v, ok, err := cur.convert(name)
+		if err != nil {
+			return value.Undefined, false, err
+		}
+		if ok {
+			return v, true, nil
 		}
 	}
-	return value.Undefined, false
+	return value.Undefined, false, nil
 }
 
 // convert realises one not-yet-converted render argument, memoising it so that
 // the second reference is the same value as the first -- which matters, since
 // a template can mutate what it was handed within a render.
-func (s *scope) convert(name string) (value.Value, bool) {
+//
+// It is charged to the render, because its cost is the argument's size and not
+// the template's: a million-element argument took a second to convert, and did
+// it before anything a deadline could interrupt had started. An expression that
+// never iterates -- `{{ big|length }}` -- then rendered successfully against an
+// already-cancelled context, because nothing afterwards ever consulted it.
+func (s *scope) convert(name string) (value.Value, bool, error) {
 	raw, ok := s.raw[name]
 	if !ok {
-		return value.Undefined, false
+		return value.Undefined, false, nil
 	}
 	// Memoise into vars and leave raw alone: raw *is* the caller's map, so
 	// deleting from it would empty the caller's context as the first render
 	// walked it, and the second render would find nothing there.
-	v := value.FromGoWith(raw, s.expose)
+	v, err := value.FromGoBudget(raw, s.expose, s.budget)
+	if err != nil {
+		return value.Undefined, false, err
+	}
 	s.set(name, v)
-	return v, true
+	return v, true, nil
 }
 
 // realise converts everything still pending, for the callers that need the
 // whole context rather than one name of it.
-func (s *scope) realise() {
+func (s *scope) realise() error {
 	for name := range s.raw {
-		s.convert(name)
+		if _, _, err := s.convert(name); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // lookupUntil searches the chain up to and including stop, ignoring anything
 // below it. It is how a frame asks whether an *enclosing frame* binds a name,
 // without seeing the render arguments underneath them.
-func (s *scope) lookupUntil(name string, stop *scope) (value.Value, bool) {
+func (s *scope) lookupUntil(name string, stop *scope) (value.Value, bool, error) {
 	for cur := s; cur != nil; cur = cur.parent {
 		if v, ok := cur.vars[name]; ok {
-			return v, true
+			return v, true, nil
 		}
-		if v, ok := cur.convert(name); ok {
-			return v, true
+		v, ok, err := cur.convert(name)
+		if err != nil {
+			return value.Undefined, false, err
+		}
+		if ok {
+			return v, true, nil
 		}
 		if cur == stop {
 			break
 		}
 	}
-	return value.Undefined, false
+	return value.Undefined, false, nil
 }
 
 func (s *scope) set(name string, v value.Value) {
@@ -106,21 +129,28 @@ func (s *scope) set(name string, v value.Value) {
 
 // flatten collects every visible binding, innermost first, for handing a whole
 // context to an included template.
-func (s *scope) flatten() map[string]value.Value {
+func (s *scope) flatten() (map[string]value.Value, error) {
 	out := make(map[string]value.Value)
-	var walk func(*scope)
-	walk = func(cur *scope) {
+	var walk func(*scope) error
+	walk = func(cur *scope) error {
 		if cur == nil {
-			return
+			return nil
 		}
-		walk(cur.parent)
+		if err := walk(cur.parent); err != nil {
+			return err
+		}
 		// Handing the whole context somewhere -- an {% include with
 		// context %} -- is the one place laziness cannot help.
-		cur.realise()
+		if err := cur.realise(); err != nil {
+			return err
+		}
 		for k, v := range cur.vars {
 			out[k] = v
 		}
+		return nil
 	}
-	walk(s)
-	return out
+	if err := walk(s); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

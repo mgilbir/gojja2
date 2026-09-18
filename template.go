@@ -107,7 +107,7 @@ func (t *Template) renderGo(ctx context.Context, w io.Writer, vars map[string]an
 	}()
 	defer catchPanic(&err)
 	st := t.newState(nil, 0, newBudget(ctx, t.env))
-	st.contextVars.raw, st.contextVars.expose = vars, t.env.methods
+	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, t.env.methods, st
 	return t.renderState(st, &stringWriter{w: bw})
 }
 
@@ -283,7 +283,16 @@ func (s *State) Name() string { return s.tmpl.name }
 func (s *State) Autoescape() bool { return s.autoescape }
 
 // Resolve looks a name up in the template context.
-func (s *State) Resolve(name string) (value.Value, bool) { return s.ctx.lookup(name) }
+// A refused conversion cannot be reported through this signature. The refusal
+// came from the render's budget, which remembers it, so the render fails on its
+// next charge rather than on the undefined this returns.
+func (s *State) Resolve(name string) (value.Value, bool) {
+	v, ok, err := s.ctx.lookup(name)
+	if err != nil {
+		return value.Undefined, false
+	}
+	return v, ok
+}
 
 // Undefined builds an undefined value under the environment's policy.
 func (s *State) Undefined(v value.Value) value.Value {
@@ -330,7 +339,7 @@ func (t *Template) newState(vars map[string]value.Value, depth int, b *budget) *
 	}
 	st.escapeDefault = t.env.escapes(t.name, t.fromString)
 	st.autoescape = st.escapeDefault
-	declareFrameLocals(ctx, st, t.tree, t.tree.Body, nil)
+	declareRootLocals(ctx, st, t.tree, t.tree.Body)
 	return st
 }
 

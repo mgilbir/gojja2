@@ -293,14 +293,39 @@ func (v *frameVisitor) args(a ast.Args) {
 // context is not an enclosing frame, so a value passed in does *not* survive
 // the block owning the name, and a block that assigns `x` late reads nothing
 // for it early even when `x` was an argument.
-func declareFrameLocals(sc *scope, st *State, key any, body []ast.Stmt, enclosing *scope) {
+// declareRootLocals is declareFrameLocals for a frame with nothing enclosing
+// it: a template's root frame, and a block body, which resolves against the
+// render arguments rather than against an enclosing frame.
+//
+// It is separate so that "this call cannot be refused" is something the
+// signature states rather than something a reader has to re-derive. Nothing is
+// looked up when there is no enclosing frame, so no render argument is
+// converted, so there is no budget to refuse it.
+func declareRootLocals(sc *scope, st *State, key any, body []ast.Stmt) {
+	names := st.root.frameLocalsOf(key, body)
+	sc.refs = names.refs
+	for _, name := range names.owns {
+		sc.set(name, st.Undefined(value.NewUndefined(name)))
+	}
+}
+
+// declareFrameLocals declares a nested frame's locals, aliasing each from the
+// enclosing frame where that frame binds it.
+//
+// It can be refused: resolving a name against the enclosing chain may be what
+// first converts a render argument, and that conversion is charged.
+func declareFrameLocals(sc *scope, st *State, key any, body []ast.Stmt, enclosing *scope) error {
 	names := st.root.frameLocalsOf(key, body)
 	// Recorded so a frame nested inside this one can ask what this one
 	// mentions, which is what decides whether its own stores alias.
 	sc.refs = names.refs
 	for _, name := range names.owns {
 		if enclosing != nil {
-			if v, found := enclosing.lookupUntil(name, st.ctx); found {
+			v, found, err := enclosing.lookupUntil(name, st.ctx)
+			if err != nil {
+				return err
+			}
+			if found {
 				// Aliased at entry, as jinja2 does it, so a
 				// later change to the enclosing binding does
 				// not reach in here.
@@ -317,7 +342,11 @@ func declareFrameLocals(sc *scope, st *State, key any, body []ast.Stmt, enclosin
 			// undefined -- while a read inside a nested frame is
 			// not, because that is a different symbol table.
 			if enclosingReferences(enclosing, st.ctx, name) {
-				if v, found := enclosing.lookup(name); found {
+				v, found, err := enclosing.lookup(name)
+				if err != nil {
+					return err
+				}
+				if found {
 					sc.set(name, v)
 					continue
 				}
@@ -325,6 +354,7 @@ func declareFrameLocals(sc *scope, st *State, key any, body []ast.Stmt, enclosin
 		}
 		sc.set(name, st.Undefined(value.NewUndefined(name)))
 	}
+	return nil
 }
 
 // enclosingReferences reports whether any frame from sc up to and including
