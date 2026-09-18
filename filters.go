@@ -1850,6 +1850,12 @@ func filterFloat(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	method := "common"
 	if m, ok := arg(args, 1, "method"); ok {
+		// jinja2 writes `method not in {...}`, and membership of a set
+		// asks whether the value can be hashed -- so a list here is
+		// about the list, not about the method.
+		if err := value.Hashable(m); err != nil {
+			return value.Undefined, err
+		}
 		method = value.Str(m)
 	}
 	if method != "common" && method != "ceil" && method != "floor" {
