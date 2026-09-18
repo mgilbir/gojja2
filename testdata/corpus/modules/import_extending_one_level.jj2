@@ -1,0 +1,9 @@
+{
+  "__templates__": {
+    "base.html": "B[{% block x %}bx{% endblock %}]{% set fromBase = 'FB' %}",
+    "mid.html": "{% extends \"base.html\" %}{% block x %}mx{% endblock %}{% set fromMid = 'FM' %}",
+    "deep.html": "{% extends \"mid.html\" %}{% block x %}dx{% endblock %}{% set v = 7 %}{% macro m() %}M{% endmacro %}"
+  }
+}
+---
+[{% import "mid.html" as m %}{{ m }}]

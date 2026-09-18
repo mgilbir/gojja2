@@ -732,9 +732,18 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 	// The body is kept, not discarded: a TemplateModule's str() is what the
 	// imported template rendered, so `{% import "t" as m %}{{ m }}` prints
 	// t's output. gojja2 threw it away and printed the repr instead.
+	//
+	// It goes through renderState rather than straight to execBody, because
+	// rendering a template is not the same as running its body. A template
+	// that extends emits nothing from its own body -- its output comes from
+	// the parent, rendered afterwards with the blocks the child registered
+	// -- so running the body alone gave an extending module an empty string
+	// and no exports from anywhere up the chain. renderState is the one
+	// place that knows this, and {% include %} was already using it, which
+	// is why an include of the same template was right and an import of it
+	// was not.
 	var body strings.Builder
-	sub := &exec{st: st, sc: st.ctx, out: &body, stream: &body, autoescape: st.autoescape}
-	if err := sub.execBody(tmpl.tree.Body); err != nil {
+	if err := tmpl.renderState(st, &body); err != nil {
 		return value.Undefined, err
 	}
 	return value.FromObject(&moduleObject{st: st, name: tmpl.name, body: body.String()}), nil
