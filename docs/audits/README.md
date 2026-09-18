@@ -8,9 +8,9 @@ read the code, or `docs/` outside this directory.
 That warning is here because the alternative already happened. The 2026-09-16
 audit sat in `docs/` for two days with thirty findings all marked `CONFIRMED`,
 including four Critical ones that said the process dies. By the time anyone
-looked again, twenty-eight were fixed and one had never been real — but nothing
-on the page said so, so a contributor opening `docs/` to find work would have
-started reproducing bugs that were gone.
+looked again, twenty-nine were fixed and the thirtieth had never been real — but
+nothing on the page said so, so a contributor opening `docs/` to find work would
+have started reproducing bugs that were gone.
 
 ## The rule
 
@@ -32,8 +32,8 @@ Rewriting an audit to match today's code destroys the only thing it is good for.
 
 | Report | Taken at | Covers | State |
 |---|---|---|---|
-| [codebase-audit-2026-09-16.md](codebase-audit-2026-09-16.md) | `fa584a9` | Every `.go` file, the Makefile, both workflows, the corpora | 30 findings, re-run 2026-09-18: 28 fixed, 1 partial, 1 not a defect |
-| [docs-audit-2026-09-18.md](docs-audit-2026-09-18.md) | `9da6620` | Every reader-facing surface: README, `docs/`, NOTICE, `make help`, godoc, the workflows' comments | 22 findings |
+| [codebase-audit-2026-09-16.md](codebase-audit-2026-09-16.md) | `fa584a9` | Every `.go` file, the Makefile, both workflows, the corpora | 30 findings, re-run 2026-09-18: 29 fixed, 1 never a defect |
+| [docs-audit-2026-09-18.md](docs-audit-2026-09-18.md) | `9da6620` | Every reader-facing surface: README, `docs/`, NOTICE, `make help`, godoc, the workflows' comments | 23 findings |
 
 An earlier codebase audit, describing commit `b7c96ca`, was superseded rather
 than kept. It is still retrievable:
