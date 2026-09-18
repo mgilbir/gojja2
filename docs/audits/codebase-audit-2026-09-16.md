@@ -1,5 +1,19 @@
 # gojja2 — adversarial codebase audit
 
+> **This is a point-in-time snapshot of commit `fa584a9`, not a description of
+> how gojja2 behaves now.** Read the Status column before acting on any finding.
+>
+> All thirty were re-run against `HEAD` on 2026-09-18. **Twenty-nine are now
+> fixed** — twenty-eight were already, and C24's remaining half (`make check`
+> not running CI's `GOMEMLIMIT` pass) was closed by the re-run. The thirtieth,
+> C28, was never a defect: its premise does not survive contact with the oracle,
+> which is worth reading about under the table. The evidence for each re-run is
+> in [docs-audit-2026-09-18.md](docs-audit-2026-09-18.md) §3.
+>
+> Nothing below has been edited to match today's code. An audit is a record of
+> what was true when it was taken, and rewriting it would destroy the only thing
+> it is good for.
+
 **Date:** 2026-09-16
 **Commit:** fa584a9 "Run CI on every commit that reaches main, and gate fork pull requests"
 **Scope:** the whole repository — every `.go` file read in full (~22,500 lines across the
@@ -25,38 +39,38 @@ Hypotheses that did not survive are recorded in §7 rather than promoted.
 
 ## 1. Summary
 
-| ID | Severity | Area | Issue | Site | Status |
-|---|---|---|---|---|---|
-| C1 | Critical | limits / inheritance | `{% import %}` renders with **no budget and no context** — a nested render with *no* allowance, not a fresh one | exec.go:636 | CONFIRMED |
-| C2 | Critical | inheritance | `{% block x %}{{ self.x }}{% endblock %}` kills the process with a Go stack overflow | runtime.go:403,445 | CONFIRMED |
-| C3 | Critical | value / compare | Ordered comparison of cyclic values kills the process; `==` is bounded, `<` is not | value/compare.go:160,208 | CONFIRMED |
-| C4 | Critical | optimizer | `%` formatting at **compile** time is unbudgeted: a 42-byte template OOM-kills `FromString` at a 4 GB cap | optimize.go:404 | CONFIRMED |
-| C5 | High | filters | `\|tojson` of `-inf` calls `Builder.Reset()` and destroys the document produced so far | filters_web.go:452 | CONFIRMED |
-| C6 | High | lexer / DX | Lexing is quadratic in tag count when a delimiter is absent — 1.6 MB compiles in 34 s | internal/lexer/lexer.go:146 | CONFIRMED |
-| C7 | High | value / limits | `StrSlice`/`StrIndex` allocate 8 bytes per input byte, uncharged — 8× past the output budget | value/str.go:30,40,62 | CONFIRMED |
-| C8 | High | parser | The 1,000-level nesting bound does not apply to `not`, unary `-` or filter chains | internal/parser/expr.go:117,233 | CONFIRMED |
-| C9 | High | globals / limits | `x in range(...)` is an uninterruptible linear scan; CPython's is O(1) | value/compare.go:336 | CONFIRMED |
-| C10 | High | filters | `\|unique` is O(n²) and never polls the context | filters_seq.go:246 | CONFIRMED |
-| C11 | High | filters | **No filter checks arity**; extra arguments are silently accepted or reinterpreted | filters.go:22 | CONFIRMED |
-| C12 | High | CI | The "Test under a memory cap" job runs nothing: every package replays from the test cache | .github/workflows/ci.yml:111 | CONFIRMED |
-| C13 | Medium | pyformat | `%*s` and `%.*f` are broken — the value is consumed before the star width | value/pyformat.go:102 | CONFIRMED |
-| C14 | Medium | pyformat | A large width emits Go's `%!(NOVERB)%!(EXTRA string=x)` into the document | value/pyformat.go:314 | CONFIRMED |
-| C15 | Medium | pyformat / limits | `%` allocation is uncharged at render time too: 4 KiB budget, 10 MB built, success reported | eval.go:211 | CONFIRMED |
-| C16 | Medium | lexer | A float literal that overflows to `inf` is a syntax error; CPython renders `inf` | internal/lexer/number.go:182 | CONFIRMED |
-| C17 | Medium | filters | `\|sum(start='')` concatenates where CPython raises `TypeError` | filters.go:1360 | CONFIRMED |
-| C18 | Medium | autoescape | `"%c"\|safe % 60` emits an unescaped `<`; markupsafe raises | value/pyformat.go:344 | CONFIRMED |
-| C19 | Medium | loader | `FSLoader` silently **remaps** `../x` to `x` instead of refusing it; the rejection loop is dead code | loader.go:75 | CONFIRMED |
-| C20 | Medium | Go bridge | A method whose only result is `error` renders the error object and reports success | value/convert.go:459 | CONFIRMED |
-| C21 | Medium | hygiene | `State.exported` / `State.export()` are write-only; the doc says imports read them | exec.go:647, template.go:203 | CONFIRMED |
-| C22 | Low | errs | `Error.Stack []Frame` and `Frame` are never written or read — dead exported API | errs/errs.go:125,141 | CONFIRMED |
-| C23 | Low | errs | `At` says "returns a copy of err" and mutates in place | errs/errs.go:190 | CONFIRMED |
-| C24 | Low | DX | `make check` claims "Everything CI runs"; there is no `make lint`, and CI runs two more jobs | Makefile:241 | CONFIRMED |
-| C25 | Low | docs | divergences.md says known_failures.txt has "only two entries"; it has four | docs/divergences.md:344 | CONFIRMED |
-| C26 | Low | lexer | `"\Uffffffff"` renders U+FFFD; CPython raises "illegal Unicode character" | internal/lexer/strlit.go:142 | CONFIRMED |
-| C27 | Low | hygiene | Four dead or write-only fragments the linter cannot see | see §3.7 | CONFIRMED |
-| C28 | Low | autoescape | `SelectAutoescape("")` selects nothing; jinja2 builds the pattern `"."` | environment.go:260 | CONFIRMED |
-| C29 | Low | API | `Globals()` hands out the live map; a caller can clobber `range` | environment.go:392 | CONFIRMED |
-| C30 | Low | value | `SliceBounds` and `SliceIndices` duplicate the clamp logic verbatim | value/str.go:87,139 | CONFIRMED |
+| ID | Severity | Area | Issue | Site | Then | Now (re-run 2026-09-18) |
+|---|---|---|---|---|---|---|
+| C1 | Critical | limits / inheritance | `{% import %}` renders with **no budget and no context** — a nested render with *no* allowance, not a fresh one | exec.go:636 | CONFIRMED | **Fixed** — import is budgeted and honours the deadline |
+| C2 | Critical | inheritance | `{% block x %}{{ self.x }}{% endblock %}` kills the process with a Go stack overflow | runtime.go:403,445 | CONFIRMED | **Fixed** — `blockReference.render` enters the recursion counter |
+| C3 | Critical | value / compare | Ordered comparison of cyclic values kills the process; `==` is bounded, `<` is not | value/compare.go:160,208 | CONFIRMED | **Fixed** — `<` and `\|sort` raise the same bounded error `==` did |
+| C4 | Critical | optimizer | `%` formatting at **compile** time is unbudgeted: a 42-byte template OOM-kills `FromString` at a 4 GB cap | optimize.go:404 | CONFIRMED | **Fixed** — the fold is declined; `FromString` returns at once |
+| C5 | High | filters | `\|tojson` of `-inf` calls `Builder.Reset()` and destroys the document produced so far | filters_web.go:452 | CONFIRMED | **Fixed** |
+| C6 | High | lexer / DX | Lexing is quadratic in tag count when a delimiter is absent — 1.6 MB compiles in 34 s | internal/lexer/lexer.go:146 | CONFIRMED | **Fixed** — lexing is linear; 800 KB in 128 ms |
+| C7 | High | value / limits | `StrSlice`/`StrIndex` allocate 8 bytes per input byte, uncharged — 8× past the output budget | value/str.go:30,40,62 | CONFIRMED | **Fixed** — a one-char slice of 100 MB costs 279 ms, not an OOM |
+| C8 | High | parser | The 1,000-level nesting bound does not apply to `not`, unary `-` or filter chains | internal/parser/expr.go:117,233 | CONFIRMED | **Fixed** — all four nesting forms trip the bound |
+| C9 | High | globals / limits | `x in range(...)` is an uninterruptible linear scan; CPython's is O(1) | value/compare.go:336 | CONFIRMED | **Fixed** — answered arithmetically, in 0 s |
+| C10 | High | filters | `\|unique` is O(n²) and never polls the context | filters_seq.go:246 | CONFIRMED | **Fixed** — 60,000 items in 54 ms |
+| C11 | High | filters | **No filter checks arity**; extra arguments are silently accepted or reinterpreted | filters.go:22 | CONFIRMED | **Fixed** |
+| C12 | High | CI | The "Test under a memory cap" job runs nothing: every package replays from the test cache | .github/workflows/ci.yml:111 | CONFIRMED | **Fixed** — `-count=1`; verified it defeats the cache |
+| C13 | Medium | pyformat | `%*s` and `%.*f` are broken — the value is consumed before the star width | value/pyformat.go:102 | CONFIRMED | **Fixed** |
+| C14 | Medium | pyformat | A large width emits Go's `%!(NOVERB)%!(EXTRA string=x)` into the document | value/pyformat.go:314 | CONFIRMED | **Fixed** |
+| C15 | Medium | pyformat / limits | `%` allocation is uncharged at render time too: 4 KiB budget, 10 MB built, success reported | eval.go:211 | CONFIRMED | **Fixed** — charged; the 4 KiB budget refuses it |
+| C16 | Medium | lexer | A float literal that overflows to `inf` is a syntax error; CPython renders `inf` | internal/lexer/number.go:182 | CONFIRMED | **Fixed** |
+| C17 | Medium | filters | `\|sum(start='')` concatenates where CPython raises `TypeError` | filters.go:1360 | CONFIRMED | **Fixed** |
+| C18 | Medium | autoescape | `"%c"\|safe % 60` emits an unescaped `<`; markupsafe raises | value/pyformat.go:344 | CONFIRMED | **Fixed** |
+| C19 | Medium | loader | `FSLoader` silently **remaps** `../x` to `x` instead of refusing it; the rejection loop is dead code | loader.go:75 | CONFIRMED | **Fixed** |
+| C20 | Medium | Go bridge | A method whose only result is `error` renders the error object and reports success | value/convert.go:459 | CONFIRMED | **Fixed** |
+| C21 | Medium | hygiene | `State.exported` / `State.export()` are write-only; the doc says imports read them | exec.go:647, template.go:203 | CONFIRMED | **Fixed** — `moduleObject` reads the export set |
+| C22 | Low | errs | `Error.Stack []Frame` and `Frame` are never written or read — dead exported API | errs/errs.go:125,141 | CONFIRMED | **Fixed** — both types removed |
+| C23 | Low | errs | `At` says "returns a copy of err" and mutates in place | errs/errs.go:190 | CONFIRMED | **Fixed** — the doc says it edits in place, and why |
+| C24 | Low | DX | `make check` claims "Everything CI runs"; there is no `make lint`, and CI runs two more jobs | Makefile:241 | CONFIRMED | **Fixed** — `make lint` was added then; the missing `GOMEMLIMIT` pass since. `make check` now matches CI step for step |
+| C25 | Low | docs | divergences.md says known_failures.txt has "only two entries"; it has four | docs/divergences.md:344 | CONFIRMED | **Fixed** |
+| C26 | Low | lexer | `"\Uffffffff"` renders U+FFFD; CPython raises "illegal Unicode character" | internal/lexer/strlit.go:142 | CONFIRMED | **Fixed** |
+| C27 | Low | hygiene | Four dead or write-only fragments the linter cannot see | see §3.7 | CONFIRMED | **Fixed** — all four |
+| C28 | Low | autoescape | `SelectAutoescape("")` selects nothing; jinja2 builds the pattern `"."` | environment.go:260 | CONFIRMED | **Not a defect** — see below |
+| C29 | Low | API | `Globals()` hands out the live map; a caller can clobber `range` | environment.go:392 | CONFIRMED | **Fixed** |
+| C30 | Low | value | `SliceBounds` and `SliceIndices` duplicate the clamp logic verbatim | value/str.go:87,139 | CONFIRMED | **Fixed** — `SliceSpan` delegates to `SliceBounds` |
 
 **Counts:** 4 Critical, 8 High, 9 Medium, 9 Low — 30 findings, all CONFIRMED by execution
 or by direct comparison against the pinned oracle.
@@ -84,6 +98,19 @@ Said once, because it is substantial and it shapes the diagnosis.
 
 The findings below are concentrated in exactly the places that story does *not* cover:
 compile time, recursion depth, and anything a hand-written corpus would not think to write.
+
+
+**C28 does not survive re-running.** It reasoned from reading jinja2's source —
+`select_autoescape` does build the pattern `"."` for an empty extension — and
+inferred that jinja2 therefore escapes everything. It does not: the pattern is
+tested with `str.endswith`, which matches only a name *ending in a dot*. Asked
+the pinned interpreter directly, `select_autoescape(enabled_extensions=[""])`
+returns `False` for `page.anything` and `True` for `page.`, `a.b.` and `.`.
+gojja2 gives the same five answers. There is no divergence, and there never was.
+
+That is the one finding here that was marked CONFIRMED without being run against
+the oracle this project calls its specification. It is the argument for the
+column above: a finding nobody re-runs is a finding nobody can trust.
 
 ---
 
