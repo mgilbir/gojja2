@@ -585,7 +585,12 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 	// else goes through iterencode and does. So `"s"|tojson(1.5)` answers
 	// "s" and `1|tojson(1.5)` raises. Resolving here and passing the result
 	// down means it is worked out, and charged, once.
-	if v.Kind() != value.KindString && v.Kind() != value.KindBytes {
+	// Only a *string* short-circuits. bytes used to be serialised as one and
+	// shared this branch; now that json.dumps refuses it, the indent is
+	// resolved first and its own failure comes out ahead of the refusal --
+	// `{{ x|tojson(1.5) }}` on a bytes is the multiplication's error, not
+	// "bytes is not JSON serializable".
+	if v.Kind() != value.KindString {
 		var err error
 		if indent, err = indent.resolve(st); err != nil {
 			return err

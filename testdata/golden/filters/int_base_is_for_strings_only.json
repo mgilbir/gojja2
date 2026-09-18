@@ -1,0 +1,11 @@
+{
+  "case": "filters/int_base_is_for_strings_only.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "255|0|15|0"
+}
