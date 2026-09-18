@@ -28,7 +28,19 @@ SEPARATOR = "\n---\n"
 CASES: list[tuple[str, str, dict]] = []
 
 
+_SEEN: set[str] = set()
+
+
 def case(name: str, template: str, **header) -> None:
+    # A name is a path, so two cases sharing one silently overwrote each
+    # other: main() writes them in order and the second wins. The count this
+    # file printed counted CASES, not files, so 740 cases became 739 on disk
+    # and nothing said so. Two striptags cases had been collapsed that way,
+    # and the one that lost covered partial tags and HTML comments -- it was
+    # generated, overwritten, and never graded again.
+    if name in _SEEN:
+        raise SystemExit(f"gen_corpus: duplicate case name {name!r}")
+    _SEEN.add(name)
     CASES.append((name, template, header))
 
 
@@ -578,7 +590,7 @@ case("filters/truncate", "{{ text|truncate(20) }}|{{ text|truncate(20, true) }}|
 case("filters/wordwrap", "{{ text|wordwrap(10) }}", **TEXT)
 case("filters/striptags", "{{ '<p>a  <b>b</b></p>'|striptags }}|{{ '&lt;a&gt;'|striptags }}")
 # Only complete tags and comments go; an unpaired "<" stays.
-case("filters/striptags_partial", "{{ '<'|striptags }}|{{ '<b'|striptags }}|{{ 'a<!--c-->b'|striptags }}|{{ 'a < b'|striptags }}")
+case("filters/striptags_partial_tags", "{{ '<'|striptags }}|{{ '<b'|striptags }}|{{ 'a<!--c-->b'|striptags }}|{{ 'a < b'|striptags }}")
 case("filters/format", "{{ '%s-%d'|format('a', 5) }}|{{ '%(x)s'|format(x=1) }}")
 case("filters/filesizeformat", "{{ 1|filesizeformat }}|{{ 1000|filesizeformat }}|{{ 1000000|filesizeformat }}|{{ 1024|filesizeformat(true) }}")
 case("filters/urlencode", "{{ 'a b/c?d'|urlencode }}|{{ {'a':'1 2'}|urlencode }}")
@@ -958,7 +970,7 @@ case("errshape/sort_mixed_reverse", "{{ mix|sort(true) }}", mix=[1, "a", 2.5, Tr
 # for a space survives as a character.
 case("filters/striptags_entities", "{{ html|upper|striptags }}|{{ '<b>&copy;</b> &reg; &Yacute;'|striptags }}", html="<b>a &amp; b</b>")
 case("filters/striptags_numeric", "{{ '&#38;|&#x26;|&#X26;|&#0000038;|&#128;|&#13;|&#55296;|&#1114112;'|striptags }}")
-case("filters/striptags_partial", "{{ '&notit;|&notit|&not|&amp|&ampx|&#;|&;|&'|striptags }}")
+case("filters/striptags_partial_entities", "{{ '&notit;|&notit|&not|&amp|&ampx|&#;|&;|&'|striptags }}")
 case("filters/striptags_spacing", "{{ 'a&nbsp;b'|striptags }}|{{ 'a &nbsp; b'|striptags }}|{{ '&#32;a&#32;'|striptags }}|{{ 'a&Tab;b'|striptags }}")
 
 case("filters/wordwrap_hyphens", "{{ 'well-known a-b ab-cd a-b-c-d co-op-er-ate'|wordwrap(6) }}")
@@ -1609,7 +1621,12 @@ def main() -> int:
         text = json.dumps(header, ensure_ascii=False, indent=2) if header else "{}"
         path.write_text(text + SEPARATOR + template, encoding="utf-8")
 
-    print(f"wrote {len(CASES)} cases into {DST.relative_to(ROOT)}", file=sys.stderr)
+    written = sum(1 for _ in DST.rglob("*.jj2"))
+    if written != len(CASES):
+        raise SystemExit(
+            f"gen_corpus: {len(CASES)} cases but {written} files on disk"
+        )
+    print(f"wrote {written} cases into {DST.relative_to(ROOT)}", file=sys.stderr)
     return 0
 
 
