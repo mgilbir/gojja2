@@ -570,8 +570,22 @@ That is a statement about gojja2's own value model, and it is inert: there is
 nothing behind it. One consequence is visible: under autoescape, CPython's
 `escape()` finds `__html__` on the *class* of an imported module and calls it
 unbound, so `{{ m.__class__ }}` raises where gojja2 prints the class. That is
-an artifact of the class object existing at all. Two of Jinja's sandbox-escape tests go further, and those
-are not implemented:
+an artifact of the class object existing at all.
+
+`__doc__` is not. CPython answers it with the docstring of the built-in type --
+several paragraphs of English that change between Python releases -- and gojja2
+renders nothing, as it does for any attribute it has not got:
+
+```jinja
+{{ [1].__doc__ }}     "Built-in mutable sequence. ..." on CPython, "" here
+```
+
+Carrying those strings would mean carrying a copy of CPython's documentation
+and keeping it in step with the version being compared against, to answer an
+attribute that says nothing about the value. A 352-case sweep of attribute and
+item lookup across every kind found this and nothing else.
+
+Two of Jinja's sandbox-escape tests go further, and those are not implemented:
 
 ```jinja
 {{ foo.__class__.__subclasses__() }}
