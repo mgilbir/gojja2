@@ -302,7 +302,7 @@ func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	// is about the 1, not about the None.
 	reverse := false
 	if r, ok := arg(args, 0, "reverse"); ok {
-		n, err := indexOf(r)
+		n, err := indexOf(r, cInt)
 		if err != nil {
 			return value.Undefined, err
 		}

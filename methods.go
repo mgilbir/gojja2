@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"errors"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -151,24 +152,24 @@ func bareStr(v value.Value) (string, error) {
 	return v.AsString(), nil
 }
 
-func intArg(args *value.CallArgs, i int, name string, def int) (int, error) {
+func intArg(args *value.CallArgs, i int, name string, def int, t cIntType) (int, error) {
 	v, ok := arg(args, i, name)
 	if !ok || v.IsNone() {
 		return def, nil
 	}
-	return indexOf(v)
+	return indexOf(v, t)
 }
 
 // indexArg is intArg for an argument whose Python default is not None. Only
 // *absence* is the default there: an explicit None reaches the C function and
 // is refused, which is why `{{ "x"|center(none) }}` is a TypeError and not a
 // width of 80.
-func indexArg(args *value.CallArgs, i int, name string, def int) (int, error) {
+func indexArg(args *value.CallArgs, i int, name string, def int, t cIntType) (int, error) {
 	v, ok := arg(args, i, name)
 	if !ok {
 		return def, nil
 	}
-	return indexOf(v)
+	return indexOf(v, t)
 }
 
 // clinicTypeName is the type name CPython's own argument parser prints, which
@@ -183,11 +184,43 @@ func clinicTypeName(v value.Value) string {
 	return v.TypeName()
 }
 
+// cIntType is the C type CPython's argument parser converts an integer
+// argument to.
+//
+// It is not an implementation detail: a template can observe both halves of
+// it. The range decides which values are refused -- a C int argument gives up
+// at 2**31, long before anything runs out of memory -- and the name is what
+// the OverflowError reports.
+type cIntType struct {
+	name     string
+	min, max int64
+}
+
+var (
+	// cSSizeT is Py_ssize_t, which every length, width, index and count
+	// converts to. It is the common case.
+	cSSizeT = cIntType{"ssize_t", math.MinInt64, math.MaxInt64}
+	// cInt is a plain C int. Only three arguments use it: expandtabs'
+	// tabsize, and the two declared `bool(accept={int})` in Argument
+	// Clinic -- splitlines' keepends and sorted's reverse -- which are
+	// integers rather than truth tests and so carry a range.
+	cInt = cIntType{"int", math.MinInt32, math.MaxInt32}
+)
+
 // indexOf is Python's __index__ protocol: the conversion every argument used
 // as an integer goes through, and the complaint it makes.
-func indexOf(v value.Value) (int, error) {
+func indexOf(v value.Value, t cIntType) (int, error) {
 	n, fits := v.Int64()
 	if !fits {
+		// Int64 reports failure for two unrelated reasons: the value is
+		// not an integer at all, or it is an integer too wide for
+		// int64. Reporting the second as the first said "'int' object
+		// cannot be interpreted as an integer", which contradicts
+		// itself -- the object is an int, and the complaint is about
+		// how large it is. IsInteger is what tells them apart.
+		if v.IsInteger() {
+			return 0, overflowsC(t)
+		}
 		// This is the __index__ protocol's own complaint, which is what
 		// CPython raises wherever an argument is used as an integer:
 		// str.center, str.zfill, |round, |replace's count, lipsum and
@@ -197,7 +230,18 @@ func indexOf(v value.Value) (int, error) {
 		return 0, errs.New(errs.TypeError,
 			"'%s' object cannot be interpreted as an integer", v.TypeName())
 	}
+	if n < t.min || n > t.max {
+		return 0, overflowsC(t)
+	}
 	return int(n), nil
+}
+
+// overflowsC is CPython's wording for an integer outside a C type's range. It
+// says "too large" in both directions, including for a negative that is too
+// small, which is what CPython does.
+func overflowsC(t cIntType) error {
+	return errs.New(errs.OverflowError,
+		"Python int too large to convert to C %s", t.name)
 }
 
 // bytesMethods is what a bytes value answers. There was no table at all, so
@@ -560,7 +604,7 @@ func isXIDContinue(c rune) bool {
 // of tabsize, and the column resets at every line break rather than counting
 // from the start of the string.
 func methodExpandtabs(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	size, err := indexArg(args, 0, "tabsize", 8)
+	size, err := indexArg(args, 0, "tabsize", 8, cInt)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -673,7 +717,7 @@ func trimMethod(name string, withCutset func(string, string) string, withFunc fu
 // `" a  b ".split()` has two elements and `" a  b ".split(" ")` has five.
 func splitMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		limit, err := indexArg(args, 1, "maxsplit", -1)
+		limit, err := indexArg(args, 1, "maxsplit", -1, cSSizeT)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -746,7 +790,7 @@ func methodSplitlines(_ *State, r value.Value, args *value.CallArgs) (value.Valu
 	// truth quietly kept nothing.
 	keepEnds := false
 	if v, ok := arg(args, 0, "keepends"); ok {
-		n, err := indexOf(v)
+		n, err := indexOf(v, cInt)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -804,7 +848,7 @@ func methodReplace(st *State, r value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	count, err := indexArg(args, 2, "count", -1)
+	count, err := indexArg(args, 2, "count", -1, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1405,7 +1449,7 @@ func isAllDigits(s string) bool {
 }
 
 func methodZfill(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	width, err := indexArg(args, 0, "width", 0)
+	width, err := indexArg(args, 0, "width", 0, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1435,7 +1479,7 @@ const (
 
 func padMethod(align padAlign) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		width, err := indexArg(args, 0, "width", 0)
+		width, err := indexArg(args, 0, "width", 0, cSSizeT)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -1863,7 +1907,7 @@ func methodListExtend(st *State, r value.Value, args *value.CallArgs) (value.Val
 }
 
 func methodListInsert(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	at, err := indexArg(args, 0, "", 0)
+	at, err := indexArg(args, 0, "", 0, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1890,7 +1934,7 @@ func methodListPop(_ *State, r value.Value, args *value.CallArgs) (value.Value, 
 	if len(items) == 0 {
 		return value.Undefined, errs.New(errs.IndexError, "pop from empty list")
 	}
-	at, err := indexArg(args, 0, "", len(items)-1)
+	at, err := indexArg(args, 0, "", len(items)-1, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}

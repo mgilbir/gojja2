@@ -1593,6 +1593,30 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- integer arguments and the C type they convert to -------------------------
+# An argument used as an integer is converted by CPython's argument parser to a
+# specific C type, and a template can see both halves of that: the range, and
+# the type named in the OverflowError past it. Most convert to Py_ssize_t;
+# expandtabs' tabsize and the two `bool(accept={int})` arguments -- splitlines'
+# keepends and sorted's reverse -- convert to a plain C int and so give up at
+# 2**31, in both directions.
+#
+# These used to answer "TypeError: 'int' object cannot be interpreted as an
+# integer", which contradicts itself, or -- for the C int ones below 2**63 --
+# quietly accepted the value.
+case("errors/index_overflow_ssize_t", '{{ "ab"|center(9223372036854775808) }}')
+case("errors/index_overflow_ssize_t_split", '{{ "a b".split(" ",9223372036854775808)|list }}')
+case("errors/index_overflow_c_int_expandtabs", '{{ "a\tb".expandtabs(2147483648) }}')
+case("errors/index_overflow_c_int_splitlines", '{{ "a\nb".splitlines(2147483648)|list }}')
+case("errors/index_overflow_c_int_sort", '{{ [3,1]|sort(reverse=2147483648) }}')
+case("errors/index_overflow_c_int_negative", '{{ [3,1]|sort(reverse=-2147483649) }}')
+# The edge that must still be accepted, so the bound is a bound and not a clamp.
+case("errors/index_at_c_int_max", '{{ [3,1]|sort(reverse=2147483647) }}|{{ "a\nb".splitlines(2147483647)|list }}')
+case("errors/index_at_ssize_t_max", '{{ "a b c".split(" ",9223372036854775807)|list }}')
+# A value that is genuinely not an integer keeps the TypeError -- the other half
+# of what the conversion could not tell apart.
+case("errors/index_not_an_integer", '{{ "ab"|center("x") }}')
+
 # --- the width limit on computed integers -------------------------------------
 # Deliberate divergences, listed in testdata/known_failures.txt. CPython computes
 # both; gojja2 refuses past 2**20 bits. They compare rather than print, because
