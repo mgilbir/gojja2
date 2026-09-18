@@ -1,0 +1,3 @@
+{}
+---
+{{ "é".encode()|length }}|{{ "é".encode()[0:1]|length }}

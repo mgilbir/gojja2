@@ -405,6 +405,19 @@ func Contains(item, container Value, budget Budget) (bool, error) {
 		}
 		return strings.Contains(container.str, item.str), nil
 	case KindBytes:
+		// bytes is a sequence of integers, so an integer on the left is
+		// asking whether that *byte value* occurs -- `97 in b"ab"` is
+		// True. It is refused outside a byte's range rather than simply
+		// answered False, because the question is malformed rather than
+		// unsatisfied. A bool is an int here as everywhere in Python.
+		if item.IsInteger() {
+			n, fits := item.Int64()
+			if !fits || n < 0 || n > 255 {
+				return false, errs.New(errs.ValueError,
+					"byte must be in range(0, 256)")
+			}
+			return strings.IndexByte(container.str, byte(n)) >= 0, nil
+		}
 		if item.kind != KindBytes {
 			return false, errs.New(errs.TypeError,
 				"a bytes-like object is required, not '%s'", item.TypeName())
