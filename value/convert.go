@@ -330,20 +330,152 @@ func (o *structObject) fields() reflect.Value {
 
 func (o *structObject) GetAttr(name string) (Value, bool) {
 	fields := o.fields()
-	rt := fields.Type()
-	for i := range rt.NumField() {
-		f := rt.Field(i)
-		if !f.IsExported() {
+	for _, f := range visibleFields(fields.Type()) {
+		if f.name != name && f.goName != name {
 			continue
 		}
-		if f.Name == name || tagName(f) == name {
-			return FromGoWith(fields.Field(i).Interface(), o.expose), true
+		fv, err := fields.FieldByIndexErr(f.index)
+		if err != nil {
+			// The path runs through a nil embedded pointer, which
+			// in Go is a panic on access. A template gets the
+			// undefined it would get for any missing name.
+			return Undefined, false
 		}
+		return FromGoWith(fv.Interface(), o.expose), true
 	}
 	if m, ok := o.method(name); ok {
 		return m, true
 	}
 	return Undefined, false
+}
+
+// fieldRef is one field a template can reach, after promotion.
+type fieldRef struct {
+	// name is what the field is listed as: its tag if it has one, else its
+	// Go name.
+	name string
+	// goName is the Go spelling, which stays reachable even when a tag has
+	// renamed it -- guide.md promises "by name or by json tag".
+	goName string
+	index  []int
+}
+
+// visibleFields is the fields of a struct as Go sees them, embedding included.
+//
+// Go promotes an embedded struct's fields to the outer type: `d.ID` reaches
+// Base.ID when Derived embeds Base, and that is idiomatic enough that leaving
+// it out made `{{ user.ID }}` render *nothing* for a host whose type embeds a
+// common base. Methods were promoted all along -- reflect's method set does it
+// -- so the same embedding exposed d.Describe() and hid d.ID.
+//
+// The rules are Go's: shallower wins, and two fields of one name at the same
+// depth promote neither. An embedded struct is descended into even when its
+// own type is unexported, because the fields inside it may not be; that is why
+// `d.Hidden` reaches lowerBase.Hidden.
+//
+// The embedded field itself is not listed, which is encoding/json's rule rather
+// than reflect.VisibleFields': a struct that embeds another serialises flat,
+// which is what `{{ user|tojson }}` has to mean for the json tags this already
+// honours to be worth anything. It stays *reachable* by its own name, as Go
+// allows, so nothing that worked before stops working.
+func visibleFields(rt reflect.Type) []fieldRef {
+	type queued struct {
+		typ   reflect.Type
+		index []int
+	}
+	var out []fieldRef
+	seen := map[string]int{} // name -> depth it was claimed at
+	ambiguous := map[string]bool{}
+
+	level := []queued{{typ: rt}}
+	for depth := 0; len(level) > 0; depth++ {
+		var next []queued
+		var found []fieldRef
+		claimed := map[string]int{}
+		for _, q := range level {
+			for i := range q.typ.NumField() {
+				f := q.typ.Field(i)
+				index := append(append([]int{}, q.index...), i)
+
+				ft := f.Type
+				if ft.Kind() == reflect.Pointer {
+					ft = ft.Elem()
+				}
+				if f.Anonymous && ft.Kind() == reflect.Struct {
+					// The tag is honoured only when the
+					// embedded type is exported: naming the
+					// field means reading its value, and
+					// reflect will not hand over an
+					// unexported field's. encoding/json
+					// reaches it by walking the reflect
+					// value; this converts through
+					// interfaces, so an unexported embedded
+					// type promotes as if untagged.
+					if tag := tagName(f); tag != "" && f.IsExported() {
+						// A tag on an embedded field
+						// names it, and a named field
+						// is not promoted through --
+						// encoding/json's rule, and the
+						// only way to ask for the
+						// nested shape.
+						found = append(found, fieldRef{
+							name: tag, goName: f.Name, index: index})
+						claimed[tag]++
+						claimed[f.Name]++
+						continue
+					}
+					// Descend whether or not the embedded
+					// type is exported: the fields inside
+					// it may be.
+					next = append(next, queued{typ: ft, index: index})
+					if !f.IsExported() {
+						continue
+					}
+					// An untagged embedded field is
+					// reachable by its own name but not
+					// listed, so the struct serialises flat.
+					found = append(found, fieldRef{name: "", goName: f.Name, index: index})
+					claimed[f.Name]++
+					continue
+				}
+				if !f.IsExported() {
+					continue
+				}
+				ref := fieldRef{name: tagName(f), goName: f.Name, index: index}
+				if ref.name == "" {
+					ref.name = f.Name
+				}
+				found = append(found, ref)
+				claimed[ref.name]++
+				if ref.goName != ref.name {
+					claimed[ref.goName]++
+				}
+			}
+		}
+		for name, n := range claimed {
+			if n > 1 {
+				// Two fields of one name at one depth promote
+				// neither, which is Go's rule.
+				ambiguous[name] = true
+			}
+		}
+		for _, ref := range found {
+			key := ref.name
+			if key == "" {
+				key = ref.goName
+			}
+			if ambiguous[key] {
+				continue
+			}
+			if d, taken := seen[key]; taken && d < depth {
+				continue // a shallower field of this name won
+			}
+			seen[key] = depth
+			out = append(out, ref)
+		}
+		level = next
+	}
+	return out
 }
 
 // method resolves an exported method the policy allows.
@@ -395,18 +527,15 @@ func cutComma(s string) (string, string, bool) {
 
 // Keys lets a struct participate in `|items` and `{% for %}` over a mapping.
 func (o *structObject) Keys() []Value {
-	rt := o.fields().Type()
 	var keys []Value
-	for i := range rt.NumField() {
-		f := rt.Field(i)
-		if !f.IsExported() {
+	for _, f := range visibleFields(o.fields().Type()) {
+		// An embedded field with no tag has an empty name: it is
+		// reachable but not listed, so that a struct which embeds
+		// another serialises flat.
+		if f.name == "" {
 			continue
 		}
-		if name := tagName(f); name != "" {
-			keys = append(keys, String(name))
-			continue
-		}
-		keys = append(keys, String(f.Name))
+		keys = append(keys, String(f.name))
 	}
 	return keys
 }
