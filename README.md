@@ -5,6 +5,7 @@ template language, built to be behaviourally identical to CPython's `jinja2`.
 
 [Documentation index](docs/README.md) ·
 [Divergences](docs/divergences.md) ·
+[Limits](docs/limits.md) ·
 [Scope](docs/scope.md) ·
 [Audits](docs/audits/README.md)
 
@@ -75,7 +76,8 @@ of output, and anything a template sizes from a number it chose -- a pad width,
 an indent, a rounding precision -- is charged against that budget before it is
 allocated. Zero means "the default" for every limit option; removing a bound
 takes `WithoutLimits()`, so a configuration nobody filled in is the safe one.
-See [docs/divergences.md](docs/divergences.md).
+Every bound, its default and the option that adjusts it are tabulated in
+[docs/limits.md](docs/limits.md).
 
 Compiled templates are cached in a bounded LRU of 400, as jinja2 does;
 `WithCacheSize` adjusts it and `ClearCache` picks up an edited template.

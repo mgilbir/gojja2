@@ -8,7 +8,8 @@ Start from the question, not the filename.
 | Will my jinja2 templates render the same here? | [divergences.md](divergences.md) — one divergence can change what a working template renders, and it is named in the first paragraph |
 | Does it support *X*? Async? `{% trans %}`? The sandbox? | [scope.md](scope.md) |
 | How correct is it, and how is that measured? | [../README.md#conformance](../README.md#conformance) |
-| Why does my render fail with `ErrOutputTooLarge`? | [divergences.md](divergences.md), "A budget on the work of one render" |
+| Why did my render fail with `ErrOutputTooLarge`, or stop early? | [limits.md](limits.md) |
+| How do I bound a render of a template I do not trust? | [limits.md](limits.md) |
 | What did an adversarial read of the code find? | [audits/](audits/README.md) — snapshots, not current state |
 
 The Go API itself is documented in the source, as godoc. `go doc
@@ -27,7 +28,7 @@ tell which one lost.
 |---|---|
 | What is in and out of scope | [scope.md](scope.md) |
 | Where gojja2 deliberately differs from CPython jinja2 | [divergences.md](divergences.md) |
-| What bounds a render, and which option adjusts it | [divergences.md](divergences.md) |
+| What bounds a render, and which option adjusts it | [limits.md](limits.md) |
 | The conformance corpora, the oracle, and the numbers | [../README.md](../README.md) |
 | Which upstream projects are consulted, and under what licence | [../NOTICE](../NOTICE) |
 | The signature and contract of anything exported | godoc |
