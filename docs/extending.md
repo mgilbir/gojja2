@@ -139,7 +139,8 @@ a=2)` renders its keys in the order they were written.
 
 ## Exposing a Go type directly
 
-Reflection handles ordinary structs, slices and maps — see the README. When you
+Reflection handles ordinary structs, slices and maps — see
+[guide.md](guide.md#go-values-in-the-context). When you
 want the type to decide for itself how it looks to a template, implement
 `value.Object` and pass it with `value.FromObject`.
 

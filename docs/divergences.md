@@ -351,6 +351,10 @@ These two are in `testdata/known_failures.txt`, alongside the two DeepSeek-R1
 chat templates recorded above under "Lazy sequence filters", and this is the
 one place where not matching CPython is the point.
 
+Why there is no sandbox at all — and what draws the line instead, which is not
+what most readers assume — belongs to [scope.md](scope.md#out-of-scope). This
+section is only about what `__class__` answers.
+
 Note what is *not* in this category. `str.format`'s replacement fields take
 attribute and index accessors -- `"{0.foo}"`, `"{user[id]}"` -- and that is an
 ordinary documented feature, implemented and matched. The tests above only use
