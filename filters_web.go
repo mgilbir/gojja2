@@ -549,18 +549,25 @@ func (j jsonIndent) resolve(st *State) (jsonIndent, error) {
 	switch {
 	case j.raw.IsString():
 		j.unit = value.Str(j.raw)
-	case j.raw.IsInteger():
-		n, _ := j.raw.Int64()
-		// A width the template chose sizes every line of the document,
-		// so it is charged before it is built.
-		unit, err := st.repeatStringN(" ", max(n, 0))
+	default:
+		// Everything that is not a string is `" " * indent`, which is
+		// literally what json.dumps builds the unit with -- so the
+		// multiplication does it rather than a reimplementation beside
+		// it. That is what settles all four edges at once: a count too
+		// wide for an index overflows whatever its sign, a negative one
+		// indents by nothing, a non-int is reported as the
+		// multiplication it is, and the width a template chose is
+		// charged before the spaces are allocated.
+		//
+		// Narrowing it here instead dropped the "does it fit" answer,
+		// so an indent past int64 became zero and the document came out
+		// broken up with no leading spaces -- a different document,
+		// silently.
+		unit, err := value.Mul(value.String(" "), j.raw, st)
 		if err != nil {
 			return j, err
 		}
-		j.unit = unit
-	default:
-		return j, errs.New(errs.TypeError,
-			"can't multiply sequence by non-int of type '%s'", j.raw.TypeName())
+		j.unit = value.Str(unit)
 	}
 	j.resolved = true
 	return j, nil
