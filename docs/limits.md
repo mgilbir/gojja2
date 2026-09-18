@@ -25,15 +25,22 @@ that is what this page records.
 | output bytes | 256 MiB | `WithMaxOutputBytes` | `ErrOutputTooLarge` |
 | include/extends/macro/block nesting | 100 | `WithMaxRecursion` | `RecursionError` |
 | parse-tree nesting | 1,000 | fixed | `TemplateSyntaxError` |
-| width of a computed integer | 2**20 bits | fixed | `OverflowError` |
+| width of a computed integer | 2**20 bits | `WithMaxIntBits` | `OverflowError` |
 | size of one repetition | 2**31 elements | fixed | `OverflowError` |
 | any template-chosen allocation | 2**31 bytes or elements | fixed | `OverflowError` |
 | a constant the optimizer will fold | 64 KiB | fixed | no error; the fold is declined and the work moves to render time, where the budget applies |
 
-**Zero means *the default*, not "off", for all three configurable bounds.** To
-remove one, pass a negative value or use `WithoutLimits()`. That way a
-configuration nobody filled in -- a struct deserialised from YAML or flags -- is
-the bounded one.
+**Zero means *the default*, not "off", for every configurable bound.** To remove
+one, pass a negative value; `WithoutLimits()` removes the iteration and output
+budgets together. That way a configuration nobody filled in -- a struct
+deserialised from YAML or flags -- is the bounded one.
+
+`WithoutLimits()` does **not** remove the integer-width ceiling, and does not
+remove the 2**31 caps either. Those are ceilings rather than budgets: a budget
+is what the caller asked to spend, a ceiling is what the process survives when
+they asked for nothing. Removing the integer ceiling is asked for by name,
+because it is the one that stops an expression growing exponentially from a
+template of fixed size.
 
 The iteration and output budgets are carried on the render's `*State` and shared
 across `{% include %}`, `{% extends %}` and `{% import %}`, so a nested render
@@ -73,9 +80,24 @@ iterations and four bytes of output were enough to exhaust the machine with
 `WithMaxIterations` and `WithMaxOutputBytes` both set, since neither of those
 counts the memory a `big.Int` occupies.
 
-Every operation that can widen an integer -- `+`, `-`, `*`, `**` -- now asks the
-same question before it allocates, so an operator added later inherits the bound
+Every operation that can widen an integer -- `+`, `-`, `*`, `**` -- asks the same
+question before it allocates, so an operator added later inherits the bound
 instead of reopening the hole.
+
+**This is the one bound that is also a conformance question**, which is why it
+is the one with a knob. CPython computes `(2**500000) * (2**500000)`; gojja2
+refuses it by default. `WithMaxIntBits` raises the ceiling, and a negative value
+removes it and gives CPython's arithmetic back.
+
+Removing it is not free, and the cost is worth stating: the only backstop left
+is the 2**31-byte ceiling on a single allocation, and a 2 GiB integer is enough
+to exhaust most processes on its own — a squaring loop reaches it in about forty
+iterations. The width is charged against the output budget *before* it is
+allocated, though, so keeping a `WithMaxOutputBytes` bounds such a loop even
+with the ceiling gone. That combination — the ceiling removed, a budget kept —
+is how to have CPython's answers without giving up the floor, and it is the only
+configuration in which an expression can still exhaust the process that does not
+say so twice.
 
 The width is also charged against the output budget, like any other allocation a
 template sizes for itself. A render that computes a 128 KiB integer has

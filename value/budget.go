@@ -74,7 +74,30 @@ func chargeBytes(b Budget, n int64) error {
 // 2**20 bits is 128 KiB, or about 315,653 decimal digits. Nothing written on
 // purpose computes an integer that wide; anything that needs to is asking for
 // a bignum library rather than a template engine.
+//
+// It is the *default*, not a hard ceiling: a caller who wants CPython's
+// arithmetic back can raise or remove it through WithMaxIntBits, which is the
+// only bound here that is also a conformance question. Removing it leaves
+// MaxAllocBytes as the backstop, so an integer still cannot pass 2**31 bytes.
 const MaxIntBits = 1 << 20
+
+// IntBitLimiter is a Budget that carries its own ceiling on the width of a
+// computed integer.
+//
+// Optional, as the Object capabilities are: a Budget that does not implement it
+// gets MaxIntBits. A limit of zero or less means no ceiling, which is what the
+// engine's limit options mean by a negative value.
+type IntBitLimiter interface {
+	IntBitLimit() int64
+}
+
+// intBitLimit is the ceiling to apply for this budget.
+func intBitLimit(b Budget) int64 {
+	if l, ok := b.(IntBitLimiter); ok {
+		return l.IntBitLimit()
+	}
+	return MaxIntBits
+}
 
 // chargeIntBits refuses an integer wider than MaxIntBits and charges the bytes
 // it is about to occupy against the budget.
@@ -87,10 +110,10 @@ const MaxIntBits = 1 << 20
 // op names the operator for the message, because "the result of what" is the
 // first thing anyone reading the error needs to know.
 func chargeIntBits(b Budget, op string, bits int64) error {
-	if bits > MaxIntBits {
+	if limit := intBitLimit(b); limit > 0 && bits > limit {
 		return errs.New(errs.OverflowError,
 			"result of %s would be %d bits wide, over the %d bit limit",
-			op, bits, int64(MaxIntBits))
+			op, bits, limit)
 	}
 	// Eight bits to the byte, rounded up: the budget counts bytes, and a
 	// width that rounds to zero still costs an allocation.

@@ -53,6 +53,9 @@ type budget struct {
 	maxSteps  int64
 	written   int64
 	maxOutput int64
+	// maxIntBits is the ceiling on a computed integer's width. Zero or
+	// less means none; see value.IntBitLimiter.
+	maxIntBits int64
 	// sinceCheck counts steps and writes since the context was last read.
 	sinceCheck int
 }
@@ -62,10 +65,11 @@ func newBudget(ctx context.Context, env *Environment) *budget {
 		ctx = context.Background()
 	}
 	return &budget{
-		done:      ctx.Done(),
-		ctx:       ctx,
-		maxSteps:  env.maxIterations,
-		maxOutput: env.maxOutputBytes,
+		done:       ctx.Done(),
+		ctx:        ctx,
+		maxSteps:   env.maxIterations,
+		maxOutput:  env.maxOutputBytes,
+		maxIntBits: env.maxIntBits,
 	}
 }
 

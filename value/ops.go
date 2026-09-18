@@ -760,7 +760,11 @@ func estimatePowBits(base *big.Int, exp int64) int64 {
 	if bits <= 1 {
 		return 1 // 0 and +/-1 never grow
 	}
-	if exp > MaxIntBits {
+	// Saturate rather than wrap: the product is what the caller compares
+	// against its own ceiling, and a wrapped one reads as "small". This
+	// used to saturate at MaxIntBits, which was the ceiling as well as the
+	// guard -- so raising the ceiling would have refused at the old one.
+	if exp > math.MaxInt64/bits {
 		return math.MaxInt64
 	}
 	return bits * exp

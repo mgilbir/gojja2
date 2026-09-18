@@ -72,6 +72,12 @@ type Environment struct {
 	maxIterations  int64
 	maxOutputBytes int64
 
+	// maxIntBits bounds the width of an integer an expression computes.
+	// Unlike the others it is a conformance question as much as a safety
+	// one -- CPython computes what this refuses -- which is why it is
+	// configurable at all. See value.MaxIntBits.
+	maxIntBits int64
+
 	// cache holds compiled templates, bounded and least-recently-used.
 	cache *templateCache
 }
@@ -104,6 +110,7 @@ func New(opts ...Option) *Environment {
 		maxRecursion:   100,
 		maxIterations:  defaultMaxIterations,
 		maxOutputBytes: defaultMaxOutputBytes,
+		maxIntBits:     value.MaxIntBits,
 		filters:        make(map[string]Filter),
 		tests:          make(map[string]Test),
 		globals:        make(map[string]value.Value),
@@ -374,6 +381,40 @@ func WithMaxOutputBytes(n int64) Option {
 			n = defaultMaxOutputBytes
 		}
 		e.maxOutputBytes = n
+	}
+}
+
+// WithMaxIntBits bounds the width, in bits, of an integer an expression
+// computes. Exceeding it fails the render with an `OverflowError`.
+//
+// This is the one bound here that is also a conformance question: CPython
+// computes `(2**500000) * (2**500000)` and gojja2 refuses it. The bound exists
+// because multiplication doubles the operand width, so a loop that squares
+// grows exponentially while the template stays the same size -- twelve
+// iterations were enough to exhaust the machine with the output and iteration
+// budgets both set, because neither counts the memory a big.Int occupies.
+//
+// Zero restores the default of 2**20 bits. A negative n removes the bound and
+// gives CPython's arithmetic back.
+//
+// [WithoutLimits] does *not* remove it, which is deliberate. This is a ceiling
+// rather than a budget, and WithoutLimits leaves the other ceilings alone too --
+// the 2**31 cap on a repetition and on any sized allocation are not affected by
+// it either. Removing this one has to be asked for by name.
+//
+// Removing it is not free, and the cost is worth stating plainly: the only
+// backstop left is the 2**31-byte ceiling on a single allocation, and an
+// integer of 2 GiB is enough to exhaust most processes on its own. A squaring
+// loop reaches it in about forty iterations. Keeping a WithMaxOutputBytes
+// budget still bounds such a loop, because the width is charged against it
+// before it is allocated -- so removing this bound and keeping that one is the
+// combination that gives CPython's answers without giving up the floor.
+func WithMaxIntBits(n int64) Option {
+	return func(e *Environment) {
+		if n == 0 {
+			n = value.MaxIntBits
+		}
+		e.maxIntBits = n
 	}
 }
 
