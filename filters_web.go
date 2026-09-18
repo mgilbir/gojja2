@@ -377,19 +377,7 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 // block: the characters that could close the tag or start an entity are
 // written as escapes.
 func filterToJSON(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	// json.dumps splits "no indent" from "an indent of zero": only None
-	// gives the one-line form, while 0 -- and any negative, which clamps to
-	// 0 -- still puts every element on its own line. A default of 0 here
-	// collapsed the two, so `{{ x|tojson(0) }}` came out on one line where
-	// CPython breaks it. A negative indent means none, internally.
-	indent := -1
-	if a, ok := arg(args, 0, "indent"); ok && !a.IsNone() {
-		n, err := intArg(args, 0, "indent", 0)
-		if err != nil {
-			return value.Undefined, err
-		}
-		indent = max(n, 0)
-	}
+	indent := jsonIndentOf(args)
 	var b strings.Builder
 	if err := writeJSON(s, &b, v, indent, 0, nil); err != nil {
 		return value.Undefined, err
@@ -441,26 +429,95 @@ const maxJSONDepth = 1000
 // stack, and therefore what tojson must report here.
 const RecursionMessageJSON = "maximum recursion depth exceeded while encoding a JSON object"
 
-func writeJSON(st *State, b *strings.Builder, v value.Value, indent, depth int, path jsonPath) error {
+// jsonIndent is what one level of indentation costs: the unit json.dumps
+// repeats, and whether there is one at all.
+//
+// The unit is a *string*, not a count. json.dumps takes either, and a string is
+// used literally -- `{{ x|tojson("\t") }}` indents with tabs and
+// `{{ x|tojson("ab") }}` with "ab". Reading the argument as an integer refused
+// both outright.
+type jsonIndent struct {
+	raw      value.Value
+	unit     string
+	on       bool
+	resolved bool
+}
+
+// jsonIndentOf reads tojson's argument. Only None -- or no argument -- gives
+// the one-line form; an integer is that many spaces, clamped at zero, and a
+// string is the unit itself. Anything else is what `unit * level` says about
+// it, which is where json.dumps fails too.
+func jsonIndentOf(args *value.CallArgs) jsonIndent {
+	a, ok := arg(args, 0, "indent")
+	if !ok || a.IsNone() {
+		return jsonIndent{}
+	}
+	return jsonIndent{raw: a, on: true}
+}
+
+// resolve turns the argument into the unit, which is where an indent that is
+// neither a string nor an integer fails.
+//
+// It happens here rather than when the argument is read because json.dumps
+// only multiplies the indent once it has a container to write: `1|tojson(1.5)`
+// is "1" and `[]|tojson(1.5)` is the TypeError, so the value decides whether
+// the argument is ever looked at that closely.
+func (j jsonIndent) resolve(st *State) (jsonIndent, error) {
+	if !j.on || j.resolved {
+		return j, nil
+	}
+	switch {
+	case j.raw.IsString():
+		j.unit = value.Str(j.raw)
+	case j.raw.IsInteger():
+		n, _ := j.raw.Int64()
+		// A width the template chose sizes every line of the document,
+		// so it is charged before it is built.
+		unit, err := st.repeatStringN(" ", max(n, 0))
+		if err != nil {
+			return j, err
+		}
+		j.unit = unit
+	default:
+		return j, errs.New(errs.TypeError,
+			"can't multiply sequence by non-int of type '%s'", j.raw.TypeName())
+	}
+	j.resolved = true
+	return j, nil
+}
+
+func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, depth int, path jsonPath) error {
 	if depth > maxJSONDepth {
 		return errs.New(errs.RecursionError, "%s", RecursionMessageJSON)
 	}
 	// json.dumps separates with ", " until an indent is given, at which
 	// point the space moves onto the next line.
-	nl, pad, padEnd, comma := "", "", "", ", "
-	if indent >= 0 {
-		// The indent is repeated once per level and once per element, so
-		// a template-chosen one sizes the whole document: tojson(2000000000)
-		// asked for a two-gigabyte prefix. indent*(depth+1) can also
-		// overflow an int and reach strings.Repeat as a negative count,
-		// which panics -- so the multiplication saturates rather than
-		// wrapping, and the result is charged before it is built.
+	// The unit is worked out here rather than when the argument is read,
+	// because a *string* never reaches it: JSONEncoder.encode returns the
+	// encoded string before it builds any indentation, while everything
+	// else goes through iterencode and does. So `"s"|tojson(1.5)` answers
+	// "s" and `1|tojson(1.5)` raises. Resolving here and passing the result
+	// down means it is worked out, and charged, once.
+	if v.Kind() != value.KindString && v.Kind() != value.KindBytes {
 		var err error
-		pad, err = st.repeatStringN(" ", saturatingMulInt(int64(indent), int64(depth+1)))
+		if indent, err = indent.resolve(st); err != nil {
+			return err
+		}
+	}
+	nl, pad, padEnd, comma := "", "", "", ", "
+	if indent.on {
+		// The unit is repeated once per level and once per element, so a
+		// template-chosen one sizes the whole document: tojson(2000000000)
+		// asked for a two-gigabyte prefix. The count can also overflow an
+		// int and reach strings.Repeat as a negative, which panics -- so
+		// it saturates rather than wrapping, and is charged before it is
+		// built.
+		var err error
+		pad, err = st.repeatStringN(indent.unit, int64(depth+1))
 		if err != nil {
 			return err
 		}
-		padEnd, err = st.repeatStringN(" ", saturatingMulInt(int64(indent), int64(depth)))
+		padEnd, err = st.repeatStringN(indent.unit, int64(depth))
 		if err != nil {
 			return err
 		}
