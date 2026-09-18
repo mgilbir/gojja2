@@ -263,7 +263,8 @@ make venv       # CPython + jinja2 oracle
 make suites     # download reference suites (gitignored)
 make oracle     # regenerate goldens from CPython jinja2
 make test       # go test ./...
-make check      # what CI runs: fmt, vet, test, race, lint
+make check      # everything CI runs, in CI's order
+make ask T='{{ 1/2 }}'  # what does CPython jinja2 render for this?
 ```
 
 CI runs on every pull request and on every commit that reaches `main`. A pull

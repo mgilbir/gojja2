@@ -8,9 +8,9 @@
 # Ten upstreams: Jinja's own pytest suite, MiniJinja's fixtures, minja,
 # llama.cpp's Jinja tests, two collections of real LLM chat templates, a
 # documentation theme, and four cookiecutter project templates. Only their
-# *inputs* are used. Every
-# expected output is regenerated from the pinned CPython jinja2, because that
-# is the specification; where an upstream disagrees with it, it is wrong here.
+# *inputs* are used. Every expected output is regenerated from the pinned
+# CPython jinja2, because that is the specification; where an upstream
+# disagrees with it, it is wrong here. NOTICE names each one with its licence.
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
@@ -237,7 +237,7 @@ test: ## Run the Go test suite
 	go test ./...
 
 .PHONY: soak
-soak: venv ## Differential-test N generated templates against CPython (make soak N=200000)
+soak: venv ## Differential-test generated templates: make soak N=200000 SEED=7
 	GOJJA2_FUZZ_N=$(if $(N),$(N),50000) GOJJA2_FUZZ_SEED=$(if $(SEED),$(SEED),0) \
 		go test ./conformance/ -run TestDifferential -timeout 60m -v
 
@@ -249,9 +249,17 @@ fuzz: venv ## Coverage-guided differential fuzzing (make fuzz TIME=5m)
 conformance: ## Report conformance pass-rate against the full corpus
 	go test ./conformance/... -run TestConformance -v
 
+# third_party/ holds pinned upstream checkouts, one of which (minijinja-go) is
+# a Go module of ~40 files. `gofmt -w .` would rewrite someone else's tree in
+# place and leave the clone dirty against its pin, so both targets below filter
+# it out -- which is also exactly what the CI workflow does. The two must agree:
+# a `make check` that passes where CI fails is worse than no check at all.
 .PHONY: fmt
-fmt: ## Format Go sources
-	gofmt -l -w .
+fmt: ## Format this repository's Go sources (third_party/ is left alone)
+	@out=$$(gofmt -l . | grep -v '^third_party/' || true); \
+	if [ -z "$$out" ]; then echo "already formatted"; else \
+		printf '%s\n' "$$out" | while IFS= read -r f; do gofmt -w "$$f"; done; \
+		echo "formatted:"; printf '%s\n' "$$out"; fi
 
 .PHONY: vet
 vet: ## Run go vet
@@ -261,16 +269,38 @@ vet: ## Run go vet
 lint: ## Run golangci-lint, pinned to the version CI uses
 	golangci-lint run
 
+# Everything CI runs, in CI's order. `memlimit` is not decoration: it is a step
+# the workflow has and this target did not, so a contributor could run `make
+# check`, see it pass, push, and fail CI on a step they had no way to reach.
 .PHONY: check
-check: fmt-check vet test race lint ## Everything CI runs
+check: fmt-check vet test memlimit race lint ## Everything CI runs
+
+# A second pass under a tight GOMEMLIMIT, which changes when the collector runs
+# and so exercises the allocation paths differently.
+#
+# -count=1 is load-bearing. GOMEMLIMIT is read by the runtime rather than
+# through os.Getenv, so it is not part of the test cache key: without it this
+# replays the `test` target above, reports every package as "(cached)" and
+# executes no test code at all. That is what the CI step used to do.
+#
+# It is also not a cap in the sense the name suggests. GOMEMLIMIT is a *soft*
+# limit -- the runtime collects harder rather than refusing an allocation -- so
+# a regression shows up here as a slow run, not a failure. What fails on one is
+# the guards that measure the property directly: TestSlicingCostsTheResultNotThe
+# Input, TestTupleHashIsLinear, TestLexingIsLinearInTheSource and the deep-graph
+# tests.
+.PHONY: memlimit
+memlimit: ## Run the suite again under a tight GOMEMLIMIT, as CI does
+	GOMEMLIMIT=1GiB go test -count=1 ./...
 
 .PHONY: race
 race: ## Run the Go test suite under the race detector
 	go test -race ./...
 
 .PHONY: fmt-check
-fmt-check: ## Fail if any source is unformatted
-	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "unformatted:"; echo "$$out"; exit 1; fi
+fmt-check: ## Fail if any source this repository owns is unformatted
+	@out=$$(gofmt -l . | grep -v '^third_party/' || true); \
+	if [ -n "$$out" ]; then echo "unformatted:"; printf '%s\n' "$$out"; exit 1; fi
 
 .PHONY: clean
 clean: ## Remove build and generated artifacts
@@ -296,5 +326,5 @@ parse-corpus: venv ## Regenerate the jinja2 AST corpus used by parser tests
 corpora: repr-corpus ops-corpus lex-corpus parse-corpus oracle ## Regenerate every oracle-derived corpus
 
 .PHONY: ask
-ask: venv ## Ask the oracle what CPython jinja2 renders: make ask T='{{ 1/2 }}'
+ask: venv ## Ask the oracle what jinja2 renders: make ask T='{{ a }}' C='{"a":1}'
 	@$(PY) tools/oracle/oracle.py --template '$(T)' --context '$(if $(C),$(C),{})'
