@@ -439,6 +439,28 @@ not, so the conformance suite treats it as ungradable.
 Only a *call* renders a block. Printing the reference prints the object, which
 is why `{% block x %}{{ self.x }}{% endblock %}` terminates.
 
+## `is sameas` on two literals
+
+`sameas` is Python's `is`, and gojja2 answers it by identity for containers and
+by value for everything else. That matches CPython wherever the two sides came
+from anywhere but a literal:
+
+```jinja
+{% set a = 1.5 %}{% set b = 1.5 %}
+{{ a is sameas(b) }}        True in both
+{{ 1.5 is sameas(1.5) }}    True here, False on CPython
+```
+
+The difference is jinja2's generated code, not the language. One of the two
+literals ends up inside a marshalled tuple, whose element is a distinct object
+from the standalone constant, so CPython's `is` says no. The same expression
+written over variables says yes on both. Modelling it would mean modelling
+CPython's marshalling, and the expression it changes the answer to is a
+tautology.
+
+The singletons CPython really guarantees are matched: None, True, False, and
+the empty tuple.
+
 ## `{{ self|list }}`
 
 `TemplateReference` defines `__getitem__` and nothing else, so Python's legacy

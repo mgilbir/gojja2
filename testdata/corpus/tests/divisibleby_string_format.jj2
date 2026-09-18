@@ -1,0 +1,3 @@
+{}
+---
+{{ '' is divisibleby([]) }}|{{ '' is divisibleby({}) }}|{{ 'a%s' is divisibleby([1]) }}|{{ 4 is divisibleby(2) }}|{{ 5 is divisibleby(2) }}
