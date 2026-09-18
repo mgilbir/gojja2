@@ -75,6 +75,19 @@ Reflection, with Python semantics on the other side:
 
 - a **struct** exposes its exported fields, by name or by `json` tag, and its
   methods that take no arguments — value or pointer receiver;
+- an **embedded struct** promotes, as it does in Go: `{{ user.ID }}` reaches
+  the embedded base's field, a shallower field of the same name shadows a
+  deeper one, and two of one name at one depth promote neither. The embedded
+  field stays reachable by its own name (`{{ user.Base.ID }}`). For *listing* —
+  `|items`, `{% for %}`, `|tojson` — the rule is `encoding/json`'s instead: an
+  embedded struct serialises flat, so `{{ user|tojson }}` is what
+  `json.Marshal` gives. A `json` tag on an embedded field names it and stops
+  the promotion, exactly as it does there.
+
+  One corner differs from `encoding/json`: a tag on an embedded field whose
+  *type* is unexported is ignored, and the fields promote as if it were not
+  there. Naming the field means reading its value, and reflection will not hand
+  over an unexported field's without unsafe access;
 - a **slice** becomes a list, a **map** becomes a dict;
 - a value that refers to itself converts once and is shared, so it terminates
   rather than expanding forever, and `{{ n.self.self.k }}` resolves however deep
