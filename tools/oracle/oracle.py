@@ -40,8 +40,11 @@ import jinja2
 from jinjaoracle import (  # noqa: E402 - sibling module, not a package
     SETTING_KEYS,
     CaseError,
+    apply_limits,
     build_environment,
     describe,
+    guarded,
+    is_unrecordable,
 )
 
 # The oracle's identity travels with every golden. markupsafe is in here
@@ -87,17 +90,34 @@ class Case:
         return build_environment(self.settings, sources, self.rel, self.profile)
 
     def render(self) -> dict:
-        try:
-            template = self.environment().get_template(self.rel)
-            output = template.render(self.context)
-        except Exception as exc:  # noqa: BLE001 - any exception is a valid result
-            return {"ok": False, "error": describe(exc)}
-        return {"ok": True, "output": output}
+        def run() -> dict:
+            try:
+                template = self.environment().get_template(self.rel)
+                output = template.render(self.context)
+            except Exception as exc:  # noqa: BLE001 - any exception is a valid result
+                return {"ok": False, "error": describe(exc)}
+            return {"ok": True, "output": output}
+
+        # Under the same limits the server applies. This tool had none, so a
+        # corpus case asking for unbounded work took the machine down while
+        # goldens were being generated -- which is exactly when nobody is
+        # watching, because generating goldens is supposed to be routine.
+        return guarded(run)
 
 
 def golden_for(case: Case) -> dict:
+    answer = case.render()
+    # A result that came from hitting a limit is this machine's answer, not
+    # CPython's, so it must never be written down as the expected one.
+    answer.pop("resource", None)
+    if is_unrecordable(answer):
+        raise CaseError(
+            f"{case.rel}: hit this machine's limits ({answer['error']['type']}: "
+            f"{answer['error']['message']}); that is not CPython's answer and "
+            f"cannot be a golden"
+        )
     result = {"case": case.rel, "oracle": ORACLE}
-    result.update(case.render())
+    result.update(answer)
     return result
 
 
@@ -110,6 +130,9 @@ def collect(corpus: Path) -> list[Path]:
 
 
 def main() -> int:
+    # The same address-space bound and per-case alarm the server runs under.
+    apply_limits()
+
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--corpus", type=Path, help="directory of *.jj2 cases")
     ap.add_argument("--golden", type=Path, help="directory to write *.json goldens into")
