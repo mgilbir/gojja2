@@ -461,23 +461,71 @@ func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 		if count < 0 {
 			count = 0
 		}
+		// A paragraph is not a flat run of words. jinja2 punctuates it as
+		// it goes: a comma once the last one is far enough behind, a
+		// full stop once the last of those is, and a capital on the word
+		// after each full stop. Both can land on the same word, so
+		// "word,." is a shape jinja2 really produces. Emitting one
+		// run-on sentence with a single trailing stop was visibly not
+		// lorem ipsum.
 		words := make([]string, 0, count)
-		for range count {
-			words = append(words, lipsumWords[rand.IntN(len(lipsumWords))])
+		nextCapitalized := true
+		lastComma, lastFullStop := 0, 0
+		last := -1
+		for idx := range count {
+			// jinja2 redraws until the word differs from the one
+			// before it. Drawing from the rest is the same
+			// distribution and is bounded, where redrawing is not.
+			j := rand.IntN(len(lipsumWords))
+			if last >= 0 && len(lipsumWords) > 1 {
+				if j = rand.IntN(len(lipsumWords) - 1); j >= last {
+					j++
+				}
+			}
+			last = j
+			word := lipsumWords[j]
+			if nextCapitalized {
+				// str.capitalize also lowers the rest, which
+				// these words already are.
+				word = strings.ToUpper(word[:1]) + word[1:]
+				nextCapitalized = false
+			}
+			if idx-(3+rand.IntN(5)) > lastComma {
+				lastComma = idx
+				lastFullStop += 2
+				word += ","
+			}
+			if idx-(10+rand.IntN(10)) > lastFullStop {
+				lastComma, lastFullStop = idx, idx
+				word += "."
+				nextCapitalized = true
+			}
+			words = append(words, word)
 		}
 		text := strings.Join(words, " ")
-		// A zero-word paragraph is a real outcome -- lipsum(1, true, 0, 1)
-		// asks for it -- and jinja2 renders it as just the full stop.
-		if text != "" {
-			text = strings.ToUpper(text[:1]) + text[1:]
+		// The paragraph has to end in a full stop. A trailing comma
+		// becomes one; a zero-word paragraph -- which lipsum(1, true, 0,
+		// 1) really asks for -- is just the stop.
+		switch {
+		case strings.HasSuffix(text, ","):
+			text = text[:len(text)-1] + "."
+		case !strings.HasSuffix(text, "."):
+			text += "."
 		}
-		text += "."
 		if html {
 			text = "<p>" + text + "</p>"
 		}
 		paragraphs = append(paragraphs, text)
 	}
-	joined := strings.Join(paragraphs, "\n\n")
+	// The paragraphs are separated by one newline in the HTML form, where
+	// the tags already mark them apart, and by a blank line in the plain
+	// one. Using the blank line for both put a stray one between every
+	// pair of <p> tags.
+	sep := "\n\n"
+	if html {
+		sep = "\n"
+	}
+	joined := strings.Join(paragraphs, sep)
 	if html {
 		return value.Safe(joined), nil
 	}

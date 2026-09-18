@@ -494,6 +494,14 @@ which case gojja2 reports `unexpected char` where jinja2 reports
 `lipsum()` and the `random` filter draw from a random source. Their output
 cannot match CPython's and is excluded from conformance comparison.
 
+The *shape* of `lipsum()`'s output is not excluded, and is reproduced: the
+paragraph length, where the commas and full stops fall, the capital after each
+stop, the rule that no word follows itself, and the single newline between HTML
+paragraphs against the blank line between plain ones. `TestLipsumShape` checks
+those invariants over enough paragraphs that a missing rule cannot hide behind
+the randomness, and the distributions were compared against CPython's before it
+was written.
+
 ## Python object introspection
 
 `__class__` is implemented. Every value answers it with a type object that has
