@@ -1309,6 +1309,41 @@ case("methods/seq_index_window",
 case("errors/seq_index_window_empty", "{{ [1,2,1].index(1, 1, 2) }}")
 case("errors/seq_index_bounds_none", "{{ [1,2,1].index(1, none) }}")
 case("errors/seq_index_bounds_float", "{{ [1,2,1].index(1, 1.5) }}")
+
+# What CPython says about an argument it does not like, and when it says it. The
+# wordings are not interchangeable: a string search raises from a helper shared
+# by all of them and names neither the method nor the parameter; startswith
+# names itself; strip names itself and not the type; replace and maketrans
+# number their arguments; and the parser's messages call the None singleton
+# "None" where a hand-written check says "NoneType".
+case("errors/search_arg_bare", "{{ 'ab'.count(1) }}")
+case("errors/search_arg_bare_find", "{{ 'ab'.find(none) }}")
+case("errors/search_bounds_before_sub", "{{ 'ab'.count(1, 1.5) }}")
+case("errors/startswith_names_itself", "{{ 'ab'.startswith(1) }}")
+case("errors/endswith_names_itself", "{{ 'ab'.endswith(none) }}")
+case("errors/strip_names_itself", "{{ 'ab'.lstrip([]) }}")
+case("errors/removesuffix_names_itself", "{{ 'ab'.removesuffix(none) }}")
+case("errors/replace_numbers_its_args", "{{ 'ab'.replace('a', none) }}")
+case("errors/replace_numbers_its_args_first", "{{ 'ab'.replace(1, none) }}")
+case("errors/maketrans_second_first", "{{ 'ab'.maketrans(1, none) }}")
+case("errors/maketrans_first_arg", "{{ 'ab'.maketrans(1, 'b') }}")
+case("errors/join_any_iterable", "{{ '-'.join(none) }}")
+case("errors/encode_errors_before_codec", "{{ 'ab'.encode('nosuch', 1) }}")
+
+# Neither format_map nor translate converts the argument it is handed.
+# translate is `table[ord(c)]` per character, catching LookupError, so an empty
+# string never touches the table and anything subscriptable by an integer will
+# do. format_map subscripts its mapping once per *named* field.
+case("methods/translate_is_lazy",
+     "[{{ ''.translate(1) }}]|{{ 'a'.translate('xyz') }}|{{ 'a'.translate(['z']) }}|"
+     "{{ 'a'.translate({97: 'Z'}) }}|{{ 'ab'.translate({98: 'Z'}) }}")
+case("errors/translate_not_subscriptable", "{{ 'a'.translate(1) }}")
+case("methods/format_map_is_lazy",
+     "{{ 'ab'.format_map(1) }}|{{ 'ab'.format_map(none) }}|{{ '{a}'.format_map({'a': 1}) }}")
+case("errors/format_map_positional", "{{ '{0}'.format_map({'a': 1}) }}")
+case("errors/format_map_list", "{{ '{a}'.format_map([1]) }}")
+case("errors/format_map_str", "{{ '{a}'.format_map('x') }}")
+case("errors/format_map_none", "{{ 'x{a}'.format_map(none) }}")
 case("errors/center_width_none", "{{ 'abc'|center(none) }}")
 case("filters/sort_reverse_int",
      "{{ [3,1,2]|sort(1) }}|{{ [3,1,2]|sort(0) }}|{{ [3,1,2]|sort(true) }}|"

@@ -1,0 +1,3 @@
+{}
+---
+{{ 'ab'.format_map(1) }}|{{ 'ab'.format_map(none) }}|{{ '{a}'.format_map({'a': 1}) }}

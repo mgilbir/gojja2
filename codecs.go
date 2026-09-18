@@ -183,17 +183,13 @@ func codecArgs(args *value.CallArgs, method string) (codec, handler string, err 
 	// A None is not the default here either: str.encode's arguments are
 	// declared as str, so an explicit None is refused rather than falling
 	// back on utf-8.
-	if v, ok := arg(args, 0, "encoding"); ok {
-		if !v.IsString() {
-			return "", "", errs.New(errs.TypeError,
-				"%s() argument 'encoding' must be str, not %s", method, clinicTypeName(v))
-		}
-		name, known := codecName(value.Str(v))
-		if !known {
-			return "", "", errs.New(errs.LookupError,
-				"unknown encoding: %s", value.Str(v))
-		}
-		codec = name
+	// Both arguments are converted while the call is parsed, before the
+	// codec is looked up -- so `"x".encode("nosuch", 1)` is about the 1 and
+	// not about the missing codec.
+	encoding, hasEncoding := arg(args, 0, "encoding")
+	if hasEncoding && !encoding.IsString() {
+		return "", "", errs.New(errs.TypeError,
+			"%s() argument 'encoding' must be str, not %s", method, clinicTypeName(encoding))
 	}
 	if v, ok := arg(args, 1, "errors"); ok {
 		if !v.IsString() {
@@ -201,6 +197,14 @@ func codecArgs(args *value.CallArgs, method string) (codec, handler string, err 
 				"%s() argument 'errors' must be str, not %s", method, clinicTypeName(v))
 		}
 		handler = value.Str(v)
+	}
+	if hasEncoding {
+		name, known := codecName(value.Str(encoding))
+		if !known {
+			return "", "", errs.New(errs.LookupError,
+				"unknown encoding: %s", value.Str(encoding))
+		}
+		codec = name
 	}
 	return codec, handler, nil
 }
