@@ -204,10 +204,16 @@ func SliceSpan(length int, start, stop, step *int) (begin, stride, count int, er
 		return begin, stride, 0, nil
 	}
 	// Round the span up, away from zero, to count the final partial step.
+	//
+	// The obvious form of this -- (span + stride - 1) / stride -- adds two
+	// numbers that a template chooses, and `{{ [1,2,3][::2**63-1] }}`
+	// overflowed it to a negative count, which reached make() and panicked.
+	// Dividing first cannot overflow: the span is already bounded by the
+	// length.
 	if stride > 0 {
-		count = (span + stride - 1) / stride
+		count = (span-1)/stride + 1
 	} else {
-		count = (span + stride + 1) / stride
+		count = (span+1)/stride + 1
 	}
 	return begin, stride, count, nil
 }

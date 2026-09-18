@@ -128,6 +128,8 @@ var sizedConstructs = []string{
 	`{{ [1] * %[1]s }}`,
 	`{{ range(%[1]s)|length }}`,
 	`{{ "abcdef"[%[1]s:] }}`,
+	`{{ "abcdef"[::%[1]s] }}`,
+	`{{ [1,2,3][::%[1]s] }}`,
 	`{{ "abc".split("b", %[1]s)|length }}`,
 	`{{ [1,2,3].pop(%[1]s) }}`,
 	`{{ 10 ** %[1]s }}`,
