@@ -8,7 +8,8 @@ Start from the question, not the filename.
 | How do I configure loaders, autoescaping, syntax, undefined values? | [guide.md](guide.md) |
 | Will my jinja2 templates render the same here? | [divergences.md](divergences.md) — one divergence can change what a working template renders, and it is named in the first paragraph |
 | Does it support *X*? Async? `{% trans %}`? The sandbox? | [scope.md](scope.md) |
-| How correct is it, and how is that measured? | [../README.md#conformance](../README.md#conformance) |
+| How correct is it, and how is that measured? | [conformance.md](conformance.md) |
+| How do I add a conformance case, or reproduce the numbers? | [conformance.md](conformance.md) |
 | Why did my render fail with `ErrOutputTooLarge`, or stop early? | [limits.md](limits.md) |
 | How do I bound a render of a template I do not trust? | [limits.md](limits.md) |
 | How do I add a filter, a test, a global, or expose my own type? | [extending.md](extending.md) |
@@ -33,7 +34,7 @@ tell which one lost.
 | What is in and out of scope | [scope.md](scope.md) |
 | Where gojja2 deliberately differs from CPython jinja2 | [divergences.md](divergences.md) |
 | What bounds a render, and which option adjusts it | [limits.md](limits.md) |
-| The conformance corpora, the oracle, and the numbers | [../README.md](../README.md) |
+| The conformance corpora, the oracle, and the numbers | [conformance.md](conformance.md) |
 | Which upstream projects are consulted, and under what licence | [../NOTICE](../NOTICE) |
 | How the pieces fit, and what nesting must not drop | [architecture.md](architecture.md) |
 | The contract a filter, test or global must honour | [extending.md](extending.md) |
