@@ -139,6 +139,11 @@ var emailRe = regexp.MustCompile(`^\S+@\w[\w.-]*\.\w+$`)
 var urlizeLeadRe = regexp.MustCompile(`^([(<]|&lt;)+`)
 var urlizeTailRe = regexp.MustCompile(`([)>.,\n]|&gt;)+$`)
 
+// uriSchemeRe is jinja2's _uri_scheme_re, which every extra scheme has to
+// match. Python's \w is Unicode-aware, so the class is spelled out rather than
+// left to Go's ASCII-only \w.
+var uriSchemeRe = regexp.MustCompile(`^[\p{L}\p{N}_.+-]{2,}:/{0,2}$`)
+
 // filterUrlize turns URLs and email addresses in text into links.
 //
 // The text is HTML-escaped before anything else, whatever the autoescape
@@ -146,13 +151,14 @@ var urlizeTailRe = regexp.MustCompile(`([)>.,\n]|&gt;)+$`)
 // would turn a URL containing "<" into a tag. The `rel` and `target`
 // attributes apply to web links only, not to mailto links.
 func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	trimLimit, hasLimit := 0, false
+	// The trim limit is carried as a value, not converted. jinja2 closes over
+	// it in trim_url and asks `len(x) > trim_url_limit` once per link, so a
+	// text with no links never looks at it, a non-number refuses by naming
+	// the operator, and a float compares fine and only has to be whole when
+	// something is actually sliced by it.
+	limit, hasLimit := value.Undefined, false
 	if lim, ok := arg(args, 0, "trim_url_limit"); ok && !lim.IsNone() {
-		n, err := intArg(args, 0, "trim_url_limit", 0)
-		if err != nil {
-			return value.Undefined, err
-		}
-		trimLimit, hasLimit = n, true
+		limit, hasLimit = lim, true
 	}
 	// jinja2's signature is (trim_url_limit, nofollow, target, rel,
 	// extra_schemes); the positional order matters for templates that pass
@@ -168,12 +174,21 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	// asked, and the environment's urlize.rel policy -- which defaults to
 	// "noopener", so every generated link carries it unless the policy is
 	// cleared. The parts are sorted, as jinja2 sorts the set.
-	// jinja2 writes `rel.split()`, so a rel that is not a string fails as a
-	// missing attribute rather than being stringified. target is only
-	// interpolated, so anything goes there.
-	if !rel.IsUndefined() && !rel.IsNone() && !rel.IsString() {
+	//
+	// jinja2 writes `(rel or "").split()`, so the argument is only asked for
+	// a split when it is truthy: an empty list or a zero stands in for the
+	// empty string and passes, and only a truthy non-string fails as a
+	// missing attribute.
+	relTrue, err := value.IsTrue(rel)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if relTrue && !rel.IsString() {
 		return value.Undefined, errs.New(errs.AttributeError,
 			"'%s' object has no attribute 'split'", rel.TypeName())
+	}
+	if !relTrue {
+		rel = value.String("")
 	}
 	relParts := map[string]bool{}
 	for _, part := range strings.Fields(attrText(rel)) {
@@ -194,6 +209,14 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if target.IsUndefined() || target.IsNone() {
 		target = value.String(s.env.policies.URLizeTarget)
 	}
+	// The attribute is written `if target else ""`, so it is truthiness that
+	// decides it and not "is not None": `urlize(20, false, [])` carries no
+	// target where an emptiness check on its string form would have written
+	// target="[]".
+	targetTrue, err := value.IsTrue(target)
+	if err != nil {
+		return value.Undefined, err
+	}
 
 	var extra []string
 	if schemes, ok := arg(args, 4, "extra_schemes"); ok && !schemes.IsNone() {
@@ -202,7 +225,21 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 			return value.Undefined, err
 		}
 		for _, item := range items {
-			extra = append(extra, value.Str(item))
+			// Every scheme is checked before any linking happens,
+			// and it is checked with a regexp -- so a scheme that
+			// is not a string fails as re does, naming the type it
+			// was handed, and one that is a string but not a
+			// scheme prefix is a FilterArgumentError naming it.
+			if !item.IsString() {
+				return value.Undefined, errs.New(errs.TypeError,
+					"expected string or bytes-like object, got '%s'", item.TypeName())
+			}
+			text := value.Str(item)
+			if !uriSchemeRe.MatchString(text) {
+				return value.Undefined, errs.New(errs.FilterArgumentError,
+					"%s is not a valid URI scheme prefix.", value.Repr(item))
+			}
+			extra = append(extra, text)
 		}
 	}
 
@@ -210,16 +247,28 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if len(sortedRel) > 0 {
 		attrs += ` rel="` + escapeHTML(strings.Join(sortedRel, " ")) + `"`
 	}
-	if targetText := attrText(target); targetText != "" {
-		attrs += ` target="` + escapeHTML(targetText) + `"`
+	if targetTrue {
+		attrs += ` target="` + escapeHTML(value.Str(target)) + `"`
 	}
 
-	trim := func(x string) string {
-		if hasLimit && value.StrLen(x) > trimLimit {
-			head, _ := value.StrSlice(x, nil, &trimLimit, nil)
-			return head + "..."
+	// trim_url is jinja2's closure: the comparison happens per link, and the
+	// slice only when the link is over the limit.
+	trim := func(x string) (string, error) {
+		if !hasLimit {
+			return x, nil
 		}
-		return x
+		over, err := value.Ordered(">", value.Int(int64(value.StrLen(x))), limit)
+		if err != nil || !over {
+			return x, err
+		}
+		n, ok := limit.Int64()
+		if !ok {
+			return "", errs.New(errs.TypeError,
+				"slice indices must be integers or None or have an __index__ method")
+		}
+		cut := int(n)
+		head, _ := value.StrSlice(x, nil, &cut, nil)
+		return head + "...", nil
 	}
 
 	escaped := value.Str(escapeIfNeeded(v))
@@ -239,7 +288,11 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 			if !strings.HasPrefix(middle, "https://") && !strings.HasPrefix(middle, "http://") {
 				href = "https://" + middle
 			}
-			middle = `<a href="` + href + `"` + attrs + `>` + trim(middle) + `</a>`
+			shown, err := trim(middle)
+			if err != nil {
+				return value.Undefined, err
+			}
+			middle = `<a href="` + href + `"` + attrs + `>` + shown + `</a>`
 
 		case strings.HasPrefix(middle, "mailto:") && emailRe.MatchString(middle[7:]):
 			middle = `<a href="` + middle + `">` + middle[7:] + `</a>`

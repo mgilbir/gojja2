@@ -1,0 +1,14 @@
+{
+  "case": "errors/urlize_scheme_type.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "expected string or bytes-like object, got 'int'"
+  }
+}

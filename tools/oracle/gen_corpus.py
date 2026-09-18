@@ -1149,6 +1149,24 @@ case("errors/truncate_end_concat",
 case("errors/urlize_rel_type", '{{ "x"|urlize(rel=4) }}')
 case("filters/urlize_attrs", '{{ "http://a.com"|urlize(rel="me") }}|{{ "http://a.com"|urlize(target="_b") }}')
 
+# |urlize looks at its arguments where jinja2 looks at them. The trim limit is
+# closed over by trim_url and compared once per link, so a text with no links
+# never examines it; target and rel are decided by truthiness, so an empty list
+# writes no attribute and is not asked for a split; and every extra scheme is
+# matched against a regexp before anything is linked.
+URLTEXT = {"u": "go https://example.com/long/path now", "plain": "no links here"}
+case("filters/urlize_limit_unused", "{{ plain|urlize('x') }}|{{ plain|urlize(1.5) }}", **URLTEXT)
+case("filters/urlize_falsey_attrs",
+     "{{ u|urlize(none, false, []) }}|{{ u|urlize(none, false, none, 0) }}", **URLTEXT)
+case("filters/urlize_extra_schemes",
+     "{{ f|urlize(none, false, none, none, ['ftp://']) }}|{{ f|urlize(none, false, none, none, ['\u00fc2:']) }}",
+     f="try ftp://x.com now")
+case("errors/urlize_limit_str", "{{ u|urlize('x') }}", **URLTEXT)
+case("errors/urlize_limit_float", "{{ u|urlize(10.0) }}", **URLTEXT)
+case("errors/urlize_rel_truthy", "{{ u|urlize(none, false, none, [1]) }}", **URLTEXT)
+case("errors/urlize_scheme_invalid", "{{ u|urlize(none, false, none, none, ['ftp']) }}", **URLTEXT)
+case("errors/urlize_scheme_type", "{{ u|urlize(none, false, none, none, [1]) }}", **URLTEXT)
+
 
 # --- what a module exports ----------------------------------------------------
 # jinja2 exports the names a top-level binding actually made, recorded as the
