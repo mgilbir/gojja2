@@ -1603,6 +1603,19 @@ func recursionID(v value.Value) uintptr {
 	return reflect.ValueOf(v.Interface()).Pointer()
 }
 
+// pyObjectRepr is Python's repr for an object whose type defines none:
+// `<module.Qualname object at 0xADDR>`. jinja2's Cycler, Joiner and
+// BlockReference all fall back to it, so a template that prints one sees this
+// rather than a name gojja2 invented -- and a template that prints
+// `{{ self.body }}` sees it instead of the block, which is the difference that
+// mattered.
+//
+// The address is this object's, as reproducible as CPython's own: the same
+// bargain |pprint already strikes for a container that contains itself.
+func pyObjectRepr(qualified string, obj any) string {
+	return fmt.Sprintf("<%s object at 0x%x>", qualified, reflect.ValueOf(obj).Pointer())
+}
+
 func markSeen(seen map[any]bool, key any) map[any]bool {
 	if seen == nil {
 		seen = make(map[any]bool, 4)

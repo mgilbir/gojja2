@@ -419,6 +419,37 @@ its own container.
 A cyclic value reaches `pprint` at all only when its `repr` is too wide to
 print on one line; a small one collapses to `{...}` first, which is exact.
 
+## Objects whose repr carries an address
+
+jinja2 gives most of the objects a template can reach a `__repr__` of their
+own -- `Namespace`, `LoopContext`, `Macro`, `TemplateReference`,
+`TemplateModule` -- and three of them none at all. `Cycler`, `Joiner` and
+`BlockReference` fall back to Python's default, `<module.Qualname object at
+0xADDR>`. gojja2 prints the same form with the address of its own object, on
+the same terms as `|pprint` above: the form is reproducible and the address is
+not, so the conformance suite treats it as ungradable.
+
+```jinja
+{{ joiner() }}                  <jinja2.utils.Joiner object at 0x...>
+{% block b %}x{% endblock %}
+{{ self.b }}                    <jinja2.runtime.BlockReference object at 0x...>
+{{ self.b() }}                  x
+```
+
+Only a *call* renders a block. Printing the reference prints the object, which
+is why `{% block x %}{{ self.x }}{% endblock %}` terminates.
+
+## `{{ self|list }}`
+
+`TemplateReference` defines `__getitem__` and nothing else, so Python's legacy
+iteration protocol makes it iterable and `list(self)` asks for index 0 --
+which is a block name lookup, and raises `KeyError: 0`. gojja2 answers
+`TypeError: 'TemplateReference' object is not iterable`.
+
+Reproducing the KeyError would mean a way for an Object to say "iterable, but
+the first step fails", which nothing else here needs. A template that iterates
+`self` fails either way, and the wording is the only difference.
+
 ## A render does not mutate the caller's data
 
 ```jinja
@@ -514,7 +545,10 @@ a name, a repr and equality:
 ```
 
 That is a statement about gojja2's own value model, and it is inert: there is
-nothing behind it. Two of Jinja's sandbox-escape tests go further, and those
+nothing behind it. One consequence is visible: under autoescape, CPython's
+`escape()` finds `__html__` on the *class* of an imported module and calls it
+unbound, so `{{ m.__class__ }}` raises where gojja2 prints the class. That is
+an artifact of the class object existing at all. Two of Jinja's sandbox-escape tests go further, and those
 are not implemented:
 
 ```jinja
