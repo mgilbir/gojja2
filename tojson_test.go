@@ -197,3 +197,102 @@ func TestToJSONIndentUnchangedElsewhere(t *testing.T) {
 		}
 	}
 }
+
+// A JSON object's keys are sorted as *keys* and then converted, which is the
+// order CPython does it in and not the order gojja2 did.
+//
+// Converting first and sorting the text is a different sort: {100: 1, 20: 2,
+// 3: 3} came out 100, 20, 3, because "100" precedes "20" as text. It also
+// made a dict that CPython refuses serialise happily -- sorting {1: 1, "a": 2}
+// has to compare an int with a str, which Python will not do.
+//
+// Sorting the key objects through pythonSort inherits both: the numeric order,
+// and the TypeError naming the two types in CPython's own wording.
+func TestToJSONSortsKeysAsKeys(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`{{ {100: 1, 20: 2, 3: 3}|tojson }}`, `{"3": 3, "20": 2, "100": 1}`},
+		{`{{ {10: 1, 9: 2}|tojson }}`, `{"9": 2, "10": 1}`},
+		{`{{ {2: 1, 10: 2, 1: 3}|tojson }}`, `{"1": 3, "2": 1, "10": 2}`},
+		{`{{ {-1: 1, -10: 2}|tojson }}`, `{"-10": 2, "-1": 1}`},
+		{`{{ {1.5: 1, 10.5: 2}|tojson }}`, `{"1.5": 1, "10.5": 2}`},
+		{`{{ {2**70: 1, 3: 2}|tojson }}`, `{"3": 2, "1180591620717411303424": 1}`},
+		// Text keys still sort as text.
+		{`{{ {"10": 1, "9": 2}|tojson }}`, `{"10": 1, "9": 2}`},
+		{`{{ {"b": 1, "a": 2}|tojson }}`, `{"a": 2, "b": 1}`},
+	} {
+		tmpl, err := New().FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil || got != tc.want {
+			t.Errorf("%s = %q, %v; want %q", tc.src, got, err, tc.want)
+		}
+	}
+}
+
+// Keys of types that cannot be ordered against each other are refused, in the
+// words the comparison itself produces.
+func TestToJSONRefusesIncomparableKeys(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`{{ {1: 1, "a": 2}|tojson }}`, "'<' not supported between instances of 'str' and 'int'"},
+		{`{{ {true: 1, "a": 2}|tojson }}`, "'<' not supported between instances of 'str' and 'bool'"},
+		{`{{ {none: 1, "a": 2}|tojson }}`, "'<' not supported between instances of 'str' and 'NoneType'"},
+		{`{{ {none: 1, true: 2}|tojson }}`, "'<' not supported between instances of 'bool' and 'NoneType'"},
+		// A key type JSON has no spelling for is refused whatever the sort did.
+		{`{{ {(1,2): 1}|tojson }}`, "keys must be str, int, float, bool or None, not tuple"},
+	} {
+		tmpl, err := New().FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		_, err = tmpl.RenderString(context.Background(), nil)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
+		}
+	}
+}
+
+// A key that is not already a string takes JSON's spelling, not Python's.
+func TestToJSONKeySpellingIsJSON(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`{{ {true: 1}|tojson }}`, `{"true": 1}`},
+		{`{{ {false: 1}|tojson }}`, `{"false": 1}`},
+		{`{{ {none: 1}|tojson }}`, `{"null": 1}`},
+		{`{{ {true: 1, false: 2}|tojson }}`, `{"false": 2, "true": 1}`},
+		{`{{ {1: 1}|tojson }}`, `{"1": 1}`},
+		{`{{ {-0.0: 1}|tojson }}`, `{"-0.0": 1}`},
+	} {
+		tmpl, err := New().FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil || got != tc.want {
+			t.Errorf("%s = %q, %v; want %q", tc.src, got, err, tc.want)
+		}
+	}
+}
+
+// bytes has no JSON type and json.dumps refuses it. Writing it out as a string
+// invented a document CPython will not produce, and silently.
+func TestToJSONRefusesBytes(t *testing.T) {
+	const want = "Object of type bytes is not JSON serializable"
+	for _, src := range []string{
+		`{{ "a".encode()|tojson }}`,
+		`{{ ["a".encode()]|tojson }}`,
+		`{{ {"k": "a".encode()}|tojson }}`,
+	} {
+		tmpl, err := New().FromString(src)
+		if err != nil {
+			t.Errorf("%s: %v", src, err)
+			continue
+		}
+		if _, err := tmpl.RenderString(context.Background(), nil); err == nil || err.Error() != want {
+			t.Errorf("%s: got %v, want %q", src, err, want)
+		}
+	}
+}

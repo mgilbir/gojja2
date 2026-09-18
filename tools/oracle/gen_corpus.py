@@ -1593,6 +1593,25 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- tojson sorts keys as keys, then converts them -----------------------------
+# json.dumps with sort_keys sorts the key *objects* and converts them
+# afterwards. gojja2 converted first and sorted the text, which is a different
+# order for numeric keys -- "100" precedes "20" as text -- and which let a dict
+# mixing key types serialise where CPython refuses to compare them.
+case("filters/tojson_numeric_key_order", "{{ {100: 1, 20: 2, 3: 3}|tojson }}|{{ {10: 1, 9: 2}|tojson }}")
+case("filters/tojson_big_key_order", "{{ {2**70: 1, 3: 2}|tojson }}")
+case("filters/tojson_text_key_order", '{{ {"10": 1, "9": 2}|tojson }}|{{ {"b": 1, "a": 2}|tojson }}')
+case("filters/tojson_mixed_keys_refused", '{{ {1: 1, "a": 2}|tojson }}')
+case("filters/tojson_mixed_bool_keys_refused", '{{ {none: 1, true: 2}|tojson }}')
+# A key that is not already a string takes JSON's spelling, not Python's: str()
+# gives "True" and "None" where JSON wants "true" and "null".
+case("filters/tojson_key_spelling", "{{ {true: 1}|tojson }}|{{ {false: 1}|tojson }}|{{ {none: 1}|tojson }}|{{ {true: 1, false: 2}|tojson }}")
+case("filters/tojson_numeric_key_spelling", "{{ {1: 1}|tojson }}|{{ {-0.0: 1}|tojson }}")
+# bytes has no JSON type and json.dumps refuses it; writing it out as a string
+# invented a document CPython will not produce.
+case("filters/tojson_bytes_refused", '{{ "a".encode()|tojson }}')
+case("filters/tojson_bytes_in_list_refused", '{{ ["a".encode()]|tojson }}')
+
 # --- full case mapping and cased characters -----------------------------------
 # Python's case operations are full mappings over cased characters; Go's are
 # simple mappings over general categories. Both halves differed. "\u00df".upper()

@@ -643,8 +643,12 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 		default:
 			b.WriteString(value.FormatFloat(f))
 		}
-	case value.KindString, value.KindBytes:
+	case value.KindString:
 		writeJSONString(b, v.AsString())
+	// bytes deliberately has no case here. json.dumps refuses it -- there is
+	// no JSON type for bytes and no encoding it could assume -- so it falls
+	// to the default below, which says so. Writing it out as a string
+	// invented a document CPython will not produce.
 	case value.KindList, value.KindTuple:
 		s, _ := v.Seq()
 		if s.Len() == 0 {
@@ -683,23 +687,36 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 		b.WriteString("{" + nl)
 		// jinja2's tojson policy sets sort_keys, so a dict serialises in
 		// key order rather than insertion order.
-		entries := append([]value.DictEntry(nil), d.Entries()...)
-		sort.SliceStable(entries, func(i, j int) bool {
-			return value.Str(entries[i].Key) < value.Str(entries[j].Key)
-		})
+		//
+		// CPython sorts the key *objects* and converts them afterwards.
+		// Converting first and sorting the text is a different order:
+		// {100: 1, 20: 2, 3: 3} came out 100, 20, 3 because "100" sorts
+		// before "20" as text, and a dict mixing a string key with an int
+		// one serialised happily where CPython refuses to compare them.
+		// Sorting through pythonSort inherits both -- the numeric order,
+		// and the TypeError naming the two types, in CPython's wording.
+		entries := d.Entries()
+		keys := make([]value.Value, len(entries))
+		vals := make([]value.Value, len(entries))
 		for i, e := range entries {
+			keys[i], vals[i] = e.Key, e.Value
+		}
+		if err := pythonSort(st, vals, keys); err != nil {
+			return err
+		}
+		for i, k := range keys {
 			if i > 0 {
 				b.WriteString(comma + nl)
 			}
 			b.WriteString(pad)
-			if !jsonKeyable(e.Key) {
+			if !jsonKeyable(k) {
 				return errs.New(errs.TypeError,
 					"keys must be str, int, float, bool or None, not %s",
-					e.Key.TypeName())
+					k.TypeName())
 			}
-			writeJSONString(b, value.Str(e.Key))
+			writeJSONString(b, jsonKeyText(k))
 			b.WriteString(": ")
-			if err := writeJSON(st, b, e.Value, indent, depth+1, path); err != nil {
+			if err := writeJSON(st, b, vals[i], indent, depth+1, path); err != nil {
 				return err
 			}
 		}
@@ -814,6 +831,39 @@ func unpackPair(item value.Value) (value.Value, value.Value, error) {
 
 // jsonKeyable reports whether a dict key can be a JSON object name. json.dumps
 // coerces the scalar types and refuses everything else.
+// jsonKeyText is what json.dumps writes for a key that is not already a
+// string. The spelling is JSON's rather than Python's: True is "true" and None
+// is "null", where str() gives "True" and "None".
+//
+// The order of the checks is CPython's own, and it is load-bearing there: in
+// Python a bool *is* an int, so True has to be recognised before the integer
+// branch or it would be written as "1".
+func jsonKeyText(v value.Value) string {
+	switch {
+	case v.IsString():
+		return v.AsString()
+	case v.Kind() == value.KindFloat:
+		f := v.AsFloat()
+		switch {
+		case math.IsNaN(f):
+			return "NaN"
+		case math.IsInf(f, 1):
+			return "Infinity"
+		case math.IsInf(f, -1):
+			return "-Infinity"
+		}
+		return value.FormatFloat(f)
+	case v.Kind() == value.KindBool:
+		if v.AsBool() {
+			return "true"
+		}
+		return "false"
+	case v.IsNone():
+		return "null"
+	}
+	return value.Repr(v)
+}
+
 func jsonKeyable(v value.Value) bool {
 	switch v.Kind() {
 	case value.KindString, value.KindInt, value.KindFloat, value.KindBool, value.KindNone:
