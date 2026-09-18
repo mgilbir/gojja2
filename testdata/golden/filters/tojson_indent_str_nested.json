@@ -1,0 +1,11 @@
+{
+  "case": "filters/tojson_indent_str_nested.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": true,
+  "output": "[\nx[\nxx1\nx]\n]|{\n\t\"a\": 1,\n\t\"b\": {\n\t\t\"c\": 2\n\t}\n}|\"s\"|\"s\""
+}

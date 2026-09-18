@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,68 @@ func TestToJSONIndentZero(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// TestToJSONStringIndent: json.dumps takes either an integer or a *string* for
+// its indent, and a string is used literally -- `tojson("\t")` indents with
+// tabs. gojja2 read the argument as an integer, so every string was refused.
+//
+// The argument is only looked at that closely once something needs indenting,
+// which is why a str value never raises: JSONEncoder.encode returns the encoded
+// string before building any indentation, while everything else goes through
+// iterencode and does.
+func TestToJSONStringIndent(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// A string is the unit, repeated once per level.
+		{`{{ [1,2]|tojson("  ") }}`, "[\n  1,\n  2\n]"},
+		{`{{ [1,2]|tojson("x") }}`, "[\nx1,\nx2\n]"},
+		{`{{ [1,2]|tojson("ab") }}`, "[\nab1,\nab2\n]"},
+		{`{{ [1,2]|tojson("") }}`, "[\n1,\n2\n]"},
+		// Nesting repeats it, so the unit shows per level.
+		{`{{ [[1]]|tojson("x") }}`, "[\nx[\nxx1\nx]\n]"},
+		{`{{ {"a":1,"b":{"c":2}}|tojson("x") }}`,
+			"{\nx\"a\": 1,\nx\"b\": {\nxx\"c\": 2\nx}\n}"},
+		// An integer is still that many spaces, and a bool is an int.
+		{`{{ [1,2]|tojson(2) }}`, "[\n  1,\n  2\n]"},
+		{`{{ [1,2]|tojson(true) }}`, "[\n 1,\n 2\n]"},
+		// A string value never builds the indent, so a bad one is not
+		// looked at.
+		{`{{ "s"|tojson(1.5) }}|{{ "s"|tojson([1]) }}`, `"s"|"s"`},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+
+	// Anything that is neither a string nor an integer fails where the unit
+	// would have been multiplied -- including for an empty container, and
+	// for a bare number.
+	for _, src := range []string{
+		`{{ [1,2]|tojson(1.5) }}`,
+		`{{ []|tojson(1.5) }}`,
+		`{{ {}|tojson([1]) }}`,
+		`{{ 1|tojson(1.5) }}`,
+		`{{ none|tojson([1]) }}`,
+	} {
+		tmpl, err := env.FromString(src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", src, err)
+		}
+		_, err = tmpl.RenderString(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), "can't multiply sequence by non-int") {
+			t.Errorf("%s: got %v, want the sequence-repetition error", src, err)
 		}
 	}
 }

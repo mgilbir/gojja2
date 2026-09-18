@@ -659,6 +659,22 @@ case("filters/tojson_indent_nested",
      "{{ [[1]]|tojson(0) }}|{{ [[1]]|tojson(2) }}|{{ {'b':1,'a':2}|tojson(0) }}|"
      "{{ []|tojson(0) }}|{{ 1|tojson(0) }}")
 
+# The indent is a pad *unit*, not a count: an integer is that many spaces but a
+# string is used literally, so tojson("\t") indents with tabs. It is also only
+# worked out once something needs indenting -- JSONEncoder.encode returns a str
+# before it builds any -- so a bad unit passes unnoticed on a string value and
+# raises on everything else.
+case("filters/tojson_indent_str",
+     "{{ [1,2]|tojson('  ') }}|{{ [1,2]|tojson('x') }}|{{ [1,2]|tojson('ab') }}|"
+     "{{ [1,2]|tojson('') }}|{{ [1,2]|tojson(true) }}")
+case("filters/tojson_indent_str_nested",
+     "{{ [[1]]|tojson('x') }}|{{ {'a':1,'b':{'c':2}}|tojson('\t') }}|"
+     "{{ 's'|tojson(1.5) }}|{{ 's'|tojson([1]) }}")
+case("errors/tojson_indent_float", "{{ [1,2]|tojson(1.5) }}")
+case("errors/tojson_indent_empty_list", "{{ []|tojson(1.5) }}")
+case("errors/tojson_indent_scalar", "{{ 1|tojson(1.5) }}")
+case("errors/tojson_indent_list_unit", "{{ {}|tojson([1]) }}")
+
 # When a frame assigns a name, jinja2 asks the enclosing symbol table for a
 # *reference* to it before settling on undefined. A reference is any mention at
 # that level, so a read is enough and where it sits does not matter -- which is
