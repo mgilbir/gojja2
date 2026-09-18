@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"math"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -453,7 +454,9 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 		d, _ := base.Dict()
 		v, ok, err := d.Get(key)
 		if err != nil {
-			return value.Undefined, err
+			// An unhashable key is a TypeError, which getitem
+			// catches like any other: `{{ d[[]] }}` is empty.
+			return ex.st.Undefined(value.UndefinedElement(base, key)), nil
 		}
 		if ok {
 			return v, nil
@@ -530,8 +533,11 @@ func (ex *exec) indexSequence(base, key value.Value) (value.Value, error) {
 			}
 			return ex.st.Undefined(value.UndefinedAttr(base, key.AsString())), nil
 		}
-		return value.Undefined, errs.New(errs.TypeError,
-			"%s indices must be integers or slices, not %s", base.TypeName(), key.TypeName())
+		// jinja2's getitem catches TypeError and LookupError alike and
+		// answers with an undefined, so a key the container cannot take
+		// renders as nothing rather than raising -- `{{ xs[none] }}` is
+		// empty, not an error.
+		return ex.st.Undefined(value.UndefinedElement(base, key)), nil
 	}
 
 	switch base.Kind() {
@@ -628,6 +634,17 @@ func sliceIndex(v value.Value) (*int, error) {
 	}
 	i, ok := v.Int64()
 	if !ok {
+		// An integer too big for the machine is still an integer, and
+		// CPython clamps it: `"abcde"[:2**70]` is the whole string, not
+		// an empty one and not an error. Only a value that is not a
+		// whole number at all is refused.
+		if b, whole := v.BigInt(); whole {
+			idx := math.MaxInt
+			if b.Sign() < 0 {
+				idx = math.MinInt
+			}
+			return &idx, nil
+		}
 		return nil, errs.New(errs.TypeError,
 			"slice indices must be integers or None or have an __index__ method")
 	}

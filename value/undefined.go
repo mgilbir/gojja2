@@ -64,6 +64,16 @@ func UndefinedIndex(owner Value, i int) Value {
 	return Value{kind: KindUndefined, obj: &undefinedInfo{index: i, hasIndex: true, owner: ObjectTypeRepr(owner)}}
 }
 
+// UndefinedElement returns the undefined produced by a subscript whose key is
+// not one the container takes at all: `{{ list[none] }}`. jinja2's getitem
+// catches the TypeError and hands back an undefined, and the repr of the key
+// is what it names -- "list object has no element None".
+func UndefinedElement(owner, key Value) Value {
+	return Value{kind: KindUndefined, obj: &undefinedInfo{
+		hint: fmt.Sprintf("%s has no element %s", ObjectTypeRepr(owner), Repr(key)),
+	}}
+}
+
 // UndefinedHint returns an undefined with a fixed message, as produced by
 // jinja2's `default` machinery and by filters that reject their input.
 func UndefinedHint(format string, args ...any) Value {

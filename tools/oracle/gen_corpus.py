@@ -1375,6 +1375,19 @@ case("errors/format_int_precision_first", "{{ '{:+.3c}'.format(5) }}")
 case("errors/format_int_c_alternate", "{{ '{:#c}'.format(5) }}")
 case("errors/format_object_ignores_spec", "{{ '{:,n}'.format(none) }}")
 case("errors/format_c_too_large", "{{ '{:c}'.format(2**70) }}")
+
+# A slice index too big for the machine is still an integer, and CPython clamps
+# it. And jinja2's getitem catches TypeError and LookupError alike, so a key the
+# container cannot take renders as nothing rather than raising.
+case("slice/huge_bounds",
+     "{{ 'abcde'[:2**70] }}|{{ 'abcde'[1:2**70] }}|{{ 'abcde'[-(2**70):2] }}|"
+     "[{{ 'abcde'[2**70:] }}]|{{ [1,2,3][:2**70] }}|[{{ [1,2,3][:-(2**70)] }}]")
+case("slice/huge_step",
+     "{{ 'abcde'[::2**70] }}|{{ 'abcde'[::-(2**70)] }}|"
+     "{{ [1,2,3][::9223372036854775807] }}|{{ [1,2,3][::-9223372036854775808] }}")
+case("slice/bad_key_is_undefined",
+     "[{{ xs[none] }}][{{ xs[1.5] }}][{{ xs[[]] }}][{{ d[[]] }}][{{ xs[9] }}]",
+     xs=[1, 2, 3], d={"a": 1})
 case("errors/center_width_none", "{{ 'abc'|center(none) }}")
 case("filters/sort_reverse_int",
      "{{ [3,1,2]|sort(1) }}|{{ [3,1,2]|sort(0) }}|{{ [3,1,2]|sort(true) }}|"
