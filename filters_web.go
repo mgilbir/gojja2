@@ -464,7 +464,11 @@ func filterToJSON(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	}
 	// htmlsafe_json_dumps returns Markup whatever the autoescape setting,
 	// because its output is escaped by construction.
-	return value.Safe(htmlSafeJSON(b.String())), nil
+	out, err := inChunks(s, b.String(), htmlSafeJSON)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.Safe(out), nil
 }
 
 // jsonHTMLEscaper makes serialised JSON safe to embed in a <script> block:
@@ -649,7 +653,9 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 			b.WriteString(value.FormatFloat(f))
 		}
 	case value.KindString:
-		writeJSONString(b, v.AsString())
+		if err := writeJSONString(st, b, v.AsString()); err != nil {
+			return err
+		}
 	// bytes deliberately has no case here. json.dumps refuses it -- there is
 	// no JSON type for bytes and no encoding it could assume -- so it falls
 	// to the default below, which says so. Writing it out as a string
@@ -719,7 +725,9 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 					"keys must be str, int, float, bool or None, not %s",
 					k.TypeName())
 			}
-			writeJSONString(b, jsonKeyText(k))
+			if err := writeJSONString(st, b, jsonKeyText(k)); err != nil {
+				return err
+			}
 			b.WriteString(": ")
 			if err := writeJSON(st, b, vals[i], indent, depth+1, path); err != nil {
 				return err
@@ -753,9 +761,20 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 	return nil
 }
 
-func writeJSONString(b *strings.Builder, s string) {
+// The string is as long as the caller's data and escaping it is one pass, so
+// the walk charges what it has written every few thousand bytes. Charging the
+// whole length once would consult the context once and then run to the end,
+// which is how `{{ s|tojson }}` over 23MB ignored a 19ms deadline.
+func writeJSONString(st *State, b *strings.Builder, s string) error {
 	b.WriteByte('"')
-	for _, r := range s {
+	charged := 0
+	for i, r := range s {
+		if i-charged >= jsonChargeBlock {
+			if err := st.ChargeBytes(int64(i - charged)); err != nil {
+				return err
+			}
+			charged = i
+		}
 		switch r {
 		case '"':
 			b.WriteString(`\"`)
@@ -789,8 +808,16 @@ func writeJSONString(b *strings.Builder, s string) {
 			}
 		}
 	}
+	if err := st.ChargeBytes(int64(len(s) - charged)); err != nil {
+		return err
+	}
 	b.WriteByte('"')
+	return nil
 }
+
+// jsonChargeBlock is how much of a string is escaped between charges. It is the
+// budget's own check interval, so each block is one consultation.
+const jsonChargeBlock = 1 << 12
 
 // itemsAttributeError reports what `d.items()` does to a value that is not a
 // mapping.

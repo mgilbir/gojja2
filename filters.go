@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/value"
@@ -24,15 +25,26 @@ func registerDefaultFilters(env *Environment) {
 	add := func(name string, f Filter) { env.AddFilter(name, f) }
 
 	// text
-	add("upper", stringFilter(pyUpperString))
-	add("lower", stringFilter(pyLowerString))
+	add("upper", runeFilter(func(_ int, r rune) string { return pyUpperRune(r) }))
+	add("lower", runeFilter(func(_ int, r rune) string { return pyLowerRune(r) }))
 	// title is the one case filter that does not preserve Markup: jinja2
 	// assembles it with "".join(...), and joining on a plain str gives a
 	// plain str.
-	add("title", func(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.String(jinjaTitle(value.Str(v))), nil
+	add("title", func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+		out, err := jinjaTitle(s, value.Str(v))
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.String(out), nil
 	})
-	add("capitalize", stringFilter(pyCapitalizeString))
+	// capitalize is upper on the first code point and lower on the rest,
+	// which is the index the mapping is given for.
+	add("capitalize", runeFilter(func(i int, r rune) string {
+		if i == 0 {
+			return pyTitleRune(r)
+		}
+		return pyLowerRune(r)
+	}))
 	add("trim", filterTrim)
 	add("string", filterString)
 	add("replace", filterReplace)
@@ -126,13 +138,33 @@ func definedFilter(f Filter) Filter {
 // markupsafe's Markup overrides the str methods these filters use, and they
 // return Markup: changing the case of escaped text cannot unescape it. So
 // `{{ x|safe|upper }}` stays safe, and reports its type as Markup.
-func stringFilter(fn func(string) string) Filter {
-	return func(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		out := fn(value.Str(v))
-		if v.IsSafe() {
-			return value.Safe(out), nil
+// runeFilter builds its result one code point at a time, yielding between them.
+//
+// The string it walks is as long as the caller's data, and mapping a code point
+// is cheap, so the whole cost is the length of the input and none of it used to
+// be interruptible: a 23MB string took half a second in |upper and two thirds
+// of a second in |title, and a deadline set at an eighth of that stopped
+// neither. The filters that take this shape are the case ones, whose mappings
+// are per code point, so walking them here rather than inside a string-to-string
+// function is what gives them somewhere to yield.
+//
+// i is the byte offset of the code point, which is what tells |capitalize its
+// first one from the rest.
+func runeFilter(f func(i int, r rune) string) Filter {
+	return func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+		in := value.Str(v)
+		var b strings.Builder
+		b.Grow(len(in))
+		for i, r := range in {
+			if err := s.Poll(); err != nil {
+				return value.Undefined, err
+			}
+			b.WriteString(f(i, r))
 		}
-		return value.String(out), nil
+		if v.IsSafe() {
+			return value.Safe(b.String()), nil
+		}
+		return value.String(b.String()), nil
 	}
 }
 
@@ -608,7 +640,11 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		if err := chargeReplace(s, src, from, to, count); err != nil {
 			return value.Undefined, err
 		}
-		return value.String(strings.Replace(src, from, to, count)), nil
+		out, err := replaceYielding(s, src, from, to, count)
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.String(out), nil
 	}
 	// Under autoescape the rule is not "escape everything", and escaping
 	// everything got two things wrong. `old` is matched verbatim -- so
@@ -637,11 +673,51 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	if err := chargeReplace(s, src, from, to, count); err != nil {
 		return value.Undefined, err
 	}
-	out := strings.Replace(src, from, to, count)
+	out, err := replaceYielding(s, src, from, to, count)
+	if err != nil {
+		return value.Undefined, err
+	}
 	if markup {
 		return value.Safe(out), nil
 	}
 	return value.String(out), nil
+}
+
+// replaceYielding is strings.Replace with a yield between replacements.
+//
+// For a non-empty needle this is what strings.Replace does: successive
+// non-overlapping instances, left to right, and a negative count meaning all of
+// them. Doing it here rather than in one call is what lets a render be stopped
+// part way through a subject as long as the caller's data.
+//
+// An empty needle is left to strings.Replace. Its rule -- insert between every
+// rune, and at both ends -- is a different function wearing the same name, and
+// the result is bounded by the subject either way.
+func replaceYielding(s *State, src, from, to string, count int) (string, error) {
+	if count == 0 || from == to {
+		return src, nil
+	}
+	if from == "" {
+		return strings.Replace(src, from, to, count), nil
+	}
+	var b strings.Builder
+	b.Grow(len(src))
+	at := 0
+	for count != 0 {
+		if err := s.Poll(); err != nil {
+			return "", err
+		}
+		i := strings.Index(src[at:], from)
+		if i < 0 {
+			break
+		}
+		b.WriteString(src[at : at+i])
+		b.WriteString(to)
+		at += i + len(from)
+		count--
+	}
+	b.WriteString(src[at:])
+	return b.String(), nil
 }
 
 func filterCenter(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
@@ -724,6 +800,9 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if len(rest) > 0 {
 		indented := make([]string, len(rest))
 		for i, line := range rest {
+			if err := s.Poll(); err != nil {
+				return value.Undefined, err
+			}
 			if blank || line != "" {
 				line = prefix + line
 			}
@@ -894,7 +973,7 @@ func truncPoint(length value.Value, endLen int) (int, error) {
 
 func ptr[T any](v T) *T { return &v }
 
-func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	// The width is carried as a value rather than converted here. jinja2
 	// hands it straight to textwrap, which only looks at it once it has a
 	// line to wrap -- so `{{ ""|wordwrap("z") }}` renders nothing, and a
@@ -954,7 +1033,10 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 
 	var out []string
 	for _, paragraph := range splitLines(value.Str(v), false) {
-		wrapped, err := wrapLine(paragraph, width, breakLong, breakOnHyphens)
+		if err := s.Poll(); err != nil {
+			return value.Undefined, err
+		}
+		wrapped, err := wrapLine(s, paragraph, width, breakLong, breakOnHyphens)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -975,7 +1057,7 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 //   - exactly one trailing whitespace chunk is dropped from a finished line,
 //     so a line can still end in a space when an empty piece was dropped
 //     ahead of it.
-func wrapLine(text string, widthVal value.Value, breakLong, breakOnHyphens bool) ([]string, error) {
+func wrapLine(s *State, text string, widthVal value.Value, breakLong, breakOnHyphens bool) ([]string, error) {
 	// textwrap checks the width before anything else, and it checks it with
 	// Python's own comparison -- which is what refuses a string, a list or
 	// None here, naming the operator, rather than an argument check at the
@@ -995,10 +1077,21 @@ func wrapLine(text string, widthVal value.Value, breakLong, breakOnHyphens bool)
 	width, _ := widthVal.Float64()
 	sliceable := widthVal.IsInteger()
 
-	chunks := wrapChunks(text, breakOnHyphens)
+	chunks, err := wrapChunks(s, text, breakOnHyphens)
+	if err != nil {
+		return nil, err
+	}
 	var lines []string
 
 	for len(chunks) > 0 {
+		// One line per pass, and the loop below is bounded by the
+		// width, so yielding here bounds the work between checks to a
+		// single line however long the paragraph is. Wrapping a 23MB
+		// paragraph to 20 columns took a second and ignored a 129ms
+		// deadline.
+		if err := s.Poll(); err != nil {
+			return nil, err
+		}
 		// Progress is either consuming a chunk or shortening the one
 		// at the front, so both are watched.
 		beforeCount, beforeHead := len(chunks), len(chunks[0])
@@ -1097,11 +1190,18 @@ func lastHyphenBefore(chunk string, limit int) int {
 
 // wrapChunks splits text into the pieces textwrap considers indivisible:
 // whitespace runs, and words, optionally broken after an internal hyphen.
-func wrapChunks(text string, breakOnHyphens bool) []string {
+func wrapChunks(s *State, text string, breakOnHyphens bool) ([]string, error) {
 	var chunks []string
 	runes := []rune(text)
 	i := 0
 	for i < len(runes) {
+		// One word or one run of spaces per pass, both of which
+		// advance. A paragraph is split in full before any of it is
+		// wrapped, so without a yield here a single long line was one
+		// uninterruptible pass however short the deadline.
+		if err := s.Poll(); err != nil {
+			return nil, err
+		}
 		start := i
 		inSpace := unicode.IsSpace(runes[i])
 		for i < len(runes) && unicode.IsSpace(runes[i]) == inSpace {
@@ -1114,7 +1214,7 @@ func wrapChunks(text string, breakOnHyphens bool) []string {
 		}
 		chunks = append(chunks, splitOnHyphens(word)...)
 	}
-	return chunks
+	return chunks, nil
 }
 
 // splitOnHyphens breaks a word where textwrap's wordsep_re allows a line to
@@ -1200,14 +1300,38 @@ func splitsAfterHyphen(runes []rune, i int) bool {
 	return j < len(runes) && isWordLetter(runes[j])
 }
 
-// wordRe matches what jinja2's wordcount counts: runs of word characters. It
-// is not the same as splitting on whitespace -- "[]" has one field and no
-// words.
-// Go's \w is ASCII-only; Python's is not, so the class is spelled out.
-var wordRe = regexp.MustCompile(`[\p{L}\p{N}_]+`)
+// isWordRune is what jinja2's wordcount counts a word out of: `[\p{L}\p{N}_]`.
+// It is not the same as splitting on whitespace -- "[]" has one field and no
+// words. Go's \w is ASCII-only; Python's is not, so the class is spelled out.
+func isWordRune(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
+}
 
-func filterWordcount(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	return value.Int(int64(len(wordRe.FindAllString(value.Str(v), -1)))), nil
+// filterWordcount counts runs of word characters.
+//
+// It walks the string rather than asking a regexp for every match, for two
+// reasons that are the same reason. FindAllString builds a slice holding every
+// word in the input, which for a large string is an allocation as big as the
+// string and charged to nobody; and a regexp runs to the end whatever the
+// render's deadline says, so counting the words of a 23MB string took 1.4
+// seconds and a deadline of 171ms did not stop it.
+func filterWordcount(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	var n int64
+	inWord := false
+	for _, r := range value.Str(v) {
+		if err := s.Poll(); err != nil {
+			return value.Undefined, err
+		}
+		if !isWordRune(r) {
+			inWord = false
+			continue
+		}
+		if !inWord {
+			n++
+			inWord = true
+		}
+	}
+	return value.Int(n), nil
 }
 
 // stripTagsRe matches what jinja2 removes: an HTML comment, or a complete
@@ -1221,9 +1345,120 @@ var stripTagsRe = regexp.MustCompile(`(?s)<!--.*?-->|<[^>]*>`)
 // collapse, and only then are the character references resolved. Resolving
 // first would let a reference standing for a space -- `&nbsp;`, `&#32;` -- be
 // collapsed away as though the author had typed one.
-func filterStriptags(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	text := stripTagsRe.ReplaceAllString(value.Str(v), "")
-	return value.String(unescapeHTML(strings.Join(strings.Fields(text), " "))), nil
+// Each of the three steps walks the whole input, and each used to do it in one
+// uninterruptible call -- ReplaceAllString, then Fields, then a second
+// ReplaceAll. Fields was also an allocation the size of the input, holding every
+// word of it separately and charged to nobody.
+func filterStriptags(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	text, err := stripTags(s, value.Str(v))
+	if err != nil {
+		return value.Undefined, err
+	}
+	text, err = collapseSpace(s, text)
+	if err != nil {
+		return value.Undefined, err
+	}
+	text, err = unescapeHTML(s, text)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.String(text), nil
+}
+
+// stripTags removes every comment and tag, yielding as it goes.
+//
+// The regexp still decides what a tag is -- the pattern is markupsafe's and is
+// not worth reimplementing -- but it is asked for one match at a time rather
+// than for all of them at once, so a render can be stopped between tags. A
+// match is never empty, since the shortest thing the pattern accepts is "<>",
+// so the cursor always advances.
+func stripTags(s *State, text string) (string, error) {
+	var b strings.Builder
+	b.Grow(len(text))
+	for at := 0; at < len(text); {
+		if err := s.Poll(); err != nil {
+			return "", err
+		}
+		loc := stripTagsRe.FindStringIndex(text[at:])
+		if loc == nil {
+			b.WriteString(text[at:])
+			break
+		}
+		b.WriteString(text[at : at+loc[0]])
+		at += loc[1]
+	}
+	return b.String(), nil
+}
+
+// collapseSpace is strings.Join(strings.Fields(text), " ") in one pass.
+//
+// Fields materialises every word of the input before Join puts them back
+// together, which for a large string is two allocations the size of it. Writing
+// the separators while walking needs neither, and gives the walk somewhere to
+// yield.
+func collapseSpace(s *State, text string) (string, error) {
+	var b strings.Builder
+	b.Grow(len(text))
+	pending, started := false, false
+	// Runs are copied whole rather than a rune at a time: writing each rune
+	// back out separately cost more than the two allocations this exists to
+	// avoid, which made the filter slower than the version it replaced.
+	for at := 0; at < len(text); {
+		r, size := utf8.DecodeRuneInString(text[at:])
+		if unicode.IsSpace(r) {
+			// Leading whitespace is dropped rather than collapsed,
+			// and trailing whitespace never gets written, because
+			// the separator is only emitted once something follows.
+			pending = started
+			at += size
+			continue
+		}
+		if err := s.Poll(); err != nil {
+			return "", err
+		}
+		if pending {
+			b.WriteByte(' ')
+			pending = false
+		}
+		start := at
+		for at < len(text) {
+			r, size = utf8.DecodeRuneInString(text[at:])
+			if unicode.IsSpace(r) {
+				break
+			}
+			at += size
+		}
+		b.WriteString(text[start:at])
+		started = true
+	}
+	return b.String(), nil
+}
+
+// unescapeHTML is Python's html.unescape, which is what markupsafe's unescape
+// is, and therefore what |striptags ends in.
+//
+// It used to be a replacer over eight entities. That left `&AMP;` -- the
+// uppercase spelling the standard also defines, and what `{{ html|upper }}`
+// produces -- and the other 2,223 named references sitting in the output.
+//
+// The yield is between references rather than inside the scan for them: a
+// string with no "&" leaves immediately, and one with references is
+// interruptible in proportion to how many it has.
+func unescapeHTML(s *State, text string) (string, error) {
+	if !strings.Contains(text, "&") {
+		return text, nil
+	}
+	var stop error
+	out := charrefRe.ReplaceAllStringFunc(text, func(match string) string {
+		if stop == nil {
+			stop = s.Poll()
+		}
+		return resolveCharref(match[1:])
+	})
+	if stop != nil {
+		return "", stop
+	}
+	return out, nil
 }
 
 // charrefRe is Python's _charref, which decides how much of the text after an
@@ -1232,21 +1467,6 @@ func filterStriptags(_ *State, v value.Value, _ *value.CallArgs) (value.Value, e
 // space, "<", "&", "#" or ";". The trailing ";" is optional, which is what
 // lets `&amp` resolve.
 var charrefRe = regexp.MustCompile("&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)")
-
-// unescapeHTML is Python's html.unescape, which is what markupsafe's unescape
-// is, and therefore what |striptags ends in.
-//
-// It used to be a replacer over eight entities. That left `&AMP;` -- the
-// uppercase spelling the standard also defines, and what `{{ html|upper }}`
-// produces -- and the other 2,223 named references sitting in the output.
-func unescapeHTML(s string) string {
-	if !strings.Contains(s, "&") {
-		return s
-	}
-	return charrefRe.ReplaceAllStringFunc(s, func(match string) string {
-		return resolveCharref(match[1:])
-	})
-}
 
 // resolveCharref resolves one reference, given the text after the "&".
 func resolveCharref(ref string) string {
@@ -1344,7 +1564,7 @@ func escapeArg(safe bool, v value.Value) value.Value {
 
 // filterPprint renders a value the way Python's pprint.pformat does: repr()
 // with dict keys sorted, wrapped across lines once it no longer fits.
-func filterPprint(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+func filterPprint(st *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	// pformat returns a str even for Markup input -- what it renders is the
 	// repr, which for Markup is `Markup('...')`.
 	sorted, err := sortDictKeys(v, 0)
@@ -1352,7 +1572,7 @@ func filterPprint(_ *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 		return value.Undefined, err
 	}
 	var b strings.Builder
-	if err := pformat(&b, sorted, 0, 0, 0); err != nil {
+	if err := pformat(st, &b, sorted, 0, 0, 0); err != nil {
 		return value.Undefined, err
 	}
 	return value.String(b.String()), nil
@@ -1384,8 +1604,8 @@ const pprintWidth = 80
 // column the value starts at; allowance is the space reserved on the last line
 // for whatever closes around it; level counts how deep the dispatch has gone,
 // because a long string only gains its wrapping parentheses at the top.
-func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) error {
-	return pformatSeen(b, v, indent, allowance, level, nil)
+func pformat(st *State, b *strings.Builder, v value.Value, indent, allowance, level int) error {
+	return pformatSeen(st, b, v, indent, allowance, level, nil)
 }
 
 // pformatSeen carries the containers on the active path.
@@ -1394,12 +1614,23 @@ func pformat(b *strings.Builder, v value.Value, indent, allowance, level int) er
 // reaches the recursive arms below; one whose repr is too wide to print on a
 // line does. CPython's pprint marks that case with the container's id, which
 // differs between runs there as it does here -- see docs/divergences.md.
-func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int, seen map[any]bool) error {
+func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance, level int, seen map[any]bool) error {
+	if err := st.Poll(); err != nil {
+		return err
+	}
 	if level > maxPPrintDepth {
 		return tooDeepToPrint()
 	}
+	// A string's repr is at least the string plus its quotes, so a long one
+	// cannot fit and does not have to be built to establish that. Building
+	// it escaped the whole of a 23MB string before anything was printed:
+	// the slowest part of the filter, and a pass nothing could interrupt.
+	limit := pprintWidth - indent - allowance
+	if text, ok := longPlainString(v, limit); ok {
+		return pformatString(st, b, text, "", indent, allowance, level+1)
+	}
 	rep := value.Repr(v)
-	if len(rep) <= pprintWidth-indent-allowance {
+	if len(rep) <= limit {
 		b.WriteString(rep)
 		return nil
 	}
@@ -1425,7 +1656,7 @@ func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int
 			b.WriteString(rep)
 			return nil
 		}
-		pformatString(b, v.AsString(), rep, indent, allowance, level+1)
+		return pformatString(st, b, v.AsString(), rep, indent, allowance, level+1)
 
 	case value.KindList, value.KindTuple:
 		s, _ := v.Seq()
@@ -1434,8 +1665,8 @@ func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int
 			open, close = "(", ")"
 		}
 		b.WriteString(open)
-		err := pformatItems(b, s.Items(), indent, allowance+1, func(b *strings.Builder, item value.Value, at, room int) error {
-			return pformatSeen(b, item, at, room, level+1, seen)
+		err := pformatItems(st, b, s.Items(), indent, allowance+1, func(b *strings.Builder, item value.Value, at, room int) error {
+			return pformatSeen(st, b, item, at, room, level+1, seen)
 		})
 		if err != nil {
 			return err
@@ -1448,12 +1679,12 @@ func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int
 	case value.KindDict:
 		d, _ := v.Dict()
 		b.WriteString("{")
-		err := pformatItems(b, d.Keys(), indent, allowance+1, func(b *strings.Builder, key value.Value, at, room int) error {
+		err := pformatItems(st, b, d.Keys(), indent, allowance+1, func(b *strings.Builder, key value.Value, at, room int) error {
 			keyRep := value.Repr(key)
 			b.WriteString(keyRep)
 			b.WriteString(": ")
 			val, _, _ := d.Get(key)
-			return pformatSeen(b, val, at+len(keyRep)+2, room, level+1, seen)
+			return pformatSeen(st, b, val, at+len(keyRep)+2, room, level+1, seen)
 		})
 		if err != nil {
 			return err
@@ -1466,16 +1697,60 @@ func pformatSeen(b *strings.Builder, v value.Value, indent, allowance, level int
 	return nil
 }
 
-// wordChunkRe matches a run of non-space followed by the space after it, which
-// is where pprint may break a long string.
-var wordChunkRe = regexp.MustCompile(`\S*\s*`)
+// longPlainString reports a string that is certainly too long to print on one
+// line, without building its repr.
+//
+// Markup is excluded because it is printed by its own repr on one line however
+// long it is, so that repr has to be built either way.
+func longPlainString(v value.Value, limit int) (string, bool) {
+	if v.Kind() != value.KindString || v.IsSafe() {
+		return "", false
+	}
+	text := v.AsString()
+	return text, text != "" && len(text) > limit
+}
+
+// wordChunks splits a line where pprint may break it: a run of non-space
+// followed by the space after it, which is `\S*\s*`.
+//
+// The regexp that spelled it was asked for every match at once, which for a
+// line that is the whole of a 23MB string is one pass nothing can interrupt
+// before any of the result is used. Walking it gives the same pieces -- every
+// position consumes at least one character until the end, so the only empty
+// match the pattern admits is the one at the end, which was being dropped
+// again straight afterwards.
+func wordChunks(st *State, line string) ([]string, error) {
+	var parts []string
+	for at := 0; at < len(line); {
+		if err := st.Poll(); err != nil {
+			return nil, err
+		}
+		start := at
+		for at < len(line) {
+			r, size := utf8.DecodeRuneInString(line[at:])
+			if unicode.IsSpace(r) {
+				break
+			}
+			at += size
+		}
+		for at < len(line) {
+			r, size := utf8.DecodeRuneInString(line[at:])
+			if !unicode.IsSpace(r) {
+				break
+			}
+			at += size
+		}
+		parts = append(parts, line[start:at])
+	}
+	return parts, nil
+}
 
 // pformatString breaks a string that does not fit into one repr per line,
 // wrapping the whole in parentheses when it is the outermost value.
-func pformatString(b *strings.Builder, text, rep string, indent, allowance, level int) {
+func pformatString(st *State, b *strings.Builder, text, rep string, indent, allowance, level int) error {
 	if text == "" {
 		b.WriteString(rep)
-		return
+		return nil
 	}
 	if level == 1 {
 		indent++
@@ -1486,23 +1761,39 @@ func pformatString(b *strings.Builder, text, rep string, indent, allowance, leve
 	var chunks []string
 	lines := splitLinesKeepingEnds(text)
 	for i, line := range lines {
-		lineRep := value.Repr(value.String(line))
+		if err := st.Poll(); err != nil {
+			return err
+		}
 		limit := maxWidth
 		if i == len(lines)-1 {
 			limit -= allowance
 		}
-		if len(lineRep) <= limit {
-			chunks = append(chunks, lineRep)
-			continue
+		// The same lower bound as above, for the same reason: a line
+		// longer than the width cannot be printed on one whatever its
+		// repr turns out to be, and building the repr of a line that is
+		// the whole of a 23MB string was the rest of what made this
+		// filter run for four seconds without pausing.
+		if len(line) <= limit {
+			if lineRep := value.Repr(value.String(line)); len(lineRep) <= limit {
+				chunks = append(chunks, lineRep)
+				continue
+			}
 		}
 		// Break the line between words, keeping each piece's repr
 		// inside the width.
-		parts := wordChunkRe.FindAllString(line, -1)
-		if n := len(parts); n > 0 && parts[n-1] == "" {
-			parts = parts[:n-1]
+		parts, err := wordChunks(st, line)
+		if err != nil {
+			return err
 		}
 		current := ""
 		for j, part := range parts {
+			// One repr of the accumulated piece per part, and a
+			// long line has as many parts as it has words: this is
+			// where pretty-printing a 23MB string spent four
+			// seconds, without once looking at the deadline.
+			if err := st.Poll(); err != nil {
+				return err
+			}
 			candidate := current + part
 			limit := maxWidth
 			if j == len(parts)-1 && i == len(lines)-1 {
@@ -1524,12 +1815,15 @@ func pformatString(b *strings.Builder, text, rep string, indent, allowance, leve
 
 	if len(chunks) == 1 {
 		b.WriteString(chunks[0])
-		return
+		return nil
 	}
 	if level == 1 {
 		b.WriteString("(")
 	}
 	for i, chunk := range chunks {
+		if err := st.Poll(); err != nil {
+			return err
+		}
 		if i > 0 {
 			b.WriteString("\n" + pprintIndent(indent))
 		}
@@ -1538,6 +1832,7 @@ func pformatString(b *strings.Builder, text, rep string, indent, allowance, leve
 	if level == 1 {
 		b.WriteString(")")
 	}
+	return nil
 }
 
 // pprintIndent is the leading space for one pprint line.
@@ -1577,12 +1872,15 @@ func splitLinesKeepingEnds(s string) []string {
 
 // pformatItems writes a sequence of entries one per line, indented one column
 // past the bracket that opened them.
-func pformatItems[T any](b *strings.Builder, items []T, indent, allowance int,
+func pformatItems[T any](st *State, b *strings.Builder, items []T, indent, allowance int,
 	write func(*strings.Builder, T, int, int) error,
 ) error {
 	inner := indent + 1
 	separator := ",\n" + pprintIndent(inner)
 	for i, item := range items {
+		if err := st.Poll(); err != nil {
+			return err
+		}
 		if i > 0 {
 			b.WriteString(separator)
 		}
@@ -1694,14 +1992,68 @@ func filterSafe(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 	return value.Safe(value.Str(v)), nil
 }
 
-func filterEscape(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	return escapeIfNeeded(v), nil
+func filterEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	if v.IsSafe() {
+		return v, nil
+	}
+	if html, ok := value.HTML(v); ok {
+		return value.Safe(html), nil
+	}
+	out, err := inChunks(s, value.Str(v), escapeHTML)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.Safe(out), nil
+}
+
+// inChunks applies a single-character substitution to a caller-sized string a
+// piece at a time, yielding between pieces.
+//
+// Escaping replaces one ASCII character with a sequence and carries nothing
+// across the boundary, so a chunk at a time gives exactly what the whole string
+// gives -- which is what makes splitting it legitimate rather than an
+// approximation. The boundary is moved to the next code point all the same, so
+// the pieces stay individually well formed.
+//
+// A string that fits in one chunk takes the original path untouched. That
+// matters: escaping is on the autoescape path for every write a template makes,
+// and most of those are short.
+//
+// Each chunk is charged rather than merely polled, because Poll is counted in
+// calls and the context is consulted every few thousand of them. At 64KiB a
+// chunk a 23MB string is 360 calls, which is not one consultation -- polling
+// here changed nothing at all, and only charging the bytes puts the check back
+// on the scale of the work. The bytes are also a real allocation, so charging
+// them is what the rest of the engine would have done anyway.
+func inChunks(s *State, in string, f func(string) string) (string, error) {
+	const chunk = 1 << 16
+	if len(in) <= chunk {
+		return f(in), nil
+	}
+	var b strings.Builder
+	b.Grow(len(in))
+	for at := 0; at < len(in); {
+		end := min(at+chunk, len(in))
+		for end < len(in) && !utf8.RuneStart(in[end]) {
+			end++
+		}
+		if err := s.ChargeBytes(int64(end - at)); err != nil {
+			return "", err
+		}
+		b.WriteString(f(in[at:end]))
+		at = end
+	}
+	return b.String(), nil
 }
 
 // filterForceEscape escapes even an already-safe value, which is how a
 // template un-trusts something it was handed as Markup.
-func filterForceEscape(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	return value.Safe(escapeHTML(value.Str(v))), nil
+func filterForceEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	out, err := inChunks(s, value.Str(v), escapeHTML)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.Safe(out), nil
 }
 
 // --- number filters ----------------------------------------------------------
@@ -2351,11 +2703,17 @@ func isWordBreak(r rune) bool {
 // uppercases the first character of each remaining chunk and lowercases the
 // rest. An apostrophe does not start a word, so "foo's bar" becomes
 // "Foo's Bar" where str.title() would give "Foo'S Bar".
-func jinjaTitle(s string) string {
+func jinjaTitle(st *State, s string) (string, error) {
 	var b strings.Builder
 	runes := []rune(s)
 	i := 0
 	for i < len(runes) {
+		// Once per word, and once per run of separators: both advance,
+		// so every pass through here is progress and the yield cannot
+		// starve.
+		if err := st.Poll(); err != nil {
+			return "", err
+		}
 		if isWordBreak(runes[i]) {
 			for i < len(runes) && isWordBreak(runes[i]) {
 				b.WriteRune(runes[i])
@@ -2374,7 +2732,7 @@ func jinjaTitle(s string) string {
 		b.WriteString(pyUpperString(string(word[0])))
 		b.WriteString(pyLowerString(string(word[1:])))
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // augmentedAssign rewords a `+` failure as the `+=` jinja2 actually performed.

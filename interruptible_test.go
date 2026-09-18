@@ -77,6 +77,15 @@ func buildSeq(kind string, n int) map[string]any {
 			v[i] = &keyed{K: i, V: i}
 		}
 		return map[string]any{kind: v}
+	case "text":
+		// Markup, a URL, an entity and non-ASCII, so no filter takes a
+		// short path past the work it is here to be measured doing.
+		//
+		// Lines, too: |indent and |pprint do a pass per line, so over a
+		// single long line their work is one copy however big the input
+		// is, and the workload would be measuring memmove.
+		return map[string]any{kind: strings.Repeat(
+			"Héllo wörld, <b>this</b> &amp; a http://example.com sentence.\n", n)}
 	case "mapping":
 		v := make(map[string]any, n)
 		for i := range n {
@@ -208,6 +217,47 @@ func assertYieldsToDeadline(t *testing.T, w workload) {
 			"work whatever the deadline says",
 			deadline.Round(time.Millisecond), stopped.Round(time.Millisecond),
 			100*float64(stopped)/float64(natural), natural.Round(time.Millisecond))
+	}
+}
+
+// stringWorkloads make each filter walk a string of the caller's length.
+//
+// A filter over one long string is the same defect as a filter over a long
+// sequence, and it was the more widespread of the two: ten of these ran to the
+// end of a 23MB string whatever the deadline said, |pprint by eight times over.
+// Nothing about it is exotic -- the string comes from the caller, or from `"x"
+// * n`, which the output bound allows up to 256MB of by default.
+var stringWorkloads = map[string]workload{
+	"upper":       {"text", `{{ text|upper|length }}`, 120000},
+	"lower":       {"text", `{{ text|lower|length }}`, 120000},
+	"title":       {"text", `{{ text|title|length }}`, 120000},
+	"capitalize":  {"text", `{{ text|capitalize|length }}`, 120000},
+	"striptags":   {"text", `{{ text|striptags|length }}`, 120000},
+	"wordcount":   {"text", `{{ text|wordcount }}`, 300000},
+	"wordwrap":    {"text", `{{ text|wordwrap(20)|length }}`, 120000},
+	"escape":      {"text", `{{ text|escape|length }}`, 400000},
+	"forceescape": {"text", `{{ text|forceescape|length }}`, 400000},
+	"tojson":      {"text", `{{ text|tojson|length }}`, 200000},
+	"pprint":      {"text", `{{ text|pprint|length }}`, 60000},
+	"urlize":      {"text", `{{ text|urlize|length }}`, 40000},
+	"replace":     {"text", `{{ text|replace("o", "0")|length }}`, 600000},
+	"indent":      {"text", `{{ text|indent(2)|length }}`, 400000},
+	"urlencode":   {"text", `{{ text|urlencode|length }}`, 200000},
+}
+
+// |string, |trim and |truncate are left out on purpose. What each does is
+// bounded whatever it is given -- returning the subject, trimming its two ends,
+// cutting it at a length the template chose -- so there is no walk to interrupt
+// and nothing for a deadline to arrive in the middle of. Copying the result is
+// all that is proportional to the input, and that is true of every filter here.
+
+// A filter that walks a caller-sized string has to stop when the deadline
+// passes, not when the string ends.
+func TestStringFiltersYieldToTheDeadline(t *testing.T) {
+	for name, w := range stringWorkloads {
+		t.Run(name, func(t *testing.T) {
+			assertYieldsToDeadline(t, w)
+		})
 	}
 }
 
