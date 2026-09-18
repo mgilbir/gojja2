@@ -1506,6 +1506,18 @@ func fillCharArg(args *value.CallArgs, i int, name string) (string, error) {
 	return fill, nil
 }
 
+// centerSplit divides a center's padding between the two sides.
+//
+// The odd character goes on the *left* when the margin and the width are both
+// odd, and on the right otherwise. CPython computes it as
+// `marg / 2 + (marg & width & 1)`, which is a quirk of the C rather than a rule
+// anyone would derive -- and reading it as "the odd one goes right" put
+// "ab".center(5) at " ab  " where CPython has "  ab ".
+func centerSplit(missing, width int) (left, right int) {
+	left = missing/2 + (missing & width & 1)
+	return left, missing - left
+}
+
 func pad(st *State, s string, width int, fill string, align padAlign) (value.Value, error) {
 	missing := width - value.StrLen(s)
 	if missing <= 0 {
@@ -1532,12 +1544,12 @@ func pad(st *State, s string, width int, fill string, align padAlign) (value.Val
 		}
 		return value.String(head + s), nil
 	default:
-		// Python's str.center puts the odd character on the right.
-		left, err := st.repeatString(fill, missing/2)
+		lead, trail := centerSplit(missing, width)
+		left, err := st.repeatString(fill, lead)
 		if err != nil {
 			return value.Undefined, err
 		}
-		right, err := st.repeatString(fill, missing-missing/2)
+		right, err := st.repeatString(fill, trail)
 		if err != nil {
 			return value.Undefined, err
 		}
