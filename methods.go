@@ -244,11 +244,11 @@ func overflowsC(t cIntType) error {
 		"Python int too large to convert to C %s", t.name)
 }
 
-// bytesMethods is what a bytes value answers. There was no table at all, so
-// `{{ "é".encode().decode() }}` could not round-trip.
-var bytesMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
-	"decode": methodDecode,
-}
+// bytesMethods is what a bytes value answers. It held decode alone, so a type
+// the engine otherwise supports fully -- repr, indexing, iteration, comparison,
+// concatenation, repetition -- answered an attribute error to all 41 of its
+// other methods. See bytes_methods.go.
+var bytesMethods = registerBytesMethods()
 
 // --- string methods ----------------------------------------------------------
 

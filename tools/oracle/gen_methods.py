@@ -31,6 +31,8 @@ import jinja2
 ROOT = Path(__file__).resolve().parents[2]
 DST = ROOT / "method_arity.go"
 METHODS_GO = ROOT / "methods.go"
+# bytes has forty-two methods and they live in a file of their own.
+BYTES_GO = ROOT / "bytes_methods.go"
 
 # A receiver of each type, chosen so that a correctly-shaped call is as likely
 # as possible to *work*: the probe reads arity errors, and an argument error of
@@ -139,6 +141,51 @@ def one_count_template(message: str, n: int, what: str) -> str:
     return parts[0] + "%d" + parts[2]
 
 
+def text_signature_keywords(fn) -> list[str] | None:
+    """The keyword-capable parameter names out of a builtin's __text_signature__.
+
+    inspect refuses a handful of builtins whose signature text it cannot parse
+    -- bytes.hex declares `sep=<unrepresentable>` -- and the names are right
+    there in the text. There are exactly three across the types here, and two
+    of them are positional-only, so the `/` marker has to be honoured or this
+    would report keywords that CPython refuses.
+
+    A method with no signature text at all declares no keywords: CPython says
+    "takes no keyword arguments" for every one of them, which was checked.
+    Returns None only when the text is there and cannot be read, which is the
+    case that must stop the generator rather than be guessed at.
+    """
+    text = getattr(fn, "__text_signature__", None)
+    if text is None:
+        return []
+    inner = text.strip()
+    if not (inner.startswith("(") and inner.endswith(")")):
+        return None
+
+    fields: list[str] = []
+    depth, field = 0, ""
+    for ch in inner[1:-1] + ",":
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            fields.append(field.strip())
+            field = ""
+            continue
+        field += ch
+
+    # Everything up to a "/" is positional-only and cannot be named.
+    if "/" in fields:
+        fields = fields[fields.index("/") + 1:]
+    names = []
+    for f in fields:
+        if not f or f in ("/", "*") or f.startswith("$") or f.startswith("*"):
+            continue
+        names.append(f.split("=", 1)[0].strip())
+    return names
+
+
 def keyword_rule(fn, lead, what: str) -> tuple[list[str], str, bool]:
     """The keywords a method accepts, and what it says about one it does not.
 
@@ -151,7 +198,14 @@ def keyword_rule(fn, lead, what: str) -> tuple[list[str], str, bool]:
             if p.kind in (p.KEYWORD_ONLY, p.POSITIONAL_OR_KEYWORD) and p.name != "self":
                 names.append(p.name)
     except (TypeError, ValueError):
-        names = []
+        # inspect refuses some builtins whose __text_signature__ it cannot
+        # parse -- bytes.hex declares `sep=<unrepresentable>` -- and the
+        # names are right there in the text. Recording "no keywords" here
+        # is the guess this module exists not to make: bytes.hex takes two,
+        # and the generated table said it took none.
+        names = text_signature_keywords(fn)
+        if names is None:
+            raise SystemExit(f"{what}: cannot read the parameter names")
 
     try:
         sig = inspect.signature(fn)
@@ -238,18 +292,19 @@ def go_string(s: str) -> str:
 def gojja2_methods() -> dict[str, list[str]]:
     """The methods gojja2 implements, read out of its own tables."""
     txt = METHODS_GO.read_text(encoding="utf-8")
+    bytes_txt = BYTES_GO.read_text(encoding="utf-8")
 
-    def table(start: str, end: str) -> list[str]:
-        i = txt.index(start)
-        j = txt.index(end, i)
-        return sorted(set(re.findall(r'^\t+"([a-z_0-9]+)":', txt[i:j], re.M)))
+    def table(src: str, start: str, end: str) -> list[str]:
+        i = src.index(start)
+        j = src.index(end, i)
+        return sorted(set(re.findall(r'^\t+"([a-z_0-9]+)":', src[i:j], re.M)))
 
     return {
-        "str": table("\tstringMethods = map[string]", "\n\t}\n"),
-        "list": table("var listMethods = map[string]", "\n}\n"),
-        "dict": table("var dictMethods = map[string]", "\n}\n"),
-        "tuple": table("var tupleMethods = map[string]", "\n}\n"),
-        "bytes": table("var bytesMethods = map[string]", "\n}\n"),
+        "str": table(txt, "\tstringMethods = map[string]", "\n\t}\n"),
+        "list": table(txt, "var listMethods = map[string]", "\n}\n"),
+        "dict": table(txt, "var dictMethods = map[string]", "\n}\n"),
+        "tuple": table(txt, "var tupleMethods = map[string]", "\n}\n"),
+        "bytes": table(bytes_txt, "\tm := map[string]fn{", "\n\treturn m\n}"),
     }
 
 

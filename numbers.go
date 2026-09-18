@@ -81,6 +81,12 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
 			return intToBytes(st, asBig(base), args)
 		}), true
+	case "from_bytes":
+		// A classmethod, so the receiver contributes nothing but the
+		// route to it: a template cannot name int, only an int.
+		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+			return bigFromBytes(st, value.Undefined, args)
+		}), true
 	}
 	return value.Undefined, false
 }
@@ -112,6 +118,17 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 	case "as_integer_ratio":
 		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
 			return floatRatio(x)
+		}), true
+	case "fromhex":
+		// A classmethod, reached through a float for the same reason
+		// from_bytes is reached through an int.
+		return boundNumeric(s, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+			v, _ := args.Arg(0)
+			if !v.IsString() {
+				return value.Undefined, errs.New(errs.TypeError,
+					"bad argument type for built-in operation")
+			}
+			return floatFromHex(value.Str(v))
 		}), true
 	}
 	return value.Undefined, false
@@ -230,4 +247,78 @@ func intToBytes(st *State, b *big.Int, args *value.CallArgs) (value.Value, error
 		}
 	}
 	return value.Bytes(out), nil
+}
+
+// floatFromHex is float.fromhex, which is not strconv.ParseFloat with a
+// different base.
+//
+// Python's grammar is its own: the "0x" is optional, the binary exponent is
+// optional, and the digits are hexadecimal either way -- so "1.8" is 1.5 there
+// and 1.8 to Go. It also takes the three non-finite spellings, and tolerates
+// surrounding whitespace. The normalisation here puts a string into the form
+// Go's hexadecimal float syntax accepts, and refuses anything else in Python's
+// words rather than Go's.
+func floatFromHex(s string) (value.Value, error) {
+	bad := func() (value.Value, error) {
+		return value.Undefined, errs.New(errs.ValueError,
+			"invalid hexadecimal floating-point string")
+	}
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return bad()
+	}
+	sign := ""
+	if t[0] == '+' || t[0] == '-' {
+		sign, t = string(t[0]), t[1:]
+	}
+	switch strings.ToLower(t) {
+	case "inf", "infinity":
+		return value.Float(math.Inf(map[string]int{"-": -1}[sign] | 1)), nil
+	case "nan":
+		return value.Float(math.NaN()), nil
+	}
+	if strings.HasPrefix(t, "0x") || strings.HasPrefix(t, "0X") {
+		t = t[2:]
+	}
+	if t == "" {
+		return bad()
+	}
+	// Split off the binary exponent, which Go requires and Python does not.
+	mantissa, exponent := t, "p0"
+	if i := strings.IndexAny(t, "pP"); i >= 0 {
+		mantissa, exponent = t[:i], "p"+t[i+1:]
+		if exponent == "p" {
+			return bad()
+		}
+	}
+	// The mantissa has to be hex digits with at most one point, and at
+	// least one digit. Go would otherwise accept things Python does not.
+	seenPoint, seenDigit := false, false
+	for i := range len(mantissa) {
+		switch c := mantissa[i]; {
+		case c == '.':
+			if seenPoint {
+				return bad()
+			}
+			seenPoint = true
+		case isHexDigit(c):
+			seenDigit = true
+		default:
+			return bad()
+		}
+	}
+	if !seenDigit {
+		return bad()
+	}
+	f, err := strconv.ParseFloat(sign+"0x"+mantissa+exponent, 64)
+	if err != nil {
+		// Out of range is an overflow rather than a syntax error, which
+		// is what Python reports for a hex float too large to hold.
+		if strings.Contains(err.Error(), "value out of range") {
+			return value.Undefined, errs.New(errs.OverflowError,
+				"hexadecimal value too large to represent as a float")
+		}
+		return bad()
+	}
+	return value.Float(f), nil
 }

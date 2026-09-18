@@ -1,0 +1,3 @@
+{}
+---
+{{ "ab".encode().center(7, "*".encode()) }}|{{ "42".encode().zfill(5) }}|{{ "a	b".encode().expandtabs(4) }}

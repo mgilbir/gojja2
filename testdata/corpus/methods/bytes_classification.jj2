@@ -1,0 +1,3 @@
+{}
+---
+{{ "abc".encode().isalpha() }}|{{ "é".encode().isalpha() }}|{{ "".encode().isalpha() }}|{{ "".encode().isascii() }}|{{ "é".encode().isascii() }}|{{ "Ab".encode().istitle() }}
