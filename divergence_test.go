@@ -5,7 +5,7 @@ package gojja2
 
 import (
 	"context"
-	"strconv"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -141,15 +141,27 @@ func TestRangeLengthDoesNotOverflow(t *testing.T) {
 // TestRangeLengthNeverNegative pins the invariant the overflow broke. A
 // negative length reaches make() in anything that sizes a slice from it.
 func TestRangeLengthNeverNegative(t *testing.T) {
-	bounds := []string{"-9223372036854775808", "-1", "0", "1", "9223372036854775807"}
-	steps := []string{"-9223372036854775808", "-3", "-1", "1", "3", "9223372036854775807"}
+	// The wide bounds are in here too: a range whose bounds do not fit an
+	// int64 takes the other representation, and the invariant is the same
+	// one. Construction goes through newRange because that is what computes
+	// the length -- reaching past it and assigning the fields left the
+	// length nil, which is its own kind of wrong answer.
+	bounds := []string{
+		"-1180591620717411303424", "-9223372036854775808", "-1", "0", "1",
+		"9223372036854775807", "1180591620717411303424",
+	}
+	steps := []string{
+		"-1180591620717411303424", "-9223372036854775808", "-3", "-1", "1", "3",
+		"9223372036854775807", "1180591620717411303424",
+	}
 	for _, start := range bounds {
 		for _, stop := range bounds {
 			for _, step := range steps {
-				r := &rangeObject{}
-				r.start = mustParseInt(t, start)
-				r.stop = mustParseInt(t, stop)
-				r.step = mustParseInt(t, step)
+				r := newRange(
+					mustParseBig(t, start),
+					mustParseBig(t, stop),
+					mustParseBig(t, step),
+				)
 				if n := r.Len(); n < 0 {
 					t.Errorf("range(%s, %s, %s).Len() = %d, must never be negative",
 						start, stop, step, n)
@@ -161,6 +173,16 @@ func TestRangeLengthNeverNegative(t *testing.T) {
 			}
 		}
 	}
+}
+
+// mustParseBig reads an exact bound, however wide.
+func mustParseBig(t *testing.T, s string) *big.Int {
+	t.Helper()
+	b, ok := new(big.Int).SetString(s, 10)
+	if !ok {
+		t.Fatalf("bad bound %q", s)
+	}
+	return b
 }
 
 // TestFillCharMustBeOneCharacter pins CPython's two refusals. A multi-character
@@ -255,15 +277,6 @@ func TestDictUpdateAcceptsEverythingDictDoes(t *testing.T) {
 
 // mustParseInt keeps the range table readable; the bounds are written as they
 // appear in a template.
-func mustParseInt(t *testing.T, s string) int64 {
-	t.Helper()
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		t.Fatalf("parse %q: %v", s, err)
-	}
-	return n
-}
-
 // TestRepeatCountIndexOverflow: sequence repetition asks its count for
 // __index__ before it repeats anything, so a count outside Py_ssize_t raises
 // an OverflowError there -- whatever the count's sign, and however short the

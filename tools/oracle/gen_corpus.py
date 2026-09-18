@@ -1593,6 +1593,33 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- a range holds its bounds exactly -----------------------------------------
+# range() builds a Python object holding Python ints, so bounds past an int64
+# are legal: the range simply cannot be walked far. Printing it, deciding
+# membership, indexing, slicing and asking for the first element all work
+# without the length ever being reachable -- and len() is the one that refuses,
+# because it converts to a C ssize_t.
+#
+# gojja2 narrowed the bounds when the range was built and refused the lot.
+case("globals/range_wide_repr", "{{ range(1180591620717411303424) }}|{{ range(2,1180591620717411303424,3) }}")
+case("globals/range_wide_first", "{{ range(1180591620717411303424)|first }}|{{ range(2,1180591620717411303424,3)|first }}")
+case("globals/range_wide_contains",
+     "{{ 3 in range(1180591620717411303424) }}|{{ -1 in range(1180591620717411303424) }}"
+     "|{{ 1180591620717411303424 in range(1180591620717411303424) }}")
+case("globals/range_wide_index_and_slice",
+     "{{ range(1180591620717411303424)[5] }}|{{ range(1180591620717411303424)[1:3] }}")
+case("globals/range_wide_attrs",
+     "{{ range(1180591620717411303424).start }}|{{ range(1180591620717411303424).stop }}"
+     "|{{ range(1180591620717411303424).step }}")
+case("globals/range_wide_elements", "{{ range(1180591620717411303424,1180591620717411303427)|list }}")
+case("globals/range_wide_equality",
+     "{{ range(1180591620717411303424) == range(1180591620717411303424) }}"
+     "|{{ range(1180591620717411303424) == range(3) }}")
+# len() converts to a C ssize_t, so a range longer than one refuses there --
+# which is where the refusal belongs, rather than at construction.
+case("globals/range_wide_length_overflows", "{{ range(1180591620717411303424)|length }}")
+case("globals/range_wide_negative", "{{ range(-1180591620717411303424,0) }}|{{ range(1180591620717411303424,0,-1) }}")
+
 # --- a search bound is a slice index, so it clamps ----------------------------
 # str.find and friends take their start and end as slice indices: out of range
 # clamps rather than refusing, in both directions and in both positions. An
