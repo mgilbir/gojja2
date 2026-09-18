@@ -626,29 +626,46 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 	return sliceOf(base, start, stop, step)
 }
 
+// sliceIndexOf converts a value used as a slice bound, saturating rather than
+// refusing an integer too wide for the machine.
+//
+// An integer too big for the machine is still an integer, and CPython clamps
+// it: `"abcde"[:2**70]` is the whole string, not an empty one and not an
+// error. Only a value that is not a whole number at all is refused, in the
+// words CPython uses for a slice.
+//
+// It saturates to MinInt/MaxInt rather than to the sequence's own bounds
+// because it does not know them: `str.find` counts its bounds in code points
+// and the subscript path in elements. Saturating leaves each caller to clamp
+// against the length it has, which they already do.
+//
+// This is shared with strSliceBounds deliberately. Both convert the same thing
+// and they used to disagree -- the search methods refused an integer this one
+// clamps -- so a template could tell which implementation it had reached.
+func sliceIndexOf(v value.Value) (int, error) {
+	if i, ok := v.Int64(); ok {
+		return int(i), nil
+	}
+	if b, whole := v.BigInt(); whole {
+		if b.Sign() < 0 {
+			return math.MinInt, nil
+		}
+		return math.MaxInt, nil
+	}
+	return 0, errs.New(errs.TypeError,
+		"slice indices must be integers or None or have an __index__ method")
+}
+
 // sliceIndex converts one slice operand, which only the branches that index
 // with it may do -- see evalSlice.
 func sliceIndex(v value.Value) (*int, error) {
 	if v.IsNone() {
 		return nil, nil
 	}
-	i, ok := v.Int64()
-	if !ok {
-		// An integer too big for the machine is still an integer, and
-		// CPython clamps it: `"abcde"[:2**70]` is the whole string, not
-		// an empty one and not an error. Only a value that is not a
-		// whole number at all is refused.
-		if b, whole := v.BigInt(); whole {
-			idx := math.MaxInt
-			if b.Sign() < 0 {
-				idx = math.MinInt
-			}
-			return &idx, nil
-		}
-		return nil, errs.New(errs.TypeError,
-			"slice indices must be integers or None or have an __index__ method")
+	idx, err := sliceIndexOf(v)
+	if err != nil {
+		return nil, err
 	}
-	idx := int(i)
 	return &idx, nil
 }
 

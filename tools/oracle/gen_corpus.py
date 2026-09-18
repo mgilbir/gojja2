@@ -1593,6 +1593,28 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- a search bound is a slice index, so it clamps ----------------------------
+# str.find and friends take their start and end as slice indices: out of range
+# clamps rather than refusing, in both directions and in both positions. An
+# integer too wide for the machine is still an integer, so it clamps too.
+#
+# These were refused as though the bound were not an integer at all, while the
+# subscript path -- `{{ "abcde"[2**70:] }}` -- clamped correctly, which is the
+# real defect: one conversion with two implementations that disagreed.
+case("methods/search_bounds_clamp_wide",
+     '{{ "abc".find("b",1180591620717411303424) }}|{{ "abc".rfind("b",1180591620717411303424) }}'
+     '|{{ "abc".count("b",1180591620717411303424) }}|{{ "abc".startswith("b",1180591620717411303424) }}')
+case("methods/search_bounds_clamp_wide_negative",
+     '{{ "abc".find("b",-1180591620717411303424) }}|{{ "abc".count("b",-1180591620717411303424) }}'
+     '|{{ "abc".index("b",-1180591620717411303424) }}')
+case("methods/search_bounds_clamp_end",
+     '{{ "abc".find("b",0,1180591620717411303424) }}|{{ "abc".find("b",0,-1180591620717411303424) }}'
+     '|{{ "abc".count("b",0,1180591620717411303424) }}')
+case("methods/search_bounds_clamp_index_raises",
+     '{{ "abc".index("b",1180591620717411303424) }}')
+# A bound that is not a whole number at all is still refused, in CPython's words.
+case("methods/search_bounds_reject_float", '{{ "abc".find("b",1.5) }}')
+
 # --- tojson's indent is a repetition, and fails like one ----------------------
 # json.dumps builds the indent unit as `" " * indent`, so the multiplication is
 # where a hostile argument is refused. An index-sized overflow fires whatever
