@@ -187,6 +187,25 @@ case("include/without_context", "{% set v = 'V' %}{% include 'inc.html' without 
 case("include/in_loop", "{% for v in [1,2] %}{% include 'inc.html' %}{% endfor %}", __templates__=INC)
 case("include/missing", "A{% include 'nope.html' %}B", __templates__=INC)
 case("include/ignore_missing", "A{% include 'nope.html' ignore missing %}B", __templates__=INC)
+
+# {% include %} compiles to get_or_select_template, while {% extends %},
+# {% import %} and {% from %} compile to get_template. So a name that is not a
+# string is a *selection* in the first -- empty by truthiness, then iterated --
+# and a missing template in the others, reported as it was written.
+case("errors/include_none", "{% include none %}", __templates__=INC)
+case("errors/include_empty_list", "{% include [] %}", __templates__=INC)
+case("errors/include_empty_dict", "{% include {} %}", __templates__=INC)
+case("errors/include_number", "{% include 1 %}", __templates__=INC)
+case("errors/include_number_ignore_missing", "{% include 1 ignore missing %}", __templates__=INC)
+case("errors/include_dict_not_found", "{% include {'a':1} %}", __templates__=INC)
+case("errors/include_none_ignore_missing", "[{% include none ignore missing %}]", __templates__=INC)
+case("include/select_dict_key", "{% include {'inc.html': 1} %}", __templates__=INC)
+case("include/select_tuple", "{% include ('inc.html',) %}", __templates__=INC)
+case("errors/import_number", "{% import 1 as m %}{{ m }}", __templates__=INC)
+case("errors/import_none", "{% import none as m %}{{ m }}", __templates__=INC)
+case("errors/import_list", "{% import ['a'] as m %}{{ m }}", __templates__=INC)
+case("errors/from_number", "{% from 1 import x %}{{ x }}", __templates__=INC)
+case("errors/extends_dict", "{% extends {} %}", __templates__=INC)
 case("import/module", "{% import 'mac.html' as m %}{{ m.f(1) }}{{ m.exported }}", __templates__=INC)
 case("import/from", "{% from 'mac.html' import f, f as g %}{{ f(1) }}{{ g(2) }}", __templates__=INC)
 case("import/from_missing", "{% from 'mac.html' import nope %}{{ nope }}", __templates__=INC)
