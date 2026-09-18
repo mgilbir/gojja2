@@ -30,8 +30,6 @@ var hostileTemplates = []string{
 	`{{ [1]|tojson(2000000000) }}`,
 	`{{ [[1]]|tojson(2000000000) }}`,
 	`{{ {"a": 1}|tojson(2000000000) }}`,
-	// A digit count.
-	`{{ 1.5|round(2000000000) }}`,
 	// A number of containers to build.
 	`{{ []|slice(100000000)|length }}`,
 	`{{ [1]|batch(100000000, 0)|length }}`,
@@ -67,6 +65,41 @@ func TestHostileTemplatesAreRefused(t *testing.T) {
 				t.Errorf("rendered %d bytes instead of refusing", len(out))
 			}
 		})
+	}
+}
+
+// TestHugeRoundPrecisionIsBoundedNotRefused: `{{ 1.5|round(2000000000) }}` used
+// to be on the list above, because the precision sized a FormatFloat call
+// directly. It is not hostile any more and it is not refused either: a float
+// carries no decimal past ~1080 places, so the precision is clamped and the
+// allocation is bounded whatever the template asks -- which is also the answer
+// CPython gives, instantly.
+//
+// A bound that cannot be exceeded is better than one that has to be checked, so
+// what is pinned here is the answer and the absence of a refusal.
+func TestHugeRoundPrecisionIsBoundedNotRefused(t *testing.T) {
+	env := New(WithMaxOutputBytes(4096), WithMaxIterations(10000))
+	for _, tc := range []struct{ src, want string }{
+		{`{{ 1.5|round(2000000000) }}`, "1.5"},
+		{`{{ 1.5|round(9223372036854775807) }}`, "1.5"},
+		{`{{ 1.5|round(-2000000000) }}`, "0.0"},
+		{`{{ 1.5|round(-9223372036854775808) }}`, "0.0"},
+		{`{{ -1.5|round(-2000000000) }}`, "-0.0"},
+		{`{{ 5|round(-2000000000) }}`, "0"},
+		{`{{ 1.23456789|round(2000000000) }}`, "1.23456789"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
 	}
 }
 

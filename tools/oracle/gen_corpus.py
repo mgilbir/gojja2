@@ -634,6 +634,30 @@ case("filters/round_keeps_the_type",
      "{{ (3)|round(-1) }}|{{ (-4)|round(-1) }}|{{ (3)|round(0) }}|{{ (2.5)|round(-1) }}|"
      "{{ (10000000000000000000000)|round(-1) }}|{{ (10000000000000000000000)|round(-25) }}")
 
+# do_round is three different things depending on the method, and it checks the
+# method before it looks at anything else. "common" is Python's round(): the
+# method is looked up on the *value*, so a type with no __round__ is refused
+# before the precision is examined; None asks for an integer rather than a
+# float, exactly; and bool is an int. "ceil" and "floor" raise ten to the
+# precision instead, so they take a float one, fail on None at the exponent, and
+# divide by zero once the power underflows.
+case("filters/round_none_precision",
+     "{{ 1.5|round(none) }}|{{ 2.5|round(none) }}|{{ 3.5|round(none) }}|"
+     "{{ -2.5|round(none) }}|{{ 0.5|round(none) }}|{{ -0.0|round(none) }}|{{ 5|round(none) }}")
+case("filters/round_bool_is_an_int",
+     "{{ true|round(-1) }}|{{ true|round(0) }}|{{ false|round(-1) }}|"
+     "{{ 1.5|round(true) }}|{{ 1.55|round(true) }}|{{ 1.5|round(false) }}")
+case("filters/round_negative_precision_exact",
+     "{{ 1e300|round(-300) }}|{{ 1e300|round(-301) }}|{{ 1.5|round(-400) }}|{{ -1.5|round(-400) }}")
+case("filters/round_float_precision_ceil",
+     "{{ 1.5|round(2.5, 'ceil') }}|{{ 1.5|round(-1.5, 'ceil') }}|{{ 1.5|round(-3, 'ceil') }}")
+case("errors/round_method_first", "{{ 'x'|round(1.5, 'nope') }}")
+case("errors/round_value_before_precision", "{{ 'abc'|round(1.5) }}")
+case("errors/round_precision_not_whole", "{{ 1.5|round(1.5) }}")
+case("errors/round_ceil_exponent_first", "{{ 'abc'|round(none, 'ceil') }}")
+case("errors/round_ceil_not_real", "{{ 'abc'|round(0, 'ceil') }}")
+case("errors/round_ceil_underflow", "{{ 1.5|round(-400, 'ceil') }}")
+
 # |int with a base is Python's int(str, base): base 0 detects the prefix in
 # either case, a matching prefix is allowed but not required, a sign does not
 # hide it, and underscores separate digits -- including after a prefix.
