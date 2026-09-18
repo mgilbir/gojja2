@@ -1,0 +1,14 @@
+{
+  "case": "errors/dict_view_not_json.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "Object of type dict_keys is not JSON serializable"
+  }
+}

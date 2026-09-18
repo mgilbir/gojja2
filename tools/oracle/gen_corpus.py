@@ -1593,6 +1593,28 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- dict views are views ------------------------------------------------------
+# d.keys(), d.values() and d.items() returned lists, which a template can tell
+# apart: the repr, the `is sequence` test, indexing, json.dumps, and -- the one
+# that is not cosmetic -- that a view tracks the dict it came from.
+#
+# Not the lazy-sequence divergence: that is about the map/select/items
+# *filters*, which return generators in jinja2 and lists here on purpose.
+case("methods/dict_view_reprs", "{% set d = {'b': 2, 'a': 1} %}{{ d.keys() }}|{{ d.values() }}|{{ d.items() }}")
+case("methods/dict_view_is_not_a_sequence",
+     "{% set d = {'b': 2, 'a': 1} %}{{ d.keys() is sequence }}|{{ d.keys() is iterable }}|{{ d.keys()[0] }}|{{ d.keys()|length }}")
+case("methods/dict_view_walks",
+     "{% set d = {'b': 2, 'a': 1} %}{{ d.keys()|list }}|{{ d.keys()|sort }}|{{ d.values()|sum }}|{{ 'a' in d.keys() }}")
+# A view is live, which a list cannot be.
+case("methods/dict_view_tracks_the_dict",
+     "{% set d = {'b': 2} %}{% set k = d.keys() %}{{ d.update({'c': 3}) }}{{ k|list }}|{{ k|length }}")
+case("errors/dict_view_not_json", "{{ {'a': 1}.keys()|tojson }}")
+# Keys and items compare as sets; a values view compares by identity.
+case("methods/dict_view_equality",
+     "{{ {'a':1}.keys() == {'a':2}.keys() }}|{{ {'a':1}.keys() == {'b':1}.keys() }}"
+     "|{{ {'a':1}.items() == {'a':2}.items() }}|{{ {'a':1,'b':2}.keys() == {'b':2,'a':1}.keys() }}")
+case("methods/dict_view_values_equality", "{% set d = {'a': 1} %}{{ d.values() == d.values() }}|{{ d.keys() == d.keys() }}")
+
 # --- the bytes methods --------------------------------------------------------
 # bytes had one method, decode, so the other forty-one were attribute errors on
 # a type the engine otherwise supports fully. They are not the str methods:

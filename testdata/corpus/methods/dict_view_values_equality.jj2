@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{{ d.values() == d.values() }}|{{ d.keys() == d.keys() }}
