@@ -196,6 +196,21 @@ func (r *rangeObject) Repr() string {
 }
 
 func globalRange(s *State, args *value.CallArgs) (value.Value, error) {
+	// range is a C function, and it checks in this order: keywords at all,
+	// then the count, then each argument. Every step matters -- a keyword
+	// beats a wrong count, and a wrong count beats an argument that is not
+	// an integer, so `range("x",1,2,3)` is about the count and not the
+	// string. Checking the count last, after converting, reported the
+	// wrong one of the three for every mixed call.
+	if len(args.Kwargs) > 0 {
+		return value.Undefined, errs.New(errs.TypeError, "%s", rangeKwMessage)
+	}
+	switch {
+	case len(args.Pos) == 0:
+		return value.Undefined, errs.New(errs.TypeError, "%s", rangeFewMessage)
+	case len(args.Pos) > 3:
+		return value.Undefined, errs.New(errs.TypeError, rangeManyMessage, len(args.Pos))
+	}
 	nums := make([]int64, 0, 3)
 	for _, v := range args.Pos {
 		n, ok := v.Int64()
@@ -216,9 +231,6 @@ func globalRange(s *State, args *value.CallArgs) (value.Value, error) {
 		if r.step == 0 {
 			return value.Undefined, errs.New(errs.ValueError, "range() arg 3 must not be zero")
 		}
-	default:
-		return value.Undefined, errs.New(errs.TypeError,
-			"range expected 1 to 3 arguments, got %d", len(nums))
 	}
 	return value.FromObject(r), nil
 }
@@ -278,9 +290,17 @@ func (c *cyclerObject) GetAttr(name string) (value.Value, bool) {
 		}
 		return c.items[c.pos], true
 	case "next":
-		return Func("next", func(*State, *value.CallArgs) (value.Value, error) { return c.next() }), true
+		return Func("next", func(_ *State, a *value.CallArgs) (value.Value, error) {
+			if err := bindArgs(globalSignatures["Cycler.next"], a, 1); err != nil {
+				return value.Undefined, err
+			}
+			return c.next()
+		}), true
 	case "reset":
-		return Func("reset", func(*State, *value.CallArgs) (value.Value, error) {
+		return Func("reset", func(_ *State, a *value.CallArgs) (value.Value, error) {
+			if err := bindArgs(globalSignatures["Cycler.reset"], a, 1); err != nil {
+				return value.Undefined, err
+			}
 			c.pos = 0
 			return value.None, nil
 		}), true
@@ -297,12 +317,20 @@ func (c *cyclerObject) next() (value.Value, error) {
 	return v, nil
 }
 
-func (c *cyclerObject) Call(*value.CallArgs) (value.Value, error) { return c.next() }
-func (c *cyclerObject) TypeName() string                          { return "Cycler" }
-func (c *cyclerObject) QualifiedName() string                     { return "jinja2.utils.Cycler" }
-func (c *cyclerObject) Repr() string                              { return "<Cycler>" }
+// A Cycler is not callable. jinja2 rotates it through .next(), and giving it a
+// Call made `{{ c() }}` advance the cycle where CPython refuses the call
+// outright -- a template written against that would silently do nothing on the
+// other implementation.
+func (c *cyclerObject) TypeName() string      { return "Cycler" }
+func (c *cyclerObject) QualifiedName() string { return "jinja2.utils.Cycler" }
+func (c *cyclerObject) Repr() string          { return "<Cycler>" }
 
 func globalCycler(s *State, args *value.CallArgs) (value.Value, error) {
+	// Python binds the call before __init__ runs, so a keyword beats the
+	// empty-cycle RuntimeError that the body raises.
+	if err := bindArgs(globalSignatures["Cycler.__init__"], args, 1); err != nil {
+		return value.Undefined, err
+	}
 	if len(args.Pos) == 0 {
 		return value.Undefined, errs.New(errs.RuntimeError, "at least one item has to be provided")
 	}
@@ -312,7 +340,11 @@ func globalCycler(s *State, args *value.CallArgs) (value.Value, error) {
 // joinerObject returns nothing the first time it is called and its separator
 // every time after, for joining a list whose items are emitted separately.
 type joinerObject struct {
-	sep  string
+	// The separator is whatever was passed, not its string form. jinja2
+	// stores it and hands it back, so `joiner(1)` yields the integer 1 and
+	// `joiner(none)` yields None -- where forcing a string, or falling back
+	// to the default for anything that was not one, printed ", ".
+	sep  value.Value
 	used bool
 }
 
@@ -321,18 +353,24 @@ func (j *joinerObject) TypeName() string                   { return "Joiner" }
 func (j *joinerObject) QualifiedName() string              { return "jinja2.utils.Joiner" }
 func (j *joinerObject) Repr() string                       { return "<Joiner>" }
 
-func (j *joinerObject) Call(*value.CallArgs) (value.Value, error) {
+func (j *joinerObject) Call(args *value.CallArgs) (value.Value, error) {
+	if err := bindArgs(globalSignatures["Joiner.__call__"], args, 1); err != nil {
+		return value.Undefined, err
+	}
 	if !j.used {
 		j.used = true
 		return value.String(""), nil
 	}
-	return value.String(j.sep), nil
+	return j.sep, nil
 }
 
 func globalJoiner(s *State, args *value.CallArgs) (value.Value, error) {
-	sep := ", "
-	if v, ok := arg(args, 0, "sep"); ok && v.Kind() == value.KindString {
-		sep = v.AsString()
+	if err := bindArgs(globalSignatures["Joiner.__init__"], args, 1); err != nil {
+		return value.Undefined, err
+	}
+	sep := value.String(", ")
+	if v, ok := arg(args, 0, "sep"); ok {
+		sep = v
 	}
 	return value.FromObject(&joinerObject{sep: sep}), nil
 }
@@ -360,6 +398,12 @@ vivamus viverra volutpat vulputate`)
 // jinja2 draws from a random source, so this cannot render the same bytes as
 // CPython and is excluded from conformance comparison. See docs/divergences.md.
 func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
+	// A plain Python function, so the binding is the ordinary one: an
+	// unexpected keyword first, then one a positional already filled, then
+	// too many positionals.
+	if err := bindArgs(globalSignatures["generate_lorem_ipsum"], args, 0); err != nil {
+		return value.Undefined, err
+	}
 	n, err := intArg(args, 0, "n", 5)
 	if err != nil {
 		return value.Undefined, err

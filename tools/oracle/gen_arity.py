@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 # Copyright 2026 The gojja2 Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Write the filter and test signatures gojja2 checks calls against.
+"""Write the filter, test and global signatures gojja2 checks calls against.
 
 Every argument error a template can provoke is CPython's, raised by CPython's
-own argument binding against the signature of a function in jinja2.filters or
-jinja2.tests. Transcribing 48 signatures by hand is exactly the kind of work
-that is done once, drifts, and is never checked again -- so they are read out
-of the pinned jinja2 with inspect.signature instead.
+own argument binding against the signature of a function in jinja2.filters,
+jinja2.tests or jinja2.utils. Transcribing 48 signatures by hand is exactly the
+kind of work that is done once, drifts, and is never checked again -- so they
+are read out of the pinned jinja2 with inspect.signature instead.
+
+The globals are the same story one level down: `cycler` and `joiner` are
+classes, so the call a template writes is bound against __init__ with self
+counted among the positional arguments, which is why CPython says "takes from 1
+to 2 positional arguments but 3 were given" for `joiner('-','x')`.
 
 The counts here are Python's, so the messages can be too: a filter called with
 too many arguments reports the numbers CPython would, injected first parameter
@@ -24,6 +29,7 @@ from pathlib import Path
 import jinja2
 from jinja2.filters import FILTERS
 from jinja2.tests import TESTS
+from jinja2.utils import Cycler, Joiner, generate_lorem_ipsum
 from jinja2.utils import pass_eval_context  # noqa: F401  (import proves the API shape)
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +92,22 @@ var filterSignatures = map[string]signature{{
 
 var testSignatures = map[string]signature{{
 {tests}}}
+
+// globalSignatures covers the callables jinja2 puts in every template's
+// namespace, and the methods reachable on what they return. They are keyed by
+// the name CPython puts in the error rather than by the template's name,
+// because one global -- cycler -- is a class whose __init__, next and reset
+// each bind separately.
+var globalSignatures = map[string]signature{{
+{globals}}}
+
+// range is a C function with two wordings for a wrong count rather than one,
+// so it does not fit the single countMessage a builtin signature carries.
+const (
+	rangeFewMessage  = {rangeFew}
+	rangeManyMessage = {rangeMany}
+	rangeKwMessage   = {rangeKw}
+)
 '''
 
 
@@ -188,8 +210,13 @@ def call_name(fn) -> str:
     return f"{module}.{qualname}()"
 
 
-def describe(fn) -> dict | None:
-    """Read one callable's signature, or None when it cannot be introspected."""
+def describe(fn, qualified: bool = False) -> dict | None:
+    """Read one callable's signature, or None when it cannot be introspected.
+
+    qualified names the function the way an error raised inside a *method*
+    names it -- "Joiner.__init__" rather than "__init__" -- which is the only
+    form that tells two classes' constructors apart.
+    """
     target = inspect.unwrap(fn)
     try:
         sig = inspect.signature(target)
@@ -223,8 +250,9 @@ def describe(fn) -> dict | None:
     count_msg, kw_msg = "", ""
     if builtin:
         count_msg, kw_msg = builtin_messages(target, total, getattr(target, "__name__", "?"))
+    name_attr = "__qualname__" if qualified else "__name__"
     return {
-        "pyName": getattr(target, "__name__", "?"),
+        "pyName": getattr(target, name_attr, "?"),
         "pyCallName": call_name(fn),
         "params": params,
         "injected": injected,
@@ -237,10 +265,30 @@ def describe(fn) -> dict | None:
     }
 
 
-def rows_for(kind: str, table: dict) -> tuple[str, int]:
+def range_messages() -> tuple[str, str, str]:
+    """Probe CPython for range's three argument errors.
+
+    range says "at least" for too few and "at most" for too many, which is two
+    templates where every other builtin here has one, and it refuses keywords
+    without naming them. Each is diffed out of two real calls so that nothing
+    about the wording is assumed.
+    """
+    few = probe(range)
+    many = substitute(
+        probe(range, *([1] * 4)), probe(range, *([1] * 9)), 4, 9, "range"
+    )
+    kw_a, kw_b = probe(range, 1, zz=2), probe(range, qq=2)
+    if few is None or kw_a is None or kw_a != kw_b:
+        raise SystemExit(f"range: unexpected wording {few!r} {kw_a!r} {kw_b!r}")
+    if "%d" in few:
+        raise SystemExit(f"range: the too-few message carries a count: {few!r}")
+    return few, many, kw_a
+
+
+def rows_for(kind: str, table: dict, qualified: bool = False) -> tuple[str, int]:
     rows = []
     for name in sorted(table):
-        d = describe(table[name])
+        d = describe(table[name], qualified=qualified)
         if d is None:
             print(f"skipped {kind} {name}: not introspectable", file=sys.stderr)
             continue
@@ -258,14 +306,41 @@ def rows_for(kind: str, table: dict) -> tuple[str, int]:
     return "".join(rows), len(rows)
 
 
+# GLOBALS are the callables a template reaches without importing anything, and
+# the methods on what they return. A class is listed by its __init__ because
+# that is what a call to the class binds against.
+GLOBALS = {
+    "generate_lorem_ipsum": generate_lorem_ipsum,
+    "Cycler.__init__": Cycler.__init__,
+    "Cycler.next": Cycler.next,
+    "Cycler.reset": Cycler.reset,
+    "Joiner.__init__": Joiner.__init__,
+    "Joiner.__call__": Joiner.__call__,
+}
+
+
 def main() -> int:
     filters, nf = rows_for("filter", FILTERS)
     tests, nt = rows_for("test", TESTS)
+    globals_, ng = rows_for("global", GLOBALS, qualified=True)
+    few, many, kw = range_messages()
     DST.write_text(
-        HEADER.format(version=jinja2.__version__, filters=filters, tests=tests),
+        HEADER.format(
+            version=jinja2.__version__,
+            filters=filters,
+            tests=tests,
+            globals=globals_,
+            rangeFew=go_string(few),
+            rangeMany=go_string(many),
+            rangeKw=go_string(kw),
+        ),
         encoding="utf-8",
     )
-    print(f"wrote {nf} filter and {nt} test signatures into {DST.relative_to(ROOT)}", file=sys.stderr)
+    print(
+        f"wrote {nf} filter, {nt} test and {ng} global signatures "
+        f"into {DST.relative_to(ROOT)}",
+        file=sys.stderr,
+    )
     return 0
 
 
