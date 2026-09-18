@@ -7,6 +7,7 @@ template language, built to be behaviourally identical to CPython's `jinja2`.
 [Divergences](docs/divergences.md) ·
 [Guide](docs/guide.md) ·
 [Conformance](docs/conformance.md) ·
+[Contributing](docs/contributing.md) ·
 [Limits](docs/limits.md) ·
 [Extending](docs/extending.md) ·
 [Scope](docs/scope.md) ·
@@ -161,3 +162,8 @@ request from a **fork** deliberately runs nothing until a maintainer has read
 the diff and added the `safe-to-test` label: CI executes the code in the pull
 request, and that is not something to do to an unreviewed branch. Pushing a new
 commit after the label is applied requires it to be applied again.
+
+[docs/contributing.md](docs/contributing.md) has the rest: how to tell a bug
+from a deliberate divergence, where a conformance case has to live, how to
+regenerate a golden, and why every one of these commands wants a cgroup cap
+around it.

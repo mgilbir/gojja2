@@ -9,7 +9,8 @@ Start from the question, not the filename.
 | Will my jinja2 templates render the same here? | [divergences.md](divergences.md) — one divergence can change what a working template renders, and it is named in the first paragraph |
 | Does it support *X*? Async? `{% trans %}`? The sandbox? | [scope.md](scope.md) |
 | How correct is it, and how is that measured? | [conformance.md](conformance.md) |
-| How do I add a conformance case, or reproduce the numbers? | [conformance.md](conformance.md) |
+| How do I add a conformance case, or reproduce the numbers? | [contributing.md](contributing.md), then [conformance.md](conformance.md) |
+| I found something gojja2 gets wrong — now what? | [contributing.md](contributing.md) |
 | Why did my render fail with `ErrOutputTooLarge`, or stop early? | [limits.md](limits.md) |
 | How do I bound a render of a template I do not trust? | [limits.md](limits.md) |
 | How do I add a filter, a test, a global, or expose my own type? | [extending.md](extending.md) |
