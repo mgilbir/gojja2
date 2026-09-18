@@ -31,6 +31,7 @@ are safety controls rather than behavioural choices, and they live in
 |---|---|---|
 | [Lazy sequence filters](#lazy-sequence-filters) | sequence filters return lists, not generators | **Yes** -- and toward what the author meant |
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
+| [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | the macro compiles; jinja2 raises a Python `SyntaxError` | No -- the template is broken under CPython |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
 | [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | No -- it fails either way |
@@ -116,6 +117,26 @@ gojja2 renders the template. Reproducing the other answer would mean carrying a
 poisoned constant through the optimizer so that *using* it raises a NameError
 about a Python identifier that has no counterpart here. The corpus case is in
 `testdata/known_failures.txt`.
+
+### A macro with a repeated parameter name
+
+```jinja
+{% macro m(a, a) %}{% endmacro %}
+```
+
+CPython raises `SyntaxError: duplicate argument 'l_1_a' in function definition
+(<template>, line 12)`. jinja2 compiles a macro to a Python function, and the
+duplicate reaches the Python compiler as a duplicate parameter.
+
+Look at what that error names: `l_1_a` is the identifier jinja2 *generated* for
+the parameter, and line 12 is a line of the generated module, not of the
+template. Neither exists here, and inventing them would mean building a decoy of
+jinja2's code generator to report an error about it -- so this is the kind of
+Python-specific artefact [scope.md](scope.md) excludes rather than a behaviour
+to match.
+
+gojja2 compiles the macro. The later parameter wins, as it would in any
+signature where a name is given twice.
 
 ### Complex numbers
 

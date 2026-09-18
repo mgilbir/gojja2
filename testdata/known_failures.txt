@@ -62,3 +62,10 @@ own/fold/infinite_constant.jj2   # jinja2 writes `inf` into its generated source
 # machine with the output and iteration budgets both set. See docs/limits.md.
 own/limits/integer_width_multiply.jj2   # gojja2 bounds a computed integer at 2**20 bits
 own/limits/integer_width_power.jj2      # gojja2 bounds a computed integer at 2**20 bits
+
+# --- a macro with a repeated parameter name -----------------------------------
+# jinja2 compiles a macro to a Python function, so a duplicate parameter reaches
+# the Python compiler. The SyntaxError it raises names `l_1_a` -- the identifier
+# jinja2 generated -- and a line of the generated module, neither of which
+# exists here. gojja2 compiles the macro. See docs/divergences.md.
+own/macro/duplicate_parameter.jj2   # jinja2 raises a Python SyntaxError about a generated name

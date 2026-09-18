@@ -1593,6 +1593,23 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- a raw tag with nothing after it -------------------------------------------
+# jinja2 looks for a raw body with a regex that requires one, so an empty
+# remainder never reaches the "missing end" branch and the tokenizer stops:
+# `{% raw %}` renders "" and `{% raw %}abc` raises. The boundary is exactly "is
+# there anything left", which is why one trailing space brings the error back.
+case("syntax/raw_empty_at_eof", "{% raw %}")
+case("syntax/raw_empty_at_eof_trimmed", "{%- raw -%}")
+case("syntax/raw_empty_after_text", "a{% raw %}")
+case("errors/raw_unterminated_with_body", "{% raw %}abc")
+case("errors/raw_unterminated_whitespace_body", "{% raw %}   ")
+
+# --- a macro with a repeated parameter name ------------------------------------
+# jinja2 compiles a macro to a Python function, so the duplicate reaches the
+# Python compiler; the error it raises names the identifier jinja2 *generated*
+# and a line of the generated module. See docs/divergences.md.
+case("macro/duplicate_parameter", "{% macro m(a, a) %}{{ a }}{% endmacro %}{{ m(1, 2) }}")
+
 # --- dict views are views ------------------------------------------------------
 # d.keys(), d.values() and d.items() returned lists, which a template can tell
 # apart: the repr, the `is sequence` test, indexing, json.dumps, and -- the one
