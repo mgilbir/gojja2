@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'b': 2, 'a': 1} %}{{ d.keys()|list }}|{{ d.keys()|sort }}|{{ d.values()|sum }}|{{ 'a' in d.keys() }}

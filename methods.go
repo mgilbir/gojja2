@@ -1585,12 +1585,10 @@ func stringPredicate(f func(string) bool) func(*State, value.Value, *value.CallA
 
 var dictMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
 	"keys": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-		d, _ := r.Dict()
-		return value.NewList(d.Keys()...), nil
+		return value.FromObject(&dictView{d: r, kind: viewKeys}), nil
 	},
 	"values": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-		d, _ := r.Dict()
-		return value.NewList(d.Values()...), nil
+		return value.FromObject(&dictView{d: r, kind: viewValues}), nil
 	},
 	"items":  methodDictItems,
 	"get":    methodDictGet,
@@ -1607,12 +1605,7 @@ var dictMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.V
 }
 
 func methodDictItems(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-	d, _ := r.Dict()
-	items := make([]value.Value, 0, d.Len())
-	for _, e := range d.Entries() {
-		items = append(items, value.NewTuple(e.Key, e.Value))
-	}
-	return value.NewList(items...), nil
+	return value.FromObject(&dictView{d: r, kind: viewItems}), nil
 }
 
 func methodDictGet(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {

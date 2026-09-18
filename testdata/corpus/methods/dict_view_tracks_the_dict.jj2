@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'b': 2} %}{% set k = d.keys() %}{{ d.update({'c': 3}) }}{{ k|list }}|{{ k|length }}

@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'b': 2, 'a': 1} %}{{ d.keys() is sequence }}|{{ d.keys() is iterable }}|{{ d.keys()[0] }}|{{ d.keys()|length }}
