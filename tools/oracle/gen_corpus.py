@@ -1246,6 +1246,7 @@ case("errors/arity_injected", '{{ "x"|truncate(1,2,3,4,5) }}')
 # explicit None reaches str.center.
 case("errors/sort_reverse_none", "{{ [3,1,2]|sort(none) }}")
 case("errors/sort_reverse_str", "{{ [3,1,2]|sort('x') }}")
+case("errors/sort_value_before_reverse", "{{ 1|sort(none) }}")
 case("errors/center_width_none", "{{ 'abc'|center(none) }}")
 case("filters/sort_reverse_int",
      "{{ [3,1,2]|sort(1) }}|{{ [3,1,2]|sort(0) }}|{{ [3,1,2]|sort(true) }}|"
