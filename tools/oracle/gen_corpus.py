@@ -652,6 +652,7 @@ case("filters/round_negative_precision_exact",
 case("filters/round_float_precision_ceil",
      "{{ 1.5|round(2.5, 'ceil') }}|{{ 1.5|round(-1.5, 'ceil') }}|{{ 1.5|round(-3, 'ceil') }}")
 case("errors/round_method_first", "{{ 'x'|round(1.5, 'nope') }}")
+case("errors/round_method_unhashable", "{{ 1|round(method=[]) }}")
 case("errors/round_value_before_precision", "{{ 'abc'|round(1.5) }}")
 case("errors/round_precision_not_whole", "{{ 1.5|round(1.5) }}")
 case("errors/round_ceil_exponent_first", "{{ 'abc'|round(none, 'ceil') }}")

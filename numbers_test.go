@@ -314,6 +314,10 @@ func TestRoundIsPythonsRound(t *testing.T) {
 		{`{{ "x"|round(1.5, "nope") }}`, "method must be common, ceil or floor"},
 		{`{{ 1.5|round(1.5, none) }}`, "method must be common, ceil or floor"},
 		{`{{ 1.5|round(1.5, 1) }}`, "method must be common, ceil or floor"},
+		// The method is tested for membership of a *set*, so a value
+		// that cannot be hashed is about the value.
+		{`{{ 1|round(method=[]) }}`, "unhashable type: 'list'"},
+		{`{{ 1.5|round(0, {}) }}`, "unhashable type: 'dict'"},
 		// Then the value's own __round__, before the precision.
 		{`{{ "abc"|round(1.5) }}`, "type str doesn't define __round__ method"},
 		{`{{ []|round("x") }}`, "type list doesn't define __round__ method"},
