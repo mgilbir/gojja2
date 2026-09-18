@@ -18,11 +18,15 @@ if err != nil {
 return tmpl.Render(ctx, w, map[string]any{"user": user, "items": items})
 ```
 
-Output is streamed to `w` as the template produces it, with one exception:
-`{% include %}` renders the included template in full before writing it on, so
-peak memory tracks the largest include rather than the write buffer.
-`tmpl.RenderString(ctx, vars)` returns the whole document instead, and returns
-nothing at all when the render fails.
+Output is streamed to `w` as the template produces it, except where a construct
+has to hold its own body before it can hand it on. Six do: `{% include %}`
+renders the included template in full before writing it out, `{% filter %}` and
+a block `{% set %}` buffer their bodies so a filter or an assignment can be
+applied to the finished text, a macro body and a `{% block %}` body are captured
+because each is a function that returns its output, and a recursive `{% for %}`
+captures each level so `loop()` can return it. Peak memory tracks the largest of
+those, not the write buffer. `tmpl.RenderString(ctx, vars)` returns the whole
+document instead, and returns nothing at all when the render fails.
 
 Go values cross into templates by reflection: structs expose their exported
 fields (by name or by `json` tag) and their methods that take no arguments,
@@ -42,9 +46,14 @@ outside its root gets "not found" and not a different file.
 A method that *takes* arguments is not exposed by default, because calling one
 means the template chooses what a host method is invoked with.
 `WithMethodPolicy(value.AllMethods)` opts in, for templates as trusted as the
-Go code they call into. A structure that refers to itself is fine to pass: it
-converts once and is shared, so it renders the way Python renders one
-(`{'k': 'v', 'self': {...}}`) rather than expanding forever.
+Go code they call into.
+
+A value that refers to itself is fine to pass: it converts once and is shared,
+so it terminates rather than expanding forever, and `{{ n.self.self.k }}`
+resolves however deep it is followed. A self-referential *map* prints the way
+Python prints one, `{'k': 'v', 'self': {...}}`; a *struct* prints as the object
+it is, in the `<pkg.Type object>` form, because that is what printing a struct
+gives whether or not it is cyclic.
 
 `SelectAutoescape` follows jinja2's `select_autoescape`: matching ignores case
 and a leading dot is optional, and a template compiled with `FromString` is
@@ -75,6 +84,13 @@ produced:
 ```
 $ .venv/bin/python tools/oracle/oracle.py --template '{% set d = {1:"a",} %}{{ d[1] }}'
 {
+  "case": "<stdin>",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
   "ok": true,
   "output": "a"
 }
@@ -113,23 +129,29 @@ Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
 templates real models ship, a theme written to be used rather than tested, and
 four project generators. Only their *inputs* are used: every expected output is
-regenerated from the pinned CPython jinja2, because that is the specification. On top of that, roughly a million generated templates have been
-rendered by both implementations and compared (see below).
+regenerated from the pinned CPython jinja2, because that is the specification.
+On top of that, roughly a million generated templates have been rendered by both
+implementations and compared (see below).
 
-The 5 that differ are listed, with reasons, in `testdata/known_failures.txt`;
-a case on that list which starts passing fails the test, so the list can only
-shrink deliberately. The table above is checked against the suite by
-`TestConformance` whenever every corpus is present, so it cannot drift from
-what is actually measured -- it had. Two are Jinja's own sandbox-escape tests, which walk a
-Python object graph out to `__subclasses__` and `__import__`. `__class__` *is*
-implemented; these two go past it. Two are DeepSeek-R1's chat
-template, which writes `{{ tools|map(attribute='function')|tojson }}` -- jinja2's
-`map` returns a generator, which `json.dumps` refuses, so the template raises
-under CPython and renders under gojja2. The fifth is `{% if 1e400 %}`: jinja2
+Those numbers are not typed in by hand. `TestConformance` parses this README and
+fails the build on any row that disagrees with what it just measured, whenever
+every corpus is present -- which it does because the table had drifted, twice,
+after cases were added and the prose was not.
+
+The 5 that differ are listed, with reasons, in `testdata/known_failures.txt`. A
+case on that list which starts passing also fails the test, so the list can only
+shrink deliberately.
+
+They are three kinds. **Two** are Jinja's own sandbox-escape tests, which walk a
+Python object graph out to `__subclasses__` and `__import__`; `__class__` *is*
+implemented, and these two go past it. **Two** are DeepSeek-R1's chat template,
+which writes `{{ tools|map(attribute='function')|tojson }}` -- jinja2's `map`
+returns a generator, which `json.dumps` refuses, so the template raises under
+CPython and renders under gojja2. **The fifth** is `{% if 1e400 %}`: jinja2
 writes a folded constant into its generated Python as that constant's repr, and
 `repr(float("inf"))` is the bare word `inf`, so the template raises a NameError
-there and renders here. See [docs/divergences.md](docs/divergences.md) for all
-three.
+there and renders here. All three are explained in
+[docs/divergences.md](docs/divergences.md).
 
 Four further cases are marked *ungradable* and left out of the table: they
 render a generator's memory address, which differs between two runs of CPython
@@ -196,12 +218,17 @@ make fuzz TIME=5m       # coverage-guided, via go test -fuzz
 
 Generation is structured rather than byte-level: random bytes are read as
 *grammar decisions*, so almost every case renders instead of being a syntax
-error, and a mutation changes one choice rather than corrupting a tag. The
-oracle runs as a warm subprocess -- about 5,000 templates a second rather than
-ten -- under a memory cap and a per-render timeout, so a pathological case
-degrades to an error instead of taking the machine down. A divergence is
-shrunk against the same check before it is reported, so findings arrive
-minimal.
+error, and a mutation changes one choice rather than corrupting a tag. A
+divergence is shrunk against the same check before it is reported, so findings
+arrive minimal.
+
+The oracle runs as a warm subprocess. That is what makes a soak practical at
+all: starting an interpreter and importing jinja2 per case costs tens of
+milliseconds, which caps a cold run at a few tens of templates a second, where
+keeping one up runs into the hundreds. Budget minutes for
+`make soak N=200000`, not seconds -- which is why the target allows itself an
+hour. The subprocess runs under a memory cap and a per-render timeout, so a
+pathological case degrades to an error instead of taking the machine down.
 
 This is where most of the subtler behaviour in this list came from: that
 jinja2 wraps a sort key in a list (so two undefineds sort but do not compare),
@@ -220,9 +247,13 @@ slicing, and trailing commas in every literal.
 
 Apache 2.0. See `LICENSE` and `NOTICE`.
 
-gojja2 contains no code from Jinja or MiniJinja. Their test suites are used as
-behavioural references and are downloaded on demand by `make suites` into the
-gitignored `third_party/` directory -- never vendored.
+gojja2 contains no code from any other implementation of the language. Ten
+upstream projects are consulted as behavioural references and corpus inputs:
+Jinja itself, MiniJinja, minja, llama.cpp, a collection of real chat templates,
+a documentation theme and four project generators. `make suites` downloads them
+on demand into the gitignored `third_party/`; nothing from any of them is
+vendored, committed or redistributed. `NOTICE` names each one with its licence,
+and each generated corpus repeats it in its own `SOURCES.md`.
 
 ## Development
 
