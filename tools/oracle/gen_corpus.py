@@ -1593,6 +1593,17 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- where center puts the odd character --------------------------------------
+# On the left when the margin and the width are both odd, and on the right
+# otherwise: CPython computes it as `marg / 2 + (marg & width & 1)`. gojja2 read
+# it as "the odd one goes right", which agrees whenever the margin is even --
+# which is why every case here has an odd one.
+case("methods/center_odd_margin", '{{ "ab".center(5) }}|{{ "ab".center(7) }}|{{ "abcd".center(7) }}')
+case("methods/center_odd_margin_even_width", '{{ "abc".center(6) }}|{{ "a".center(4) }}')
+case("methods/center_even_margin", '{{ "ab".center(6) }}|{{ "abc".center(7) }}')
+case("filters/center_odd_margin", '{{ "ab"|center(5) }}|{{ "abc"|center(6) }}')
+case("methods/center_odd_margin_fill", '{{ "ab".center(5, "*") }}|{{ "abc".center(6, "*") }}')
+
 # --- bytes is a sequence of integers ------------------------------------------
 # Indexing a bytes already gave the byte value, and iteration, len, comparison,
 # concatenation and the sequence filters were all right. Slicing was missing

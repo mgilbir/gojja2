@@ -1,0 +1,3 @@
+{}
+---
+{{ "ab".center(5) }}|{{ "ab".center(7) }}|{{ "abcd".center(7) }}
