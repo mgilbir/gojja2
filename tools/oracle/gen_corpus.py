@@ -1593,6 +1593,28 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- float() and int() read a bytes -------------------------------------------
+# Python's float() and int() take a bytes exactly as they take a str. Both
+# filters asked "is this a str", so a bytes fell through to the filter's
+# *default*: `{{ "1.5".encode()|float }}` answered 0.0 rather than 1.5, which is
+# a wrong number rather than an error, and silent.
+case("filters/float_reads_bytes", '{{ "1.5".encode()|float }}|{{ " 1.5 ".encode()|float }}|{{ "inf".encode()|float }}|{{ "a".encode()|float }}|{{ "a".encode()|float(9) }}')
+case("filters/int_reads_bytes", '{{ "15".encode()|int }}|{{ " 15 ".encode()|int }}|{{ "-15".encode()|int }}|{{ "1.5".encode()|int }}|{{ "a".encode()|int }}')
+case("filters/filesizeformat_reads_bytes", '{{ "1000".encode()|filesizeformat }}')
+case("errors/filesizeformat_bad_bytes", '{{ "a".encode()|filesizeformat }}')
+# do_int passes the base only for a str, so a bytes is always base ten.
+case("filters/int_base_is_for_strings_only",
+     '{{ "ff"|int(0, 16) }}|{{ "ff".encode()|int(0, 16) }}|{{ "15".encode()|int(0, 16) }}|{{ "0x1f".encode()|int(0, 0) }}')
+# wordwrap is the one filter a bytes gets past the attribute lookup of, so its
+# failure is textwrap's -- and an empty bytes never reaches textwrap at all.
+case("filters/wordwrap_empty_bytes", '{{ "".encode()|wordwrap }}')
+case("errors/wordwrap_bytes", '{{ "a".encode()|wordwrap }}')
+case("errors/wordwrap_non_string", '{{ 1|wordwrap }}')
+# json.dumps builds the indent before it discovers it cannot serialise the
+# value; only a str short-circuits before the indent is touched.
+case("errors/tojson_indent_before_bytes_refusal", '{{ "a".encode()|tojson(1.5) }}')
+case("filters/tojson_string_ignores_indent", '{{ "s"|tojson(1.5) }}')
+
 # --- a raw tag with nothing after it -------------------------------------------
 # jinja2 looks for a raw body with a regex that requires one, so an empty
 # remainder never reaches the "missing end" branch and the tokenizer stops:

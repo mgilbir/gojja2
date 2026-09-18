@@ -891,9 +891,22 @@ func filterWordwrap(_ *State, v value.Value, args *value.CallArgs) (value.Value,
 
 	// jinja2 calls value.splitlines(), so a non-string fails as a missing
 	// attribute rather than being stringified.
+	//
+	// A bytes is the exception: it *has* splitlines, so it gets past the
+	// attribute and into textwrap, whose pattern is a str one and refuses
+	// a bytes-like object. An empty bytes splits to no lines at all, so
+	// nothing is ever handed to textwrap and the filter answers "" --
+	// which is why the emptiness is checked rather than assumed.
 	if !v.IsString() {
-		return value.Undefined, errs.New(errs.AttributeError,
-			"'%s' object has no attribute 'splitlines'", v.TypeName())
+		if v.Kind() != value.KindBytes {
+			return value.Undefined, errs.New(errs.AttributeError,
+				"'%s' object has no attribute 'splitlines'", v.TypeName())
+		}
+		if len(splitLines(v.AsString(), false)) == 0 {
+			return value.String(""), nil
+		}
+		return value.Undefined, errs.New(errs.TypeError,
+			"cannot use a string pattern on a bytes-like object")
 	}
 
 	var out []string
@@ -1701,13 +1714,23 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 			return value.Undefined, overflowToInt(f)
 		}
 		return intFromFloat(f), nil
-	case v.IsString():
-		text := strings.TrimSpace(v.AsString())
+	case isNumericText(v):
+		raw, _ := numericText(v)
+		text := strings.TrimSpace(raw)
 		// Python accepts base 0 or 2..36 and raises ValueError otherwise;
 		// jinja2's filter catches that and falls through to the float
 		// path, so `"10"|int(0, 99999)` is 10.
-		if baseOK {
-			if n, ok := pyParseInt(v.AsString(), base); ok {
+		// The base reaches the conversion only for a str. do_int tests
+		// `isinstance(value, str)` before passing it, so a bytes goes
+		// to the bare int(value) -- base ten, whatever was asked for --
+		// and `{{ "ff".encode()|int(0, 16) }}` is the default and not
+		// 255.
+		useBase := base
+		if !v.IsString() {
+			useBase = 10
+		}
+		if baseOK || !v.IsString() {
+			if n, ok := pyParseInt(raw, useBase); ok {
 				return value.BigInt(n), nil
 			}
 		}
@@ -1819,6 +1842,28 @@ func intFromFloat(f float64) value.Value {
 	return value.BigInt(b)
 }
 
+// numericText is the text Python's float() and int() read a value as.
+//
+// Both accept a bytes exactly as they accept a str -- float(b"1.5") is 1.5 and
+// int(b"15") is 15, because the conversion parses ASCII digits and does not
+// care which of the two carried them. Asking IsString alone left a bytes
+// falling through to the filter's *default*, so `{{ "1.5".encode()|float }}`
+// answered 0.0 rather than 1.5: a wrong number rather than an error, and
+// silent.
+func numericText(v value.Value) (string, bool) {
+	switch v.Kind() {
+	case value.KindString, value.KindBytes:
+		return v.AsString(), true
+	}
+	return "", false
+}
+
+// isNumericText is numericText as a predicate, for a switch case.
+func isNumericText(v value.Value) bool {
+	_, ok := numericText(v)
+	return ok
+}
+
 // validIntBase reports whether Python's int() would accept this base.
 func validIntBase(base int) bool { return base == 0 || (base >= 2 && base <= 36) }
 
@@ -1830,8 +1875,8 @@ func filterFloat(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 	if f, ok := v.Float64(); ok {
 		return value.Float(f), nil
 	}
-	if v.IsString() {
-		if f, ok := value.ParseFloat(strings.TrimSpace(v.AsString())); ok {
+	if text, ok := numericText(v); ok {
+		if f, ok := value.ParseFloat(strings.TrimSpace(text)); ok {
 			return value.Float(f), nil
 		}
 	}
@@ -2142,13 +2187,15 @@ func filterFilesizeformat(_ *State, v value.Value, args *value.CallArgs) (value.
 	}
 	bytes, ok := v.Float64()
 	if !ok {
-		// jinja2 calls float(value), so the failure is float()'s.
-		if !v.IsString() {
+		// jinja2 calls float(value), so the failure is float()'s -- and
+		// float() takes a bytes as readily as a str.
+		text, textual := numericText(v)
+		if !textual {
 			return value.Undefined, errs.New(errs.TypeError,
 				"float() argument must be a string or a real number, not '%s'",
 				v.TypeName())
 		}
-		f, ok := value.ParseFloat(strings.TrimSpace(v.AsString()))
+		f, ok := value.ParseFloat(strings.TrimSpace(text))
 		if !ok {
 			return value.Undefined, errs.New(errs.ValueError,
 				"could not convert string to float: %s", value.Repr(v))

@@ -1,0 +1,3 @@
+{}
+---
+{{ "1.5".encode()|float }}|{{ " 1.5 ".encode()|float }}|{{ "inf".encode()|float }}|{{ "a".encode()|float }}|{{ "a".encode()|float(9) }}
