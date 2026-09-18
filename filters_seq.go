@@ -527,7 +527,7 @@ func filterBatch(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 				// multiplies a sequence by a non-int, and one
 				// too wide for an index overflows. Mul charges
 				// the padding before building it.
-				n, err := value.Sub(size, have)
+				n, err := value.Sub(size, have, s)
 				if err != nil {
 					return value.Undefined, err
 				}

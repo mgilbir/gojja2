@@ -54,3 +54,11 @@ minja/syntax_decfafe0b4.jj2   ungradable: jinja2 prints a generator's address
 # a poisoned constant through the optimizer so that using it raises a NameError
 # about a Python identifier that has no counterpart here.
 own/fold/infinite_constant.jj2   # jinja2 writes `inf` into its generated source
+
+# --- the width limit on computed integers -------------------------------------
+# gojja2 refuses a computed integer wider than 2**20 bits; CPython computes it
+# and answers. The bound itself is the divergence, and it is what stops a
+# squaring loop -- which doubles the width each time -- from exhausting the
+# machine with the output and iteration budgets both set. See docs/limits.md.
+own/limits/integer_width_multiply.jj2   # gojja2 bounds a computed integer at 2**20 bits
+own/limits/integer_width_power.jj2      # gojja2 bounds a computed integer at 2**20 bits

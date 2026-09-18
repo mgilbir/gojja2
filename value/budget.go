@@ -56,6 +56,47 @@ func chargeBytes(b Budget, n int64) error {
 	return b.ChargeBytes(n)
 }
 
+// MaxIntBits bounds the width of any integer an expression computes.
+//
+// Integers here are arbitrary precision, which is what makes `{{ 2 ** 100 }}`
+// answer all 31 digits. Arbitrary precision and attacker-chosen magnitudes do
+// not combine: multiplication doubles the operand width, so an expression that
+// squares repeatedly grows exponentially while the template that asks for it
+// stays the same size.
+//
+// `**` carried a bound of its own long before the others did, which made the
+// bound decorative -- `x ** 2` was refused past this width and `x * x` was not,
+// though they compute the same number. So the limit belongs to *integers*
+// rather than to one operator: every operation that can widen an integer asks
+// this same question, and an operation added later inherits the answer instead
+// of reopening the hole.
+//
+// 2**20 bits is 128 KiB, or about 315,653 decimal digits. Nothing written on
+// purpose computes an integer that wide; anything that needs to is asking for
+// a bignum library rather than a template engine.
+const MaxIntBits = 1 << 20
+
+// chargeIntBits refuses an integer wider than MaxIntBits and charges the bytes
+// it is about to occupy against the budget.
+//
+// bits is an upper bound on the result's width derived from the operands, so
+// the question is asked before the result exists. Deriving it afterwards would
+// be charging for memory that is already committed, which is the shape nearly
+// every resource defect in this engine has had.
+//
+// op names the operator for the message, because "the result of what" is the
+// first thing anyone reading the error needs to know.
+func chargeIntBits(b Budget, op string, bits int64) error {
+	if bits > MaxIntBits {
+		return errs.New(errs.OverflowError,
+			"result of %s would be %d bits wide, over the %d bit limit",
+			op, bits, int64(MaxIntBits))
+	}
+	// Eight bits to the byte, rounded up: the budget counts bytes, and a
+	// width that rounds to zero still costs an allocation.
+	return chargeBytes(b, (bits+7)/8)
+}
+
 // chargeItems reserves n elements against b, which may be nil.
 func chargeItems(b Budget, n int64) error {
 	if n <= 0 {

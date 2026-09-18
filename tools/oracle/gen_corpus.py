@@ -1581,6 +1581,24 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- the width limit on computed integers -------------------------------------
+# Deliberate divergences, listed in testdata/known_failures.txt. CPython computes
+# both; gojja2 refuses past 2**20 bits. They compare rather than print, because
+# CPython 3.11 caps int->str conversion at 4300 digits and would raise about the
+# *printing* instead of answering the question these cases ask.
+#
+# The multiply case is the one that matters: the bound used to be on `**` alone,
+# so `x * x` reached a width `x ** 2` was refused, and multiplication doubles,
+# which makes a squaring loop exponential in a template of fixed size.
+#
+# The exponent comes from the context rather than the template, so that jinja2's
+# optimizer cannot fold it. A folded constant is written into jinja2's generated
+# Python as a decimal literal, which is an int->str conversion, and CPython 3.11
+# caps those at 4300 digits -- so the folded form raises about *printing* the
+# number instead of answering what the case asks.
+case("limits/integer_width_multiply", "{% set x = 2 ** e %}{{ (x * x) > x }}", e=524288)
+case("limits/integer_width_power", "{{ (2 ** e) > 0 }}", e=2000000)
+
 def main() -> int:
     if DST.exists():
         shutil.rmtree(DST)

@@ -662,7 +662,7 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, errs.New(errs.AttributeError,
 			"'%s' object has no attribute 'splitlines'", v.TypeName())
 	case !v.IsString():
-		if _, err := value.Add(v, value.String("\n")); err != nil {
+		if _, err := value.Add(v, value.String("\n"), s); err != nil {
 			return value.Undefined, augmentedAssign(err)
 		}
 		return value.Undefined, errs.New(errs.AttributeError,
@@ -789,7 +789,7 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	room, err := value.Add(length, leeway)
+	room, err := value.Add(length, leeway, s)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -817,7 +817,7 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 			}
 			// A list end really does append to a list input, so
 			// this is a result and not only a way to fail.
-			return value.Add(sliced, end)
+			return value.Add(sliced, end, s)
 		}
 		return value.Undefined, errs.New(errs.AttributeError,
 			"'%s' object has no attribute 'rsplit'", v.TypeName())
@@ -831,7 +831,7 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	}
 	if !end.IsString() {
 		// str + non-str, which is where jinja2 fails.
-		return value.Add(value.String(head), end)
+		return value.Add(value.String(head), end, s)
 	}
 	return keepSafe(v, head+value.Str(end)), nil
 }
@@ -1877,7 +1877,7 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		// matters: `[a, b] * 1` is a list, which math.ceil then rejects
 		// as "must be real number, not list" rather than the
 		// multiplication failing first.
-		scale, err := value.Pow(value.Int(10), precision)
+		scale, err := value.Pow(value.Int(10), precision, s)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -2127,7 +2127,7 @@ func filterSum(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 				return value.Undefined, err
 			}
 		}
-		total, err = value.Add(total, item)
+		total, err = value.Add(total, item, s)
 		if err != nil {
 			return value.Undefined, err
 		}
