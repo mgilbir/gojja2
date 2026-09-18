@@ -77,21 +77,38 @@ var (
 	externalRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 )
 
-// stripCode removes fenced blocks and inline spans, so a link or a bracketed
-// identifier shown as an example is not mistaken for a real one.
-func stripCode(s string) string {
-	s = fenceRe.ReplaceAllStringFunc(s, func(m string) string {
+// stripFences blanks fenced code blocks, keeping the line count so positions
+// still line up.
+func stripFences(s string) string {
+	return fenceRe.ReplaceAllStringFunc(s, func(m string) string {
 		return strings.Repeat("\n", strings.Count(m, "\n"))
 	})
-	return inlineRe.ReplaceAllString(s, "")
+}
+
+// stripCode removes fenced blocks and inline spans, so a link or a bracketed
+// identifier shown as an example is not mistaken for a real one.
+//
+// Headings do not go through this: see slug.
+func stripCode(s string) string {
+	return inlineRe.ReplaceAllString(stripFences(s), "")
 }
 
 // slug renders a heading the way GitHub's anchor generator does: lower-case,
 // punctuation dropped, spaces to hyphens.
+//
+// Two details are load-bearing, and both were wrong first time round. The
+// heading's inline code spans are part of its text -- `len()` of a very long
+// range` anchors at #len-of-a-very-long-range, not at #of-a-very-long-range --
+// so only the backticks are dropped, as punctuation, and not what they wrap.
+// And there is no trim after the punctuation goes: a heading that begins or
+// ends with a code span keeps the space next to it, which becomes a hyphen.
+// `{{ self|list }}` really does anchor at #-selflist-.
+//
+// Checked against github-slugger, which is what GitHub runs, over every
+// heading in every first-party document here.
 func slug(heading string) string {
 	s := strings.ToLower(strings.TrimSpace(heading))
 	s = slugDropRe.ReplaceAllString(s, "")
-	s = strings.TrimSpace(s)
 	return strings.ReplaceAll(s, " ", "-")
 }
 
@@ -100,7 +117,7 @@ func slug(heading string) string {
 func anchors(body string) map[string]bool {
 	seen := map[string]int{}
 	out := map[string]bool{}
-	for _, m := range headingRe.FindAllStringSubmatch(stripCode(body), -1) {
+	for _, m := range headingRe.FindAllStringSubmatch(stripFences(body), -1) {
 		s := slug(m[1])
 		if s == "" {
 			continue

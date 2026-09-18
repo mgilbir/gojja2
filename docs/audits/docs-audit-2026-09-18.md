@@ -30,7 +30,9 @@ and the entire extension API — the part with the trap in it — has no prose a
 
 ## 1. Summary
 
-22 findings: **5 high, 7 medium, 10 low.** 21 CONFIRMED, 1 PLAUSIBLE.
+23 findings: **5 high, 8 medium, 10 low.** 22 CONFIRMED, 1 PLAUSIBLE.
+
+D23 was found while fixing D12, not during the read. It is recorded here rather than left in a commit message because a finding that only exists in a commit message is a finding nobody will find.
 
 | ID | Sev | Document | Issue | Status |
 |---|---|---|---|---|
@@ -56,6 +58,7 @@ and the entire extension API — the part with the trap in it — has no prose a
 | D20 | Low | `Makefile:253,272` | `make fmt` would rewrite pinned `third_party/` checkouts; CI excludes them, `make` does not | PLAUSIBLE |
 | D21 | Low | `README.md:6` | §"Using it" is a 12-line snippet plus eight unheaded caveat paragraphs; no anchors to route to one fact | CONFIRMED |
 | D22 | Low | `README.md` | 59% of the README is conformance methodology; the newcomer's questions get zero lines | CONFIRMED |
+| D23 | Med | `docs/divergences.md:318` | Says the iteration and output bounds turn off with a "non-positive" value; zero restores the *default*, and only a negative value removes a bound | CONFIRMED |
 
 ---
 
@@ -238,6 +241,33 @@ and this half was not.
 | `make soak SEED=…` | `Makefile:265` | nothing (`make help` shows only `N=`) |
 | `make ask C='{"a":41}'` | `Makefile:299` | nothing (`make help` shows only `T=`) |
 | `GOJJA2_ORACLE_PYTHON` | `conformance/oracle.go:90` | nothing — not even a comment on the line |
+
+**D23 — "non-positive" turns a safety control off. It does not.**
+`docs/divergences.md:318` said the iteration and output budgets "can be turned
+off with a non-positive value". Zero does not turn them off; zero restores the
+default. Only a negative value removes a bound, and `WithoutLimits()` is the
+spelling meant to be found.
+
+This is not a nitpick, it is the failure mode the API was reshaped to prevent.
+`WithoutLimits`' own doc comment records the history: the three limit options
+used to disagree about zero, so a config struct deserialised from YAML or flags
+with fields nobody set quietly disabled two of the three. That was fixed in the
+code and not in the prose, so the document now describes the bug rather than the
+fix — and tells a reader that the value a zeroed struct supplies is the one that
+removes the bound.
+
+Run, not read. A template looping 20,000,000 times against the 10,000,000
+default:
+
+| option | result |
+|---|---|
+| default | `render exceeded 10000000 loop iterations` (5.07 s) |
+| `WithMaxIterations(0)` | `render exceeded 10000000 loop iterations` (5.02 s) — zero is the default |
+| `WithMaxIterations(-1)` | renders, 9.95 s — negative is off |
+| `WithoutLimits()` | renders, 9.96 s |
+
+`WithMaxOutputBytes` and `WithMaxRecursion` behave the same way, checked the same
+way.
 
 **D1 — the committed audit is a time bomb.** `docs/audits/codebase-audit-2026-09-16.md` is 1021
 lines, committed, and every one of its 30 findings carries `Status: CONFIRMED`. Nothing marks any
