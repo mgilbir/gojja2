@@ -3,6 +3,11 @@
 A pure Go implementation of the [Jinja2](https://jinja.palletsprojects.com/)
 template language, built to be behaviourally identical to CPython's `jinja2`.
 
+[Documentation index](docs/README.md) ·
+[Divergences](docs/divergences.md) ·
+[Scope](docs/scope.md) ·
+[Audits](docs/audits/README.md)
+
 ## Using it
 
 ```go
@@ -238,10 +243,17 @@ scopes until the assignment runs.
 
 ## Scope
 
-Jinja2's template language, not Python. Constructs that only exist because
-jinja2 compiles to Python bytecode are out of scope. Constructs that merely
-look Pythonic are in scope, including multi-line tags, tuple unpacking,
-slicing, and trailing commas in every literal.
+Jinja2's template language, not Python. Constructs that merely *look* Pythonic
+are in scope -- multi-line tags, tuple unpacking, slicing, trailing commas in
+every literal. Constructs that exist only because jinja2 compiles to Python
+bytecode are not, and neither are async rendering, the i18n extension, bytecode
+caches, or `SandboxedEnvironment`.
+
+[docs/scope.md](docs/scope.md) draws the line in full and says why each exclusion
+falls where it does. The sandbox entry is the one worth reading before you assume
+you know the answer: what bounds a template's reach here is `WithMethodPolicy`
+and what the caller puts in the context, not a type system and not an
+allow-list.
 
 ## Licence
 
