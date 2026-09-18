@@ -924,14 +924,17 @@ func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, err
 		if !ok || v.IsNone() {
 			return def, nil
 		}
-		k, fits := v.Int64()
-		if !fits {
-			return 0, errs.New(errs.TypeError,
-				"slice indices must be integers or None or have an __index__ method")
+		// The same conversion the subscript path uses, so that the two
+		// cannot drift apart again: an integer too wide for the machine
+		// saturates and is clamped below, rather than being refused as
+		// though it were not an integer at all.
+		idx, err := sliceIndexOf(v)
+		if err != nil {
+			return 0, err
 		}
 		// A slice index counts from the end when negative, and is
-		// clamped rather than refused when out of range.
-		idx := int(k)
+		// clamped rather than refused when out of range. Adding n to a
+		// saturated MinInt cannot wrap: it only moves toward zero.
 		if idx < 0 {
 			idx += n
 			if idx < 0 {
