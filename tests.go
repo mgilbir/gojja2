@@ -169,11 +169,12 @@ func testDivisibleBy(s *State, v value.Value, args *value.CallArgs) (bool, error
 	if err != nil {
 		return false, err
 	}
-	truth, err := value.IsTrue(rem)
-	if err != nil {
-		return false, err
-	}
-	return !truth, nil
+	// jinja2 writes `value % num == 0`, which is a comparison against zero
+	// and not a truth test. They part company wherever % is not division:
+	// on a string it is *formatting*, so `"" is divisibleby([])` is
+	// `"" == 0` -- False -- where an empty result read as falsey answered
+	// True.
+	return value.Equal(rem, value.Int(0)), nil
 }
 
 // testSameAs is Python's `is`, identity rather than equality. Only reference
@@ -188,7 +189,15 @@ func testSameAs(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
 		return false, nil
 	}
 	switch v.Kind() {
-	case value.KindList, value.KindTuple, value.KindDict, value.KindObject, value.KindFunc:
+	case value.KindTuple:
+		// CPython shares one empty tuple, so `() is ()` is true where
+		// every other pair of separately built tuples is not.
+		if a, _ := v.Seq(); a.Len() == 0 {
+			b, _ := other.Seq()
+			return b.Len() == 0, nil
+		}
+		return v.Interface() == other.Interface(), nil
+	case value.KindList, value.KindDict, value.KindObject, value.KindFunc:
 		return v.Interface() == other.Interface(), nil
 	case value.KindFloat:
 		// NaN is not identical to another NaN unless it is the same

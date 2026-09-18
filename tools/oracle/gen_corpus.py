@@ -1247,6 +1247,17 @@ case("errors/arity_injected", '{{ "x"|truncate(1,2,3,4,5) }}')
 case("errors/sort_reverse_none", "{{ [3,1,2]|sort(none) }}")
 case("errors/sort_reverse_str", "{{ [3,1,2]|sort('x') }}")
 case("errors/sort_value_before_reverse", "{{ 1|sort(none) }}")
+
+# `is divisibleby` is `value % num == 0`, a comparison and not a truth test.
+# They part company wherever % is not division: on a string it is formatting.
+# And CPython shares one empty tuple, so `() is ()` is true where no other pair
+# of separately built containers is.
+case("tests/divisibleby_string_format",
+     "{{ '' is divisibleby([]) }}|{{ '' is divisibleby({}) }}|"
+     "{{ 'a%s' is divisibleby([1]) }}|{{ 4 is divisibleby(2) }}|{{ 5 is divisibleby(2) }}")
+case("tests/sameas_empty_tuple",
+     "{{ () is sameas(()) }}|{{ (1,) is sameas((1,)) }}|{{ [] is sameas([]) }}|"
+     "{{ () is sameas([]) }}")
 case("errors/center_width_none", "{{ 'abc'|center(none) }}")
 case("filters/sort_reverse_int",
      "{{ [3,1,2]|sort(1) }}|{{ [3,1,2]|sort(0) }}|{{ [3,1,2]|sort(true) }}|"

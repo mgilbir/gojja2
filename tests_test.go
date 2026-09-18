@@ -65,3 +65,64 @@ func TestIsFilterAndIsTestHashTheirValue(t *testing.T) {
 		}
 	}
 }
+
+// TestDivisiblebyComparesAgainstZero: jinja2 writes `value % num == 0`, which
+// is a comparison and not a truth test. The two part company wherever % is not
+// division: on a string it is *formatting*, so `{{ "" is divisibleby([]) }}` is
+// `"" == 0` -- False -- where reading the empty result as falsey answered True.
+//
+// TestSameAsEmptyTuple covers the one container CPython shares.
+func TestDivisiblebyComparesAgainstZero(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// % on a string is formatting, and no format produces "".
+		{`{{ "" is divisibleby([]) }}`, "False"},
+		{`{{ "" is divisibleby({}) }}`, "False"},
+		{`{{ "" is divisibleby([1]) }}`, "False"},
+		// A format that does produce something is no more zero.
+		{`{{ "a%s" is divisibleby([1]) }}`, "False"},
+		// And on numbers it is still division.
+		{`{{ 4 is divisibleby(2) }}|{{ 5 is divisibleby(2) }}`, "True|False"},
+		{`{{ 4.0 is divisibleby(2) }}|{{ 0 is divisibleby(3) }}`, "True|True"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// TestSameAsEmptyTuple: CPython shares one empty tuple, so `() is ()` is true
+// where every other pair of separately built containers is not.
+func TestSameAsEmptyTuple(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		{`{{ () is sameas(()) }}`, "True"},
+		{`{{ (1,) is sameas((1,)) }}`, "False"},
+		{`{{ [] is sameas([]) }}`, "False"},
+		{`{{ {} is sameas({}) }}`, "False"},
+		{`{{ () is sameas((1,)) }}|{{ (1,) is sameas(()) }}`, "False|False"},
+		{`{{ () is sameas([]) }}`, "False"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+}

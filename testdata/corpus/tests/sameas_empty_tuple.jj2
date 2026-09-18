@@ -1,0 +1,3 @@
+{}
+---
+{{ () is sameas(()) }}|{{ (1,) is sameas((1,)) }}|{{ [] is sameas([]) }}|{{ () is sameas([]) }}
