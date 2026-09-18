@@ -87,6 +87,13 @@ func StartOracle() (*Oracle, error) {
 		return nil, err
 	}
 
+	// GOJJA2_ORACLE_PYTHON overrides the interpreter, for a checkout whose
+	// virtualenv lives elsewhere -- and, pointed at a path that does not
+	// exist, for checking that the suite really does grade the committed
+	// corpus with no Python, which is what the README promises.
+	//
+	// Whatever it names must carry the *pinned* jinja2: the goldens are that
+	// version's answers, and a different one is a different specification.
 	python := os.Getenv("GOJJA2_ORACLE_PYTHON")
 	if python == "" {
 		python = filepath.Join(root, ".venv", "bin", "python")
