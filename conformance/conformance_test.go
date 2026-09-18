@@ -213,12 +213,12 @@ func TestConformance(t *testing.T) {
 			len(known)-ungradable, ungradable)
 	}
 
-	checkReadmeTable(t, all, known, present)
+	checkPublishedNumbers(t, all, known, present)
 }
 
-// readmeRows maps each corpus to the row that describes it in the README, in
-// the order the table lists them.
-var readmeRows = []struct{ corpus, label string }{
+// publishedRows maps each corpus to the row that describes it in
+// docs/conformance.md, in the order the table lists them.
+var publishedRows = []struct{ corpus, label string }{
 	{"own", "gojja2's own (committed, with goldens)"},
 	{"minijinja", "MiniJinja fixtures"},
 	{"jinja-harvest", "Jinja's own test suite (harvested templates)"},
@@ -229,22 +229,31 @@ var readmeRows = []struct{ corpus, label string }{
 	{"cookiecutter", "Cookiecutter project templates"},
 }
 
-// checkReadmeTable requires the README's conformance table to match what was
-// just measured.
+const (
+	// tablePath holds the per-corpus table; headlinePath repeats only the
+	// total, because a README that cannot state its own headline number is
+	// not much of a README. Both are checked, so the duplication is pinned
+	// rather than left to rot.
+	tablePath    = "docs/conformance.md"
+	headlinePath = "README.md"
+)
+
+// checkPublishedNumbers requires every conformance figure this project
+// publishes to match what was just measured.
 //
-// The table was stale: it claimed 2589 gradable and 2585 matching where the
+// The table was stale once: it claimed 2589 gradable and 2585 matching where the
 // suite reported 2591 and 2587, because two cases had been added to the
-// committed corpus without anyone updating the prose. A number in a README that
-// nothing checks is a number that drifts, and this one is the project's
+// committed corpus without anyone updating the prose. A number in documentation
+// that nothing checks is a number that drifts, and this one is the project's
 // headline claim.
 //
 // It can only be checked when every corpus is present, since `make import` is
 // what builds most of them.
-func checkReadmeTable(t *testing.T, all []result, known map[string]string, present map[string]bool) {
+func checkPublishedNumbers(t *testing.T, all []result, known map[string]string, present map[string]bool) {
 	t.Helper()
-	for _, row := range readmeRows {
+	for _, row := range publishedRows {
 		if !present[row.corpus] {
-			t.Logf("README table not checked: corpus %q absent; run `make suites && make import`",
+			t.Logf("published figures not checked: corpus %q absent; run `make suites && make import`",
 				row.corpus)
 			return
 		}
@@ -271,27 +280,40 @@ func checkReadmeTable(t *testing.T, all []result, known map[string]string, prese
 		}
 	}
 
-	readme, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
-	if err != nil {
-		t.Fatalf("reading README.md: %v", err)
+	read := func(rel string) string {
+		b, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
+		if err != nil {
+			t.Fatalf("reading %s: %v", rel, err)
+		}
+		return string(b)
 	}
-	text := string(readme)
 
-	for _, row := range readmeRows {
+	table := read(tablePath)
+	for _, row := range publishedRows {
 		c := byCorpus[row.corpus]
 		if c == nil {
 			t.Errorf("corpus %q produced no gradable cases", row.corpus)
 			continue
 		}
 		want := fmt.Sprintf("| %s | %d | %d |", row.label, c.gradable, c.passed)
-		if !strings.Contains(text, want) {
-			t.Errorf("README conformance table is out of date.\n  expected row: %s", want)
+		if !strings.Contains(table, want) {
+			t.Errorf("%s conformance table is out of date.\n  expected row: %s", tablePath, want)
 		}
 	}
-	wantTotal := fmt.Sprintf("| **total** | **%d** | **%d (%.1f%%)** |",
-		totalGradable, totalPassed, 100*float64(totalPassed)/float64(totalGradable))
-	if !strings.Contains(text, wantTotal) {
-		t.Errorf("README conformance total is out of date.\n  expected row: %s", wantTotal)
+
+	pct := 100 * float64(totalPassed) / float64(totalGradable)
+	wantTotal := fmt.Sprintf("| **total** | **%d** | **%d (%.1f%%)** |", totalGradable, totalPassed, pct)
+	if !strings.Contains(table, wantTotal) {
+		t.Errorf("%s conformance total is out of date.\n  expected row: %s", tablePath, wantTotal)
+	}
+
+	// The headline sentence, wherever it is repeated. Spelled once here so
+	// the two documents cannot say different things.
+	headline := fmt.Sprintf("**%d of %d gradable cases (%.1f%%)**", totalPassed, totalGradable, pct)
+	for _, rel := range []string{headlinePath, tablePath} {
+		if !strings.Contains(read(rel), headline) {
+			t.Errorf("%s does not state the measured headline.\n  expected: %s", rel, headline)
+		}
 	}
 }
 
