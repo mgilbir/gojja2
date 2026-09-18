@@ -188,6 +188,19 @@ func TestIntFilterBaseParsing(t *testing.T) {
 		// And the case the differential sweep turned it up on: a join
 		// that produces a double sign is not a number.
 		{`{{ ('-4'|join(d='-'))|int }}`, `0`},
+		// do_int wraps the whole conversion in `except (TypeError,
+		// ValueError)`, so a base that is not usable as one is
+		// swallowed: int("10", 1.5) raises inside, is caught, and the
+		// filter falls through to int(float(value)) and then to the
+		// default. Refusing it reported an error CPython never lets
+		// out.
+		{`{{ '10'|int(2, 1.5) }}|{{ '10'|int(2, 'x') }}|{{ '10'|int(2, none) }}`, `10|10|10`},
+		{`{{ '10'|int(2, 2**70) }}|{{ '10'|int(2, true) }}`, `10|10`},
+		// And the base is only ever used on a str, so nothing else
+		// notices it at all.
+		{`{{ 1.9|int(2, 'x') }}|{{ 'abc'|int(2, 1.5) }}`, `1|2`},
+		// A base that *is* usable still decides.
+		{`{{ '10'|int(2, 16) }}|{{ '0x1f'|int(2, none) }}`, `16|2`},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {

@@ -129,15 +129,45 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 
 // filterRandom picks an element. Its result is necessarily not comparable
 // against CPython's; see docs/divergences.md.
+// filterRandom is random.choice, which is `len(seq)` and then `seq[i]` -- not
+// an iteration. So a value with no length is refused as len() refuses it, an
+// empty one is the undefined jinja2 substitutes for the IndexError, and a
+// mapping is subscripted by the *index*, which is a key lookup that finds
+// nothing unless that integer happens to be one of its keys.
 func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	n, err := value.Len(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if n == 0 {
+		return s.Undefined(value.UndefinedHint("No random item, sequence was empty.")), nil
+	}
+	i := rand.IntN(n)
+	switch v.Kind() {
+	case value.KindDict:
+		d, _ := v.Dict()
+		item, ok, err := d.Get(value.Int(int64(i)))
+		if err != nil {
+			return value.Undefined, err
+		}
+		if !ok {
+			return value.Undefined, errs.New(errs.KeyError, "%d", i)
+		}
+		return item, nil
+	case value.KindObject:
+		if m, ok := v.Interface().(value.Mapping); ok {
+			item, found := m.GetItem(value.Int(int64(i)))
+			if !found {
+				return value.Undefined, errs.New(errs.KeyError, "%d", i)
+			}
+			return item, nil
+		}
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
 	}
-	if len(items) == 0 {
-		return s.Undefined(value.UndefinedHint("No random item, sequence was empty.")), nil
-	}
-	return items[rand.IntN(len(items))], nil
+	return items[i], nil
 }
 
 // filterJoin concatenates, escaping items when autoescaping so that a list of

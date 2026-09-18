@@ -1667,9 +1667,16 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 	if !hasDef {
 		def = value.Int(0)
 	}
-	base, err := intArg(args, 1, "base", 10)
-	if err != nil {
-		return value.Undefined, err
+	// do_int wraps the whole conversion in `except (TypeError, ValueError)`,
+	// so a base that is not usable as one is *swallowed*: `int("10", 1.5)`
+	// raises TypeError inside, is caught, and the filter falls through to
+	// int(float(value)) and then to the default. Refusing it here reported
+	// an error CPython never lets out -- and only for a str value at that,
+	// since nothing else passes the base on.
+	base, baseOK := 10, true
+	if b, ok := arg(args, 1, "base"); ok {
+		n, whole := b.Int64()
+		base, baseOK = int(n), whole
 	}
 
 	switch {
@@ -1699,8 +1706,10 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		// Python accepts base 0 or 2..36 and raises ValueError otherwise;
 		// jinja2's filter catches that and falls through to the float
 		// path, so `"10"|int(0, 99999)` is 10.
-		if n, ok := pyParseInt(v.AsString(), base); ok {
-			return value.BigInt(n), nil
+		if baseOK {
+			if n, ok := pyParseInt(v.AsString(), base); ok {
+				return value.BigInt(n), nil
+			}
 		}
 		// jinja2 accepts "3.5" here by falling back to float then int,
 		// and int() of a float is exact however large it is -- which a

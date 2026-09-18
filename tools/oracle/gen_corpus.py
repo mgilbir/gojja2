@@ -1250,6 +1250,21 @@ case("errors/center_width_none", "{{ 'abc'|center(none) }}")
 case("filters/sort_reverse_int",
      "{{ [3,1,2]|sort(1) }}|{{ [3,1,2]|sort(0) }}|{{ [3,1,2]|sort(true) }}|"
      "{{ ['b','A']|sort(false, none) }}|{{ ['b','A']|sort(false, 1) }}")
+
+# do_int wraps the whole conversion in `except (TypeError, ValueError)`, so a
+# base that is not usable as one is swallowed rather than reported -- and the
+# base is only ever passed on for a str value. do_random is random.choice,
+# which is len(seq) and then seq[i]: a value with no length is refused as len()
+# refuses it, and a mapping is subscripted by the *index*.
+case("filters/int_unusable_base",
+     "{{ '10'|int(2, 1.5) }}|{{ '10'|int(2, 'x') }}|{{ '10'|int(2, none) }}|"
+     "{{ '10'|int(2, 2**70) }}|{{ '10'|int(2, true) }}|{{ 1.9|int(2, 'x') }}|"
+     "{{ 'abc'|int(2, 1.5) }}|{{ '10'|int(2, 16) }}|{{ '0x1f'|int(2, none) }}")
+case("errors/random_no_len", "{{ 1|random }}")
+case("errors/random_mapping_index", "{{ {'a':1}|random }}")
+case("filters/random_empty",
+     "[{{ []|random }}][{{ {}|random }}][{{ ''|random }}][{{ nope|random }}]")
+case("filters/random_single", "{{ [7]|random }}|{{ 'q'|random }}|{{ {0:'z'}|random }}")
 # Keyword problems beat count problems, and count problems beat missing ones;
 # among keywords the first one in the call wins.
 case("errors/arity_keyword_beats_count", '{{ "x"|upper(1, zzzz=2) }}')
