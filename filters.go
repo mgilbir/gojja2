@@ -602,7 +602,10 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 }
 
 func filterCenter(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	width, err := intArg(args, 0, "width", 80)
+	// str.center's width has no None to fall back on: 80 is the filter's
+	// default for an argument that was not written, and an explicit None
+	// reaches str.center and is refused.
+	width, err := indexArg(args, 0, "width", 80)
 	if err != nil {
 		return value.Undefined, err
 	}

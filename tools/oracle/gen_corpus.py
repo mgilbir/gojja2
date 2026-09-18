@@ -1238,6 +1238,18 @@ case("errors/arity_builtin", '{{ -1|abs(1) }}')
 case("errors/arity_builtin_keyword", '{{ 1 is callable(zzz=1) }}')
 case("errors/arity_test", '{{ 1 is odd(1) }}')
 case("errors/arity_injected", '{{ "x"|truncate(1,2,3,4,5) }}')
+
+# |sort hands reverse to sorted(), which takes it as an integer, so a string or
+# a None is refused there rather than read for its truth -- only case_sensitive
+# is a plain `if` in jinja2's own code. And |center's width has no None to fall
+# back on: 80 is the default for an argument that was not written, and an
+# explicit None reaches str.center.
+case("errors/sort_reverse_none", "{{ [3,1,2]|sort(none) }}")
+case("errors/sort_reverse_str", "{{ [3,1,2]|sort('x') }}")
+case("errors/center_width_none", "{{ 'abc'|center(none) }}")
+case("filters/sort_reverse_int",
+     "{{ [3,1,2]|sort(1) }}|{{ [3,1,2]|sort(0) }}|{{ [3,1,2]|sort(true) }}|"
+     "{{ ['b','A']|sort(false, none) }}|{{ ['b','A']|sort(false, 1) }}")
 # Keyword problems beat count problems, and count problems beat missing ones;
 # among keywords the first one in the call wins.
 case("errors/arity_keyword_beats_count", '{{ "x"|upper(1, zzzz=2) }}')

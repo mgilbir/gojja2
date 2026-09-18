@@ -100,6 +100,24 @@ func intArg(args *value.CallArgs, i int, name string, def int) (int, error) {
 	if !ok || v.IsNone() {
 		return def, nil
 	}
+	return indexOf(v)
+}
+
+// indexArg is intArg for an argument whose Python default is not None. Only
+// *absence* is the default there: an explicit None reaches the C function and
+// is refused, which is why `{{ "x"|center(none) }}` is a TypeError and not a
+// width of 80.
+func indexArg(args *value.CallArgs, i int, name string, def int) (int, error) {
+	v, ok := arg(args, i, name)
+	if !ok {
+		return def, nil
+	}
+	return indexOf(v)
+}
+
+// indexOf is Python's __index__ protocol: the conversion every argument used
+// as an integer goes through, and the complaint it makes.
+func indexOf(v value.Value) (int, error) {
 	n, fits := v.Int64()
 	if !fits {
 		// This is the __index__ protocol's own complaint, which is what
