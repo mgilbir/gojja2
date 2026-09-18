@@ -20,7 +20,7 @@ import (
 //     differently from jinja2's;
 //   - `loop(iterable=x)` was a missing argument, though the parameter is named;
 //   - a block reference named the block rather than itself;
-//   - the caller macro has no name, and CPython prints that as None, not ''.
+//   - the caller macro has no name, and CPython prints that as None, not ”.
 func TestRuntimeArity(t *testing.T) {
 	env := New()
 	for _, tc := range []struct{ src, want string }{

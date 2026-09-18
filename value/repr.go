@@ -36,6 +36,19 @@ func Str(v Value) string {
 	return Repr(v)
 }
 
+// HTML is the escaped form a value carries for itself -- Python's __html__.
+// ok is false when it has none, which is every value but an Object that
+// implements HTMLer. A Markup string answers through IsSafe instead, because
+// markupsafe returns it unchanged rather than asking it for anything.
+func HTML(v Value) (string, bool) {
+	if v.kind == KindObject {
+		if h, ok := v.obj.(HTMLer); ok {
+			return h.HTML(), true
+		}
+	}
+	return "", false
+}
+
 // Repr is Python's repr(): the form a value takes inside a container.
 func Repr(v Value) string {
 	var b strings.Builder

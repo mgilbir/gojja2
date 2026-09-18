@@ -212,7 +212,15 @@ func (ex *exec) renderValue(v value.Value) (string, error) {
 	}
 	text := value.Str(v)
 	if ex.autoescape && !v.IsSafe() {
-		text = escapeHTML(text)
+		// Output is str(x) plainly and escape(x) when autoescaping, so
+		// a value that carries its own escaped form hands that over
+		// here and only here -- `{{ m }}` is the module's body where
+		// `{{ m ~ "" }}` is str(m), escaped as a whole.
+		if html, ok := value.HTML(v); ok {
+			text = html
+		} else {
+			text = escapeHTML(text)
+		}
 	}
 	return text, nil
 }
@@ -676,12 +684,17 @@ func (ex *exec) execFromImport(n *ast.FromImport) error {
 		return err
 	}
 	obj, _ := module.Object()
+	mod, _ := obj.(*moduleObject)
 	for _, entry := range n.Names {
 		v, ok := obj.GetAttr(entry.Name)
 		if !ok {
+			// jinja2 names the template the name was asked *of* --
+			// `included_template.__name__` -- not the one doing the
+			// asking. Reading the importer's name reported '' for
+			// every template compiled from a string.
 			v = value.UndefinedHint(
 				"the template %s (imported on line %d) does not export the requested name %s",
-				value.Repr(value.String(ex.st.tmpl.name)), n.Line(),
+				value.Repr(value.String(mod.name)), n.Line(),
 				value.Repr(value.String(entry.Name)))
 			v = ex.st.Undefined(v)
 		}
@@ -714,12 +727,15 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 	// share it, or the imported template renders with no bound and no
 	// context at all.
 	st := tmpl.newState(vars, ex.st.depth, ex.st.budget)
-	var discard strings.Builder
-	sub := &exec{st: st, sc: st.ctx, out: &discard, stream: &discard, autoescape: st.autoescape}
+	// The body is kept, not discarded: a TemplateModule's str() is what the
+	// imported template rendered, so `{% import "t" as m %}{{ m }}` prints
+	// t's output. gojja2 threw it away and printed the repr instead.
+	var body strings.Builder
+	sub := &exec{st: st, sc: st.ctx, out: &body, stream: &body, autoescape: st.autoescape}
 	if err := sub.execBody(tmpl.tree.Body); err != nil {
 		return value.Undefined, err
 	}
-	return value.FromObject(&moduleObject{st: st, name: tmpl.name}), nil
+	return value.FromObject(&moduleObject{st: st, name: tmpl.name, body: body.String()}), nil
 }
 
 // export records a top-level binding so an importing template can see it.
@@ -741,6 +757,7 @@ func (s *State) export(name string) {
 type moduleObject struct {
 	st   *State
 	name string
+	body string
 }
 
 func (m *moduleObject) GetAttr(name string) (value.Value, bool) {
@@ -762,6 +779,14 @@ func (m *moduleObject) GetAttr(name string) (value.Value, bool) {
 
 func (m *moduleObject) TypeName() string { return "TemplateModule" }
 
+func (m *moduleObject) QualifiedName() string { return "jinja2.environment.TemplateModule" }
+
 func (m *moduleObject) Repr() string {
 	return "<TemplateModule " + value.Repr(value.String(m.name)) + ">"
 }
+
+// Str and HTML are the module's __str__ and __html__: both are the body it
+// rendered. The body was produced under the imported template's own escaping,
+// so handing it over as markup is what keeps it from being escaped twice.
+func (m *moduleObject) Str() string  { return m.body }
+func (m *moduleObject) HTML() string { return m.body }

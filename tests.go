@@ -22,7 +22,7 @@ func registerDefaultTests(env *Environment) {
 		"number":    func(v value.Value) bool { return v.IsNumber() },
 		"string":    func(v value.Value) bool { return v.IsString() },
 		"mapping":   func(v value.Value) bool { return v.IsMapping() },
-		"escaped":   func(v value.Value) bool { return v.IsSafe() },
+		"escaped":   isEscaped,
 		"true":      func(v value.Value) bool { return v.Kind() == value.KindBool && v.AsBool() },
 		"false":     func(v value.Value) bool { return v.Kind() == value.KindBool && !v.AsBool() },
 		"sequence":  isSequenceValue,
@@ -250,10 +250,26 @@ func comparisonTest(op string) Test {
 	}
 }
 
-// escapeIfNeeded is shared by the escaping filters.
+// isEscaped is jinja2's `escaped` test, which is `hasattr(value, "__html__")`
+// -- so it is true of anything that carries its own escaped form and not only
+// of a Markup string.
+func isEscaped(v value.Value) bool {
+	if v.IsSafe() {
+		return true
+	}
+	_, ok := value.HTML(v)
+	return ok
+}
+
+// escapeIfNeeded is shared by the escaping filters. It is markupsafe's
+// escape(): Markup passes through, a value carrying its own escaped form hands
+// that over, and everything else is escaped.
 func escapeIfNeeded(v value.Value) value.Value {
 	if v.IsSafe() {
 		return v
+	}
+	if html, ok := value.HTML(v); ok {
+		return value.Safe(html)
 	}
 	return value.Safe(escapeHTML(value.Str(v)))
 }
