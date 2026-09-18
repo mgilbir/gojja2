@@ -58,6 +58,34 @@ type budget struct {
 	maxIntBits int64
 	// sinceCheck counts steps and writes since the context was last read.
 	sinceCheck int
+	// failed is the first refusal this budget returned, and every charge
+	// after it returns the same one.
+	//
+	// A render that has run out of time, output or iterations cannot come
+	// back: the context stays cancelled and the two counters only climb. So
+	// the first refusal is the whole answer, and repeating it is what makes
+	// it safe for a caller to drop one. Without that, a charge whose error
+	// went unpropagated left the render walking on with a truncated value
+	// and -- because the check that refused also reset sinceCheck -- a real
+	// chance that nothing looked again before the render returned success.
+	// Converting a render argument is exactly that shape.
+	failed error
+}
+
+// resetAllowance starts a fresh accounting period on a budget that is reused.
+//
+// Only constant folding reuses one, and it has to: the allowance is spent per
+// fold *attempt*, so whether an expression folds must not depend on what
+// preceded it in the file. Every field that accumulates is cleared here rather
+// than at the call site, so a field added later cannot be the one nobody
+// remembered -- which is the mistake `failed` would otherwise have been, since
+// it would have made the first over-budget fold in a template silently poison
+// every fold after it.
+func (b *budget) resetAllowance() {
+	b.steps = 0
+	b.written = 0
+	b.sinceCheck = 0
+	b.failed = nil
 }
 
 func newBudget(ctx context.Context, env *Environment) *budget {
@@ -126,7 +154,14 @@ func (b *budget) account(n int) error {
 }
 
 // tick consults the context, but only every checkInterval units.
+//
+// This is also the one place a spent budget is re-reported from, and one is
+// enough: every charge either refuses through abort, which keeps the first
+// cause, or falls through to here.
 func (b *budget) tick() error {
+	if b.failed != nil {
+		return b.failed
+	}
 	b.sinceCheck++
 	if b.sinceCheck < checkInterval {
 		return nil
@@ -155,5 +190,12 @@ func (b *budget) checkContext() error {
 func (b *budget) abort(cause error, format string, args ...any) error {
 	e := errs.New(errs.TemplateRuntimeError, format, args...)
 	e.Cause = cause
-	return e
+	if b.failed == nil {
+		b.failed = e
+	}
+	// The first refusal is the one reported, from here on. A render stopped
+	// by its deadline says so even if the work already in flight would have
+	// overrun the output bound a moment later; otherwise the cause a caller
+	// sees depends on which check happened to run next.
+	return b.failed
 }
