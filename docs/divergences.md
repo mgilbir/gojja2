@@ -160,8 +160,8 @@ unbounded must still not mean "allocate 2**63 bytes". It is the same ceiling
 the same sizes.
 
 Where CPython raises `MemoryError` for these, gojja2 raises its own
-`OverflowError` or fails the render with [ErrOutputTooLarge] /
-[ErrTooManyIterations], depending on which bound was reached. CPython has no
+`OverflowError` or fails the render with `ErrOutputTooLarge` /
+`ErrTooManyIterations`, depending on which bound was reached. CPython has no
 budget to exceed, so there is nothing to match here; the divergence is the
 bound itself, which this file already records above.
 
@@ -175,7 +175,7 @@ into "allocate the maximum" is the failure this ceiling exists to prevent.
 ### A backstop on panics
 
 A panic anywhere inside gojja2 is turned into a render error wrapping
-[ErrInternal], at both entry points: `FromString`/`GetTemplate` and
+`ErrInternal`, at both entry points: `FromString`/`GetTemplate` and
 `Render`/`RenderString`.
 
 This is a backstop, not a licence. A template engine renders input its caller
@@ -477,6 +477,12 @@ the first step fails", which nothing else here needs. A template that iterates
 ```jinja
 {% do xs.append(9) %}
 ```
+
+`{% do %}` is jinja2's `do` extension and is off by default in both engines --
+`gojja2.New(gojja2.WithExtensions("do"))` turns it on, and without it both
+report the same `Encountered unknown tag 'do'.` On a bare environment
+`{% set _ = xs.append(9) %}` does the same thing, and everything below holds for
+either spelling.
 
 jinja2 hands a template the caller's real objects, so a template that appends
 to a list appends to *your* list, and the next render starts from the longer
