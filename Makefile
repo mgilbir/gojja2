@@ -164,7 +164,7 @@ clean-suites: ## Remove downloaded suites
 # --- oracle ------------------------------------------------------------------
 
 .PHONY: oracle
-oracle: venv arity entities strclass ## Regenerate golden files for testdata/corpus from CPython jinja2
+oracle: venv arity methodarity entities strclass ## Regenerate golden files for testdata/corpus from CPython jinja2
 	$(PY) tools/oracle/gen_corpus.py
 	$(PY) tools/oracle/oracle.py --corpus testdata/corpus --golden testdata/golden
 
@@ -172,6 +172,11 @@ oracle: venv arity entities strclass ## Regenerate golden files for testdata/cor
 arity: venv ## Regenerate arity.go from jinja2's own filter and test signatures
 	$(PY) tools/oracle/gen_arity.py
 	gofmt -w arity.go
+
+.PHONY: methodarity
+methodarity: venv ## Regenerate method_arity.go from CPython's own built-in methods
+	$(PY) tools/oracle/gen_methods.py
+	gofmt -w method_arity.go
 
 .PHONY: entities
 entities: venv ## Regenerate entities.go from CPython's HTML character references

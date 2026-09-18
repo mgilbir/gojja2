@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -61,6 +62,7 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 	if !ok {
 		return value.Undefined, false
 	}
+	typeName := recv.TypeName()
 	return Func(name, func(callState *State, args *value.CallArgs) (value.Value, error) {
 		// Prefer the state of the call over the state of the lookup:
 		// they are the same render, but a bound method can outlive the
@@ -68,8 +70,49 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 		if callState == nil {
 			callState = s
 		}
+		if err := checkMethodArity(typeName, name, args); err != nil {
+			return value.Undefined, err
+		}
 		return fn(callState, recv, args)
 	}), true
+}
+
+// checkMethodArity reports what CPython would say about the *shape* of this
+// call, before the method itself looks at anything.
+//
+// The filters and tests got this treatment first; the methods never did, and
+// every one of them accepted whatever it was given. `[1].append("a", 1)` bound
+// the extra argument to nothing and answered None, where CPython says
+// "list.append() takes exactly one argument (2 given)".
+//
+// A method gojja2 adds that CPython has not got is left alone: there is no
+// signature to bind against and nothing to reproduce.
+func checkMethodArity(typeName, name string, args *value.CallArgs) error {
+	sig, known := methodSignatures[typeName+"."+name]
+	if !known {
+		return nil
+	}
+	// The keyword check comes first, as it does in CPython: a call that is
+	// both the wrong length and carrying a bad keyword reports the keyword.
+	if !sig.anyKw {
+		for _, kw := range args.Kwargs {
+			if slices.Contains(sig.kwNames, kw.Name) {
+				continue
+			}
+			if strings.Contains(sig.kwMessage, "%s") {
+				return errs.New(errs.TypeError, sig.kwMessage, kw.Name)
+			}
+			return errs.New(errs.TypeError, "%s", sig.kwMessage)
+		}
+	}
+	n := len(args.Pos)
+	switch {
+	case n < sig.minArgs:
+		return errs.New(errs.TypeError, sig.fewMessage, n)
+	case sig.maxArgs >= 0 && n > sig.maxArgs:
+		return errs.New(errs.TypeError, sig.manyMessage, n)
+	}
+	return nil
 }
 
 // arg reads a positional or named argument.

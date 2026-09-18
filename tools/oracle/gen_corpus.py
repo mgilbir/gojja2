@@ -1258,6 +1258,27 @@ case("tests/divisibleby_string_format",
 case("tests/sameas_empty_tuple",
      "{{ () is sameas(()) }}|{{ (1,) is sameas((1,)) }}|{{ [] is sameas([]) }}|"
      "{{ () is sameas([]) }}")
+
+# The methods on str, list, dict and tuple are bound by CPython before they run,
+# and gojja2 checked none of it: `[1].append("a", 1)` answered None. The
+# wordings are not derivable from a signature -- a method that takes nothing,
+# one that takes exactly one, and one with an optional second all word it
+# differently -- so they are probed; see tools/oracle/gen_methods.py.
+case("errors/method_takes_no_arguments", "{{ 'ab'.upper(1) }}")
+case("errors/method_takes_no_arguments_list", "{{ [1].clear(none) }}")
+case("errors/method_exactly_one_too_many", "{{ [1].append('a', 1) }}")
+case("errors/method_exactly_one_too_few", "{{ [1].append() }}")
+case("errors/method_exactly_two", "{{ [1].insert(0) }}")
+case("errors/method_range_too_few", "{{ 'ab'.center() }}")
+case("errors/method_range_too_many", "{{ 'ab'.center(1, 'x', 2) }}")
+case("errors/method_count_too_many", "{{ 'ab'.count('a', 1, 2, 3) }}")
+case("errors/method_get_too_many", "{{ {'a':1}.get('a', 1, 2) }}")
+case("errors/method_no_keywords", "{{ 'ab'.upper(zz=1) }}")
+case("errors/method_invalid_keyword", "{{ 'a,b'.split(zz=1) }}")
+case("errors/method_keyword_before_count", "{{ 'ab'.upper(1, zz=1) }}")
+case("methods/arity_accepted",
+     "{{ 'ab'.upper() }}|{{ 'a,b'.split(sep=',') }}|{{ 'a,b,c'.split(',', maxsplit=1) }}|"
+     "{{ 'ab'.center(6, '-') }}|{{ {'a':1}.get('a', 2) }}|{{ '{0}{k}'.format(1, k=2) }}")
 case("errors/center_width_none", "{{ 'abc'|center(none) }}")
 case("filters/sort_reverse_int",
      "{{ [3,1,2]|sort(1) }}|{{ [3,1,2]|sort(0) }}|{{ [3,1,2]|sort(true) }}|"
