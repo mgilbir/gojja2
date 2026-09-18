@@ -646,23 +646,26 @@ func (ex *exec) loadTemplateName(e ast.Expr) (*Template, error) {
 	return ex.st.env.GetTemplate(value.Str(v))
 }
 
-// loadTemplateExpr resolves the template named by an expression, which may be
-// a name, a template object, or a list of candidates.
+// loadTemplateExpr is jinja2's get_or_select_template, which is what
+// `{% include %}` compiles to: a string or an undefined is a single name, and
+// everything else is a selection.
+//
+// There is no type check of its own. A number reaches select_template and fails
+// as something that cannot be iterated; a None fails as an empty selection
+// before anything asks whether it could be. Refusing both at the door with
+// "template name must be a string" named a rule jinja2 does not have.
 func (ex *exec) loadTemplateExpr(e ast.Expr) (*Template, error) {
 	v, err := ex.eval(e)
 	if err != nil {
 		return nil, err
 	}
-	switch v.Kind() {
-	case value.KindString:
+	switch {
+	case v.IsString():
 		return ex.st.env.GetTemplate(v.AsString())
-	case value.KindList, value.KindTuple:
-		s, _ := v.Seq()
-		return ex.st.env.selectTemplateValues(s.Items())
-	case value.KindUndefined:
+	case v.IsUndefined():
 		return nil, v.UndefinedError()
 	}
-	return nil, errs.New(errs.TypeError, "template name must be a string, not %s", v.TypeName())
+	return ex.st.env.selectTemplateValue(v)
 }
 
 func (ex *exec) execImport(n *ast.Import) error {
@@ -710,7 +713,11 @@ func (ex *exec) execFromImport(n *ast.FromImport) error {
 // importModule renders a template for its definitions rather than its output,
 // returning an object exposing the names it exported.
 func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, error) {
-	tmpl, err := ex.loadTemplateExpr(nameExpr)
+	// {% import %} and {% from %} compile to get_template, not to
+	// get_or_select_template: there is no selection here, so a name that is
+	// not a string goes to the loader as it is and comes back as
+	// TemplateNotFound naming it.
+	tmpl, err := ex.loadTemplateName(nameExpr)
 	if err != nil {
 		return value.Undefined, err
 	}

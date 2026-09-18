@@ -509,6 +509,42 @@ func (e *Environment) SelectTemplate(names []string) (*Template, error) {
 	return e.selectTemplateValues(values)
 }
 
+// selectTemplateValue is jinja2's select_template over one value.
+//
+// The order is Python's, and each step is reachable from a template. Emptiness
+// is truthiness and is checked first, so `{% include none %}` and
+// `{% include [] %}` are both "an empty list of templates" -- neither ever
+// reaches the iteration that a number fails at.
+func (e *Environment) selectTemplateValue(v value.Value) (*Template, error) {
+	on, err := value.IsTrue(v)
+	if err != nil {
+		return nil, err
+	}
+	if !on {
+		return nil, errs.New(errs.TemplatesNotFound,
+			"Tried to select from an empty list of templates.")
+	}
+	seq, err := value.Iterate(v)
+	if err != nil {
+		return nil, err
+	}
+	var names []value.Value
+	for item := range seq {
+		names = append(names, item)
+	}
+	tmpl, err := e.selectTemplateValues(names)
+	if err != nil && v.Kind() == value.KindDict &&
+		errs.KindOf(err).DerivesFrom(errs.TemplatesNotFound) {
+		// TemplatesNotFound builds its `name` as `names and names[-1]`,
+		// which subscripts what it was handed. A mapping iterates its
+		// keys happily and then has no key -1, so CPython's own
+		// reporting path raises here instead -- and a template that
+		// selects from a dict sees that, not the message.
+		return nil, errs.New(errs.KeyError, "-1")
+	}
+	return tmpl, err
+}
+
 // selectTemplateValues is SelectTemplate over raw values, so that an undefined
 // entry can describe itself when nothing is found.
 //
