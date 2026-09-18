@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"github.com/mgilbir/gojja2/value"
 	"math"
 	"strings"
 
@@ -49,6 +50,19 @@ func (s *State) ChargeBytes(n int64) error {
 		return nil
 	}
 	return s.budget.account(int(n))
+}
+
+// IntBitLimit is value.IntBitLimiter: the ceiling on the width of an integer
+// this render may compute.
+//
+// A State with no budget -- constant folding runs that way before any render
+// exists -- answers the package default, which is what the value package would
+// have used anyway.
+func (s *State) IntBitLimit() int64 {
+	if s == nil || s.budget == nil {
+		return value.MaxIntBits
+	}
+	return s.budget.maxIntBits
 }
 
 // ChargeItems reserves n elements against the render's iteration budget,

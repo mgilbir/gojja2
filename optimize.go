@@ -698,6 +698,12 @@ func newConstEvaluator(env *Environment, name string, fromString bool) *constEva
 		budget: &budget{
 			maxSteps:  maxFoldSteps,
 			maxOutput: maxFoldBytes,
+			// The caller's ceiling applies at compile time too, so
+			// folding refuses exactly what the render would. The
+			// fold's own output budget bounds it either way: a
+			// caller who removed the ceiling still cannot fold a
+			// constant past 64 KiB.
+			maxIntBits: env.maxIntBits,
 		},
 	}
 	return &constEvaluator{env: env, st: st}
