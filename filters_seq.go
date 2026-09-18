@@ -282,18 +282,6 @@ func filterReverse(s *State, v value.Value, _ *value.CallArgs) (value.Value, err
 }
 
 func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	// reverse is handed to sorted(), which takes it as an integer -- so a
-	// string or a None is refused rather than read for its truth. Only
-	// case_sensitive is a plain `if` in jinja2's own code, and only that
-	// one is truthiness.
-	reverse := false
-	if r, ok := arg(args, 0, "reverse"); ok {
-		n, err := indexOf(r)
-		if err != nil {
-			return value.Undefined, err
-		}
-		reverse = n != 0
-	}
 	caseSensitive, err := boolArg(args, 1, "case_sensitive", false)
 	if err != nil {
 		return value.Undefined, err
@@ -303,6 +291,22 @@ func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
+	}
+	// reverse is handed to sorted(), which takes it as an integer -- so a
+	// string or a None is refused rather than read for its truth. Only
+	// case_sensitive is a plain `if` in jinja2's own code, and only that
+	// one is truthiness.
+	//
+	// It is read here, after the value has been walked, because sorted()
+	// builds its list before it looks at the keyword: `{{ 1|sort(none) }}`
+	// is about the 1, not about the None.
+	reverse := false
+	if r, ok := arg(args, 0, "reverse"); ok {
+		n, err := indexOf(r)
+		if err != nil {
+			return value.Undefined, err
+		}
+		reverse = n != 0
 	}
 	if err := stableSortBy(s, items, sortKeyFunc(s, attribute, caseSensitive), reverse); err != nil {
 		return value.Undefined, err

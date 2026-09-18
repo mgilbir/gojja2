@@ -25,6 +25,11 @@ func TestIntegerArgumentsAreNotOptionalNones(t *testing.T) {
 	env := New()
 	for _, tc := range []struct{ src, want string }{
 		{`{{ [3,1,2]|sort(none) }}`, "'NoneType' object cannot be interpreted as an integer"},
+		// And it is read after the value has been walked, because
+		// sorted() builds its list before it looks at the keyword:
+		// `{{ 1|sort(none) }}` is about the 1, not about the None.
+		{`{{ 1|sort(none) }}`, "'int' object is not iterable"},
+		{`{{ 1|sort("x") }}`, "'int' object is not iterable"},
 		{`{{ [3,1,2]|sort("x") }}`, "'str' object cannot be interpreted as an integer"},
 		{`{{ [3,1,2]|sort([]) }}`, "'list' object cannot be interpreted as an integer"},
 		{`{{ [3,1,2]|sort(1.5) }}`, "'float' object cannot be interpreted as an integer"},
