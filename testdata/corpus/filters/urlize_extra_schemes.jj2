@@ -1,0 +1,5 @@
+{
+  "f": "try ftp://x.com now"
+}
+---
+{{ f|urlize(none, false, none, none, ['ftp://']) }}|{{ f|urlize(none, false, none, none, ['ü2:']) }}

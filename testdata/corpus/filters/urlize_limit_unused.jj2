@@ -1,0 +1,6 @@
+{
+  "u": "go https://example.com/long/path now",
+  "plain": "no links here"
+}
+---
+{{ plain|urlize('x') }}|{{ plain|urlize(1.5) }}
