@@ -206,5 +206,5 @@ on its first run.
 
 Nowhere in this repository. CPython `jinja2`, pinned in `.venv`, is the
 specification; `tools/oracle/` drives it and `conformance/` grades against it.
-See the README for the corpora and the numbers, and `make ask T='...'` for
-putting a question to it directly.
+See [conformance.md](conformance.md) for the corpora and the numbers, and
+[contributing.md](contributing.md) for what to do when the two disagree.
