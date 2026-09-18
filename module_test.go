@@ -102,3 +102,70 @@ func TestTemplateModuleIsItsBody(t *testing.T) {
 		}
 	}
 }
+
+// An imported template that extends another renders through the extends chain,
+// like any other render.
+//
+// importModule ran the template's body with execBody and stopped. A template
+// that extends emits nothing from its own body -- its output comes from the
+// parent, rendered afterwards with the blocks the child registered -- so an
+// extending module's str() was the empty string, and no name set anywhere up
+// the chain was exported.
+//
+// renderState is the one place that knows about the parent chain, and
+// {% include %} already went through it. That is what made the bug so quiet:
+// including a template and importing it disagreed about what the template
+// renders, and only one of them was right.
+func TestImportOfAnExtendingTemplateRendersTheChain(t *testing.T) {
+	loader := DictLoader{
+		"base.html":  "B[{% block x %}bx{% endblock %}]{% set fromBase = 'FB' %}",
+		"mid.html":   `{% extends "base.html" %}{% block x %}mx{% endblock %}{% set fromMid = 'FM' %}`,
+		"deep.html":  `{% extends "mid.html" %}{% block x %}dx{% endblock %}{% set v = 7 %}{% macro m() %}M{% endmacro %}`,
+		"plain.html": "P{% set v = 9 %}{% macro m() %}N{% endmacro %}",
+		"ctx.html":   `{% extends "base.html" %}{% block x %}{{ outer }}{% endblock %}`,
+	}
+	for _, tc := range []struct{ name, src, want string }{
+		{"str of a two-level extending module",
+			`[{% import "deep.html" as m %}{{ m }}]`, "[B[dx]]"},
+		{"str of a one-level extending module",
+			`[{% import "mid.html" as m %}{{ m }}]`, "[B[mx]]"},
+		{"its own exports still work",
+			`[{% import "deep.html" as m %}{{ m.v }}|{{ m.m() }}]`, "[7|M]"},
+		// A name set at the top level of a template in the chain is
+		// exported too, because the chain runs in the module's state.
+		{"an export from the middle template",
+			`[{% import "deep.html" as m %}{{ m.fromMid }}]`, "[FM]"},
+		{"an export from the base template",
+			`[{% import "deep.html" as m %}{{ m.fromBase }}]`, "[FB]"},
+		{"as a string it has a length",
+			`{% import "deep.html" as m %}{{ m|string|length }}`, "5"},
+		{"from-import off an extending template",
+			`[{% from "deep.html" import m %}{{ m() }}]`, "[M]"},
+		// The context rules are unchanged: the chain renders with
+		// whatever the import was given.
+		{"with context",
+			`{% set outer = "OUT" %}[{% import "ctx.html" as m with context %}{{ m }}]`, "[B[OUT]]"},
+		{"without context",
+			`{% set outer = "OUT" %}[{% import "ctx.html" as m %}{{ m }}]`, "[B[]]"},
+		// A plain template was always right and stays right.
+		{"a plain module",
+			`[{% import "plain.html" as m %}{{ m }}]`, "[P]"},
+		{"a plain module's exports",
+			`[{% import "plain.html" as m %}{{ m.v }}|{{ m.m() }}]`, "[9|N]"},
+		// Importing and including a template now agree about what it
+		// renders, which is the invariant that was broken.
+		{"include agrees with import",
+			`[{% include "deep.html" %}]`, "[B[dx]]"},
+	} {
+		env := New(WithLoader(loader))
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: compile: %v", tc.name, err)
+			continue
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil || got != tc.want {
+			t.Errorf("%s = %q, %v; want %q", tc.name, got, err, tc.want)
+		}
+	}
+}

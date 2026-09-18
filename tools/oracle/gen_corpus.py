@@ -1593,6 +1593,29 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- importing a template that extends another --------------------------------
+# A TemplateModule's str() is what the imported template rendered, and a
+# template that extends renders through its parent -- so an extending module is
+# the parent's output with the child's blocks, and a name set at the top level
+# anywhere in the chain is exported.
+#
+# gojja2 ran the imported template's own body and stopped, which for an
+# extending template emits nothing: the module was empty and exported nothing
+# from up the chain. An {% include %} of the same template was already right,
+# so the two disagreed about what one template renders.
+_CHAIN = {
+    "base.html": "B[{% block x %}bx{% endblock %}]{% set fromBase = 'FB' %}",
+    "mid.html": '{% extends "base.html" %}{% block x %}mx{% endblock %}{% set fromMid = \'FM\' %}',
+    "deep.html": '{% extends "mid.html" %}{% block x %}dx{% endblock %}{% set v = 7 %}{% macro m() %}M{% endmacro %}',
+}
+case("modules/import_extending_str", '[{% import "deep.html" as m %}{{ m }}]', __templates__=_CHAIN)
+case("modules/import_extending_one_level", '[{% import "mid.html" as m %}{{ m }}]', __templates__=_CHAIN)
+case("modules/import_extending_exports", '[{% import "deep.html" as m %}{{ m.v }}|{{ m.m() }}]', __templates__=_CHAIN)
+case("modules/import_extending_chain_exports",
+     '[{% import "deep.html" as m %}{{ m.fromMid }}|{{ m.fromBase }}]', __templates__=_CHAIN)
+case("modules/import_extending_matches_include",
+     '[{% import "deep.html" as m %}{{ m }}][{% include "deep.html" %}]', __templates__=_CHAIN)
+
 # --- a range holds its bounds exactly -----------------------------------------
 # range() builds a Python object holding Python ints, so bounds past an int64
 # are legal: the range simply cannot be walked far. Printing it, deciding
