@@ -132,6 +132,31 @@ func StrSlice(s string, start, stop, step *int) (string, error) {
 	return b.String(), nil
 }
 
+// BytesSlice slices a bytes value, in bytes.
+//
+// It is not StrSlice with a different length. bytes is a sequence of integers
+// rather than of characters, so its positions are bytes and every element is
+// one wide -- which is also why indexing a bytes gives 97 where indexing a str
+// gives "a". Reusing the string slicer would have counted code points and made
+// `b"\xc3\xa9"[0:1]` return two bytes.
+func BytesSlice(s string, start, stop, step *int) (string, error) {
+	begin, stride, count, err := SliceSpan(len(s), start, stop, step)
+	if err != nil {
+		return "", err
+	}
+	if count == 0 {
+		return "", nil
+	}
+	if stride == 1 {
+		return s[begin : begin+count], nil
+	}
+	out := make([]byte, 0, count)
+	for i, at := 0, begin; i < count; i, at = i+1, at+stride {
+		out = append(out, s[at])
+	}
+	return string(out), nil
+}
+
 // SliceBounds resolves a Python slice to the raw (start, stop, step) it
 // selects, without materialising the indices.
 //

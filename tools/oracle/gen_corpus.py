@@ -1593,6 +1593,20 @@ case("filters/attr_name_not_a_string", '{{ "ab"|attr(name=true) }}')
 case("filters/attr_name_unhashable", '{{ "ab"|attr(name=[1]) }}')
 
 
+# --- bytes is a sequence of integers ------------------------------------------
+# Indexing a bytes already gave the byte value, and iteration, len, comparison,
+# concatenation and the sequence filters were all right. Slicing was missing
+# entirely -- `x[0]` answered and `x[0:1]` said the object was not
+# subscriptable -- and membership refused an integer where CPython reads it as
+# the byte value to look for.
+case("membership/bytes_slice", "{{ \"ab\".encode()[0:1] }}|{{ \"ab\".encode()[::-1] }}|{{ \"abcdef\".encode()[1:5:2] }}|{{ \"ab\".encode()[:] }}")
+# Positions are bytes, not code points.
+case("membership/bytes_slice_counts_bytes", '{{ "\u00e9".encode()|length }}|{{ "\u00e9".encode()[0:1]|length }}')
+case("membership/bytes_contains_int", '{{ 97 in "ab".encode() }}|{{ 0 in "ab".encode() }}|{{ 255 in "ab".encode() }}|{{ true in "ab".encode() }}')
+case("membership/bytes_contains_int_out_of_range", '{{ 256 in "ab".encode() }}')
+case("membership/bytes_contains_negative", '{{ -1 in "ab".encode() }}')
+case("membership/bytes_contains_other", '{{ "a" in "ab".encode() }}')
+
 # --- tojson sorts keys as keys, then converts them -----------------------------
 # json.dumps with sort_keys sorts the key *objects* and converts them
 # afterwards. gojja2 converted first and sorted the text, which is a different

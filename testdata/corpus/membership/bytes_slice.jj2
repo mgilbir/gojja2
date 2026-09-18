@@ -1,0 +1,3 @@
+{}
+---
+{{ "ab".encode()[0:1] }}|{{ "ab".encode()[::-1] }}|{{ "abcdef".encode()[1:5:2] }}|{{ "ab".encode()[:] }}

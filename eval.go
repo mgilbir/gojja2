@@ -710,6 +710,20 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value) (value.Value, e
 			return value.Safe(out), nil
 		}
 		return value.String(out), nil
+	case value.KindBytes:
+		// Slicing a bytes gives a bytes, positions counted in bytes.
+		// Indexing one already worked and gave the integer byte value;
+		// only the slice was missing, so `{{ x[0] }}` answered and
+		// `{{ x[0:1] }}` said the object was not subscriptable.
+		start, stop, step, err := indices()
+		if err != nil {
+			return value.Undefined, err
+		}
+		out, err := value.BytesSlice(base.AsString(), start, stop, step)
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.Bytes([]byte(out)), nil
 	case value.KindList, value.KindTuple:
 		start, stop, step, err := indices()
 		if err != nil {

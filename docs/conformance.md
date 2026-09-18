@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**3107 of 3114 gradable cases (99.8%)** match CPython jinja2, across eight
+**3113 of 3120 gradable cases (99.8%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The five that do not are listed with reasons
 in `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 794 | 791 |
+| gojja2's own (committed, with goldens) | 800 | 797 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **3114** | **3107 (99.8%)** |
+| **total** | **3120** | **3113 (99.8%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
