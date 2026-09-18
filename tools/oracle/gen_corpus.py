@@ -1344,6 +1344,37 @@ case("errors/format_map_positional", "{{ '{0}'.format_map({'a': 1}) }}")
 case("errors/format_map_list", "{{ '{a}'.format_map([1]) }}")
 case("errors/format_map_str", "{{ '{a}'.format_map('x') }}")
 case("errors/format_map_none", "{{ 'x{a}'.format_map(none) }}")
+
+# The format mini-language, from a 40,000-case sweep against CPython. A grouping
+# option is allowed or refused by the format *code* alone, before the value is
+# looked at; a type with no __format__ of its own never reads the spec; a
+# leading zero fills any value but aligns only a number; the alternate form
+# keeps a float's point and stops at the exponent; padding zeros join a grouped
+# number and take separators of their own; and a precision with no type is 'g'
+# with the threshold one place lower.
+case("format/grouping_by_code",
+     "{{ '{:,f}'.format(1.5) }}|{{ '{:_x}'.format(1048575) }}|{{ '{:_b}'.format(255) }}|"
+     "{{ '{:_d}'.format(1048575) }}|{{ '{:,g}'.format(123456.0) }}|{{ '{:,.0E}'.format(1) }}")
+case("format/zero_fill_and_align",
+     "[{{ '{:0.0s}'.format('ab') }}]|{{ '{:05}'.format('ab') }}|{{ '{:>06,}'.format(1) }}|"
+     "{{ '{:=-06g}'.format(1.5) }}")
+case("format/alternate_keeps_the_point",
+     "{{ '{:#.0f}'.format(1.5) }}|{{ '{:#.0e}'.format(1.5) }}|{{ '{:#.3}'.format(1.5) }}|"
+     "{{ '{:#.0%}'.format(1.5) }}")
+case("format/padding_is_grouped",
+     "{{ '{:06,d}'.format(1) }}|{{ '{:-#06,.0%}'.format(1) }}|{{ '{:=+#06_.0F}'.format(-1) }}")
+case("format/typeless_precision",
+     "{{ '{:.0}'.format(1.5) }}|{{ '{:.1}'.format(1.5) }}|{{ '{:.2}'.format(1.5) }}|"
+     "{{ '{:.3}'.format(12.0) }}|{{ '{:.2}'.format(123456.789) }}|{{ '{:.0g}'.format(1.5) }}")
+case("errors/format_group_with_code", "{{ '{:,x}'.format(1.5) }}")
+case("errors/format_group_with_n", "{{ '{:,n}'.format(5) }}")
+case("errors/format_group_with_str", "{{ '{:+_s}'.format('ab') }}")
+case("errors/format_string_space", "{{ '{: s}'.format('ab') }}")
+case("errors/format_string_alternate", "{{ '{:=#s}'.format('ab') }}")
+case("errors/format_int_precision_first", "{{ '{:+.3c}'.format(5) }}")
+case("errors/format_int_c_alternate", "{{ '{:#c}'.format(5) }}")
+case("errors/format_object_ignores_spec", "{{ '{:,n}'.format(none) }}")
+case("errors/format_c_too_large", "{{ '{:c}'.format(2**70) }}")
 case("errors/center_width_none", "{{ 'abc'|center(none) }}")
 case("filters/sort_reverse_int",
      "{{ [3,1,2]|sort(1) }}|{{ [3,1,2]|sort(0) }}|{{ [3,1,2]|sort(true) }}|"

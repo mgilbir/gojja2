@@ -180,3 +180,105 @@ func TestFormatPercentStarArguments(t *testing.T) {
 func bigPow(base, exp int64) *big.Int {
 	return new(big.Int).Exp(big.NewInt(base), big.NewInt(exp), nil)
 }
+
+// TestFormatSpecRules pins the parts of the format mini-language that a
+// 40,000-case sweep against CPython turned up. value.None of them is guessable from
+// the others.
+//
+//   - A grouping option is allowed or refused by the format code alone, before
+//     the value is looked at -- so `{:,x}` on a float is about the comma and
+//     `{:x}` on the same float is about the code. Underscore is allowed in the
+//     power-of-two bases, where it separates every four digits.
+//   - A type with no __format__ of its own takes the empty spec and nothing
+//     else, and never looks at what the spec says.
+//   - A leading zero is a fill for any value, and an alignment only for one
+//     that aligns right by default.
+//   - The alternate form keeps a float's decimal point, and neither it nor the
+//     grouping reaches past the exponent.
+//   - Zeros written into a grouped number join it and take separators of their
+//     own.
+//   - A precision with no type is 'g' with the threshold one place lower and a
+//     ".0" kept on an all-digit result.
+func TestFormatSpecRules(t *testing.T) {
+	for _, tc := range []struct {
+		v    value.Value
+		spec string
+		want string
+	}{
+		// Grouping by code, not by value.
+		{value.Float(1.5), ",f", "1.500000"},
+		{value.Int(1048575), "_x", "f_ffff"},
+		{value.Int(1048575), "_b", "1111_1111_1111_1111_1111"},
+		{value.Int(1048575), "_d", "1_048_575"},
+		// A leading zero fills a string but does not align it.
+		{value.String("ab"), "0.0s", ""},
+		{value.String("ab"), "05", "ab000"},
+		{value.Int(1), ">06,", "000001"},
+		{value.Float(1.5), "=-06g", "0001.5"},
+		// The alternate form keeps the point, and stops at the exponent.
+		{value.Float(1.5), "#.0f", "2."},
+		{value.Float(1.5), "#.0e", "2.e+00"},
+		{value.Float(math.Copysign(0, -1)), "#.0f", "-0."},
+		{value.Int(1), ",.0E", "1E+00"},
+		{value.Float(123456.0), ",g", "123,456"},
+		// Padding zeros are grouped with the number.
+		{value.Int(1), "06,d", "00,001"},
+		{value.Int(1), "-#06,.0%", "0,100.%"},
+		{value.Int(-1), "=+#06_.0F", "-0_001."},
+		// A precision with no type.
+		{value.Float(1.5), ".0", "2e+00"},
+		{value.Float(1.5), ".1", "2e+00"},
+		{value.Float(1.5), ".2", "1.5"},
+		{value.Float(12.0), ".3", "12.0"},
+		{value.Float(123456.789), ".2", "1.2e+05"},
+		{value.Float(1.5), ".0g", "2"},
+		{value.Float(1.5), "#.3", "1.50"},
+	} {
+		got, err := value.FormatValue(tc.v, tc.spec, nil)
+		if err != nil {
+			t.Errorf("format(%s, %q): %v", value.Repr(tc.v), tc.spec, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("format(%s, %q)\n got %q\nwant %q", value.Repr(tc.v), tc.spec, got, tc.want)
+		}
+	}
+
+	for _, tc := range []struct {
+		v    value.Value
+		spec string
+		want string
+	}{
+		// The grouping check runs on the code, whatever the value is.
+		{value.Float(1.5), ",x", "Cannot specify ',' with 'x'."},
+		{value.Int(5), ",n", "Cannot specify ',' with 'n'."},
+		{value.Int(5), "_c", "Cannot specify '_' with 'c'."},
+		{value.Int(5), ",b", "Cannot specify ',' with 'b'."},
+		{value.String("ab"), ",", "Cannot specify ',' with 's'."},
+		{value.String("ab"), "+_s", "Cannot specify '_' with 's'."},
+		// The string checks, in CPython's order.
+		{value.String("ab"), " s", "Space not allowed in string format specifier"},
+		{value.String("ab"), "+s", "Sign not allowed in string format specifier"},
+		{value.String("ab"), "#s", "Alternate form (#) not allowed in string format specifier"},
+		{value.String("ab"), "=s", "'=' alignment not allowed in string format specifier"},
+		{value.String("ab"), "=#s", "Alternate form (#) not allowed in string format specifier"},
+		// The integer checks, in CPython's order.
+		{value.Int(5), ".3d", "Precision not allowed in integer format specifier"},
+		{value.Int(5), "+.3c", "Precision not allowed in integer format specifier"},
+		{value.Int(5), "+c", "Sign not allowed with integer format specifier 'c'"},
+		{value.Int(5), "#c", "Alternate form (#) not allowed with integer format specifier 'c'"},
+		// A type with no __format__ never reads the spec.
+		{value.None, ",n", "unsupported format string passed to NoneType.__format__"},
+		{value.NewList(value.Int(1)), "_a", "unsupported format string passed to list.__format__"},
+		{value.None, ">5", "unsupported format string passed to NoneType.__format__"},
+	} {
+		_, err := value.FormatValue(tc.v, tc.spec, nil)
+		if err == nil {
+			t.Errorf("format(%s, %q): no error, want %q", value.Repr(tc.v), tc.spec, tc.want)
+			continue
+		}
+		if err.Error() != tc.want {
+			t.Errorf("format(%s, %q)\n got %q\nwant %q", value.Repr(tc.v), tc.spec, err.Error(), tc.want)
+		}
+	}
+}
