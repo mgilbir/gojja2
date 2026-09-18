@@ -180,10 +180,13 @@ func utf8Reason(b []byte, i int) string {
 // codecArgs reads the (encoding, errors) pair both encode and decode take.
 func codecArgs(args *value.CallArgs, method string) (codec, handler string, err error) {
 	codec, handler = "utf-8", "strict"
-	if v, ok := arg(args, 0, "encoding"); ok && !v.IsNone() {
+	// A None is not the default here either: str.encode's arguments are
+	// declared as str, so an explicit None is refused rather than falling
+	// back on utf-8.
+	if v, ok := arg(args, 0, "encoding"); ok {
 		if !v.IsString() {
 			return "", "", errs.New(errs.TypeError,
-				"%s() argument 'encoding' must be str, not %s", method, v.TypeName())
+				"%s() argument 'encoding' must be str, not %s", method, clinicTypeName(v))
 		}
 		name, known := codecName(value.Str(v))
 		if !known {
@@ -192,10 +195,10 @@ func codecArgs(args *value.CallArgs, method string) (codec, handler string, err 
 		}
 		codec = name
 	}
-	if v, ok := arg(args, 1, "errors"); ok && !v.IsNone() {
+	if v, ok := arg(args, 1, "errors"); ok {
 		if !v.IsString() {
 			return "", "", errs.New(errs.TypeError,
-				"%s() argument 'errors' must be str, not %s", method, v.TypeName())
+				"%s() argument 'errors' must be str, not %s", method, clinicTypeName(v))
 		}
 		handler = value.Str(v)
 	}

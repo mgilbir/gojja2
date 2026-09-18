@@ -1279,6 +1279,36 @@ case("errors/method_keyword_before_count", "{{ 'ab'.upper(1, zz=1) }}")
 case("methods/arity_accepted",
      "{{ 'ab'.upper() }}|{{ 'a,b'.split(sep=',') }}|{{ 'a,b,c'.split(',', maxsplit=1) }}|"
      "{{ 'ab'.center(6, '-') }}|{{ {'a':1}.get('a', 2) }}|{{ '{0}{k}'.format(1, k=2) }}")
+
+# A method's optional argument has a default for being *absent*, not for being
+# None: CPython hands an explicit None to the same check every other value goes
+# through. A string search's bounds really are optional and say so in their own
+# message, which is what tells the two apart.
+case("errors/method_none_expandtabs", "{{ 'ab'.expandtabs(none) }}")
+case("errors/method_none_zfill", "{{ 'ab'.zfill(none) }}")
+case("errors/method_none_maxsplit", "{{ 'a,b'.split('a', none) }}")
+case("errors/method_none_replace_count", "{{ 'ab'.replace('a', 'b', none) }}")
+case("errors/method_none_pop", "{{ [1].pop(none) }}")
+case("errors/method_none_insert", "{{ [1].insert(none, 1) }}")
+case("errors/method_none_keepends", "{{ 'ab'.splitlines(none) }}")
+case("errors/method_float_keepends", "{{ 'ab'.splitlines(1.5) }}")
+case("errors/method_none_fillchar", "{{ 'ab'.center(4, none) }}")
+case("errors/method_none_encoding", "{{ 'ab'.encode(none) }}")
+case("errors/method_none_errors", "{{ 'ab'.encode('utf-8', none) }}")
+case("methods/optional_none_bounds",
+     "{{ 'ab'.count('a', none) }}|{{ 'ab'.find('a', none) }}|"
+     "{{ 'ab'.startswith('a', none) }}|{{ 'ab'.endswith('b', 0, none) }}|"
+     "{{ 'ab'.splitlines(1) }}")
+
+# list.index and tuple.index search only between start and stop, and answer an
+# index into the whole list. Both were read and then ignored. Their bounds have
+# no None form, which the message says by leaving "or None" out.
+case("methods/seq_index_window",
+     "{{ [1,2,1].index(1) }}|{{ [1,2,1].index(1, 1) }}|{{ [1,2,1].index(1, 1, 3) }}|"
+     "{{ [1,2,1].index(1, -1) }}|{{ [1,2,1].index(1, 0, -1) }}|{{ (1,2,1).index(1, 1) }}")
+case("errors/seq_index_window_empty", "{{ [1,2,1].index(1, 1, 2) }}")
+case("errors/seq_index_bounds_none", "{{ [1,2,1].index(1, none) }}")
+case("errors/seq_index_bounds_float", "{{ [1,2,1].index(1, 1.5) }}")
 case("errors/center_width_none", "{{ 'abc'|center(none) }}")
 case("filters/sort_reverse_int",
      "{{ [3,1,2]|sort(1) }}|{{ [3,1,2]|sort(0) }}|{{ [3,1,2]|sort(true) }}|"

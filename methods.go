@@ -158,6 +158,18 @@ func indexArg(args *value.CallArgs, i int, name string, def int) (int, error) {
 	return indexOf(v)
 }
 
+// clinicTypeName is the type name CPython's own argument parser prints, which
+// is "None" for the None singleton and the type's name for everything else.
+// Only the messages that parser generates use it; an older hand-written check
+// says "NoneType" like any other type, which is why this is not simply
+// TypeName.
+func clinicTypeName(v value.Value) string {
+	if v.IsNone() {
+		return "None"
+	}
+	return v.TypeName()
+}
+
 // indexOf is Python's __index__ protocol: the conversion every argument used
 // as an integer goes through, and the complaint it makes.
 func indexOf(v value.Value) (int, error) {
@@ -493,7 +505,7 @@ func isXIDContinue(c rune) bool {
 // of tabsize, and the column resets at every line break rather than counting
 // from the start of the string.
 func methodExpandtabs(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	size, err := intArg(args, 0, "tabsize", 8)
+	size, err := indexArg(args, 0, "tabsize", 8)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -603,7 +615,7 @@ func trimMethod(withCutset func(string, string) string, withFunc func(string, fu
 // `" a  b ".split()` has two elements and `" a  b ".split(" ")` has five.
 func splitMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		limit, err := intArg(args, 1, "maxsplit", -1)
+		limit, err := indexArg(args, 1, "maxsplit", -1)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -671,13 +683,16 @@ func splitRightN(s, sep string, n int) []string {
 }
 
 func methodSplitlines(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	// keepends is declared `bool(accept={int})`, so it is an integer and
+	// not a truth test: `splitlines(none)` is refused where reading it for
+	// truth quietly kept nothing.
 	keepEnds := false
 	if v, ok := arg(args, 0, "keepends"); ok {
-		ok, err := value.IsTrue(v)
+		n, err := indexOf(v)
 		if err != nil {
 			return value.Undefined, err
 		}
-		keepEnds = ok
+		keepEnds = n != 0
 	}
 	lines := splitLines(r.AsString(), keepEnds)
 	items := make([]value.Value, len(lines))
@@ -727,7 +742,7 @@ func methodReplace(st *State, r value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	count, err := intArg(args, 2, "count", -1)
+	count, err := indexArg(args, 2, "count", -1)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1306,7 +1321,7 @@ func isAllDigits(s string) bool {
 }
 
 func methodZfill(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	width, err := intArg(args, 0, "width", 0)
+	width, err := indexArg(args, 0, "width", 0)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1336,7 +1351,7 @@ const (
 
 func padMethod(align padAlign) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		width, err := intArg(args, 0, "width", 0)
+		width, err := indexArg(args, 0, "width", 0)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -1358,10 +1373,14 @@ func padMethod(align padAlign) func(*State, value.Value, *value.CallArgs) (value
 // string of the wrong length is worse than refusing.
 func fillCharArg(args *value.CallArgs, i int, name string) (string, error) {
 	v, ok := arg(args, i, name)
-	if !ok || v.IsNone() {
+	if !ok {
 		return " ", nil
 	}
+	// A None is not the default. Only an argument that was not written is,
+	// and an explicit one reaches the check like any other value.
 	if v.Kind() != value.KindString {
+		// Hand-written in CPython rather than generated, so it names
+		// the type plainly: "NoneType", not the parser's "None".
 		return "", errs.New(errs.TypeError,
 			"The fill character must be a unicode character, not %s", v.TypeName())
 	}
@@ -1760,7 +1779,7 @@ func methodListExtend(st *State, r value.Value, args *value.CallArgs) (value.Val
 }
 
 func methodListInsert(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	at, err := intArg(args, 0, "", 0)
+	at, err := indexArg(args, 0, "", 0)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1787,7 +1806,7 @@ func methodListPop(_ *State, r value.Value, args *value.CallArgs) (value.Value, 
 	if len(items) == 0 {
 		return value.Undefined, errs.New(errs.IndexError, "pop from empty list")
 	}
-	at, err := intArg(args, 0, "", len(items)-1)
+	at, err := indexArg(args, 0, "", len(items)-1)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1827,18 +1846,77 @@ func methodListReverse(_ *State, r value.Value, _ *value.CallArgs) (value.Value,
 	return value.None, nil
 }
 
+// methodSeqIndex is list.index(value, start=0, stop=maxsize), which searches
+// only between start and stop and answers an index into the whole list.
+//
+// The window was read and then ignored, so `[1,2,1].index(1, 1)` answered 0
+// where CPython answers 2, and `[1,2,1].index(1, 1, 2)` answered 0 where
+// CPython raises. Unlike a string search's, these bounds have no None form:
+// list.index declares them as indices outright, so the message has no "or
+// None" in it.
 func methodSeqIndex(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	v, ok := arg(args, 0, "")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError, "index() takes at least one argument")
 	}
 	s, _ := r.Seq()
-	for i, item := range s.Items() {
-		if value.Equal(item, v) {
+	items := s.Items()
+	start, end, err := seqSearchBounds(args, len(items))
+	if err != nil {
+		return value.Undefined, err
+	}
+	for i := start; i < end; i++ {
+		if value.Equal(items[i], v) {
 			return value.Int(int64(i)), nil
 		}
 	}
 	return value.Undefined, errs.New(errs.ValueError, "%s is not in list", value.Repr(v))
+}
+
+// seqSearchBounds reads list.index's start and stop as slice indices: negative
+// counts from the end, out of range clamps, and anything that is not a whole
+// number is refused.
+func seqSearchBounds(args *value.CallArgs, n int) (start, end int, err error) {
+	read := func(i, def int) (int, error) {
+		v, ok := args.Arg(i)
+		if !ok {
+			return def, nil
+		}
+		k, fits := v.Int64()
+		if !fits {
+			if _, big := v.BigInt(); big {
+				// Past any index there is, in either
+				// direction, and clamping is the answer.
+				if b, _ := v.BigInt(); b.Sign() < 0 {
+					return 0, nil
+				}
+				return n, nil
+			}
+			return 0, errs.New(errs.TypeError,
+				"slice indices must be integers or have an __index__ method")
+		}
+		idx := int(k)
+		if idx < 0 {
+			idx += n
+			if idx < 0 {
+				idx = 0
+			}
+		}
+		if idx > n {
+			idx = n
+		}
+		return idx, nil
+	}
+	if start, err = read(1, 0); err != nil {
+		return 0, 0, err
+	}
+	if end, err = read(2, n); err != nil {
+		return 0, 0, err
+	}
+	if end < start {
+		end = start
+	}
+	return start, end, nil
 }
 
 // methodTupleIndex is list.index on a tuple, which names itself when the value
