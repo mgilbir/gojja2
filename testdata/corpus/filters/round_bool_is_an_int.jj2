@@ -1,0 +1,3 @@
+{}
+---
+{{ true|round(-1) }}|{{ true|round(0) }}|{{ false|round(-1) }}|{{ 1.5|round(true) }}|{{ 1.55|round(true) }}|{{ 1.5|round(false) }}

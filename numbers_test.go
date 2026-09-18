@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 )
@@ -240,6 +241,131 @@ func TestRoundNegativePrecisionOnAnInteger(t *testing.T) {
 			continue
 		}
 		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// TestRoundIsPythonsRound: do_round is three different things depending on the
+// method, and it checks the method before it looks at anything else.
+//
+// "common" is Python's round(value, precision). The method is looked up on the
+// *value*, so a type that has no __round__ is refused before the precision is
+// examined; a precision of None asks for an integer rather than a float, and
+// asks for it exactly; and the numeric type is preserved otherwise, bool
+// included. "ceil" and "floor" multiply by 10**precision instead, so they
+// accept a float precision, fail on None at the exponent, and divide by zero
+// once the power underflows.
+//
+// gojja2 read the precision as an integer at the filter's door, which reported
+// the wrong one of those for every mixed call; answered a float where Python
+// answers an int; took round(true, -1) for 1; and scaled by a float power of
+// ten for a negative precision, which lost digits at the top of the range and
+// produced NaN at the bottom.
+func TestRoundIsPythonsRound(t *testing.T) {
+	env := New()
+	for _, tc := range []struct{ src, want string }{
+		// No precision, or None, is an integer -- exactly, ties to even.
+		{`{{ 1.5|round(none) }}|{{ 2.5|round(none) }}|{{ 3.5|round(none) }}`, "2|2|4"},
+		{`{{ -1.5|round(none) }}|{{ -2.5|round(none) }}|{{ 0.5|round(none) }}`, "-2|-2|0"},
+		{`{{ -0.0|round(none) }}|{{ 0.0|round(none) }}`, "0|0"},
+		{`{{ 5|round(none) }}|{{ true|round(none) }}|{{ false|round(none) }}`, "5|1|0"},
+		// A bool is an int at every precision.
+		{`{{ true|round(-1) }}|{{ true|round(0) }}|{{ false|round(-1) }}`, "0|1|0"},
+		{`{{ 1.5|round(true) }}|{{ 1.55|round(true) }}|{{ 1.5|round(false) }}`, "1.5|1.6|2.0"},
+		// A negative precision on a float is exact on both sides.
+		{`{{ 1e300|round(-300) }}|{{ 1e300|round(-301) }}`, "1e+300|0.0"},
+		{`{{ 1.5|round(-400) }}|{{ -1.5|round(-400) }}`, "0.0|-0.0"},
+		// ceil and floor take a float precision, because they only
+		// raise it to a power.
+		{`{{ 1.5|round(2.5, "ceil") }}`, "1.50208188857998"},
+		{`{{ 1.5|round(-1.5, "ceil") }}`, "31.622776601683796"},
+		{`{{ 1.5|round(-3, "ceil") }}|{{ 1.5|round(0, "ceil") }}`, "1000.0|2.0"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+
+	for _, tc := range []struct{ src, want string }{
+		// The method is checked first, whatever else is wrong.
+		{`{{ "x"|round(1.5, "nope") }}`, "method must be common, ceil or floor"},
+		{`{{ 1.5|round(1.5, none) }}`, "method must be common, ceil or floor"},
+		{`{{ 1.5|round(1.5, 1) }}`, "method must be common, ceil or floor"},
+		// Then the value's own __round__, before the precision.
+		{`{{ "abc"|round(1.5) }}`, "type str doesn't define __round__ method"},
+		{`{{ []|round("x") }}`, "type list doesn't define __round__ method"},
+		{`{{ none|round([]) }}`, "type NoneType doesn't define __round__ method"},
+		// Then the precision.
+		{`{{ 1.5|round(1.5) }}`, "'float' object cannot be interpreted as an integer"},
+		{`{{ 1.5|round("x") }}`, "'str' object cannot be interpreted as an integer"},
+		// ceil and floor raise ten to the precision first, so that is
+		// what fails -- even for a value that has no __round__.
+		{`{{ "abc"|round(none, "ceil") }}`,
+			"unsupported operand type(s) for ** or pow(): 'int' and 'NoneType'"},
+		{`{{ "abc"|round("x", "ceil") }}`,
+			"unsupported operand type(s) for ** or pow(): 'int' and 'str'"},
+		// And then multiply by it, which is where a str is refused as
+		// something math.ceil cannot take.
+		{`{{ "abc"|round(0, "ceil") }}`, "must be real number, not str"},
+		{`{{ []|round(0, "ceil") }}`, "must be real number, not list"},
+		// A power of ten that underflows is a division by zero.
+		{`{{ 1.5|round(-400, "ceil") }}`, "float division by zero"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		out, err := tmpl.RenderString(context.Background(), nil)
+		if err == nil {
+			t.Errorf("%s: rendered %q, want %q", tc.src, out, tc.want)
+			continue
+		}
+		if err.Error() != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, err.Error(), tc.want)
+		}
+	}
+
+	// An infinity has no integer form, so round() with no precision and
+	// math.ceil both refuse it; with a precision, round() answers a float
+	// and leaves it alone.
+	ctx := map[string]any{"inf": math.Inf(1), "nan": math.NaN()}
+	for _, tc := range []struct{ src, want string }{
+		{`{{ inf|round(none) }}`, "cannot convert float infinity to integer"},
+		{`{{ nan|round(none) }}`, "cannot convert float NaN to integer"},
+		{`{{ inf|round(2, "ceil") }}`, "cannot convert float infinity to integer"},
+		{`{{ nan|round(0, "floor") }}`, "cannot convert float NaN to integer"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		if _, err := tmpl.RenderString(context.Background(), ctx); err == nil ||
+			err.Error() != tc.want {
+			t.Errorf("%s\n got %v\nwant %q", tc.src, err, tc.want)
+		}
+	}
+	for _, tc := range []struct{ src, want string }{
+		{`{{ inf|round }}|{{ inf|round(2) }}`, "inf|inf"},
+		{`{{ nan|round }}`, "nan"},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(), ctx)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+		} else if got != tc.want {
 			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
 		}
 	}

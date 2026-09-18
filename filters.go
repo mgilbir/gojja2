@@ -1826,31 +1826,40 @@ func filterFloat(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 	return def, nil
 }
 
+// filterRound is jinja2's do_round, which is three different things depending
+// on the method -- and checks the method before it looks at anything else.
+//
+// "common" is Python's round(value, precision): the method is looked up on the
+// *value* first, so a list is refused before the precision is examined; a
+// precision of None asks for an integer rather than a float; and the numeric
+// type is preserved otherwise. "ceil" and "floor" multiply by 10**precision
+// instead, which accepts a float precision, fails on None at the exponent, and
+// divides by zero once the power underflows.
 func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	precision, err := intArg(args, 0, "precision", 0)
-	if err != nil {
-		return value.Undefined, err
-	}
 	method := "common"
 	if m, ok := arg(args, 1, "method"); ok {
 		method = value.Str(m)
 	}
 	if method != "common" && method != "ceil" && method != "floor" {
+		// Checked first, and by equality, so a method that is not even
+		// a string lands here rather than anywhere later.
 		return value.Undefined, errs.New(errs.FilterArgumentError,
 			"method must be common, ceil or floor")
 	}
+	precision := value.Int(0)
+	if p, ok := arg(args, 0, "precision"); ok {
+		precision = p
+	}
 
-	// The two methods fail differently, because jinja2 implements them
-	// differently: "common" calls round(), so a value with no __round__ is
-	// a TypeError, while ceil and floor multiply by a power of ten first,
-	// so an undefined raises its own error before any rounding happens.
 	if method != "common" {
 		// jinja2 writes `func(value * (10 ** precision)) / (10 ** precision)`,
-		// and 10**precision is an *integer* for a non-negative precision.
-		// That matters: `[a, b] * 1` is a list, which math.ceil then
-		// rejects as "must be real number, not list" rather than the
+		// and the exponent is evaluated first -- so a precision that is
+		// not a number fails there, whatever the value is. 10**precision
+		// is an *integer* for a non-negative whole precision, which
+		// matters: `[a, b] * 1` is a list, which math.ceil then rejects
+		// as "must be real number, not list" rather than the
 		// multiplication failing first.
-		scale, err := value.Pow(value.Int(10), value.Int(int64(precision)))
+		scale, err := value.Pow(value.Int(10), precision)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -1864,6 +1873,23 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 				"must be real number, not %s", scaled.TypeName())
 		}
 		divisor, _ := scale.Float64()
+		if divisor == 0 {
+			// 10**-400 underflows to 0.0, and Python then divides by
+			// it. gojja2 answered NaN, which is not a number any
+			// template asked for.
+			return value.Undefined, errs.New(errs.ZeroDivisionError, "float division by zero")
+		}
+		// math.ceil and math.floor answer a Python int, so they refuse a
+		// value that is not one -- which is where an infinity raises,
+		// rather than dividing through as an infinity of its own.
+		if math.IsInf(f, 0) {
+			return value.Undefined, errs.New(errs.OverflowError,
+				"cannot convert float infinity to integer")
+		}
+		if math.IsNaN(f) {
+			return value.Undefined, errs.New(errs.ValueError,
+				"cannot convert float NaN to integer")
+		}
 		rounded := math.Floor(f)
 		if method == "ceil" {
 			rounded = math.Ceil(f)
@@ -1879,53 +1905,152 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		return value.Float(rounded / divisor), nil
 	}
 
-	// Python's round() preserves the numeric type: round(5, 2) is the int
-	// 5, while round(2.5, 0) is the float 2.0.
-	if v.IsInteger() {
-		if v.Kind() == value.KindBool {
-			n, _ := v.Int64()
-			return value.Int(n), nil
-		}
-		if precision >= 0 {
-			return v, nil
-		}
-		// A negative precision rounds to a multiple of a power of ten,
-		// and the answer is still an int: round(3, -1) is 0, not 0.0.
-		// This used to fall through to the float path, which returned
-		// 0.0 -- and -0.0 for a negative input, which Python never
-		// writes for an integer.
-		b, _ := v.BigInt()
-		return value.BigInt(roundToPowerOfTen(b, -precision)), nil
-	}
-
-	f, ok := v.Float64()
-	if !ok {
+	// round() looks __round__ up on the value, so a type that has none is
+	// refused here -- before the precision is looked at at all.
+	if !v.IsNumber() {
 		return value.Undefined, errs.New(errs.TypeError,
 			"type %s doesn't define __round__ method", v.TypeName())
 	}
-	// Python rounds the decimal value, not the value scaled by a power of
-	// ten: 2.675 is really 2.67499..., so round(2.675, 2) is 2.67, while
-	// 2.675*100 rounds up to 267.5 and would give 2.68. Formatting to the
-	// requested precision rounds correctly against the true value, ties to
-	// even included.
-	if precision >= 0 {
-		// precision is the number of digits FormatFloat is about to
-		// write, so it sizes the allocation directly: round(2000000000)
-		// formats a two-billion-digit decimal. A float64 carries no
-		// information past ~17 significant digits, so anything past the
-		// charge is padding zeroes -- but they still have to be paid for
-		// before they are written.
-		if err := s.ChargeBytes(int64(precision)); err != nil {
+	// round(x) and round(x, None) are the same call, and both answer an
+	// *integer*: round(2.5) is 2, not 2.0.
+	if precision.IsNone() {
+		return roundToInteger(v)
+	}
+	digits, whole := precision.BigInt()
+	if !whole {
+		return value.Undefined, errs.New(errs.TypeError,
+			"'%s' object cannot be interpreted as an integer", precision.TypeName())
+	}
+
+	// Python's round preserves the numeric type: round(5, 2) is the int 5,
+	// while round(2.5, 0) is the float 2.0. A bool is an int, so
+	// round(true, -1) is 0 and not 1.
+	if v.IsInteger() {
+		b, _ := v.BigInt()
+		if digits.Sign() >= 0 {
+			return value.BigInt(b), nil
+		}
+		// A negative precision rounds to a multiple of a power of ten,
+		// and the answer is still an int: round(3, -1) is 0, not 0.0.
+		k := new(big.Int).Neg(digits)
+		// Past the width of the number every multiple is zero, and the
+		// power of ten would not fit in memory. CPython computes it
+		// anyway and takes minutes over a large enough precision; this
+		// answers what it would have answered.
+		if k.Cmp(big.NewInt(int64(len(new(big.Int).Abs(b).String())))) > 0 {
+			return value.Int(0), nil
+		}
+		return value.BigInt(roundToPowerOfTen(b, int(k.Int64()))), nil
+	}
+
+	f, _ := v.Float64()
+	// A float carries no decimal beyond ~1080 places, so a precision past
+	// that cannot change the answer -- and clamping keeps every power of
+	// ten below in range. CPython hangs rather than answering for a
+	// precision of 2**70; this does not.
+	p := clampPrecision(digits)
+	if p >= 0 {
+		// p is the number of digits FormatFloat is about to write, so it
+		// sizes the allocation directly: round(2000000000) formats a
+		// two-billion-digit decimal. A float64 carries no information
+		// past ~17 significant digits, so anything past the charge is
+		// padding zeroes -- but they still have to be paid for before
+		// they are written.
+		if err := s.ChargeBytes(int64(p)); err != nil {
 			return value.Undefined, err
 		}
-		rounded, err := strconv.ParseFloat(strconv.FormatFloat(f, 'f', precision, 64), 64)
+		// Python rounds the decimal value, not the value scaled by a
+		// power of ten: 2.675 is really 2.67499..., so round(2.675, 2)
+		// is 2.67, while 2.675*100 rounds up to 267.5 and would give
+		// 2.68. Formatting to the requested precision rounds correctly
+		// against the true value, ties to even included.
+		rounded, err := strconv.ParseFloat(strconv.FormatFloat(f, 'f', p, 64), 64)
 		if err != nil {
 			return value.Undefined, err
 		}
 		return value.Float(rounded), nil
 	}
-	scale := math.Pow(10, float64(precision))
-	return value.Float(math.RoundToEven(f*scale) / scale), nil
+	if math.IsInf(f, 0) || math.IsNaN(f) {
+		return value.Float(f), nil
+	}
+	// The same exactness on the other side of the point. Scaling by a
+	// float power of ten and dividing back loses digits -- it turned
+	// 1e300|round(-300) into 1.0000000000000006e+300 -- and underflows to
+	// NaN once the power reaches zero.
+	pow := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-p)), nil)
+	r := new(big.Rat).SetFloat64(f)
+	r.Quo(r, new(big.Rat).SetInt(pow))
+	out := new(big.Rat).SetInt(ratRoundHalfEven(r))
+	out.Mul(out, new(big.Rat).SetInt(pow))
+	got, _ := out.Float64()
+	if got == 0 && math.Signbit(f) {
+		// A rational has no signed zero; Python's round keeps the sign.
+		got = math.Copysign(0, -1)
+	}
+	return value.Float(got), nil
+}
+
+// maxFloatDecimals bounds a precision. The exact decimal expansion of a
+// float64 terminates within 1075 places after the point and needs at most 309
+// before it, so rounding anywhere past this leaves the value alone or takes it
+// to zero, whatever the precision says.
+const maxFloatDecimals = 1100
+
+func clampPrecision(digits *big.Int) int {
+	if digits.Cmp(big.NewInt(maxFloatDecimals)) > 0 {
+		return maxFloatDecimals
+	}
+	if digits.Cmp(big.NewInt(-maxFloatDecimals)) < 0 {
+		return -maxFloatDecimals
+	}
+	return int(digits.Int64())
+}
+
+// roundToInteger is round(x) with no precision, which Python answers as an int
+// -- exactly, ties to even. A float past 2**53 has no digits to spare, so the
+// answer has to be arbitrary precision: round(1e308) is 309 digits.
+func roundToInteger(v value.Value) (value.Value, error) {
+	if v.IsInteger() {
+		b, _ := v.BigInt()
+		return value.BigInt(b), nil
+	}
+	f, _ := v.Float64()
+	if math.IsInf(f, 0) {
+		return value.Undefined, errs.New(errs.OverflowError,
+			"cannot convert float infinity to integer")
+	}
+	if math.IsNaN(f) {
+		return value.Undefined, errs.New(errs.ValueError,
+			"cannot convert float NaN to integer")
+	}
+	return value.BigInt(ratRoundHalfEven(new(big.Rat).SetFloat64(f))), nil
+}
+
+// ratRoundHalfEven rounds an exact rational to the nearest integer, ties to
+// even -- Python's rule at every precision.
+func ratRoundHalfEven(r *big.Rat) *big.Int {
+	num, den := r.Num(), r.Denom()
+	q, rem := new(big.Int).QuoRem(num, den, new(big.Int))
+	twice := new(big.Int).Abs(rem)
+	twice.Lsh(twice, 1)
+	step := func() {
+		if num.Sign() < 0 {
+			q.Sub(q, big.NewInt(1))
+		} else {
+			q.Add(q, big.NewInt(1))
+		}
+	}
+	switch twice.Cmp(den) {
+	case 1:
+		step()
+	case 0:
+		// Bit(0) is the parity of the magnitude for a negative too,
+		// which is the parity Python's tie-break asks about.
+		if q.Bit(0) == 1 {
+			step()
+		}
+	}
+	return q
 }
 
 // roundToPowerOfTen rounds n to the nearest multiple of 10**k, ties going to
