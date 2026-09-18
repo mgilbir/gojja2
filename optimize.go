@@ -721,9 +721,7 @@ func (c *constEvaluator) tryConstEval(e ast.Expr) (v value.Value, ok bool) {
 			v, ok = value.Undefined, false
 		}
 	}()
-	c.st.budget.steps = 0
-	c.st.budget.written = 0
-	c.st.budget.sinceCheck = 0
+	c.st.budget.resetAllowance()
 	return c.constEval(e)
 }
 

@@ -164,6 +164,14 @@ func (t *Template) renderState(st *State, out writer) error {
 			return err
 		}
 	}
+	// A render must not succeed after a charge was refused. Every internal
+	// path propagates that refusal, but State.Resolve is a published
+	// signature with nowhere to put one, and an extension calling it is not
+	// a path this package controls. The budget remembers the first refusal
+	// precisely so the answer does not depend on who remembered to look.
+	if st.budget != nil {
+		return st.budget.failed
+	}
 	return nil
 }
 
