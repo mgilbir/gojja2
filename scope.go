@@ -12,6 +12,20 @@ import "github.com/mgilbir/gojja2/value"
 // blocks introduce. Assignment always writes to the innermost scope, which is
 // what makes `{% set %}` inside a loop invisible after it.
 type scope struct {
+	// names, vals and n are the first few bindings, held without a map.
+	//
+	// A loop frame binds two -- the loop variable and `loop` -- and
+	// building a map for them was the single largest source of allocated
+	// objects in a loop, 40% of them: a Go map with one string key and a
+	// 48-byte value is two allocations and about 576 bytes, against 56 for
+	// the scope that held it. Every iteration of every loop paid it.
+	//
+	// Bindings past these spill into vars, which also holds the environment
+	// globals, since that scope is built around a map that already exists.
+	names [inlineVars]string
+	vals  [inlineVars]value.Value
+	n     int
+
 	vars   map[string]value.Value
 	parent *scope
 
@@ -46,9 +60,43 @@ func newScope(parent *scope) *scope {
 	return &scope{parent: parent}
 }
 
+// inlineVars is how many bindings a scope holds before it needs a map.
+//
+// Two, because two is what a loop frame binds -- the loop variable and `loop` --
+// and because measuring said so. Every slot costs 64 bytes in every scope
+// whether it is used or not, and raising this to three, four or six did not
+// remove a single further allocation from any benchmark here while adding
+// 19%, 38% and 75% to the bytes a loop allocates. The frames that bind more
+// than two are rare enough that widening every scope to hold them in line
+// costs more than the map they fall back to.
+const inlineVars = 2
+
+// get reads a binding from this scope alone, slots before map.
+//
+// A name cannot be in both: set looks in both before it puts anything down.
+func (s *scope) get(name string) (value.Value, bool) {
+	for i := range s.n {
+		if s.names[i] == name {
+			return s.vals[i], true
+		}
+	}
+	v, ok := s.vars[name]
+	return v, ok
+}
+
+// each calls yield for every binding this scope holds.
+func (s *scope) each(yield func(string, value.Value)) {
+	for i := range s.n {
+		yield(s.names[i], s.vals[i])
+	}
+	for k, v := range s.vars {
+		yield(k, v)
+	}
+}
+
 func (s *scope) lookup(name string) (value.Value, bool, error) {
 	for cur := s; cur != nil; cur = cur.parent {
-		if v, ok := cur.vars[name]; ok {
+		if v, ok := cur.get(name); ok {
 			return v, true, nil
 		}
 		v, ok, err := cur.convert(name)
@@ -103,7 +151,7 @@ func (s *scope) realise() error {
 // without seeing the render arguments underneath them.
 func (s *scope) lookupUntil(name string, stop *scope) (value.Value, bool, error) {
 	for cur := s; cur != nil; cur = cur.parent {
-		if v, ok := cur.vars[name]; ok {
+		if v, ok := cur.get(name); ok {
 			return v, true, nil
 		}
 		v, ok, err := cur.convert(name)
@@ -120,7 +168,27 @@ func (s *scope) lookupUntil(name string, stop *scope) (value.Value, bool, error)
 	return value.Undefined, false, nil
 }
 
+// set binds a name in this scope, rebinding it wherever it already lives.
+//
+// Both places are searched before anything is written, which is what keeps a
+// name out of the slots and the map at once -- and keeps get free to stop at
+// the first hit.
 func (s *scope) set(name string, v value.Value) {
+	for i := range s.n {
+		if s.names[i] == name {
+			s.vals[i] = v
+			return
+		}
+	}
+	if _, ok := s.vars[name]; ok {
+		s.vars[name] = v
+		return
+	}
+	if s.n < inlineVars {
+		s.names[s.n], s.vals[s.n] = name, v
+		s.n++
+		return
+	}
 	if s.vars == nil {
 		s.vars = make(map[string]value.Value)
 	}
@@ -144,9 +212,7 @@ func (s *scope) flatten() (map[string]value.Value, error) {
 		if err := cur.realise(); err != nil {
 			return err
 		}
-		for k, v := range cur.vars {
-			out[k] = v
-		}
+		cur.each(func(k string, v value.Value) { out[k] = v })
 		return nil
 	}
 	if err := walk(s); err != nil {
