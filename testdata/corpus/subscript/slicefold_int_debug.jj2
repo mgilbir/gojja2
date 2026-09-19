@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{{ 1[1:2] }}

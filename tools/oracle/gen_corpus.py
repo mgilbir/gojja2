@@ -875,6 +875,31 @@ for _n, _src, _ctx in _BADKEY:
          __settings__={"undefined": "debug"}, **_ctx)
 
 
+# Slicing something that cannot be sliced folds, as jinja2's optimizer does,
+# into an undefined naming the owner and the slice. gojja2 built a hint saying
+# the base was not subscriptable, which under DebugUndefined rendered as
+# "undefined value printed: ..." rather than naming the subscript. The run-time
+# form raises TypeError on both engines and is unaffected; this is only about
+# the constant that folding leaves behind.
+_SLICEFOLD = [
+    ("none", "{{ none[1:2] }}"),
+    ("none_bad_stop", "{{ none[1:'x'] }}"),
+    ("none_zero_step", "{{ none[::0] }}"),
+    ("bool", "{{ true[1:2] }}"),
+    ("int", "{{ 1[1:2] }}"),
+    ("float", "{{ 1.5[1:2] }}"),
+    ("dict", "{{ {'a': 1}[1:2] }}"),
+    ("dict_full", "{{ {'a': 1}[::-1] }}"),
+]
+for _n, _src in _SLICEFOLD:
+    case(f"subscript/slicefold_{_n}", _src)
+    case(f"subscript/slicefold_{_n}_debug", _src, __settings__={"undefined": "debug"})
+    # The run-time form, which raises instead of folding.
+    case(f"subscript/sliceruntime_{_n}", _src.replace("none[", "x[").replace(
+        "true[", "x[").replace("1.5[", "x[").replace("1[", "x[").replace(
+        "{'a': 1}[", "x["), x=1)
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")
