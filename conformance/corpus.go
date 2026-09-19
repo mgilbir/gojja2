@@ -345,15 +345,67 @@ func (c *Case) Render() (string, error) {
 //
 // A value.Value passes through the conversion unchanged, so the two paths are
 // being given the same context and must agree on every case.
+// HasOrderedDict reports a context holding a dictionary of more than one key,
+// anywhere inside it.
+//
+// Such a context cannot be handed over as Go values and come back the same. A
+// Python dict keeps its insertion order and a Go map has none, so this engine
+// sorts the keys -- a deliberate divergence, recorded in docs/divergences.md,
+// and the whole of the difference between the two render paths for fourteen of
+// the committed cases. One key cannot be out of order, so the question is only
+// about two or more.
+func (c *Case) HasOrderedDict() bool {
+	for _, v := range c.Context {
+		if holdsOrderedDict(v, 0) {
+			return true
+		}
+	}
+	return false
+}
+
+func holdsOrderedDict(v value.Value, depth int) bool {
+	if depth > 32 {
+		return false
+	}
+	switch v.Kind() {
+	case value.KindDict:
+		d, _ := v.Dict()
+		if len(d.Keys()) > 1 {
+			return true
+		}
+		for _, k := range d.Keys() {
+			val, _, _ := d.Get(k)
+			if holdsOrderedDict(val, depth+1) {
+				return true
+			}
+		}
+	case value.KindList, value.KindTuple:
+		s, _ := v.Seq()
+		for _, item := range s.Items() {
+			if holdsOrderedDict(item, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (c *Case) RenderViaGo() (string, error) {
 	env := c.Environment()
 	tmpl, err := env.GetTemplate(c.Rel)
 	if err != nil {
 		return "", err
 	}
+	// Native Go values, not the case's own value.Values.
+	//
+	// Converting a Value returns it unchanged, so handing them straight
+	// over exercises the lazy per-name scope path and nothing of the
+	// Go-to-value conversion beneath it -- which is where the worst defect
+	// in this engine lived, and where a corpus of 869 cases was looking at
+	// nothing at all.
 	vars := make(map[string]any, len(c.Context))
 	for k, v := range c.Context {
-		vars[k] = v
+		vars[k] = value.ToGo(v)
 	}
 	var out strings.Builder
 	if err := tmpl.Render(context.Background(), &out, vars); err != nil {
