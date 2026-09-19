@@ -713,6 +713,40 @@ for _kind in ("strict", "chainable", "debug", "default"):
             continue
         case(f"undefined/{_kind}_{_n}", _src, __settings__={"undefined": _kind})
 
+# DebugUndefined renders the expression that failed instead of "", and jinja2's
+# __str__ has no fallback: every undefined has one of three forms, chosen the
+# way the error message is -- by whether there is a hint, an owner, and a key
+# that is not a string. gojja2 rendered "" for the hint and index forms, so an
+# out-of-range subscript and a filter's own undefined both vanished; and the
+# subscript forms that carried a hint with the right text rendered it as
+# "undefined value printed: ..." where jinja2 names the subscript.
+_DEBUG = [
+    ("name", "{{ nope }}", {}),
+    ("attr_missing", "{{ d.missing }}", {"d": {"a": 1}}),
+    ("item", "{{ d['missing'] }}", {"d": {"a": 1}}),
+    ("index", "{{ seq[42] }}", {"seq": [1, 2, 3]}),
+    ("index_str", "{{ s[9] }}", {"s": "ab"}),
+    ("index_folded", "{{ [1,2][9] }}", {}),
+    ("index_tuple", "{{ (1,2)[9] }}", {}),
+    ("index_int_base", "{{ 1[0] }}", {}),
+    ("key_not_str", "{{ [1,2][none] }}", {}),
+    ("key_float", "{{ [1,2][1.5] }}", {}),
+    ("slice_bad_stop", "{{ 'ab'[1:'x'] }}", {}),
+    ("slice_bad_step", "{{ 'ab'[::1.5] }}", {}),
+    ("slice_all_bad", "{{ 'ab'['a':'b':'c'] }}", {}),
+    ("hint_from_filter", "{{ nope|first }}", {}),
+    ("hint_from_empty", "{{ []|first }}", {}),
+    ("in_string_filter", "{{ nope|string }}", {}),
+    ("chained", "{{ nope.a }}", {}),
+    ("printed_twice", "{{ nope }}{{ d.missing }}", {"d": {"a": 1}}),
+]
+for _n, _src, _ctx in _DEBUG:
+    case(f"undefined/debug_{_n}", _src, __settings__={"undefined": "debug"}, **_ctx)
+    # The same shapes under the default class, so making one of them render
+    # cannot quietly change what the other does.
+    case(f"undefined/plain_{_n}", _src, **_ctx)
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")

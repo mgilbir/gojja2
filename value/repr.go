@@ -23,9 +23,7 @@ func Str(v Value) string {
 		return v.str
 	case KindUndefined:
 		if v.undef().behavior == UndefinedDebug {
-			if text, ok := v.DebugText(); ok {
-				return text
-			}
+			return v.DebugText()
 		}
 		return ""
 	case KindObject:
