@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mgilbir/gojja2"
@@ -20,8 +21,25 @@ import (
 // The corpus grades RenderValues, which is handed a context that is already
 // converted. Render is the one callers use, and it carries the caller's map
 // unconverted so the argument scope can convert a name at a time -- so a bug in
-// that laziness would be invisible to all 500-odd cases and to the fuzzer.
+// that laziness would be invisible to all 800-odd cases and to the fuzzer.
 // Anything that differs here is the conversion path, not the template.
+//
+// The Go side is built from native Go values rather than from the case's own
+// value.Values. Handing Values over exercises nothing: converting a Value
+// returns it unchanged, so this compared the lazy scope path against itself and
+// never reached the Go-to-value conversion beneath -- which is where the worst
+// defect in this engine lived, uncharged and uninterruptible, while the corpus
+// looked straight past it.
+//
+// A context holding a dictionary of more than one key is skipped, and cannot be
+// otherwise: a Python dict keeps its insertion order, a Go map has none, and
+// this engine sorts the keys. That is a documented divergence rather than a
+// disagreement between the paths.
+//
+// The rule is coarser than the divergence -- 39 cases hold such a dictionary
+// and only 14 of them render it in an order-revealing way -- and coarse the
+// right way round, since a case skipped here is still graded against CPython by
+// the corpus. 830 cases reach the conversion that none reached before.
 func TestBothRenderPathsAgree(t *testing.T) {
 	const root = "../testdata/corpus"
 	var paths []string
@@ -39,6 +57,7 @@ func TestBothRenderPathsAgree(t *testing.T) {
 	if len(paths) == 0 {
 		t.Fatal("no cases")
 	}
+	var skipped atomic.Int64
 	for _, path := range paths {
 		c, err := conformance.LoadCase(root, path)
 		if err != nil {
@@ -54,6 +73,11 @@ func TestBothRenderPathsAgree(t *testing.T) {
 			fresh, err := conformance.LoadCase(root, path)
 			if err != nil {
 				t.Fatalf("reload %s: %v", path, err)
+			}
+			if fresh.HasOrderedDict() {
+				skipped.Add(1)
+				t.Skip("context holds a dictionary of more than one key, " +
+					"whose order a Go map cannot carry")
 			}
 			wantOut, wantErr := c.Render()
 			gotOut, gotErr := fresh.RenderViaGo()
@@ -71,7 +95,15 @@ func TestBothRenderPathsAgree(t *testing.T) {
 			}
 		})
 	}
-	t.Logf("both render paths agree on %d cases", len(paths))
+	t.Logf("both render paths agree on %d of %d cases; %d skipped for holding "+
+		"an ordered dictionary", len(paths)-int(skipped.Load()), len(paths), skipped.Load())
+	// A skip list that quietly grew to cover everything would make this
+	// test vacuous, so the number it may reach is pinned.
+	if n := skipped.Load(); n > 80 {
+		t.Errorf("%d cases were skipped for holding an ordered dictionary; "+
+			"it was 39 when this was written, and a number this much "+
+			"larger means the predicate is matching more than it should", n)
+	}
 }
 
 // TestUnusedContextEntryIsNotConverted is the property the laziness exists for:
