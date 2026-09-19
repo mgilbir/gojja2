@@ -239,10 +239,16 @@ var stringWorkloads = map[string]workload{
 	"forceescape": {"text", `{{ text|forceescape|length }}`, 400000},
 	"tojson":      {"text", `{{ text|tojson|length }}`, 200000},
 	"pprint":      {"text", `{{ text|pprint|length }}`, 60000},
-	"urlize":      {"text", `{{ text|urlize|length }}`, 40000},
-	"replace":     {"text", `{{ text|replace("o", "0")|length }}`, 600000},
-	"indent":      {"text", `{{ text|indent(2)|length }}`, 400000},
-	"urlencode":   {"text", `{{ text|urlencode|length }}`, 200000},
+	// Markup takes its own repr, which is the whole output, and a list
+	// takes the repr of what is inside it: both reach value.Repr with the
+	// caller's data and neither goes near the word-splitting that the plain
+	// string case does.
+	"pprint, markup":    {"text", `{{ text|safe|pprint|length }}`, 200000},
+	"pprint, in a list": {"text", `{{ [text]|pprint|length }}`, 100000},
+	"urlize":            {"text", `{{ text|urlize|length }}`, 40000},
+	"replace":           {"text", `{{ text|replace("o", "0")|length }}`, 2000000},
+	"indent":            {"text", `{{ text|indent(2)|length }}`, 400000},
+	"urlencode":         {"text", `{{ text|urlencode|length }}`, 200000},
 }
 
 // |string, |trim and |truncate are left out on purpose. What each does is

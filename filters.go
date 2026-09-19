@@ -1629,7 +1629,12 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 	if text, ok := longPlainString(v, limit); ok {
 		return pformatString(st, b, text, "", indent, allowance, level+1)
 	}
-	rep := value.Repr(v)
+	// Charged and interruptible: this is the repr of the whole value, so for
+	// a Markup string it is the entire output and as long as the data.
+	rep, err := value.ReprBudget(v, st)
+	if err != nil {
+		return err
+	}
 	if len(rep) <= limit {
 		b.WriteString(rep)
 		return nil
@@ -1680,7 +1685,10 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 		d, _ := v.Dict()
 		b.WriteString("{")
 		err := pformatItems(st, b, d.Keys(), indent, allowance+1, func(b *strings.Builder, key value.Value, at, room int) error {
-			keyRep := value.Repr(key)
+			keyRep, err := value.ReprBudget(key, st)
+			if err != nil {
+				return err
+			}
 			b.WriteString(keyRep)
 			b.WriteString(": ")
 			val, _, _ := d.Get(key)

@@ -4,6 +4,8 @@
 package value_test
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,4 +107,89 @@ func TestRepeatingKeepsMarkup(t *testing.T) {
 			t.Errorf("repeating Markup %d times gave a plain string", tc.n)
 		}
 	}
+}
+
+// Building a repr is charged and can be stopped.
+//
+// A repr is as long as the value it describes, so it is work set by the
+// caller's data. It used to be one uninterruptible pass, and for a Markup
+// string it is the whole of what |pprint outputs: 90% of that filter's time
+// with a deadline an eighth of it, and the deadline arrived after the work
+// rather than during.
+func TestReprIsChargedAndCanStop(t *testing.T) {
+	long := value.String(strings.Repeat("xyz ", 200_000))
+	deep := value.NewList(long, long, long)
+
+	// A list of integers is the case the per-element charge exists for:
+	// writing an integer charges nothing of its own, so without it a
+	// million-element list is one uninterruptible walk.
+	ints := make([]value.Value, 200_000)
+	for i := range ints {
+		ints[i] = value.Int(int64(i))
+	}
+
+	for name, v := range map[string]value.Value{
+		"string":       long,
+		"markup":       value.Safe(strings.Repeat("xyz ", 200_000)),
+		"list":         deep,
+		"list of ints": value.NewList(ints...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := &countRepr{}
+			if _, err := value.ReprBudget(v, b); err != nil {
+				t.Fatalf("repr: %v", err)
+			}
+			// Bytes for the text of a repr, items for the elements
+			// of a container: which one depends on the value, and
+			// what matters is that something was charged.
+			if b.calls == 0 {
+				t.Error("building the repr charged nothing")
+			}
+
+			// A budget that refuses stops the walk rather than
+			// reporting the refusal once it has finished.
+			r := &countRepr{stopAfter: 1}
+			if _, err := value.ReprBudget(v, r); !errors.Is(err, errStopRepr) {
+				t.Fatalf("repr = %v, want the budget's refusal", err)
+			}
+			if r.calls > 8 {
+				t.Errorf("the walk charged %d times after being refused "+
+					"on the first; it built the whole repr and "+
+					"reported the refusal at the end", r.calls)
+			}
+		})
+	}
+
+	// Without a budget it is what it always was.
+	if got := value.Repr(value.String("hi")); got != "'hi'" {
+		t.Errorf("Repr = %s, want 'hi'", got)
+	}
+	if got, err := value.ReprBudget(value.String("hi"), nil); err != nil || got != "'hi'" {
+		t.Errorf("ReprBudget with no budget = %s, %v; want 'hi'", got, err)
+	}
+}
+
+var errStopRepr = errors.New("stop repr")
+
+type countRepr struct {
+	bytes     int64
+	calls     int
+	stopAfter int
+}
+
+func (c *countRepr) ChargeBytes(n int64) error {
+	c.bytes += n
+	c.calls++
+	if c.stopAfter > 0 && c.calls >= c.stopAfter {
+		return errStopRepr
+	}
+	return nil
+}
+
+func (c *countRepr) ChargeItems(n int64) error {
+	c.calls++
+	if c.stopAfter > 0 && c.calls >= c.stopAfter {
+		return errStopRepr
+	}
+	return nil
 }

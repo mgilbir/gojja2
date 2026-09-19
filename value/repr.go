@@ -52,9 +52,35 @@ func HTML(v Value) (string, bool) {
 // Repr is Python's repr(): the form a value takes inside a container.
 func Repr(v Value) string {
 	var b strings.Builder
-	writeRepr(&b, v, nil, false)
+	// No budget: nothing is charged and nothing can refuse, so the error is
+	// always nil. See ReprBudget.
+	_ = writeRepr(&b, v, nil, false, nil)
 	return b.String()
 }
+
+// ReprBudget is [Repr] with the walk charged to b and stopped when b says to
+// stop.
+//
+// A repr is as long as the value it describes, so building one is work set by
+// the caller's data rather than by the template that asked for it -- and it
+// used to be one uninterruptible pass. `{{ big|safe|pprint }}` over a 17MB
+// string spent 90% of its time here with a deadline an eighth of that, and the
+// deadline did not arrive until it was over.
+//
+// The returned string is only meaningful when the error is nil.
+func ReprBudget(v Value, bud Budget) (string, error) {
+	var b strings.Builder
+	if err := writeRepr(&b, v, nil, false, bud); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// reprChargeBlock is how much of a string is written between charges. It is the
+// budget's own check interval, so each block is one consultation -- charging
+// the whole length at once would consult the context once and then run to the
+// end, which is the defect rather than the fix.
+const reprChargeBlock = 1 << 12
 
 // active tracks the containers currently being rendered, so a value that
 // contains itself prints the way CPython prints one.
@@ -97,10 +123,13 @@ func (a active) leave(key any) { delete(a, key) }
 // point is escaped, wherever it sits. It travels with the walk because ascii()
 // applies to the whole structure and not only to a bare string -- ascii(['é'])
 // is "['\\xe9']".
-func writeRepr(b *strings.Builder, v Value, seen active, ascii bool) {
-	frame, open := openRepr(b, v, &seen, ascii)
+func writeRepr(b *strings.Builder, v Value, seen active, ascii bool, bud Budget) error {
+	frame, open, err := openRepr(b, v, &seen, ascii, bud)
+	if err != nil {
+		return err
+	}
 	if !open {
-		return
+		return nil
 	}
 	stack := []reprFrame{frame}
 	for len(stack) > 0 {
@@ -115,10 +144,20 @@ func writeRepr(b *strings.Builder, v Value, seen active, ascii bool) {
 			stack = stack[:len(stack)-1]
 			continue
 		}
-		if frame, open := openRepr(b, child, &seen, ascii); open {
+		// One element of one container per pass, so the walk yields in
+		// the size of the value rather than at the end of it.
+		if err := chargeItems(bud, 1); err != nil {
+			return err
+		}
+		frame, open, err := openRepr(b, child, &seen, ascii, bud)
+		if err != nil {
+			return err
+		}
+		if open {
 			stack = append(stack, frame)
 		}
 	}
+	return nil
 }
 
 // reprFrame is one container whose children are still being written. It stands
@@ -181,7 +220,7 @@ func (f *reprFrame) advance(b *strings.Builder) (Value, bool) {
 // container is marked on the way down and unmarked when its frame closes, so
 // two references to one non-cyclic value are both expanded in full while a
 // value that contains itself collapses.
-func openRepr(b *strings.Builder, v Value, seen *active, ascii bool) (reprFrame, bool) {
+func openRepr(b *strings.Builder, v Value, seen *active, ascii bool, bud Budget) (reprFrame, bool, error) {
 	switch v.kind {
 	case KindList, KindTuple, KindDict:
 		next, ok := seen.enter(v.obj)
@@ -194,30 +233,32 @@ func openRepr(b *strings.Builder, v Value, seen *active, ascii bool) (reprFrame,
 			default:
 				b.WriteString("{...}")
 			}
-			return reprFrame{}, false
+			return reprFrame{}, false, nil
 		}
 		*seen = next
 		switch v.kind {
 		case KindList:
 			s, _ := v.Seq()
 			b.WriteByte('[')
-			return reprFrame{items: s.items, close: ']', key: v.obj}, true
+			return reprFrame{items: s.items, close: ']', key: v.obj}, true, nil
 		case KindTuple:
 			s, _ := v.Seq()
 			b.WriteByte('(')
-			return reprFrame{items: s.items, tuple: true, close: ')', key: v.obj}, true
+			return reprFrame{items: s.items, tuple: true, close: ')', key: v.obj}, true, nil
 		default:
 			d, _ := v.Dict()
 			b.WriteByte('{')
-			return reprFrame{ents: d.entries, dict: true, close: '}', key: v.obj}, true
+			return reprFrame{ents: d.entries, dict: true, close: '}', key: v.obj}, true, nil
 		}
 	}
-	writeScalarRepr(b, v, ascii)
-	return reprFrame{}, false
+	if err := writeScalarRepr(b, v, ascii, bud); err != nil {
+		return reprFrame{}, false, err
+	}
+	return reprFrame{}, false, nil
 }
 
 // writeScalarRepr renders everything that holds no children.
-func writeScalarRepr(b *strings.Builder, v Value, ascii bool) {
+func writeScalarRepr(b *strings.Builder, v Value, ascii bool, bud Budget) error {
 	switch v.kind {
 	case KindUndefined:
 		b.WriteString("Undefined")
@@ -242,11 +283,15 @@ func writeScalarRepr(b *strings.Builder, v Value, ascii bool) {
 			// markupsafe's Markup has a repr of its own, which is
 			// what |pprint and a container's repr show.
 			b.WriteString("Markup(")
-			writeStringRepr(b, v.str, ascii)
+			if err := writeStringRepr(b, v.str, ascii, bud); err != nil {
+				return err
+			}
 			b.WriteByte(')')
-			return
+			return nil
 		}
-		writeStringRepr(b, v.str, ascii)
+		if err := writeStringRepr(b, v.str, ascii, bud); err != nil {
+			return err
+		}
 	case KindBytes:
 		b.WriteByte('b')
 		writeBytesRepr(b, v.str)
@@ -258,12 +303,13 @@ func writeScalarRepr(b *strings.Builder, v Value, ascii bool) {
 			// escaped the list around it and left the group's own
 			// text alone.
 			writeEscapedNonASCII(b, r.Repr(), ascii)
-			return
+			return nil
 		}
 		b.WriteString("<object>")
 	case KindFunc:
 		b.WriteString("<function>")
 	}
+	return nil
 }
 
 // FormatFloat renders a float the way CPython's repr does.
@@ -339,13 +385,20 @@ func FormatFloat(f float64) string {
 // writeStringRepr renders a str the way Python's repr does: single quotes
 // unless that would need escaping and double quotes would not, non-ASCII left
 // intact when printable, and the rest escaped shortest-first.
-func writeStringRepr(b *strings.Builder, s string, asciiOnly bool) {
+func writeStringRepr(b *strings.Builder, s string, asciiOnly bool, bud Budget) error {
 	quote := byte('\'')
 	if strings.ContainsRune(s, '\'') && !strings.ContainsRune(s, '"') {
 		quote = '"'
 	}
 	b.WriteByte(quote)
-	for _, r := range s {
+	charged := 0
+	for i, r := range s {
+		if i-charged >= reprChargeBlock {
+			if err := chargeBytes(bud, int64(i-charged)); err != nil {
+				return err
+			}
+			charged = i
+		}
 		switch {
 		case r == rune(quote) || r == '\\':
 			b.WriteByte('\\')
@@ -376,7 +429,11 @@ func writeStringRepr(b *strings.Builder, s string, asciiOnly bool) {
 			writeHex(b, uint32(r), 8)
 		}
 	}
+	if err := chargeBytes(bud, int64(len(s)-charged)); err != nil {
+		return err
+	}
 	b.WriteByte(quote)
+	return nil
 }
 
 // writeBytesRepr is bytes.__repr__, which escapes one *byte* at a time.
@@ -460,7 +517,7 @@ func writeHex(b *strings.Builder, v uint32, width int) {
 // rendered form: ascii(['é']) is "['\\xe9']", not "['é']".
 func Ascii(v Value) string {
 	var b strings.Builder
-	writeRepr(&b, v, nil, true)
+	_ = writeRepr(&b, v, nil, true, nil)
 	return b.String()
 }
 
