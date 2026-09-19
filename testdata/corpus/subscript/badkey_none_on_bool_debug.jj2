@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  },
+  "x": true
+}
+---
+{{ x[none] + 1 }}

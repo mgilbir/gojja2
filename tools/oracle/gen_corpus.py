@@ -848,6 +848,33 @@ for _n, _src in _STRICT:
         case(f"undefined/{_kind}_op_{_n}", _src, __settings__={"undefined": _kind})
 
 
+# A subscript whose key the container cannot take at all -- `{{ 1[none] }}` --
+# is swallowed by Environment.getitem into an undefined naming the owner and
+# the key. gojja2 built a hint saying the container was not subscriptable,
+# which is a different thing, threw the key away, and was not even well formed:
+# ObjectTypeRepr already ends in " object", so the message read "int object
+# object is not subscriptable". Printing the undefined hides all of that, so
+# each case uses it.
+_BADKEY = [
+    ("none_on_int", "{{ x[none] + 1 }}", {"x": 1}),
+    ("none_on_float", "{{ x[none] + 1 }}", {"x": 1.5}),
+    ("none_on_bool", "{{ x[none] + 1 }}", {"x": True}),
+    ("float_on_int", "{{ x[1.5] + 1 }}", {"x": 1}),
+    ("list_on_int", "{{ x[[1]] + 1 }}", {"x": 1}),
+    ("dict_on_int", "{{ x[{'a': 1}] + 1 }}", {"x": 1}),
+    ("none_on_int_printed", "{{ x[none] }}", {"x": 1}),
+    ("none_on_int_length", "{{ x[none]|length }}", {"x": 1}),
+    ("folded_none_on_int", "{{ -1[none] }}", {}),
+    ("folded_float_on_int", "{{ (1[1.5]) + 1 }}", {}),
+]
+for _n, _src, _ctx in _BADKEY:
+    case(f"subscript/badkey_{_n}", _src, **_ctx)
+    # DebugUndefined names the subscript, so it shows the shape of the
+    # undefined directly rather than through a later use of it.
+    case(f"subscript/badkey_{_n}_debug", _src,
+         __settings__={"undefined": "debug"}, **_ctx)
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")

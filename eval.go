@@ -503,8 +503,14 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 	if i, ok := key.Int64(); ok {
 		return ex.st.Undefined(value.UndefinedIndex(base, int(i))), nil
 	}
-	return ex.st.Undefined(value.UndefinedHint("%s object is not subscriptable",
-		value.ObjectTypeRepr(base))), nil
+	// A key the container cannot take at all is what Environment.getitem
+	// swallows into an undefined naming the owner and the key --
+	// "int object has no element None". The hint here said the container
+	// was not subscriptable, which is a different thing and was not even
+	// well formed: ObjectTypeRepr already ends in " object", so the
+	// message doubled the word. It also threw the key away, which is the
+	// half that says what went wrong.
+	return ex.st.Undefined(value.UndefinedElement(base, key)), nil
 }
 
 // envGetItem is Environment.getitem: the item first, the attribute as a
