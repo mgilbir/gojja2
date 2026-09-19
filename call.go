@@ -100,7 +100,28 @@ func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 				"%s argument after ** must be a mapping, not %s",
 				callee, v.TypeName())
 		}
+		// Only the keywords written out at the call site can collide
+		// with this expansion. A mapping holds each key once -- a
+		// Markup key and a plain one of the same text are one entry, as
+		// they are in Python -- and the grammar allows a single ** per
+		// call, which TestOnlyOneKeywordExpansion pins. So two entries
+		// of this expansion cannot carry the same name.
+		//
+		// That is what makes the check a scan of a handful rather than
+		// of everything merged so far. CallArgs.Kwarg scans all of it,
+		// which is the right shape for a call written out and the wrong
+		// one here, where the count is the caller's: it made `{{
+		// dict(**ctx) }}` quadratic, three minutes and thirteen seconds
+		// over a context of 300,000 keys, against twenty-two
+		// milliseconds to walk the same dictionary with |items.
+		written := out.Kwargs[:len(out.Kwargs):len(out.Kwargs)]
 		for _, e := range d.Entries() {
+			// Charged before the slice grows to hold it, which is
+			// also what lets a deadline stop the merge: the entries
+			// are the caller's and there may be a great many.
+			if err := ex.st.Step(1); err != nil {
+				return nil, err
+			}
 			if e.Key.Kind() != value.KindString {
 				return nil, errs.New(errs.TypeError, "keywords must be strings")
 			}
@@ -108,10 +129,12 @@ func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 			// The merge happens before the call, so a name given
 			// twice is refused here rather than by the binding --
 			// which words it differently, and without "keyword".
-			if _, dup := out.Kwarg(name); dup {
-				return nil, errs.New(errs.TypeError,
-					"%s got multiple values for keyword argument %s",
-					callee, value.Repr(e.Key))
+			for _, kw := range written {
+				if kw.Name == name {
+					return nil, errs.New(errs.TypeError,
+						"%s got multiple values for keyword argument %s",
+						callee, value.Repr(e.Key))
+				}
 			}
 			out.Kwargs = append(out.Kwargs, value.Kwarg{Name: name, Value: e.Value})
 		}
