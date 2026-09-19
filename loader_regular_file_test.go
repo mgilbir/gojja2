@@ -6,6 +6,9 @@ package gojja2_test
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
 
@@ -70,3 +73,47 @@ func TestIncludeIgnoreMissingCoversADirectory(t *testing.T) {
 		t.Errorf("got %q, want the include ignored", got)
 	}
 }
+
+// A template chooses the name an include resolves, so names arrive from
+// expressions and need not be anything a filesystem accepts. os.DirFS refuses
+// a name that is not valid UTF-8, or that carries a NUL byte, with
+// fs.ErrInvalid -- which is not IsNotExist, so it used to reach the caller as
+// "stat ...: invalid argument". jinja2 answers every one of these with
+// TemplateNotFound; its os.path.isfile gate returns False rather than raising.
+func TestFSLoaderReportsAnUnusableNameAsNotFound(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "page.html"), []byte("PAGE"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]string{
+		"invalid utf-8":  "\xff\xfe.html",
+		"invalid inside": "a/\xffb.html",
+		"lone surrogate": "\xed\xa0\x80.html",
+		"nul byte":       "a\x00b.html",
+	}
+	for _, root := range []string{"", "sub"} {
+		env := gojja2.New(gojja2.WithLoader(
+			gojja2.FSLoader{FS: os.DirFS(dir), Root: root}))
+		for label, name := range names {
+			_, err := env.GetTemplate(name)
+			if !errors.Is(err, errs.TemplateNotFound) {
+				t.Errorf("root=%q %s: got %v, want TemplateNotFound", root, label, err)
+			}
+		}
+	}
+}
+
+// ...and a failure that is about the system rather than the name still
+// reaches the caller, so a misconfigured deployment is not silently a miss.
+func TestFSLoaderPassesARealStatErrorThrough(t *testing.T) {
+	boom := errors.New("disk on fire")
+	env := gojja2.New(gojja2.WithLoader(gojja2.FSLoader{FS: errFS{err: boom}}))
+	if _, err := env.GetTemplate("page.html"); !errors.Is(err, boom) {
+		t.Errorf("got %v, want the filesystem's own error", err)
+	}
+}
+
+// errFS fails every open with the error it was built with.
+type errFS struct{ err error }
+
+func (e errFS) Open(string) (fs.File, error) { return nil, e.err }
