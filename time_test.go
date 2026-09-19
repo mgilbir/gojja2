@@ -11,13 +11,15 @@ import (
 	"github.com/mgilbir/gojja2"
 )
 
-// A Go time.Time reaches a template as a value that calls itself a datetime.
-// Everything but its rendering matches CPython exactly; the rendering is the
-// divergence recorded in docs/divergences.md, and these pin both halves so
-// neither can drift unnoticed.
+// A Go time.Time reaches a template as a datetime, and prints as one: str() is
+// isoformat with a space, repr() is the constructor call that would rebuild
+// it. Both were RFC 3339 before, which meant a template printing a timestamp
+// rendered differently here than under jinja2 -- and, because time.RFC3339
+// carries no fractional seconds, a sub-second time printed without them.
 //
 // The corpus cannot reach any of this: its context travels as JSON, which has
-// no way to spell a time.Time.
+// no way to spell a time.Time. Every expectation below was taken from CPython
+// for the same moment.
 
 func renderTime(t *testing.T, src string, v time.Time) string {
 	t.Helper()
@@ -61,26 +63,74 @@ func TestTimeBehavesLikeADatetime(t *testing.T) {
 	}
 }
 
-// What does not, which is the documented divergence. CPython renders
-// "2026-09-19 13:45:30+00:00" for the first of these, the datetime constructor
-// for the second, and keeps the microseconds in the third.
-func TestTimeRendersAsRFC3339(t *testing.T) {
+// str(datetime) and repr(datetime), across the shapes that change the answer:
+// microseconds present, absent and trailing-zeroed; seconds zero; offsets
+// positive, negative, zero and not a whole number of minutes; zones named and
+// not.
+func TestTimePrintsLikeADatetime(t *testing.T) {
+	utc := time.UTC
 	cet := time.FixedZone("CET", 3600)
+	est := time.FixedZone("EST", -18000)
+	gmt := time.FixedZone("GMT", 0)
+	odd := time.FixedZone("", 1172)
 	for _, tc := range []struct {
-		name, src string
+		name      string
 		v         time.Time
-		want      string
+		str, repr string
 	}{
-		{"utc", "{{ t }}", time.Date(2026, 9, 19, 13, 45, 30, 0, time.UTC), "2026-09-19T13:45:30Z"},
-		{"offset", "{{ t }}", time.Date(2026, 9, 19, 13, 45, 30, 0, cet), "2026-09-19T13:45:30+01:00"},
-		{"in a container", "{{ [t] }}", time.Date(2026, 9, 19, 13, 45, 30, 0, time.UTC), "[2026-09-19T13:45:30Z]"},
-		{"pprint", "{{ t|pprint }}", time.Date(2026, 9, 19, 13, 45, 30, 0, time.UTC), "2026-09-19T13:45:30Z"},
-		// time.RFC3339 carries no fractional seconds, so a sub-second
-		// value prints without them. CPython would show .123456.
-		{"microseconds dropped", "{{ t }}", time.Date(2026, 9, 19, 13, 45, 30, 123456000, time.UTC), "2026-09-19T13:45:30Z"},
+		{"utc", time.Date(2026, 9, 19, 13, 45, 30, 0, utc),
+			"2026-09-19 13:45:30+00:00",
+			"datetime.datetime(2026, 9, 19, 13, 45, 30, tzinfo=datetime.timezone.utc)"},
+		{"microseconds", time.Date(2026, 9, 19, 13, 45, 30, 123456000, utc),
+			"2026-09-19 13:45:30.123456+00:00",
+			"datetime.datetime(2026, 9, 19, 13, 45, 30, 123456, tzinfo=datetime.timezone.utc)"},
+		{"trailing zeros kept", time.Date(2026, 9, 19, 13, 45, 30, 120000000, utc),
+			"2026-09-19 13:45:30.120000+00:00",
+			"datetime.datetime(2026, 9, 19, 13, 45, 30, 120000, tzinfo=datetime.timezone.utc)"},
+		{"seconds zero", time.Date(2026, 9, 19, 13, 45, 0, 0, utc),
+			"2026-09-19 13:45:00+00:00",
+			"datetime.datetime(2026, 9, 19, 13, 45, tzinfo=datetime.timezone.utc)"},
+		{"seconds zero with microseconds", time.Date(2026, 9, 19, 13, 45, 0, 500000, utc),
+			"2026-09-19 13:45:00.000500+00:00",
+			"datetime.datetime(2026, 9, 19, 13, 45, 0, 500, tzinfo=datetime.timezone.utc)"},
+		{"named offset", time.Date(2026, 9, 19, 13, 45, 30, 0, cet),
+			"2026-09-19 13:45:30+01:00",
+			"datetime.datetime(2026, 9, 19, 13, 45, 30, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600), 'CET'))"},
+		{"negative offset borrows a day", time.Date(2026, 9, 19, 13, 45, 30, 0, est),
+			"2026-09-19 13:45:30-05:00",
+			"datetime.datetime(2026, 9, 19, 13, 45, 30, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400), 'EST'))"},
+		{"zero offset with a name", time.Date(2026, 9, 19, 13, 45, 30, 0, gmt),
+			"2026-09-19 13:45:30+00:00",
+			"datetime.datetime(2026, 9, 19, 13, 45, 30, tzinfo=datetime.timezone(datetime.timedelta(0), 'GMT'))"},
+		{"offset with seconds", time.Date(2026, 9, 19, 13, 45, 30, 0, odd),
+			"2026-09-19 13:45:30+00:19:32",
+			"datetime.datetime(2026, 9, 19, 13, 45, 30, tzinfo=datetime.timezone(datetime.timedelta(seconds=1172)))"},
+		{"year below 1000 pads in str only", time.Date(26, 1, 2, 3, 4, 5, 0, utc),
+			"0026-01-02 03:04:05+00:00",
+			"datetime.datetime(26, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)"},
 	} {
-		if got := renderTime(t, tc.src, tc.v); got != tc.want {
-			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		if got := renderTime(t, "{{ t }}", tc.v); got != tc.str {
+			t.Errorf("%s: str\n got %q\nwant %q", tc.name, got, tc.str)
 		}
+		if got := renderTime(t, "{{ [t] }}", tc.v); got != "["+tc.repr+"]" {
+			t.Errorf("%s: repr\n got %q\nwant %q", tc.name, got, "["+tc.repr+"]")
+		}
+		if got := renderTime(t, "{{ t|pprint }}", tc.v); got != tc.repr {
+			t.Errorf("%s: pprint\n got %q\nwant %q", tc.name, got, tc.repr)
+		}
+	}
+}
+
+// A datetime holds microseconds, so a Go time's nanoseconds are truncated --
+// not rounded, which would move the value.
+func TestTimeTruncatesNanosecondsToMicroseconds(t *testing.T) {
+	v := time.Date(2026, 9, 19, 13, 45, 30, 123456789, time.UTC)
+	if got, want := renderTime(t, "{{ t }}", v), "2026-09-19 13:45:30.123456+00:00"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	// 999 nanoseconds is less than a microsecond, so nothing is printed.
+	v = time.Date(2026, 9, 19, 13, 45, 30, 999, time.UTC)
+	if got, want := renderTime(t, "{{ t }}", v), "2026-09-19 13:45:30+00:00"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
