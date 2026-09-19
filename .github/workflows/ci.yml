@@ -145,6 +145,7 @@ jobs:
         run: |
           go test . -run xxx -fuzz FuzzParse -fuzztime 60s
           go test . -run xxx -fuzz FuzzRender -fuzztime 60s
+          go test . -run xxx -fuzz FuzzAutoescape -fuzztime 60s
 
   lint:
     needs: authorize
