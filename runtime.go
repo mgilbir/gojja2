@@ -286,12 +286,46 @@ func (l *loopObject) Repr() string {
 // builtinFunc adapts a Go closure to a template callable.
 type builtinFunc struct {
 	name string
-	fn   func(s *State, args *value.CallArgs) (value.Value, error)
+	// class is the qualified class name when this callable is a *type*
+	// rather than a function, and empty when it is a function.
+	//
+	// Most of the globals are classes in jinja2 -- range and dict are
+	// builtin types, and cycler, joiner and namespace are classes in
+	// jinja2.utils. Only lipsum is a function. Calling one constructs a
+	// value either way, so the difference is invisible until something
+	// names the type, and then it is everywhere: every arithmetic,
+	// iteration and length error says 'type' where this said 'function',
+	// and `{{ range }}` is `<class 'range'>`.
+	class string
+	fn    func(s *State, args *value.CallArgs) (value.Value, error)
+}
+
+// className is the bare name, which is what __name__ reports: "range" for
+// builtins, "Cycler" for jinja2.utils.Cycler.
+func (f *builtinFunc) className() string {
+	if i := strings.LastIndexByte(f.class, '.'); i >= 0 {
+		return f.class[i+1:]
+	}
+	return f.class
 }
 
 func (f *builtinFunc) GetAttr(name string) (value.Value, bool) {
 	if name == "name" {
 		return value.String(f.name), true
+	}
+	if f.class == "" {
+		return value.Undefined, false
+	}
+	// A type object answers the attributes classObject answers, because
+	// that is what it is.
+	switch name {
+	case "__name__", "__qualname__":
+		return value.String(f.className()), true
+	case "__module__":
+		if i := strings.LastIndexByte(f.class, '.'); i >= 0 {
+			return value.String(f.class[:i]), true
+		}
+		return value.String("builtins"), true
 	}
 	return value.Undefined, false
 }
@@ -307,8 +341,29 @@ func (f *builtinFunc) callWith(s *State, args *value.CallArgs) (value.Value, err
 	return f.fn(s, args)
 }
 
-func (f *builtinFunc) TypeName() string { return "function" }
-func (f *builtinFunc) Repr() string     { return "<function " + f.name + ">" }
+// TypeName is what an error message calls this value. type(range) is type,
+// not function.
+func (f *builtinFunc) TypeName() string {
+	if f.class != "" {
+		return "type"
+	}
+	return "function"
+}
+
+// QualifiedName is what __class__ reports, and the type of a type is type.
+func (f *builtinFunc) QualifiedName() string {
+	if f.class != "" {
+		return "type"
+	}
+	return "function"
+}
+
+func (f *builtinFunc) Repr() string {
+	if f.class != "" {
+		return "<class '" + f.class + "'>"
+	}
+	return "<function " + f.name + ">"
+}
 
 // stateless adapts a closure that has no use for the render state to the
 // signature every template callable now carries.
@@ -336,6 +391,13 @@ type statefulCaller interface {
 // nil during constant folding, which State.Step handles.
 func Func(name string, fn func(s *State, args *value.CallArgs) (value.Value, error)) value.Value {
 	return value.FromObject(&builtinFunc{name: name, fn: fn})
+}
+
+// Class is [Func] for a global that is a class in jinja2 rather than a
+// function. qualified is the name repr shows, e.g. "range" or
+// "jinja2.utils.Cycler".
+func Class(name, qualified string, fn func(s *State, args *value.CallArgs) (value.Value, error)) value.Value {
+	return value.FromObject(&builtinFunc{name: name, class: qualified, fn: fn})
 }
 
 // --- macros ------------------------------------------------------------------

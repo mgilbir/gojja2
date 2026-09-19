@@ -14,11 +14,11 @@ import (
 )
 
 func registerDefaultGlobals(env *Environment) {
-	env.AddGlobal("range", Func("range", globalRange))
-	env.AddGlobal("dict", Func("dict", globalDict))
-	env.AddGlobal("namespace", Func("namespace", globalNamespace))
-	env.AddGlobal("cycler", Func("cycler", globalCycler))
-	env.AddGlobal("joiner", Func("joiner", globalJoiner))
+	env.AddGlobal("range", Class("range", "range", globalRange))
+	env.AddGlobal("dict", Class("dict", "dict", globalDict))
+	env.AddGlobal("namespace", Class("namespace", "jinja2.utils.Namespace", globalNamespace))
+	env.AddGlobal("cycler", Class("cycler", "jinja2.utils.Cycler", globalCycler))
+	env.AddGlobal("joiner", Class("joiner", "jinja2.utils.Joiner", globalJoiner))
 	env.AddGlobal("lipsum", Func("lipsum", globalLipsum))
 }
 

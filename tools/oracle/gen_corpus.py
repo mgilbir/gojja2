@@ -943,6 +943,79 @@ for _n, _src in _FILTERBLOCK_OK:
     case(f"control/filterblock_{_n}", _src)
 
 
+# Five of the six globals are classes in jinja2 -- range and dict are builtin
+# types, cycler, joiner and namespace are classes in jinja2.utils -- and only
+# lipsum is a function. Calling one constructs a value either way, so the
+# difference is invisible until something names the type. gojja2 modelled them
+# all as functions, and then every message naming one said 'function' where
+# CPython says 'type', across arithmetic, iteration, length, comparison and
+# JSON.
+_CLASSES = ["range", "cycler", "joiner", "namespace"]
+_CLASS_OPS = [
+    ("repr", "{{ X }}"),
+    ("class", "{{ X.__class__ }}"),
+    ("class_name", "{{ X.__class__.__name__ }}"),
+    ("name", "{{ X.__name__ }}"),
+    ("module", "{{ X.__module__ }}"),
+    ("add", "{{ X + 1 }}"),
+    ("sub", "{{ X - 1 }}"),
+    ("mul", "{{ X * 2 }}"),
+    ("neg", "{{ -X }}"),
+    ("abs", "{{ X|abs }}"),
+    ("length", "{{ X|length }}"),
+    ("list", "{{ X|list }}"),
+    ("join", "{{ X|join(',') }}"),
+    ("sort", "{{ X|sort }}"),
+    ("tojson", "{{ X|tojson }}"),
+    ("lt", "{{ X < 1 }}"),
+    ("iterate", "{% for z in X %}{{ z }}{% endfor %}"),
+    ("contains", "{{ 1 in X }}"),
+    ("as_key", "{{ {X: 1} }}"),
+    ("upper", "{{ X|upper }}"),
+    ("missing_attr", "{{ X.nosuch }}"),
+    ("callable", "{{ X is callable }}"),
+    ("mapping", "{{ X is mapping }}"),
+    ("sequence", "{{ X is sequence }}"),
+]
+for _obj in _CLASSES:
+    for _n, _op in _CLASS_OPS:
+        case(f"classes/global_{_obj}_{_n}", _op.replace("X", _obj))
+
+# lipsum is the one that really is a function, so it is the control: making the
+# others report as types must not make this one.
+for _n, _op in _CLASS_OPS:
+    if _n in ("name", "module", "upper", "repr", "as_key"):
+        continue  # a function's repr carries an address, wherever it appears
+    case(f"classes/global_lipsum_{_n}", _op.replace("X", "lipsum"))
+
+# And the values those classes construct keep their own identities.
+for _n, _src in [
+    ("range_instance", "{{ range(3)|list }}"),
+    ("range_instance_class", "{{ range(3).__class__ }}"),
+    ("namespace_instance_class", "{{ namespace(a=1).__class__ }}"),
+    ("cycler_instance_class", "{{ cycler(1,2).__class__ }}"),
+    ("joiner_instance_class", "{{ joiner().__class__ }}"),
+    ("dict_instance", "{{ dict(a=1) }}"),
+]:
+    case(f"classes/{_n}", _src)
+
+
+# Two divergences the page records, pinned so they cannot drift into something
+# else. Python 3.9 made a builtin type subscriptable as a type annotation, so
+# `dict['k']` is a generic alias whose repr is `dict['k']` -- not a lookup, and
+# nothing gojja2 models. `self` is iterable in jinja2 only because
+# TemplateReference defines __getitem__, which the legacy protocol accepts.
+for _n, _src in [
+    ("dict_subscript_str", "{{ dict['k'] }}"),
+    ("dict_subscript_int", "{{ dict[0] }}"),
+    ("dict_attr_fallback", "{{ dict.nosuch }}"),
+    ("range_subscript", "{{ range['k'] }}"),
+    ("self_is_iterable", "{% block b %}B{% endblock %}{{ self is iterable }}"),
+    ("self_list", "{% block b %}B{% endblock %}{{ self|list }}"),
+]:
+    case(f"divergence/{_n}", _src)
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")

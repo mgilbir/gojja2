@@ -74,3 +74,23 @@ own/limits/integer_width_power.jj2      # gojja2 bounds a computed integer at 2*
 # compiled it and the later parameter won, so a macro written here failed when
 # the template was run under CPython. See docs/divergences.md.
 own/macro/duplicate_parameter.jj2   # same refusal, different wording: jinja2 names a generated identifier
+
+# --- a builtin type's generic alias -------------------------------------------
+# Python 3.9 made a builtin type subscriptable as a *type annotation*, so
+# `dict['k']` is a types.GenericAlias whose repr is `dict['k']`, not a lookup.
+# jinja2's attribute fallback turns `dict.nosuch` into one too. gojja2's `dict`
+# global is a callable that builds a dict, and nothing here models generic
+# aliases, so all three are undefined. Calling it is identical in both, and
+# only a handful of builtins accept the form -- `range['k']` raises in CPython
+# as well, and is graded. See docs/divergences.md.
+own/divergence/dict_subscript_str.jj2    dict['k'] is a generic alias in Python 3.9+
+own/divergence/dict_subscript_int.jj2    dict[0] is a generic alias in Python 3.9+
+own/divergence/dict_attr_fallback.jj2    dict.nosuch falls back to a generic alias
+
+# --- self is iterable ---------------------------------------------------------
+# TemplateReference defines __getitem__ and nothing else, which Python's legacy
+# iteration protocol accepts, so `iter(self)` succeeds and the test says True.
+# Iterating it raises either way; this is the one shape that answers instead of
+# failing. See docs/divergences.md.
+own/divergence/self_is_iterable.jj2      the legacy iteration protocol accepts __getitem__
+own/divergence/self_list.jj2             list(self) asks for index 0 and raises KeyError
