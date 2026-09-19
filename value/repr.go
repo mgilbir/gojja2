@@ -44,6 +44,13 @@ func HTML(v Value) (string, bool) {
 			return h.HTML(), true
 		}
 	}
+	// ChainableUndefined is the one Undefined class that defines __html__,
+	// returning str(self). That is visible: `nope is escaped` asks only
+	// whether the attribute is there, and answers True under that class
+	// alone.
+	if v.kind == KindUndefined && v.undef().behavior == UndefinedChainable {
+		return Str(v), true
+	}
 	return "", false
 }
 

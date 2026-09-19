@@ -2709,6 +2709,14 @@ func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	// `nope|attr("__subclasses__")` yields an undefined that only fails
 	// when it is used.
 	if v.IsUndefined() && !strings.HasPrefix(attrName, "__") {
+		// ChainableUndefined.__getattr__ hands back the same undefined
+		// for a name that is not a dunder, which is the whole point of
+		// the class: `a.b.c` on a missing `a` stays undefined rather
+		// than raising, and reaching it through |attr is the same
+		// lookup.
+		if v.UndefinedBehavior() == value.UndefinedChainable {
+			return v, nil
+		}
 		return value.Undefined, v.UndefinedError()
 	}
 	return s.Undefined(value.UndefinedAttr(v, attrName)), nil

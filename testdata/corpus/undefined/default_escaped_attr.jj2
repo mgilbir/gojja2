@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "undefined": "default"
+  },
+  "d": {
+    "a": 1
+  }
+}
+---
+{{ d.missing is escaped }}

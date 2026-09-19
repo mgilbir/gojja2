@@ -1,0 +1,12 @@
+{
+  "__settings__": {
+    "undefined": "default"
+  },
+  "seq": [
+    1,
+    2,
+    3
+  ]
+}
+---
+{{ seq[42]|attr('a') }}

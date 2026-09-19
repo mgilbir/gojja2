@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "d": {
+    "a": 1
+  }
+}
+---
+{{ d.missing|attr('a') }}
