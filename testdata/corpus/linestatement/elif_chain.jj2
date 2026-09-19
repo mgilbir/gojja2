@@ -1,0 +1,14 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "#",
+    "line_comment_prefix": "##"
+  }
+}
+---
+# if 1
+a
+# elif 2
+b
+# else
+c
+# endif

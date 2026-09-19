@@ -1,0 +1,12 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "#",
+    "line_comment_prefix": "##"
+  }
+}
+---
+text
+# if true
+{{ 1 }}{# block comment #}
+# endif
+tail

@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "#",
+    "line_comment_prefix": "##"
+  }
+}
+---
+#not a statement, no space

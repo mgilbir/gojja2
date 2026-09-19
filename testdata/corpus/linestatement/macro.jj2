@@ -1,0 +1,11 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "#",
+    "line_comment_prefix": "##"
+  }
+}
+---
+# macro m(a)
+M{{ a }}
+# endmacro
+{{ m(1) }}
