@@ -10,13 +10,17 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-two divergences below, **one** can change what a correct template
-renders: jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`,
-`unique` and `items` return generators, and gojja2's return lists. A generator
-is always truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its
-body even when nothing was selected. gojja2 answers the question the template
-asked. Spelling it `|selectattr("active")|list` is exact in both, and is what
-jinja2's own documentation tells you to write.
+Of the twenty-three divergences below, **one** is worth going looking for:
+jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
+`items` return generators, and gojja2's return lists. A generator is always
+truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
+when nothing was selected. gojja2 answers the question the template asked.
+Spelling it `|selectattr("active")|list` is exact in both, and is what jinja2's
+own documentation tells you to write.
+
+One other renders differently rather than failing, but only for a template that
+asks `{{ self is iterable }}` -- `True` in jinja2, `False` here. Iterating
+`self` raises under both.
 
 Everything else on this page either fails under CPython too, was never
 reproducible, or changes something outside the render. The table says which.
@@ -34,7 +38,7 @@ are safety controls rather than behavioural choices, and they live in
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
-| [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | No -- it fails either way |
+| [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | Only `self is iterable`, which answers differently |
 | [`\N{...}` escapes](#n-escapes-in-string-literals) | refused; needs the Unicode name database | Only if you write `\N{...}` |
 | [Which codecs are known](#which-codecs-encode-and-decode-know) | utf-8, ascii, latin-1; jinja2 has ~100 | Only outside those three |
 | [Objects whose repr carries an address](#objects-whose-repr-carries-an-address) | a different address | No -- unreproducible in CPython too |
@@ -48,6 +52,7 @@ are safety controls rather than behavioural choices, and they live in
 | [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | a template cannot write to your objects | Changes what the *host* sees after the render, not what renders |
 | [Which item a filter block's type error names](#which-item-a-filter-blocks-type-error-names) | the message says item 0; jinja2 counts its own output chunks | No -- same error, same type |
 | [finalize and a constant print](#finalize-and-a-constant-print) | a constant print is not finalized at compile time | Only with `WithFinalize` and autoescape |
+| [Subscripting the `dict` global](#subscripting-the-dict-global) | `dict['k']` is undefined; in Python it is a generic alias | No -- it is a type annotation, not a lookup |
 | [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
 | [No automatic template reload](#no-automatic-template-reload) | no `auto_reload`; use `ClearCache` | Changes when an edit is picked up |
 | [The default autoescape extension set](#the-default-autoescape-extension-set) | adds `xhtml` to jinja2's three | Only ever escapes *more*, never less |
@@ -197,8 +202,19 @@ which is a block name lookup, and raises `KeyError: 0`. gojja2 answers
 `TypeError: 'TemplateReference' object is not iterable`.
 
 Reproducing the KeyError would mean a way for an Object to say "iterable, but
-the first step fails", which nothing else here needs. A template that iterates
-`self` fails either way, and the wording is the only difference.
+the first step fails", which nothing else here needs. Every template that
+*iterates* `self` fails either way -- `|list`, `|join`, `|sort`, `{% for %}`
+and `in` all raise, and only the wording differs.
+
+One case answers rather than failing, though, so it is not only wording:
+
+```jinja
+{{ self is iterable }}
+```
+
+is `True` in jinja2, because the test only asks whether `iter()` accepts the
+object, and `False` here. A template that branches on it takes the other
+branch.
 
 ### `\N{...}` escapes in string literals
 
@@ -514,6 +530,24 @@ trade to copy a wart.
 
 Without a finalize hook, or without autoescaping, the two agree. Asserted by
 the tests in `finalize_test.go`.
+
+### Subscripting the `dict` global
+
+```jinja
+{{ dict['k'] }}   {{ dict[0] }}   {{ dict.nosuch }}
+```
+
+Python 3.9 made a builtin type subscriptable as a *type annotation*: `dict[str]`
+is a `types.GenericAlias`, not a lookup, and its repr is `dict[str]`. So
+CPython renders `dict['k']` for the first two, and jinja2's attribute fallback
+turns the third into `dict['nosuch']` as well.
+
+gojja2's `dict` is a callable that builds a dict, and nothing here models
+generic aliases, so all three are undefined and render empty. Calling it --
+which is what the global is for -- is identical in both.
+
+The other class globals are unaffected: `range['k']` raises in CPython too,
+because only a handful of builtins accept the annotation form.
 
 ### What a missing template's error says
 
