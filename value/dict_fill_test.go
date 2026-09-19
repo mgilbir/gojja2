@@ -197,3 +197,111 @@ func TestNumericKeyIdentityAcrossTheSplit(t *testing.T) {
 		t.Errorf("got %q, want the last assignment", v.AsString())
 	}
 }
+
+// A dict below smallDict entries carries no string index and scans instead, so
+// every operation has two implementations that must agree. These drive a dict
+// across the threshold and check it behaves the same on both sides of it.
+
+func TestDictAcrossTheIndexThreshold(t *testing.T) {
+	d, _ := NewDict().Dict()
+	for n := 1; n <= smallDict*2; n++ {
+		key := fmt.Sprintf("k%02d", n)
+		if err := d.Set(String(key), Int(int64(n))); err != nil {
+			t.Fatalf("Set(%q): %v", key, err)
+		}
+		if got := len(d.Keys()); got != n {
+			t.Fatalf("after %d inserts: %d entries", n, got)
+		}
+		// Everything inserted so far is still reachable, by both the
+		// Value and the string accessor.
+		for m := 1; m <= n; m++ {
+			k := fmt.Sprintf("k%02d", m)
+			v, ok, err := d.Get(String(k))
+			if err != nil || !ok {
+				t.Fatalf("at size %d, Get(%q): ok=%v err=%v", n, k, ok, err)
+			}
+			if got, _ := v.Int64(); got != int64(m) {
+				t.Errorf("at size %d, %q = %d, want %d", n, k, got, m)
+			}
+			if v, ok := d.GetString(k); !ok {
+				t.Errorf("at size %d, GetString(%q) missing", n, k)
+			} else if got, _ := v.Int64(); got != int64(m) {
+				t.Errorf("at size %d, GetString(%q) = %d, want %d", n, k, got, m)
+			}
+		}
+	}
+}
+
+// Replacing has to find the existing entry on both sides of the threshold,
+// rather than appending a second one under the same key.
+func TestDictReplaceAcrossTheThreshold(t *testing.T) {
+	for _, size := range []int{1, smallDict - 1, smallDict, smallDict + 1, smallDict * 3} {
+		d, _ := NewDict().Dict()
+		for n := range size {
+			_ = d.Set(String(fmt.Sprintf("k%02d", n)), Int(int64(n)))
+		}
+		_ = d.Set(String("k00"), Int(999))
+		if got := len(d.Keys()); got != size {
+			t.Errorf("size %d: replacing grew the dict to %d", size, got)
+		}
+		v, ok, _ := d.Get(String("k00"))
+		if !ok {
+			t.Fatalf("size %d: k00 missing after replace", size)
+		}
+		if got, _ := v.Int64(); got != 999 {
+			t.Errorf("size %d: k00 = %d, want 999", size, got)
+		}
+	}
+}
+
+// Delete works with no index, with one, and leaves the rest reachable.
+func TestDictDeleteAcrossTheThreshold(t *testing.T) {
+	for _, size := range []int{2, smallDict - 1, smallDict, smallDict * 2} {
+		d, _ := NewDict().Dict()
+		for n := range size {
+			_ = d.Set(String(fmt.Sprintf("k%02d", n)), Int(int64(n)))
+		}
+		// Remove from the middle, where renumbering matters.
+		gone := fmt.Sprintf("k%02d", size/2)
+		if ok, err := d.Delete(String(gone)); err != nil || !ok {
+			t.Fatalf("size %d: Delete(%q): ok=%v err=%v", size, gone, ok, err)
+		}
+		if got := len(d.Keys()); got != size-1 {
+			t.Errorf("size %d: %d entries after delete, want %d", size, got, size-1)
+		}
+		for n := range size {
+			k := fmt.Sprintf("k%02d", n)
+			v, ok, _ := d.Get(String(k))
+			if k == gone {
+				if ok {
+					t.Errorf("size %d: %q still present", size, k)
+				}
+				continue
+			}
+			if !ok {
+				t.Fatalf("size %d: %q lost after deleting %q", size, k, gone)
+			}
+			if got, _ := v.Int64(); got != int64(n) {
+				t.Errorf("size %d: %q = %d, want %d -- renumbering is off", size, k, got, n)
+			}
+		}
+	}
+}
+
+// Reserving on a dict that already holds entries must index them, not replace
+// the index with an empty one.
+func TestReserveOnAPopulatedDictKeepsItsEntries(t *testing.T) {
+	d, _ := NewDict().Dict()
+	_ = d.Set(String("a"), Int(1))
+	_ = d.Set(String("b"), Int(2))
+	d.Reserve(smallDict * 4) // crosses the threshold, so an index is built
+	for _, k := range []string{"a", "b"} {
+		if _, ok := d.GetString(k); !ok {
+			t.Errorf("%q lost when the index was built", k)
+		}
+	}
+	_ = d.Set(String("a"), Int(9))
+	if got := len(d.Keys()); got != 2 {
+		t.Errorf("got %d entries, want 2", got)
+	}
+}
