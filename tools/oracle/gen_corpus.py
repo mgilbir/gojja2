@@ -1016,6 +1016,35 @@ for _n, _src in [
     case(f"divergence/{_n}", _src)
 
 
+# A whitespace split with a maxsplit hands back the rest of the subject as its
+# last part -- and "the rest" includes the whitespace at the subject's outer
+# edge: `'  a b c d  '.split(None, 3)` ends with 'd  ', and rsplit's head keeps
+# its leading spaces. Two bugs lived here, and coverage found the code because
+# nothing reached it at all.
+#
+# rsplit(None, n) for n >= 2 *panicked*: the rejoin walked the parts it was
+# keeping left to right while cutting them off the right-hand end, so it looked
+# for the second-to-last part before the last one had gone, cut past both, and
+# then sliced at LastIndex's -1. A limit of 1 was safe, which is why only the
+# larger ones fell over.
+_SPLITSUBJECTS = [
+    "a b c d", "a b c d e", "a  b  c  d", "  a b c d  ", "a\tb\nc d",
+    "one", "a b", "a   b   c", "\ta\tb\tc\t", "a b c d e f g",
+    "  spaced  out  words  here  ",
+]
+for _i, _subj in enumerate(_SPLITSUBJECTS):
+    for _n in (0, 1, 2, 3, 9):
+        case(f"methods/split_ws_maxsplit_{_i}_{_n}", "{{ %r.split(None, %d) }}" % (_subj, _n))
+        case(f"methods/rsplit_ws_maxsplit_{_i}_{_n}", "{{ %r.rsplit(None, %d) }}" % (_subj, _n))
+
+# The separator forms take the other branch, and are the control.
+for _i, _subj in enumerate(["a,b,c,d", ",a,,b,", "a,,b", ",,,", "abc"]):
+    for _n in (0, 1, 2, 3):
+        case(f"methods/split_sep_maxsplit_{_i}_{_n}", "{{ %r.split(',', %d) }}" % (_subj, _n))
+        case(f"methods/rsplit_sep_maxsplit_{_i}_{_n}", "{{ %r.rsplit(',', %d) }}" % (_subj, _n))
+        case(f"bytes/rsplit_maxsplit_{_i}_{_n}", "{{ b%r.rsplit(b',', %d) }}" % (_subj, _n))
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")

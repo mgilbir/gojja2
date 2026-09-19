@@ -1,0 +1,3 @@
+{}
+---
+{{ '\ta\tb\tc\t'.rsplit(None, 0) }}
