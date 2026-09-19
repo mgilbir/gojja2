@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-three divergences below, **one** is worth going looking for:
+Of the twenty-four divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -18,9 +18,11 @@ when nothing was selected. gojja2 answers the question the template asked.
 Spelling it `|selectattr("active")|list` is exact in both, and is what jinja2's
 own documentation tells you to write.
 
-One other renders differently rather than failing, but only for a template that
-asks `{{ self is iterable }}` -- `True` in jinja2, `False` here. Iterating
-`self` raises under both.
+Two others render differently rather than failing. A template that asks
+`{{ self is iterable }}` gets `True` in jinja2 and `False` here (iterating
+`self` raises under both). And a Go `time.Time` prints as RFC 3339 rather than
+as Python's `str(datetime)`, and without its sub-second digits --
+see [How a Go time.Time renders](#how-a-go-timetime-renders).
 
 Everything else on this page either fails under CPython too, was never
 reproducible, or changes something outside the render. The table says which.
@@ -53,6 +55,7 @@ are safety controls rather than behavioural choices, and they live in
 | [Which item a filter block's type error names](#which-item-a-filter-blocks-type-error-names) | the message says item 0; jinja2 counts its own output chunks | No -- same error, same type |
 | [finalize and a constant print](#finalize-and-a-constant-print) | a constant print is not finalized at compile time | Only with `WithFinalize` and autoescape |
 | [Subscripting the `dict` global](#subscripting-the-dict-global) | `dict['k']` is undefined; in Python it is a generic alias | No -- it is a type annotation, not a lookup |
+| [How a Go time.Time renders](#how-a-go-timetime-renders) | RFC 3339, and without sub-second digits | Yes, if you print a time |
 | [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
 | [No automatic template reload](#no-automatic-template-reload) | no `auto_reload`; use `ClearCache` | Changes when an edit is picked up |
 | [The default autoescape extension set](#the-default-autoescape-extension-set) | adds `xhtml` to jinja2's three | Only ever escapes *more*, never less |
@@ -548,6 +551,37 @@ which is what the global is for -- is identical in both.
 
 The other class globals are unaffected: `range['k']` raises in CPython too,
 because only a handful of builtins accept the annotation form.
+
+### How a Go `time.Time` renders
+
+A `time.Time` handed in as a template variable becomes a value that calls
+itself a `datetime` everywhere it is asked -- `{{ t.__class__.__name__ }}` is
+`datetime`, and every error message names it the way CPython's does. Its
+attributes (`year`, `month`, `day`, `hour`, `minute`, `second`) and every test
+(`is string`, `is number`, `is sequence`, `is mapping`) answer identically too.
+
+Printing it does not match:
+
+| | CPython | gojja2 |
+|---|---|---|
+| `{{ t }}` | `2026-09-19 13:45:30+00:00` | `2026-09-19T13:45:30Z` |
+| `{{ [t] }}`, `{{ t\|pprint }}` | `datetime.datetime(2026, 9, 19, 13, 45, 30, tzinfo=datetime.timezone.utc)` | `2026-09-19T13:45:30Z` |
+| a time with microseconds | `2026-09-19 13:45:30.123456+00:00` | `2026-09-19T13:45:30Z` |
+
+Two differences, and the second is the one to watch. gojja2 renders RFC 3339,
+where `str(datetime)` is `isoformat(sep=" ")`; and it renders it through Go's
+`time.RFC3339`, which has **no fractional seconds at all**, so a time carrying
+microseconds prints without them.
+
+A template that prints a timestamp therefore renders differently here, and one
+that prints a sub-second timestamp loses the fraction. Formatting the value
+explicitly avoids both.
+
+There is no counterpart to this in jinja2 to be faithful to -- Python has no
+`time.Time` -- so the question is which of two conventions a Go value should
+take on when it is asked to behave like a Python one. Asserted by the tests in
+`time_test.go`, which pin what it does today across UTC, a fixed offset and a
+sub-second value.
 
 ### What a missing template's error says
 
