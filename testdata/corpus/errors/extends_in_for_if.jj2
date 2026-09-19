@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "base.html": "[{% block title %}base title{% endblock %}|{% block body %}base body{% endblock %}]"
+  }
+}
+---
+{% for i in [1] %}{% if true %}{% extends 'base.html' %}{% endif %}{% endfor %}{% block body %}c{% endblock %}

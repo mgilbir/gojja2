@@ -18,7 +18,7 @@ import (
 // too -- "No test named 'x'." when compiled, "No test named 'x' found." when
 // it finally runs -- so the distinction is visible and worth keeping.
 func (e *Environment) checkDependencies(body []ast.Stmt, name, source string) error {
-	c := &depChecker{env: e, name: name, source: source}
+	c := &depChecker{env: e, name: name, source: source, topLevel: true}
 	c.stmts(body, false)
 	return c.err
 }
@@ -28,6 +28,22 @@ type depChecker struct {
 	name   string
 	source string
 	err    error
+	// topLevel tracks whether the statements being walked are compiled
+	// into the template's own function. Only `{% extends %}` reads it; see
+	// inner for what clears it.
+	topLevel bool
+}
+
+// inner walks a body that jinja2 compiles into a frame of its own.
+//
+// Every block-opening construct does that except `{% if %}`, which compiles
+// inline and so leaves the template's top level intact -- that is what makes
+// the conditional-extends idiom legal at any depth of conditions.
+func (c *depChecker) inner(body []ast.Stmt, soft bool) {
+	saved := c.topLevel
+	c.topLevel = false
+	c.stmts(body, soft)
+	c.topLevel = saved
 }
 
 func (c *depChecker) fail(kind string, filterName string, line int) {
@@ -63,8 +79,8 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 		}
 		c.expr(n.Iter, soft)
 		c.expr(n.Test, soft)
-		c.stmts(n.Body, soft)
-		c.stmts(n.Else, soft)
+		c.inner(n.Body, soft)
+		c.inner(n.Else, soft)
 	case *ast.If:
 		// An if softens its whole subtree, condition and body alike.
 		c.expr(n.Test, true)
@@ -78,24 +94,24 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 		c.expr(n.Node, soft)
 	case *ast.AssignBlock:
 		c.expr(n.Filter, soft)
-		c.stmts(n.Body, soft)
+		c.inner(n.Body, soft)
 	case *ast.With:
 		c.exprs(n.Values, soft)
-		c.stmts(n.Body, soft)
+		c.inner(n.Body, soft)
 	case *ast.Macro:
 		c.checkCallerDefault(n.Args, n.Defaults, n.Line())
 		c.exprs(n.Defaults, soft)
-		c.stmts(n.Body, soft)
+		c.inner(n.Body, soft)
 	case *ast.CallBlock:
 		c.checkCallerDefault(n.Args, n.Defaults, n.Line())
 		c.expr(n.Call, soft)
 		c.exprs(n.Defaults, soft)
-		c.stmts(n.Body, soft)
+		c.inner(n.Body, soft)
 	case *ast.FilterBlock:
 		c.expr(n.Filter, soft)
-		c.stmts(n.Body, soft)
+		c.inner(n.Body, soft)
 	case *ast.Block:
-		c.stmts(n.Body, soft)
+		c.inner(n.Body, soft)
 	case *ast.ExprStmt:
 		c.expr(n.Node, soft)
 	case *ast.Include:
@@ -105,12 +121,20 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 	case *ast.FromImport:
 		c.expr(n.Template, soft)
 	case *ast.Extends:
+		// Which template a render extends has to be settled once, for
+		// the whole render. Reached from a frame, it would depend on
+		// control flow: gojja2 let `{% for i in [] %}{% extends %}`
+		// through, so an empty sequence silently skipped the
+		// inheritance and a non-empty one applied it.
+		if !c.topLevel {
+			c.failAt(n.Line(), "cannot use extend from a non top-level scope")
+		}
 		c.expr(n.Template, soft)
 	case *ast.Scope:
-		c.stmts(n.Body, soft)
+		c.inner(n.Body, soft)
 	case *ast.AutoescapeBlock:
 		c.expr(n.Value, soft)
-		c.stmts(n.Body, soft)
+		c.inner(n.Body, soft)
 	}
 }
 
