@@ -188,7 +188,7 @@ func (ex *exec) execOutput(n *ast.Output) error {
 		if err != nil {
 			return err
 		}
-		text, err := ex.renderValue(v)
+		text, err := ex.renderPrint(v)
 		if err != nil {
 			return errs.At(err, ex.st.tmpl.name, node.Line())
 		}
@@ -199,11 +199,24 @@ func (ex *exec) execOutput(n *ast.Output) error {
 	return nil
 }
 
-// renderValue turns a value into the text that reaches the output.
-func (ex *exec) renderValue(v value.Value) (string, error) {
+// renderPrint turns the value of a print tag into the text that reaches the
+// output.
+//
+// It is the only path finalize runs on. jinja2 applies it from visit_Output
+// and nowhere else, so a construct that produces text by *capturing* it --
+// a {% filter %} block, a {% call %} block -- hands over what it captured
+// untouched. Running it there too applied it twice to anything printed inside
+// such a block, and once to a block containing no print at all:
+// `{% filter upper %}plain{% endfilter %}` came back finalized.
+func (ex *exec) renderPrint(v value.Value) (string, error) {
 	if ex.st.env.finalize != nil {
 		v = ex.st.env.finalize(v)
 	}
+	return ex.renderValue(v)
+}
+
+// renderValue turns a value into the text that reaches the output.
+func (ex *exec) renderValue(v value.Value) (string, error) {
 	if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
 		return "", v.UndefinedError()
 	}
