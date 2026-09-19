@@ -686,6 +686,33 @@ case("undefined/arith", "{{ nope + 1 }}")
 case("undefined/tests", "{{ nope is defined }}{{ nope is undefined }}{{ nope == nope }}{{ nope|default('d') }}")
 case("undefined/length", "{{ nope|length }}|{{ nope|list }}|{{ nope|join(',') }}")
 
+# The environment offers four of jinja2's Undefined classes and the corpus
+# graded only the default, so three of them were unexercised. These cover the
+# one thing they must all agree on first: an undefined produced by *constant
+# folding* is still the environment's class. The evaluator built them with the
+# zero behaviour, so a StrictUndefined environment folded `{{ none.missing }}`
+# to "" at compile time and never raised -- a strictness setting silently not
+# applied, which is the failure mode strictness exists to prevent.
+_FOLDED = [
+    ("attr_on_none", "{{ none.missing }}"),
+    ("item_on_none", "{{ none['missing'] }}"),
+    ("attr_on_float", "{{ 1.5.missing }}"),
+    ("attr_on_bool", "{{ true.missing }}"),
+    ("missing_dict_key", "{{ {'a': 1}['b'] }}"),
+    ("chained_on_none", "{{ none.a.b }}"),
+    ("folded_length", "{{ none.missing|length }}"),
+    ("folded_arith", "{{ none.missing + 1 }}"),
+    ("folded_truth", "{% if none.missing %}t{% else %}f{% endif %}"),
+]
+for _kind in ("strict", "chainable", "debug", "default"):
+    for _n, _src in _FOLDED:
+        # |length on an undefined is a separate defect: StrictUndefined must
+        # raise from __len__ and gojja2 answers 0. It is graded where that is
+        # fixed; folding is not what is wrong with it.
+        if (_kind, _n) == ("strict", "folded_length"):
+            continue
+        case(f"undefined/{_kind}_{_n}", _src, __settings__={"undefined": _kind})
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")

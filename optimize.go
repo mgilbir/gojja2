@@ -739,7 +739,20 @@ func (c *constEvaluator) tryConstEval(e ast.Expr) (v value.Value, ok bool) {
 		}
 	}()
 	c.st.budget.resetAllowance()
-	return c.constEval(e)
+	v, ok = c.constEval(e)
+	// An undefined that folding produced is still one of the
+	// environment's, and every fold leaves through here. The evaluator
+	// builds them with the zero behaviour -- jinja2.Undefined -- so
+	// without this stamp a StrictUndefined environment folded
+	// `{{ none.missing }}` to the empty string at compile time and never
+	// raised, and a DebugUndefined one printed nothing where it owed the
+	// expression. Both are silent: the check in foldConstantPrints that
+	// keeps a strict undefined a run-time failure was already written, and
+	// could not fire because the value never said it was strict.
+	if ok && v.IsUndefined() {
+		v = v.WithBehavior(c.env.undefined)
+	}
+	return v, ok
 }
 
 // contextFilters take the render context in jinja2 and are therefore never
