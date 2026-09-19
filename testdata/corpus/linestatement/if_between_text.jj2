@@ -1,0 +1,12 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "#",
+    "line_comment_prefix": "##"
+  }
+}
+---
+before
+# if true
+yes
+# endif
+after

@@ -1,0 +1,11 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "#",
+    "line_comment_prefix": "##"
+  }
+}
+---
+{% if true %}tag{% endif %}
+# if true
+line
+# endif

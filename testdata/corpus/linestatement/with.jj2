@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "#",
+    "line_comment_prefix": "##"
+  }
+}
+---
+# with y = 2
+{{ y }}
+# endwith

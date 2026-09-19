@@ -328,6 +328,53 @@ case("whitespace/plus_end", "{% if true +%}\nx{% endif %}", __settings__={"trim_
 case("whitespace/keep_trailing", "a\n", __settings__={"keep_trailing_newline": True})
 case("whitespace/drop_trailing", "a\n")
 case("whitespace/raw", "{% raw %}{{ x }}{% endraw %}|{%- raw -%}  y  {%- endraw -%}|")
+
+# --- line statements ----------------------------------------------------------
+# An entire syntax mode with no coverage: nothing in this corpus uses
+# line_statement_prefix, and the differential generator cannot reach it -- it
+# draws autoescape and nothing else. The edges are where the rule is decided:
+# whether leading whitespace still counts as the start of a line, whether text
+# before the prefix cancels it, whether a prefix with nothing after it counts.
+LS = {"line_statement_prefix": "#", "line_comment_prefix": "##"}
+
+
+def ls(name: str, template: str, **settings) -> None:
+    merged = dict(LS)
+    merged.update(settings)
+    case(f"linestatement/{name}", template, __settings__=merged)
+
+
+ls("for", "# for i in [1,2]\nx{{ i }}\n# endfor\n")
+ls("for_no_trailing_newline", "# for i in [1,2]\nx\n# endfor")
+ls("if_between_text", "before\n# if true\nyes\n# endif\nafter")
+ls("if_else", "# if false\nno\n# else\nyes\n# endif")
+ls("elif_chain", "# if 1\na\n# elif 2\nb\n# else\nc\n# endif")
+ls("indented_prefix", "   # if true\nindented\n   # endif")
+ls("tab_indented_prefix", "\t# if true\ntabbed\n# endif")
+ls("set", "# set x = 5\n{{ x }}")
+ls("comment_after_text", "a ## this is a comment\nb")
+ls("comment_whole_line", "## whole line comment\nkept")
+ls("comment_then_statement", "x ## trailing\n# if true\ny\n# endif")
+ls("comment_inside_block", "# for i in [1]\n## inner comment\nz\n# endfor")
+ls("text_before_prefix_is_text", "not # a statement because text precedes it")
+ls("prefix_without_space", "#not a statement, no space\n")
+ls("statement_with_stray_delimiter", "# if true %}\nbroken\n# endif")
+ls("mixed_with_tags", "{% if true %}tag{% endif %}\n# if true\nline\n# endif")
+ls("for_with_filter", "# for i in [1,2,3] if i > 1\n{{ i }}\n# endfor")
+ls("macro", "# macro m(a)\nM{{ a }}\n# endmacro\n{{ m(1) }}")
+ls("with", "# with y = 2\n{{ y }}\n# endwith")
+ls("filter_block", "# filter upper\nshout\n# endfilter")
+ls("raw_block", "# raw\n# if true\n# endraw")
+ls("loop_index", "# for i in [1,2]\n{{ loop.index }}\n# endfor")
+ls("empty_body", "# if true\n# endif")
+ls("blank_line_body", "# if true\n\n# endif")
+ls("with_block_comment", "text\n# if true\n{{ 1 }}{# block comment #}\n# endif\ntail\n")
+ls("percent_prefix", "% for i in [1,2]\nx{{ i }}\n% endfor",
+   line_statement_prefix="%", line_comment_prefix="%%")
+ls("percent_comment", "%% comment\nkept",
+   line_statement_prefix="%", line_comment_prefix="%%")
+ls("multichar_prefix", "$$ for i in [1]\n{{ i }}\n$$ endfor",
+   line_statement_prefix="$$", line_comment_prefix="$$$")
 case("whitespace/comment", "a{# c #}b|a{#- c -#}b")
 case("whitespace/line_statements", "# for x in [1,2]\n{{ x }}\n# endfor\nrest ## trailing\n",
      __settings__={"line_statement_prefix": "#", "line_comment_prefix": "##"})

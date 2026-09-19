@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "#",
+    "line_comment_prefix": "##"
+  }
+}
+---
+# for i in [1,2]
+x
+# endfor
