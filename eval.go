@@ -36,7 +36,13 @@ func (ex *exec) evalInner(e ast.Expr) (value.Value, error) {
 	case *ast.Name:
 		return ex.evalName(n)
 	case *ast.NSRef:
-		return ex.evalNSRef(n)
+		// `ns.attr` is only ever an assignment target: the parser
+		// builds this node from parseAssignTarget alone, and nothing
+		// else passes withNamespace. Reading one is therefore a bug in
+		// gojja2 rather than in the template, and says so rather than
+		// quietly resolving -- the same shape as *ast.Slice above.
+		return value.Undefined, errs.New(errs.TemplateRuntimeError,
+			"a namespace reference is only valid as an assignment target")
 	case *ast.Tuple:
 		items, err := ex.evalAll(n.Items)
 		if err != nil {
@@ -111,17 +117,6 @@ func (ex *exec) evalName(n *ast.Name) (value.Value, error) {
 		}
 	}
 	return ex.st.Undefined(value.NewUndefined(n.Name)), nil
-}
-
-func (ex *exec) evalNSRef(n *ast.NSRef) (value.Value, error) {
-	base, ok, err := ex.sc.lookup(n.Name)
-	if err != nil {
-		return value.Undefined, err
-	}
-	if !ok {
-		return ex.st.Undefined(value.NewUndefined(n.Name)), nil
-	}
-	return ex.getAttr(base, n.Attr)
 }
 
 func (ex *exec) evalDict(n *ast.Dict) (value.Value, error) {
