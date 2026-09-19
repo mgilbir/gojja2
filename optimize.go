@@ -1032,7 +1032,11 @@ func (c *constEvaluator) constGetSlice(base value.Value, slice *ast.Slice) (valu
 	// subscript, which Environment.getitem turns into undefined.
 	if base.Kind() == value.KindUndefined || base.Kind() == value.KindDict ||
 		!sliceable(base) {
-		return value.UndefinedHint("%s is not subscriptable", value.ObjectTypeRepr(base)), true
+		// The same owner/key undefined the bad-bound branch below
+		// produces, for the same reason: a hint carries the text but
+		// renders as "undefined value printed: ..." under
+		// DebugUndefined, where jinja2 names the slice.
+		return value.UndefinedSlice(base, start, stop, step), true
 	}
 	out, err := sliceOf(base, start, stop, step)
 	switch {
