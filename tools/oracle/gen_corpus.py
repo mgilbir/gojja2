@@ -192,6 +192,42 @@ case("inherit/block_in_loop", "{% for i in [1,2] %}{% block b %}[{{ i|default('-
 case("inherit/block_in_loop_scoped", "{% for i in [1,2] %}{% block b scoped %}[{{ i }}]{% endblock %}{% endfor %}")
 case("inherit/endblock_name", "{% block b %}x{% endblock b %}")
 
+# super() is compiled into a block function's frame, so a body defined inside
+# the block -- a macro, or a {% call %} body -- closes over it and carries that
+# binding wherever it is invoked. The name is lexical both ways: a macro
+# written at template level has no super() however deep in a block it is
+# called, and one written in a block keeps that block's super() even when it is
+# smuggled through a namespace into a different block. Nothing graded this, and
+# every deferred body answered "'super' is undefined".
+case("inherit/super_in_macro",
+     "{% extends 'base.html' %}{% block body %}{% macro m() %}<{{ super() }}>{% endmacro %}{{ m() }}{% endblock %}",
+     __templates__=LAYOUT)
+case("inherit/super_in_nested_macro",
+     "{% extends 'base.html' %}{% block body %}{% macro m() %}{% macro inner() %}<{{ super() }}>{% endmacro %}{{ inner() }}{% endmacro %}{{ m() }}{% endblock %}",
+     __templates__=LAYOUT)
+case("inherit/super_in_call_body",
+     "{% extends 'base.html' %}{% block body %}{% macro w() %}[{{ caller() }}]{% endmacro %}{% call w() %}{{ super() }}{% endcall %}{% endblock %}",
+     __templates__=LAYOUT)
+case("inherit/super_in_macro_in_loop",
+     "{% extends 'base.html' %}{% block body %}{% for i in [1] %}{% macro m() %}<{{ super() }}>{% endmacro %}{{ m() }}{% endfor %}{% endblock %}",
+     __templates__=LAYOUT)
+case("inherit/super_macro_called_twice",
+     "{% extends 'mid.html' %}{% block body %}{% macro m() %}<{{ super() }}>{% endmacro %}{{ m() }}{{ m() }}{% endblock %}",
+     __templates__={**LAYOUT, "mid.html": "{% extends 'base.html' %}{% block body %}M({{ super() }}){% endblock %}"})
+case("inherit/super_super_in_macro",
+     "{% extends 'mid.html' %}{% block body %}{% macro m() %}<{{ super.super() }}>{% endmacro %}{{ m() }}{% endblock %}",
+     __templates__={**LAYOUT, "mid.html": "{% extends 'base.html' %}{% block body %}M({{ super() }}){% endblock %}"})
+# Defined in one block, called from another: the binding follows the macro.
+case("inherit/super_travels_with_macro",
+     "{% extends 'base.html' %}{% set ns = namespace(f=none) %}"
+     "{% block body %}{% macro m() %}<{{ super() }}>{% endmacro %}{% set ns.f = m %}B{% endblock %}"
+     "{% block title %}{{ ns.f() }}{% endblock %}",
+     __templates__=LAYOUT)
+# ... and a macro written outside every block has no super() to carry in.
+case("inherit/super_outside_block_is_undefined",
+     "{% extends 'base.html' %}{% macro m() %}<{{ super() }}>{% endmacro %}{% block body %}{{ m() }}{% endblock %}",
+     __templates__=LAYOUT)
+
 # A BlockReference defines no __str__, so only a call renders a block: printing
 # `self.body` prints the object. `super` is a property on the reference, which
 # is undefined past the end of the chain and says so when it is used. The

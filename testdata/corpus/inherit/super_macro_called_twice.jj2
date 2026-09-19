@@ -1,0 +1,8 @@
+{
+  "__templates__": {
+    "base.html": "[{% block title %}base title{% endblock %}|{% block body %}base body{% endblock %}]",
+    "mid.html": "{% extends 'base.html' %}{% block body %}M({{ super() }}){% endblock %}"
+  }
+}
+---
+{% extends 'mid.html' %}{% block body %}{% macro m() %}<{{ super() }}>{% endmacro %}{{ m() }}{{ m() }}{% endblock %}

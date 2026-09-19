@@ -316,9 +316,12 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 	text, err := ex.captureFunction(sc, func(sub *exec) error {
 		sub.autoescape = autoescape
 		sub.volatileEscape = m.volatileEscape
-		// A macro body is not inside the block that called it, so
-		// super() must not resolve through to one.
-		sub.blockName, sub.blockIndex = "", 0
+		// super() in the body means the block the macro was *written*
+		// in, not the one that called it: a macro defined at template
+		// level has no super() however deep in a block it is invoked,
+		// and one defined inside a block keeps that block's super()
+		// wherever it travels to.
+		sub.blockName, sub.blockIndex = m.blockName, m.blockIndex
 		return sub.execBody(m.node.Body)
 	})
 	ex.st.tmpl = prevTmpl
