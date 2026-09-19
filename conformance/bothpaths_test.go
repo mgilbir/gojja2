@@ -45,8 +45,18 @@ func TestBothRenderPathsAgree(t *testing.T) {
 			t.Fatalf("load %s: %v", path, err)
 		}
 		t.Run(c.Rel, func(t *testing.T) {
+			// A case is loaded once per path. Context holds values,
+			// not a description of them, so the two renders would
+			// otherwise share them -- and a case that appends to a
+			// list would see the first render's append in the
+			// second, reporting a disagreement between the paths
+			// that is really a disagreement between two renders.
+			fresh, err := conformance.LoadCase(root, path)
+			if err != nil {
+				t.Fatalf("reload %s: %v", path, err)
+			}
 			wantOut, wantErr := c.Render()
-			gotOut, gotErr := c.RenderViaGo()
+			gotOut, gotErr := fresh.RenderViaGo()
 			if (wantErr == nil) != (gotErr == nil) {
 				t.Fatalf("RenderValues err=%v, Render err=%v", wantErr, gotErr)
 			}

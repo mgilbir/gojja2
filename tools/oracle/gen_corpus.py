@@ -212,6 +212,54 @@ case("include/in_loop", "{% for v in [1,2] %}{% include 'inc.html' %}{% endfor %
 case("include/missing", "A{% include 'nope.html' %}B", __templates__=INC)
 case("include/ignore_missing", "A{% include 'nope.html' ignore missing %}B", __templates__=INC)
 
+# What a template does to its arguments has to survive being handed across a
+# template boundary. A render argument is converted from Go once and memoised,
+# and handing the whole context to an include realised every name again from the
+# caller's original -- so an include silently put the context back as it found
+# it, and `{{ l.append(9) }}{% include %}{{ l|length }}` printed 3 where CPython
+# prints 4. None of the cases above mutate anything before crossing, which is
+# why none of them noticed.
+CTX = {
+    "show": "[{{ l|length }}]",
+    "showx": "[{{ x|default('unset') }}]",
+    "setx": "{% set x = 99 %}",
+    "showi": "[{{ i|default('noi') }}]",
+    "showd": "[{{ d|length }}]",
+    "showy": "[{{ y|default('noy') }}]",
+    "show3": "[{{ l3|length }}]",
+    "nested": "{% include 'show' %}{% include 'showx' %}",
+    "mod": "{% macro n() %}N{% endmacro %}{% macro showx() %}{{ x|default('nox') }}{% endmacro %}",
+}
+
+
+def ctx(name: str, template: str) -> None:
+    case(name, template, __templates__=CTX, l=[1, 2, 3], d={"a": 1})
+
+
+ctx("include/mutation_survives", "{{ l.append(9) }}{% include 'show' %}")
+ctx("include/mutation_without_context", "{{ l.append(9) }}{% include 'show' without context %}")
+ctx("include/mutation_between_includes", "{% include 'show' %}{{ l.append(9) }}{% include 'show' %}")
+ctx("include/mutation_through_alias", "{% set l2 = l %}{{ l2.append(9) }}{% include 'show' %}{{ l|length }}")
+ctx("include/two_mutations", "{{ l.append(1) }}{{ l.append(2) }}{% include 'show' %}{{ l.append(3) }}{% include 'show' %}")
+ctx("include/dict_mutation_survives", "{% set _ = d.update({'z': 1}) %}{% include 'showd' %}")
+ctx("include/dict_mutation_through_alias", "{% set d2 = d %}{% set _ = d2.update({'q': 2}) %}{% include 'showd' %}")
+ctx("include/mutation_then_import", "{% set _ = d.update({'z': 1}) %}{% import 'mod' as m %}{{ m.n() }}{{ d|length }}")
+ctx("include/mutation_in_nested_include", "{{ l.append(9) }}{% include 'nested' %}")
+ctx("include/mutation_then_loop", "{% for i in l %}{{ i }}{% endfor %}{{ l.append(9) }}{% for i in l %}{{ i }}{% endfor %}")
+ctx("include/mutation_inside_filter_block", "{% filter upper %}{% include 'show' %}{% endfilter %}")
+ctx("include/set_is_visible", "{% set x = 1 %}{% include 'showx' %}")
+ctx("include/set_inside_does_not_escape", "{% set x = 1 %}{% include 'setx' %}{{ x }}")
+ctx("include/set_inside_does_not_leak", "{% include 'setx' %}{{ x|default('unset') }}")
+ctx("include/loop_variable_is_visible", "{% for i in [1,2] %}{% include 'showi' %}{% endfor %}")
+ctx("include/with_binding_is_visible", "{% with y = 3 %}{% include 'showy' %}{% endwith %}")
+ctx("include/set_then_nested", "{% set x = 1 %}{% include 'nested' %}")
+ctx("include/appends_in_a_loop", "{% set l3 = [] %}{% for i in [1,2,3] %}{{ l3.append(i) }}{% endfor %}{% include 'show3' %}")
+ctx("include/appends_seen_each_iteration", "{% set l3 = [] %}{% for i in [1,2,3] %}{{ l3.append(i) }}{% include 'show3' %}{% endfor %}")
+ctx("import/context_carries_set", "{% set x = 5 %}{% import 'mod' as m with context %}{{ m.showx() }}")
+ctx("import/without_context_does_not", "{% set x = 5 %}{% import 'mod' as m %}{{ m.showx() }}")
+ctx("import/from_with_context", "{% from 'mod' import n with context %}{{ n() }}")
+ctx("import/macro_sees_mutation", "{% macro mm() %}{{ l|length }}{% endmacro %}{{ l.append(9) }}{{ mm() }}")
+
 # {% include %} compiles to get_or_select_template, while {% extends %},
 # {% import %} and {% from %} compile to get_template. So a name that is not a
 # string is a *selection* in the first -- empty by truthiness, then iterated --
