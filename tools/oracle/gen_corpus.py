@@ -747,6 +747,33 @@ for _n, _src, _ctx in _DEBUG:
     case(f"undefined/plain_{_n}", _src, **_ctx)
 
 
+# ChainableUndefined differs from Undefined in exactly two observable ways, and
+# gojja2 had neither. Its __getattr__ hands back the same undefined instead of
+# raising -- which the dotted form did and the |attr filter did not, so
+# `nope.a` chained and `nope|attr("a")` raised on the same lookup. And it is
+# the one Undefined class that defines __html__, which `is escaped` asks for by
+# name. A dunder is not chained under any class: Undefined.__getattr__ reports
+# it as an ordinary missing attribute, so |attr answers with an undefined.
+_CHAIN = [
+    ("attr_filter", "{{ nope|attr('a') }}"),
+    ("attr_filter_on_key", "{{ d.missing|attr('a') }}", {"d": {"a": 1}}),
+    ("attr_filter_on_index", "{{ seq[42]|attr('a') }}", {"seq": [1, 2, 3]}),
+    ("attr_filter_twice", "{{ nope|attr('a')|attr('b') }}"),
+    ("attr_filter_dunder", "{{ nope|attr('__nosuch__') }}"),
+    ("attr_filter_then_use", "{{ nope|attr('a') + 1 }}"),
+    ("dotted_matches_filter", "{{ nope.a }}|{{ nope|attr('a') }}"),
+    ("escaped", "{{ nope is escaped }}"),
+    ("escaped_attr", "{{ d.missing is escaped }}", {"d": {"a": 1}}),
+    ("deep_chain", "{{ nope.a.b.c }}"),
+]
+for _entry in _CHAIN:
+    _n, _src = _entry[0], _entry[1]
+    _ctx = _entry[2] if len(_entry) > 2 else {}
+    for _kind in ("chainable", "default", "debug", "strict"):
+        case(f"undefined/{_kind}_{_n}", _src,
+             __settings__={"undefined": _kind}, **_ctx)
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")

@@ -1,0 +1,14 @@
+{
+  "case": "undefined/strict_attr_filter_dunder.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "UndefinedError",
+    "message": "'jinja2.runtime.StrictUndefined object' has no attribute '__nosuch__'"
+  }
+}
