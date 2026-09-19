@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "base.html": "[{% block title %}base title{% endblock %}|{% block body %}base body{% endblock %}]"
+  }
+}
+---
+{% macro m() %}{% extends 'base.html' %}{% endmacro %}{% block body %}c{% endblock %}

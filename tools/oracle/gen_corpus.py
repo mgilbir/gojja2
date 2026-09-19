@@ -192,6 +192,44 @@ case("inherit/block_in_loop", "{% for i in [1,2] %}{% block b %}[{{ i|default('-
 case("inherit/block_in_loop_scoped", "{% for i in [1,2] %}{% block b scoped %}[{{ i }}]{% endblock %}{% endfor %}")
 case("inherit/endblock_name", "{% block b %}x{% endblock b %}")
 
+# Which template a render extends is settled once, for the whole render, so
+# jinja2 refuses an {% extends %} compiled into a frame of its own. `{% if %}`
+# is the exception, and the only one: it compiles inline, which is what makes
+# the conditional-extends idiom legal at any depth of conditions. gojja2 let
+# every scope through, so inheritance followed runtime control flow --
+# `{% for i in [] %}{% extends %}` silently skipped it and `[1]` applied it.
+case("inherit/extends_in_if",
+     "{% if true %}{% extends 'base.html' %}{% endif %}{% block body %}c{% endblock %}",
+     __templates__=LAYOUT)
+case("inherit/extends_in_if_false",
+     "{% if false %}{% extends 'base.html' %}{% endif %}{% block body %}c{% endblock %}",
+     __templates__=LAYOUT)
+case("inherit/extends_in_else",
+     "{% if false %}x{% else %}{% extends 'base.html' %}{% endif %}{% block body %}c{% endblock %}",
+     __templates__=LAYOUT)
+case("inherit/extends_in_elif",
+     "{% if false %}x{% elif true %}{% extends 'base.html' %}{% endif %}{% block body %}c{% endblock %}",
+     __templates__=LAYOUT)
+case("inherit/extends_in_nested_if",
+     "{% if true %}{% if true %}{% extends 'base.html' %}{% endif %}{% endif %}{% block body %}c{% endblock %}",
+     __templates__=LAYOUT)
+for _scope, _wrap in [
+    ("for", "{% for i in [1] %}BODY{% endfor %}"),
+    ("for_else", "{% for i in [] %}x{% else %}BODY{% endfor %}"),
+    ("for_if", "{% for i in [1] %}{% if true %}BODY{% endif %}{% endfor %}"),
+    ("if_for", "{% if true %}{% for i in [1] %}BODY{% endfor %}{% endif %}"),
+    ("block", "{% block z %}BODY{% endblock %}"),
+    ("macro", "{% macro m() %}BODY{% endmacro %}"),
+    ("with", "{% with x = 1 %}BODY{% endwith %}"),
+    ("filter", "{% filter upper %}BODY{% endfilter %}"),
+    ("set_block", "{% set v %}BODY{% endset %}"),
+    ("call", "{% macro mm() %}{{ caller() }}{% endmacro %}{% call mm() %}BODY{% endcall %}"),
+    ("autoescape", "{% autoescape true %}BODY{% endautoescape %}"),
+]:
+    case("errors/extends_in_" + _scope,
+         _wrap.replace("BODY", "{% extends 'base.html' %}") + "{% block body %}c{% endblock %}",
+         __templates__=LAYOUT)
+
 # super() is compiled into a block function's frame, so a body defined inside
 # the block -- a macro, or a {% call %} body -- closes over it and carries that
 # binding wherever it is invoked. The name is lexical both ways: a macro
