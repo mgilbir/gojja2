@@ -832,12 +832,6 @@ func Pos(v Value) (Value, error) {
 	return Undefined, errs.New(errs.TypeError, "bad operand type for unary +: '%s'", v.TypeName())
 }
 
-// Concat implements jinja2's `~`, which stringifies both sides and joins them.
-// Unlike `+` it never fails on a type mismatch.
-func Concat(a, b Value) Value {
-	return String(Str(a) + Str(b))
-}
-
 // powBits is the working precision used to round x**y correctly.
 const powBits = 320
 
