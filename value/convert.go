@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -763,7 +764,13 @@ func (o *opaqueObject) GetAttr(string) (Value, bool) { return Undefined, false }
 func (o *opaqueObject) TypeName() string             { return o.rv.Type().String() }
 func (o *opaqueObject) Repr() string                 { return fmt.Sprintf("<%s>", o.rv.Type()) }
 
-// timeObject renders a time.Time as RFC 3339 and exposes its components.
+// timeObject is a time.Time seen from a template, which is a datetime: it
+// says so when asked its type, answers a datetime's components, and prints the
+// way CPython prints one.
+//
+// A Go time always carries a location, so it is always an *aware* datetime and
+// always prints an offset; there is no naive form to produce. Its nanoseconds
+// are truncated to microseconds, which is all a datetime can hold.
 type timeObject struct{ t time.Time }
 
 func (o timeObject) GetAttr(name string) (Value, bool) {
@@ -784,8 +791,96 @@ func (o timeObject) GetAttr(name string) (Value, bool) {
 	return Undefined, false
 }
 
-func (o timeObject) Str() string      { return o.t.Format(time.RFC3339) }
-func (o timeObject) Repr() string     { return o.t.Format(time.RFC3339) }
+// Str is str(datetime), which is isoformat with a space: the date, the time,
+// six digits of microseconds when there are any, and the UTC offset.
+func (o timeObject) Str() string {
+	var b strings.Builder
+	b.WriteString(o.t.Format("2006-01-02 15:04:05"))
+	if us := o.t.Nanosecond() / 1000; us != 0 {
+		// Always six digits: Python does not trim the trailing zeros
+		// of a microsecond field, so .12 is written .120000.
+		fmt.Fprintf(&b, ".%06d", us)
+	}
+	_, offset := o.t.Zone()
+	b.WriteString(isoOffset(offset))
+	return b.String()
+}
+
+// isoOffset is the "+HH:MM" an aware datetime ends with, which grows a third
+// field when the offset is not a whole number of minutes -- "+00:19:32" is
+// what a historical local-mean-time zone produces.
+func isoOffset(seconds int) string {
+	sign := "+"
+	if seconds < 0 {
+		sign, seconds = "-", -seconds
+	}
+	h, m, sec := seconds/3600, (seconds%3600)/60, seconds%60
+	if sec != 0 {
+		return fmt.Sprintf("%s%02d:%02d:%02d", sign, h, m, sec)
+	}
+	return fmt.Sprintf("%s%02d:%02d", sign, h, m)
+}
+
+// Repr is repr(datetime): the constructor call that would rebuild it.
+//
+// Python omits the arguments that trail off the end -- the microseconds when
+// they are zero, and the seconds too when both are -- but never the hour and
+// minute.
+func (o timeObject) Repr() string {
+	var b strings.Builder
+	t := o.t
+	fmt.Fprintf(&b, "datetime.datetime(%d, %d, %d, %d, %d",
+		t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute())
+	us := t.Nanosecond() / 1000
+	switch {
+	case us != 0:
+		fmt.Fprintf(&b, ", %d, %d", t.Second(), us)
+	case t.Second() != 0:
+		fmt.Fprintf(&b, ", %d", t.Second())
+	}
+	b.WriteString(", tzinfo=")
+	b.WriteString(reprTZInfo(t.Zone()))
+	b.WriteString(")")
+	return b.String()
+}
+
+// reprTZInfo is how Python spells the tzinfo of an aware datetime.
+//
+// A zero offset is datetime.timezone.utc unless the zone carries a name of its
+// own. Go names a zone it has no name for by its offset -- "+0130" -- and that
+// is not a name Python would ever hold, so it is dropped rather than quoted.
+func reprTZInfo(name string, offset int) string {
+	if name == "UTC" || (name == "" && offset == 0) {
+		if offset == 0 {
+			return "datetime.timezone.utc"
+		}
+	}
+	if name != "" && (name[0] == '+' || name[0] == '-') {
+		name = ""
+	}
+	td := reprTimeDelta(offset)
+	if name == "" {
+		return "datetime.timezone(" + td + ")"
+	}
+	return "datetime.timezone(" + td + ", '" + name + "')"
+}
+
+// reprTimeDelta is repr(timedelta(seconds=offset)).
+//
+// Python normalises a timedelta so that its seconds field is never negative,
+// so a western offset is carried as a borrowed day: -1h is
+// "days=-1, seconds=82800".
+func reprTimeDelta(seconds int) string {
+	switch {
+	case seconds == 0:
+		return "datetime.timedelta(0)"
+	case seconds > 0:
+		return fmt.Sprintf("datetime.timedelta(seconds=%d)", seconds)
+	default:
+		return fmt.Sprintf("datetime.timedelta(days=-1, seconds=%d)", 86400+seconds)
+	}
+}
+
 func (o timeObject) TypeName() string { return "datetime" }
 
 // ToGo converts a template value back into an ordinary Go value, for handing
