@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "%"
+  }
+}
+---
+% if true
+X
+% endif

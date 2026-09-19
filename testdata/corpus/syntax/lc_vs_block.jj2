@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "line_comment_prefix": "%",
+    "block_start_string": "%",
+    "block_end_string": "%"
+  }
+}
+---
+%c
+kept

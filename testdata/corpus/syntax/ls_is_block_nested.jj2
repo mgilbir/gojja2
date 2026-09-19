@@ -1,0 +1,13 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "%",
+    "block_start_string": "%",
+    "block_end_string": "%"
+  }
+}
+---
+% for i in [1]
+% if true
+{{ i }}
+% endif
+% endfor
