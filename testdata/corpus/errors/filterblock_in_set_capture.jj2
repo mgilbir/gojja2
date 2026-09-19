@@ -1,0 +1,3 @@
+{}
+---
+{% set s %}{% filter length %}abc{% endfilter %}{% endset %}{{ s }}

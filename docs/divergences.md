@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty divergences below, **one** can change what a correct template
+Of the twenty-two divergences below, **one** can change what a correct template
 renders: jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`,
 `unique` and `items` return generators, and gojja2's return lists. A generator
 is always truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its
@@ -46,6 +46,8 @@ are safety controls rather than behavioural choices, and they live in
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
 | [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | a template cannot write to your objects | Changes what the *host* sees after the render, not what renders |
+| [Which item a filter block's type error names](#which-item-a-filter-blocks-type-error-names) | the message says item 0; jinja2 counts its own output chunks | No -- same error, same type |
+| [finalize and a constant print](#finalize-and-a-constant-print) | a constant print is not finalized at compile time | Only with `WithFinalize` and autoescape |
 | [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
 | [No automatic template reload](#no-automatic-template-reload) | no `auto_reload`; use `ClearCache` | Changes when an edit is picked up |
 | [The default autoescape extension set](#the-default-autoescape-extension-set) | adds `xhtml` to jinja2's three | Only ever escapes *more*, never less |
@@ -462,6 +464,56 @@ is part of the compiled tree, which every render of that template shares --
 including renders on other goroutines at the same time. `concurrency_test.go`
 pins all of it, and the version without the rebuild fails there with one
 goroutine's values appearing in another's output.
+
+### Which item a filter block's type error names
+
+A `{% filter %}` whose filter answers with something other than a string is a
+`TypeError` in both, with the same wording and the same type named:
+
+```
+TypeError: sequence item 0: expected str instance, int found
+```
+
+The index is jinja2's position in *its* output buffer, and it depends on how
+its code generator grouped the surrounding nodes rather than on anything about
+the template. `{% filter length %}abc{% endfilter %}` is item 0; put `x` in
+front and it is item 1; put `x{{ 'q' }}y` in front and it is still item 1,
+because those three merge into one chunk. gojja2 streams its output and has no
+such buffer to count, so it always reports 0.
+
+Everything a template can act on -- the class, that it is raised at all, and
+the type it names -- is identical. This is the same kind of artifact as the
+recursion wordings in [limits.md](limits.md#a-bound-on-nesting-depth): a number that describes
+CPython's internals, not the template. Asserted by the `errors/filterblock_*`
+corpus cases.
+
+### finalize and a constant print
+
+With `WithFinalize` **and** autoescaping on, a print whose expression is
+entirely constant renders differently:
+
+```jinja
+{% autoescape true %}{{ 'a' }}{% endautoescape %}
+```
+
+jinja2 gives `<Markup('a')>` and gojja2 gives `&lt;&#39;a&#39;&gt;`, for a
+hook spelled `lambda v: "<%r>" % (v,)`.
+
+jinja2 has two orders here, and which one applies depends on whether the
+expression folded. At runtime its code generator emits
+`escape(environment.finalize(value))`; at compile time `_output_child_to_const`
+does the reverse, `finalize(escape(const))`, and emits the result without
+escaping it again. So the same expression is finalized before escaping when it
+is written as a variable and after escaping when it is written as a literal.
+
+gojja2 uses the runtime order for both, because it does not run `finalize` at
+compile time at all: the hook is arbitrary Go supplied by the embedding
+program, it may not be pure, and folding would call it once per compile rather
+than once per render. Reproducing the asymmetry would mean accepting that
+trade to copy a wart.
+
+Without a finalize hook, or without autoescaping, the two agree. Asserted by
+the tests in `finalize_test.go`.
 
 ### What a missing template's error says
 

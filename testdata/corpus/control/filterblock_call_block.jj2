@@ -1,0 +1,3 @@
+{}
+---
+{% macro w() %}{{ caller()|length }}{% endmacro %}{% call w() %}abc{% endcall %}

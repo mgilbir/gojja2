@@ -553,6 +553,21 @@ func (ex *exec) execFilterBlock(n *ast.FilterBlock) error {
 	if err != nil {
 		return err
 	}
+	// jinja2 writes a filter block's result into the output buffer as it
+	// stands and joins the buffer at the end, so a filter that answers
+	// with something other than a string fails there rather than being
+	// rendered: `{% filter length %}abc{% endfilter %}` is a TypeError,
+	// not "3". Only the writing form is affected -- `{% set s | length %}`
+	// assigns the value and keeps it an int.
+	//
+	// The index jinja2 names is the position in *its* output buffer,
+	// which depends on how its code generator grouped the surrounding
+	// nodes rather than on anything about the template; see
+	// docs/divergences.md.
+	if v.Kind() != value.KindString {
+		return errs.New(errs.TypeError,
+			"sequence item 0: expected str instance, %s found", v.TypeName())
+	}
 	out, err := ex.renderValue(v)
 	if err != nil {
 		return err
