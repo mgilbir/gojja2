@@ -1,0 +1,23 @@
+{
+  "__templates__": {
+    "show": "[{{ l|length }}]",
+    "showx": "[{{ x|default('unset') }}]",
+    "setx": "{% set x = 99 %}",
+    "showi": "[{{ i|default('noi') }}]",
+    "showd": "[{{ d|length }}]",
+    "showy": "[{{ y|default('noy') }}]",
+    "show3": "[{{ l3|length }}]",
+    "nested": "{% include 'show' %}{% include 'showx' %}",
+    "mod": "{% macro n() %}N{% endmacro %}{% macro showx() %}{{ x|default('nox') }}{% endmacro %}"
+  },
+  "l": [
+    1,
+    2,
+    3
+  ],
+  "d": {
+    "a": 1
+  }
+}
+---
+{% set x = 5 %}{% import 'mod' as m with context %}{{ m.showx() }}
