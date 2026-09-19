@@ -1,0 +1,3 @@
+{}
+---
+{% filter first %}abc{% endfilter %}

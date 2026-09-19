@@ -1,0 +1,3 @@
+{}
+---
+{% filter string %}abc{% endfilter %}

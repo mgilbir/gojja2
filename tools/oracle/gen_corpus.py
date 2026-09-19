@@ -900,6 +900,49 @@ for _n, _src in _SLICEFOLD:
         "{'a': 1}[", "x["), x=1)
 
 
+# jinja2 writes a filter block's result into its output buffer as it stands and
+# joins the buffer at the end, so a filter that answers with something other
+# than a string fails there rather than being rendered: `{% filter length %}`
+# is a TypeError, not "3". gojja2 rendered str() of whatever came back, which
+# turned an author's mistake into plausible output.
+#
+# Only the writing form is affected. `{% set s | length %}` assigns the value
+# and keeps it an int, which the paired cases below pin so the check cannot
+# spread to it.
+_FILTERBLOCK = [
+    ("length", "{% filter length %}abc{% endfilter %}"),
+    ("list", "{% filter list %}ab{% endfilter %}"),
+    ("int", "{% filter int %}42{% endfilter %}"),
+    ("float", "{% filter float %}4.5{% endfilter %}"),
+    ("count", "{% filter count %}abc{% endfilter %}"),
+    ("round", "{% filter round %}4.5{% endfilter %}"),
+    ("abs", "{% filter abs %}-3{% endfilter %}"),
+    ("chain_to_int", "{% filter string|length %}abc{% endfilter %}"),
+    ("chain_to_str", "{% filter length|string %}abc{% endfilter %}"),
+    ("nested", "{% filter upper %}{% filter length %}abc{% endfilter %}{% endfilter %}"),
+    ("in_set_capture", "{% set s %}{% filter length %}abc{% endfilter %}{% endset %}{{ s }}"),
+]
+for _n, _src in _FILTERBLOCK:
+    case(f"errors/filterblock_{_n}", _src)
+
+# The shapes that stay strings, and the assigning form, which keeps the value.
+_FILTERBLOCK_OK = [
+    ("upper", "{% filter upper %}abc{% endfilter %}"),
+    ("safe", "{% filter safe %}abc{% endfilter %}"),
+    ("string", "{% filter string %}abc{% endfilter %}"),
+    ("tojson", "{% filter tojson %}abc{% endfilter %}"),
+    ("first", "{% filter first %}abc{% endfilter %}"),
+    ("default", "{% filter default(5) %}{% endfilter %}"),
+    ("set_length", "{% set s | length %}abc{% endset %}{{ s }}"),
+    ("set_length_arith", "{% set s | length %}abc{% endset %}[{{ s + 1 }}]"),
+    ("set_list", "{% set s | list %}ab{% endset %}{{ s }}"),
+    ("set_upper", "{% set s | upper %}abc{% endset %}{{ s }}"),
+    ("call_block", "{% macro w() %}{{ caller()|length }}{% endmacro %}{% call w() %}abc{% endcall %}"),
+]
+for _n, _src in _FILTERBLOCK_OK:
+    case(f"control/filterblock_{_n}", _src)
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")

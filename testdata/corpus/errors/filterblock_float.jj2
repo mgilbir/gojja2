@@ -1,0 +1,3 @@
+{}
+---
+{% filter float %}4.5{% endfilter %}

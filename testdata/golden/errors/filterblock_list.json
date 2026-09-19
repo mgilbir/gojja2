@@ -1,0 +1,14 @@
+{
+  "case": "errors/filterblock_list.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "sequence item 0: expected str instance, list found"
+  }
+}
