@@ -143,9 +143,10 @@ jobs:
       # TIME=1h` on someone's machine, and what it finds is committed as a seed.
       - name: Fuzz
         run: |
-          go test . -run xxx -fuzz FuzzParse -fuzztime 60s
-          go test . -run xxx -fuzz FuzzRender -fuzztime 60s
-          go test . -run xxx -fuzz FuzzAutoescape -fuzztime 60s
+          go test . -run xxx -fuzz '^FuzzParse$' -fuzztime 60s
+          go test . -run xxx -fuzz '^FuzzRender$' -fuzztime 60s
+          go test . -run xxx -fuzz '^FuzzAutoescape$' -fuzztime 60s
+          go test . -run xxx -fuzz '^FuzzRenderData$' -fuzztime 60s
 
   lint:
     needs: authorize
