@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a\tb\nc d'.rsplit(None, 9) }}

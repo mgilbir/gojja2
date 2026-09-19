@@ -753,7 +753,15 @@ func splitMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (val
 			if err != nil {
 				return value.Undefined, err
 			}
-			if limit >= 0 && len(parts) > limit+1 {
+			// More parts than splits allowed: the last split's
+			// remainder is whatever the subject still holds,
+			// including the whitespace at its outer edge.
+			// `'  a b c d  '.split(None, 3)` ends with 'd  ', and
+			// rsplit's head keeps its leading spaces the same way.
+			// The test was `> limit+1`, so the case that lands
+			// exactly on the limit never rejoined and the edge
+			// whitespace was dropped.
+			if limit >= 0 && len(parts) > limit {
 				parts = rejoinTail(r.AsString(), parts, limit, fromRight)
 			}
 		} else {
@@ -802,8 +810,15 @@ func rejoinTail(src string, parts []string, limit int, fromRight bool) []string 
 	if fromRight {
 		keep := parts[len(parts)-limit:]
 		head := strings.TrimRightFunc(src, unicode.IsSpace)
-		for _, p := range keep {
-			head = head[:strings.LastIndex(head, p)]
+		// Backwards: each step cuts the *last* part off the end, so
+		// they have to come off in the order they appear from the
+		// right. Walking forwards looked for "c" before "d" had gone,
+		// found it, cut the string back past "d" as well, and then
+		// looked for "d" in what was left -- LastIndex answered -1 and
+		// the slice panicked. Only a limit of 1 was safe, because one
+		// part has no order to get wrong.
+		for i := len(keep) - 1; i >= 0; i-- {
+			head = head[:strings.LastIndex(head, keep[i])]
 		}
 		return append([]string{strings.TrimRightFunc(head, unicode.IsSpace)}, keep...)
 	}

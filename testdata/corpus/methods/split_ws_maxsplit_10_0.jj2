@@ -1,0 +1,3 @@
+{}
+---
+{{ '  spaced  out  words  here  '.split(None, 0) }}
