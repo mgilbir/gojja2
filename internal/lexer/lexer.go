@@ -67,6 +67,10 @@ type lexer struct {
 	// is non-empty an end delimiter is not recognised, so the `}` in
 	// `{{ {"a": 1} }}` closes the dict rather than the print tag.
 	balance []byte
+	// lineStatement marks the tag currently being lexed as one opened by
+	// the line-statement prefix, which ends at the newline rather than at
+	// the block delimiter. findTag decides it; see isLineStatement.
+	lineStatement bool
 
 	// scan remembers where each opening delimiter was last found. See
 	// delimScan: without it, a delimiter a template never uses costs a
@@ -354,7 +358,9 @@ func (l *lexer) run() error {
 			err = l.lexTag(VariableEnd)
 		case tagLineStatement:
 			l.emit(BlockBegin, delim)
+			l.lineStatement = true
 			err = l.lexTag(BlockEnd)
+			l.lineStatement = false
 		}
 		if err != nil {
 			return err
@@ -541,20 +547,16 @@ func (l *lexer) tryEnd(end Kind) (bool, error) {
 
 // isLineStatement reports whether the tag currently open was introduced by a
 // line statement prefix rather than by `{%`.
-func (l *lexer) isLineStatement() bool {
-	if l.syn.LineStatementPrefix == "" {
-		return false
-	}
-	for i := len(l.out) - 1; i >= 0; i-- {
-		if l.out[i].Kind == BlockBegin {
-			// A line statement's opening token is its indentation
-			// plus the prefix; a `{%` tag's is the block delimiter.
-			return !strings.HasPrefix(
-				strings.TrimLeft(l.out[i].Value, " \t\v"), l.syn.BlockStart)
-		}
-	}
-	return false
-}
+// isLineStatement reports whether the tag being lexed is a line statement,
+// which ends at its newline rather than at the block delimiter.
+//
+// findTag has already decided this, so the answer is carried from there. It
+// used to be read back off the emitted token -- "the opening token does not
+// begin with the block delimiter" -- which is true of every line statement
+// until the prefix *is* the block delimiter. Configure both as "%" and every
+// line statement was lexed as a `{% %}` tag hunting for a closing "%", which
+// it found on the next line or not at all: jinja2 renders those templates.
+func (l *lexer) isLineStatement() bool { return l.lineStatement }
 
 // tryLineStatementEnd ends a line statement at the end of its line.
 //

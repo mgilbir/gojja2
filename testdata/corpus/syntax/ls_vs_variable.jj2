@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "line_statement_prefix": "{{"
+  }
+}
+---
+{{ 1 }}

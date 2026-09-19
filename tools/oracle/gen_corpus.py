@@ -1045,6 +1045,42 @@ for _i, _subj in enumerate(["a,b,c,d", ",a,,b,", "a,,b", ",,,", "abc"]):
         case(f"bytes/rsplit_maxsplit_{_i}_{_n}", "{{ b%r.rsplit(b',', %d) }}" % (_subj, _n))
 
 
+# A line statement whose prefix is also the block delimiter. The lexer decided
+# which of the two a position opened, and then worked out the tag's *end* by
+# reading the opening token back -- "it is a line statement if it does not
+# begin with the block delimiter" -- which is true of every line statement
+# until the prefix is the block delimiter. Configured as "%" both ways, every
+# line statement was lexed as a `{% %}` tag hunting for a closing "%".
+_LSCOLLIDE = {"line_statement_prefix": "%", "block_start_string": "%",
+              "block_end_string": "%"}
+for _n, _src in [
+    ("if", "% if true\nX\n% endif\n"),
+    ("if_no_trailing_newline", "% if true\nX\n% endif"),
+    ("after_text", "A\n% if true\nX\n% endif\n"),
+    ("set_then_print", "% set a = 1\n{{ a }}\n"),
+    ("set_only", "% set a = 1\n"),
+    ("for_with_print", "% for i in [1,2]\n{{ i }}\n% endfor\n"),
+    ("for_plain", "% for i in [1]\nX\n% endfor\n"),
+    ("print_only", "{{ 1 }}\n"),
+    ("plain_text", "plain\n"),
+    ("indented", "   % if true\nX\n   % endif\n"),
+    ("nested", "% for i in [1]\n% if true\n{{ i }}\n% endif\n% endfor\n"),
+]:
+    case(f"syntax/ls_is_block_{_n}", _src, __settings__=_LSCOLLIDE)
+
+# The same prefix against the other delimiters, which were already right, and
+# a line comment sharing the block delimiter.
+for _n, _src, _st in [
+    ("ls_vs_variable", "{{ 1 }}\n", {"line_statement_prefix": "{{"}),
+    ("ls_vs_comment", "# if true\nX\n# endif\n",
+     {"line_statement_prefix": "#", "comment_start_string": "#", "comment_end_string": "#"}),
+    ("lc_vs_block", "%c\nkept\n",
+     {"line_comment_prefix": "%", "block_start_string": "%", "block_end_string": "%"}),
+    ("ls_normal_block", "% if true\nX\n% endif\n", {"line_statement_prefix": "%"}),
+]:
+    case(f"syntax/{_n}", _src, __settings__=_st)
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")
