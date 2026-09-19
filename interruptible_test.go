@@ -86,6 +86,9 @@ func buildSeq(kind string, n int) map[string]any {
 		// is, and the workload would be measuring memmove.
 		return map[string]any{kind: strings.Repeat(
 			"Héllo wörld, <b>this</b> &amp; a http://example.com sentence.\n", n)}
+	case "bytes":
+		return map[string]any{kind: []byte(strings.Repeat(
+			"hello world this is a sentence\n", n))}
 	case "mapping":
 		v := make(map[string]any, n)
 		for i := range n {
@@ -256,6 +259,37 @@ var stringWorkloads = map[string]workload{
 // cutting it at a length the template chose -- so there is no walk to interrupt
 // and nothing for a deadline to arrive in the middle of. Copying the result is
 // all that is proportional to the input, and that is true of every filter here.
+
+// methodWorkloads make each str or bytes method walk a subject of the caller's
+// length.
+//
+// The methods are the same operations as the filters reached by another name,
+// and they were audited later: `{{ s|upper }}` was made interruptible while
+// `{{ s.upper() }}` was not, because the method table hands its functions no
+// State at all. Six case methods, both splits, translate, expandtabs and decode
+// all ran to the end of a 13MB subject whatever the deadline said.
+var methodWorkloads = map[string]workload{
+	"str.upper":        {"text", `{{ (text.upper()) and 1 or 1 }}`, 100000},
+	"str.lower":        {"text", `{{ (text.lower()) and 1 or 1 }}`, 120000},
+	"str.casefold":     {"text", `{{ (text.casefold()) and 1 or 1 }}`, 100000},
+	"str.title":        {"text", `{{ (text.title()) and 1 or 1 }}`, 100000},
+	"str.capitalize":   {"text", `{{ (text.capitalize()) and 1 or 1 }}`, 120000},
+	"str.swapcase":     {"text", `{{ (text.swapcase()) and 1 or 1 }}`, 80000},
+	"str.translate":    {"text", `{{ (text.translate({})) and 1 or 1 }}`, 50000},
+	"str.expandtabs":   {"text", `{{ (text.expandtabs()) and 1 or 1 }}`, 250000},
+	"bytes.decode":     {"bytes", `{{ (bytes.decode()) and 1 or 1 }}`, 400000},
+	"bytes.expandtabs": {"bytes", `{{ (bytes.expandtabs()) and 1 or 1 }}`, 600000},
+}
+
+// A method that walks a caller-sized subject has to stop when the deadline
+// passes, not when the subject ends.
+func TestStringMethodsYieldToTheDeadline(t *testing.T) {
+	for name, w := range methodWorkloads {
+		t.Run(name, func(t *testing.T) {
+			assertYieldsToDeadline(t, w)
+		})
+	}
+}
 
 // A filter that walks a caller-sized string has to stop when the deadline
 // passes, not when the string ends.

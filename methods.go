@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/value"
@@ -257,25 +258,59 @@ var bytesMethods = registerBytesMethods()
 // the initialisation cycle that would create.
 var stringMethods map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error)
 
+// runeMethod is a str method that maps each code point of its receiver.
+//
+// It is the method-table twin of runeFilter, over the same walker, so the two
+// spellings of one operation cannot drift apart or be made interruptible
+// separately -- which is exactly what happened when only the filters were.
+func runeMethod(f func(i int, r rune) string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+		out, err := mapRunesIn(s, r.AsString(), f)
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.String(out), nil
+	}
+}
+
+// swapcaseRune is str.swapcase for one code point.
+func swapcaseRune(_ int, r rune) string {
+	switch {
+	case pyIsUpper(r):
+		return pyLowerRune(r)
+	case pyIsLower(r):
+		return pyUpperRune(r)
+	}
+	return string(r)
+}
+
+// capitalizeRune is str.capitalize: the first code point takes the titlecase
+// mapping and the rest take lowercase.
+func capitalizeRune(i int, r rune) string {
+	if i == 0 {
+		return pyTitleRune(r)
+	}
+	return pyLowerRune(r)
+}
+
 func init() {
 	stringMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
-		"upper": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(pyUpperString(r.AsString())), nil
-		},
-		"lower": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(pyLowerString(r.AsString())), nil
-		},
-		"title": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(pyTitleString(r.AsString())), nil
-		},
-		"capitalize": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(pyCapitalizeString(r.AsString())), nil
-		},
-		"swapcase": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(pySwapcaseString(r.AsString())), nil
-		},
-		"casefold": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-			return value.String(pyCasefold(r.AsString())), nil
+		// The case methods map one code point at a time, so they walk
+		// through the shared mapper and are interruptible. str.title is
+		// the exception: whether a character starts a word depends on
+		// the one before it, so it carries state across the walk and
+		// keeps a loop of its own.
+		"upper":      runeMethod(func(_ int, r rune) string { return pyUpperRune(r) }),
+		"lower":      runeMethod(func(_ int, r rune) string { return pyLowerRune(r) }),
+		"casefold":   runeMethod(func(_ int, r rune) string { return pyFoldRune(r) }),
+		"swapcase":   runeMethod(swapcaseRune),
+		"capitalize": runeMethod(capitalizeRune),
+		"title": func(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+			out, err := pyTitleString(s, r.AsString())
+			if err != nil {
+				return value.Undefined, err
+			}
+			return value.String(out), nil
 		},
 
 		"strip":  trimMethod("strip", strings.Trim, strings.TrimFunc),
@@ -472,6 +507,9 @@ func methodTranslate(s *State, r value.Value, args *value.CallArgs) (value.Value
 	// outright.
 	var b strings.Builder
 	for _, c := range r.AsString() {
+		if err := s.Poll(); err != nil {
+			return value.Undefined, err
+		}
 		repl, found, err := translateLookup(table, c)
 		if err != nil {
 			return value.Undefined, err
@@ -594,6 +632,9 @@ func methodExpandtabs(s *State, r value.Value, args *value.CallArgs) (value.Valu
 	var b strings.Builder
 	col := 0
 	for _, c := range r.AsString() {
+		if err := s.Poll(); err != nil {
+			return value.Undefined, err
+		}
 		switch c {
 		case '\t':
 			// A tabsize of zero or less deletes the tab rather than
@@ -699,7 +740,7 @@ func trimMethod(name string, withCutset func(string, string) string, withFunc fu
 // whitespace and drops leading and trailing empties, which is why
 // `" a  b ".split()` has two elements and `" a  b ".split(" ")` has five.
 func splitMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
-	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	return func(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		limit, err := indexArg(args, 1, "maxsplit", -1, cSSizeT)
 		if err != nil {
 			return value.Undefined, err
@@ -731,8 +772,18 @@ func splitMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (val
 			}
 		}
 
+		// One list element per piece, charged before the slice holding
+		// them is sized. A subject of the caller's length splits into as
+		// many pieces as it has words, and neither the pieces nor the
+		// list was counted or interruptible.
+		if err := st.ChargeItems(int64(len(parts))); err != nil {
+			return value.Undefined, err
+		}
 		items := make([]value.Value, len(parts))
 		for i, p := range parts {
+			if err := st.Poll(); err != nil {
+				return value.Undefined, err
+			}
 			items[i] = value.String(p)
 		}
 		return value.NewList(items...), nil
@@ -900,8 +951,22 @@ func affixMethod(name string, match func(string, string) bool) func(*State, valu
 // and anything that is not an integer or None is refused in the words CPython
 // uses for a slice.
 func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, error) {
-	runes := []rune(r)
-	n := len(runes)
+	// Neither bound given is the common case -- `s.startswith("x")`,
+	// `s.count("x")` -- and it selects the whole subject, so there is
+	// nothing to work out.
+	//
+	// It used to be worked out anyway. Every one of these methods expanded
+	// its receiver into a []rune to find the bounds and then copied the
+	// span back out, which is four bytes of allocation for every byte of
+	// the subject plus a copy of it, whether or not a bound was passed:
+	// `s.startswith("zzz")` over 13MB took 63 milliseconds to answer a
+	// question about three characters. value.StrSlice learned this years
+	// ago -- "building one costs eight bytes for every byte of the string"
+	// -- and this did not.
+	if !bounded(args, first) && !bounded(args, first+1) {
+		return r, 0, nil
+	}
+	n := utf8.RuneCountInString(r)
 	read := func(i, def int) (int, error) {
 		v, ok := args.Arg(i)
 		if !ok || v.IsNone() {
@@ -940,7 +1005,20 @@ func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, err
 	if end < start {
 		end = start
 	}
-	return string(runes[start:end]), start, nil
+	// A forward unit-step slice is a span of the original, so this walks to
+	// the two offsets rather than building a table of all of them.
+	within, err := value.StrSlice(r, &start, &end, nil)
+	if err != nil {
+		return "", 0, err
+	}
+	return within, start, nil
+}
+
+// bounded reports an argument that selects something other than the default,
+// which is anything but absent and anything but None.
+func bounded(args *value.CallArgs, i int) bool {
+	v, ok := args.Arg(i)
+	return ok && !v.IsNone()
 }
 
 func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {

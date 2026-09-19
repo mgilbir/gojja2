@@ -83,11 +83,14 @@ func pyCasefold(s string) string    { return mapRunes(s, pyFoldRune) }
 // A word ends at an uncased character, which is not the same as a non-letter:
 // "a1b".title() is "A1B", because a digit is uncased and so the b that follows
 // starts a word. Reading the boundary as "letter or digit" made it "A1b".
-func pyTitleString(s string) string {
+func pyTitleString(st *State, s string) (string, error) {
 	var b strings.Builder
 	b.Grow(len(s))
 	prevCased := false
 	for _, r := range s {
+		if err := st.Poll(); err != nil {
+			return "", err
+		}
 		if prevCased {
 			b.WriteString(pyLowerRune(r))
 		} else {
@@ -95,40 +98,7 @@ func pyTitleString(s string) string {
 		}
 		prevCased = pyIsCased(r)
 	}
-	return b.String()
-}
-
-// pyCapitalize is str.capitalize: the first character takes the *titlecase*
-// mapping and the rest lowercase. Titlecase rather than uppercase is
-// observable -- "ß".capitalize() is "Ss" where "ß".upper() is "SS".
-func pyCapitalizeString(s string) string {
-	if s == "" {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for i, r := range s {
-		if i == 0 {
-			b.WriteString(pyTitleRune(r))
-			continue
-		}
-		b.WriteString(pyLowerRune(r))
-	}
-	return b.String()
-}
-
-// pySwapcase is str.swapcase, deciding per character by Python's own notion of
-// which case a character is in.
-func pySwapcaseString(s string) string {
-	return mapRunes(s, func(r rune) string {
-		switch {
-		case pyIsUpper(r):
-			return pyLowerRune(r)
-		case pyIsLower(r):
-			return pyUpperRune(r)
-		}
-		return string(r)
-	})
+	return b.String(), nil
 }
 
 // The three string predicates, written the way CPython writes them.
