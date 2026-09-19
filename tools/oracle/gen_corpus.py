@@ -774,6 +774,80 @@ for _entry in _CHAIN:
              __settings__={"undefined": _kind}, **_ctx)
 
 
+# StrictUndefined adds exactly five things to Undefined -- __str__, __iter__,
+# __len__, __bool__/__eq__/__ne__/__hash__ and __contains__ -- and everything
+# else an undefined refuses, it refuses under every class. gojja2 had the
+# "everything else" and almost none of the five, so a strict environment
+# rendered `{{ nope|upper }}` as "" and answered `{{ nope == nope }}` with
+# True. That is the setting silently not applying, which is the whole reason
+# to ask for it.
+#
+# Each shape is graded under all four classes, because what is being pinned is
+# the difference between them: making strict refuse must not make the default
+# class refuse too.
+_STRICT = [
+    # __str__, reached through every filter that renders its subject.
+    ("str_filter", "{{ nope|string }}"),
+    ("upper", "{{ nope|upper }}"),
+    ("lower_filter", "{{ nope|lower }}"),
+    ("title", "{{ nope|title }}"),
+    ("capitalize", "{{ nope|capitalize }}"),
+    ("trim", "{{ nope|trim }}"),
+    ("center", "{{ nope|center(5) }}"),
+    ("indent", "{{ nope|indent(2) }}"),
+    ("truncate", "{{ nope|truncate(5) }}"),
+    ("wordwrap", "{{ nope|wordwrap(5) }}"),
+    ("wordcount", "{{ nope|wordcount }}"),
+    ("replace", "{{ nope|replace('a','b') }}"),
+    ("striptags", "{{ nope|striptags }}"),
+    ("urlize", "{{ nope|urlize }}"),
+    ("escape", "{{ nope|escape }}"),
+    ("forceescape", "{{ nope|forceescape }}"),
+    ("safe", "{{ nope|safe }}"),
+    ("format_arg", "{{ '%s'|format(nope) }}"),
+    ("percent", "{{ '%s' % nope }}"),
+    ("percent_repr", "{{ '%r' % nope }}"),
+    ("join_element", "{{ [nope]|join(',') }}"),
+    # __len__
+    ("length", "{{ nope|length }}"),
+    ("length_folded", "{{ none.missing|length }}"),
+    # __iter__
+    ("iterate", "{% for x in nope %}{{ x }}{% endfor %}"),
+    ("list", "{{ nope|list }}"),
+    ("reverse", "{{ nope|reverse|list }}"),
+    ("sort", "{{ nope|sort|list }}"),
+    # __eq__, __ne__, __contains__, __hash__
+    ("eq_self", "{{ nope == nope }}"),
+    ("eq_none", "{{ nope == none }}"),
+    ("eq_str", "{{ nope == 'x' }}"),
+    ("ne", "{{ nope != 1 }}"),
+    ("in_list", "{{ nope in [1] }}"),
+    ("contains", "{{ 1 in nope }}"),
+    ("is_eq", "{{ nope is eq 1 }}"),
+    ("is_in", "{{ nope is in([1]) }}"),
+    ("dict_key", "{{ {nope: 1} }}"),
+    ("is_filter", "{{ nope is filter }}"),
+    ("is_test", "{{ nope is test }}"),
+    # __bool__
+    ("truth", "{% if nope %}t{% else %}f{% endif %}"),
+    ("not", "{{ not nope }}"),
+    ("or", "{{ nope or 'x' }}"),
+    # Tests that inspect rather than use, and the two that must not raise.
+    ("is_sequence", "{{ nope is sequence }}"),
+    ("is_iterable", "{{ nope is iterable }}"),
+    ("is_lower", "{{ nope is lower }}"),
+    ("is_upper", "{{ nope is upper }}"),
+    ("is_defined", "{{ nope is defined }}"),
+    ("is_undefined", "{{ nope is undefined }}"),
+    ("default", "{{ nope|default('d') }}"),
+    ("default_boolean", "{{ nope|default('d', true) }}"),
+    ("pprint", "{{ nope|pprint }}"),
+]
+for _n, _src in _STRICT:
+    for _kind in ("strict", "default", "chainable", "debug"):
+        case(f"undefined/{_kind}_op_{_n}", _src, __settings__={"undefined": _kind})
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")

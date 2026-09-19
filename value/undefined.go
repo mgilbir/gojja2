@@ -220,3 +220,19 @@ func ObjectTypeRepr(v Value) string {
 	}
 	return v.TypeName() + " object"
 }
+
+// StrictRefusal returns the error a StrictUndefined raises for an operation it
+// refuses, and nil for every other value.
+//
+// StrictUndefined adds exactly five things to Undefined: __str__, __iter__,
+// __len__, __bool__/__eq__/__ne__/__hash__ and __contains__. Everything else
+// an undefined refuses -- arithmetic, calls, subscripts, ordering -- Undefined
+// already refuses whatever the class, and fails at its own site. So this is
+// the whole of the difference, and the operations above are the only ones that
+// have to ask.
+func StrictRefusal(v Value) error {
+	if v.kind == KindUndefined && v.undef().behavior == UndefinedStrict {
+		return v.UndefinedError()
+	}
+	return nil
+}

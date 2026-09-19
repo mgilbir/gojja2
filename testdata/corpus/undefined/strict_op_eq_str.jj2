@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{{ nope == 'x' }}

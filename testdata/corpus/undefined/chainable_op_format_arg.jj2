@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{{ '%s'|format(nope) }}

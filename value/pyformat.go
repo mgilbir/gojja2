@@ -420,6 +420,12 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 	// `{{ "%281%2C+2%29=x" % 2 }}`, which is what a urlencoded tuple key
 	// looks like, format quietly where CPython refuses.
 	case 's':
+		// %s is str(), which a StrictUndefined refuses. %r and %a are
+		// repr() and ascii(), which it does not -- Undefined leaves
+		// __repr__ alone under every class.
+		if err := StrictRefusal(v); err != nil {
+			return formatted{}, err
+		}
 		return formatted{body: c.truncate(text(Str(v)))}, nil
 	case 'r':
 		return formatted{body: c.truncate(text(Repr(v)))}, nil

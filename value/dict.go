@@ -205,6 +205,12 @@ type hashKey struct {
 // the render can report. CPython has no wall of its own here: its tuple hash
 // is iterative, and it hashes a 65,000-deep tuple without complaint.
 func hash(v Value) (hashKey, error) {
+	// StrictUndefined defines __hash__ as a failure, so anything that
+	// hashes one -- a dict key, a set member, `value in env.filters`
+	// behind the `filter` test -- raises rather than answering.
+	if err := StrictRefusal(v); err != nil {
+		return hashKey{}, err
+	}
 	if items, ok := tupleItems(v); ok {
 		return hashTuple(items)
 	}

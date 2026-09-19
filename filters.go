@@ -31,7 +31,11 @@ func registerDefaultFilters(env *Environment) {
 	// assembles it with "".join(...), and joining on a plain str gives a
 	// plain str.
 	add("title", func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		out, err := jinjaTitle(s, value.Str(v))
+		text, err := strictStr(v)
+		if err != nil {
+			return value.Undefined, err
+		}
+		out, err := jinjaTitle(s, text)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -150,9 +154,27 @@ func definedFilter(f Filter) Filter {
 //
 // i is the byte offset of the code point, which is what tells |capitalize its
 // first one from the rest.
+// strictStr is str() on a filter's subject: the text, or the error a
+// StrictUndefined raises rather than becoming "".
+//
+// Every filter that renders its subject as text goes through here, because
+// under that class the coercion is the operation that fails -- `{{ nope|upper }}`
+// raises in jinja2 and quietly produced "" here, which is the strictness
+// setting not applying.
+func strictStr(v value.Value) (string, error) {
+	if err := value.StrictRefusal(v); err != nil {
+		return "", err
+	}
+	return value.Str(v), nil
+}
+
 func runeFilter(f func(i int, r rune) string) Filter {
 	return func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		out, err := mapRunesIn(s, value.Str(v), f)
+		text, err := strictStr(v)
+		if err != nil {
+			return value.Undefined, err
+		}
+		out, err := mapRunesIn(s, text, f)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -228,6 +250,13 @@ func materialize(s *State, v value.Value) ([]value.Value, error) {
 func materializeOr(s *State, v value.Value, notIterable error) ([]value.Value, error) {
 	seq, err := value.Iterate(v)
 	if err != nil {
+		// A StrictUndefined refuses iteration, and that refusal is what
+		// the template should see. Substituting the filter's "argument
+		// must be iterable" would describe a type the value does not
+		// have and hide which name was undefined.
+		if strict := value.StrictRefusal(v); strict != nil {
+			return nil, strict
+		}
 		return nil, notIterable
 	}
 	return collect(s, seq)
@@ -617,7 +646,10 @@ func boolArg(args *value.CallArgs, i int, name string, def bool) (bool, error) {
 // --- text filters ------------------------------------------------------------
 
 func filterTrim(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	text := value.Str(v)
+	text, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
 	if chars, ok := arg(args, 0, "chars"); ok && !chars.IsNone() {
 		if !chars.IsString() {
 			return value.Undefined, errs.New(errs.TypeError,
@@ -633,7 +665,11 @@ func filterString(_ *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 	if v.IsString() {
 		return v, nil
 	}
-	return value.String(value.Str(v)), nil
+	text, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.String(text), nil
 }
 
 // filterReplace implements jinja2's do_replace, whose autoescaping rule is
@@ -655,7 +691,11 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	}
 
 	if !s.autoescape {
-		src, from, to := value.Str(v), value.Str(old), value.Str(new)
+		src, err := strictStr(v)
+		if err != nil {
+			return value.Undefined, err
+		}
+		from, to := value.Str(old), value.Str(new)
 		if err := chargeReplace(s, src, from, to, count); err != nil {
 			return value.Undefined, err
 		}
@@ -678,7 +718,10 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	// shape of that condition is Python operator precedence, and it is
 	// reproduced rather than tidied.
 	markup := v.IsSafe()
-	src := value.Str(v)
+	src, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
 	if old.IsSafe() || (new.IsSafe() && !v.IsSafe()) {
 		if !v.IsSafe() {
 			src = escapeHTML(src)
@@ -747,7 +790,11 @@ func filterCenter(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err != nil {
 		return value.Undefined, err
 	}
-	padded, err := pad(s, value.Str(v), width, " ", padCentered)
+	text, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	padded, err := pad(s, text, width, " ", padCentered)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -813,7 +860,11 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	// jinja2 writes `s += newline` and then s.splitlines(), so the append
 	// is the reason a trailing line survives -- and splitlines is the
 	// reason a carriage return breaks a line here too.
-	lines := splitLines(value.Str(v)+"\n", false)
+	subject, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	lines := splitLines(subject+"\n", false)
 	head, rest := lines[0], lines[1:]
 	out := head
 	if len(rest) > 0 {
@@ -946,7 +997,10 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 		return value.Undefined, err
 	}
 
-	text := value.Str(v)
+	text, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
 	// Past the length check jinja2 slices the value and then, unless
 	// killwords, calls rsplit on it -- so a non-string gets this far and
 	// fails on one of those rather than on being the wrong kind of input.
@@ -1051,7 +1105,11 @@ func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	}
 
 	var out []string
-	for _, paragraph := range splitLines(value.Str(v), false) {
+	subject, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	for _, paragraph := range splitLines(subject, false) {
 		if err := s.Poll(); err != nil {
 			return value.Undefined, err
 		}
@@ -1337,7 +1395,11 @@ func isWordRune(r rune) bool {
 func filterWordcount(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	var n int64
 	inWord := false
-	for _, r := range value.Str(v) {
+	subject, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	for _, r := range subject {
 		if err := s.Poll(); err != nil {
 			return value.Undefined, err
 		}
@@ -1369,7 +1431,11 @@ var stripTagsRe = regexp.MustCompile(`(?s)<!--.*?-->|<[^>]*>`)
 // ReplaceAll. Fields was also an allocation the size of the input, holding every
 // word of it separately and charged to nobody.
 func filterStriptags(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	text, err := stripTags(s, value.Str(v))
+	text, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	text, err = stripTags(s, text)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1537,10 +1603,13 @@ func resolveCharref(ref string) string {
 // where CPython emits it escaped.
 func filterFormat(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	safe := v.IsSafe()
-	format := value.String(value.Str(v))
+	text, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	format := value.String(text)
 
 	var out value.Value
-	var err error
 	if len(args.Kwargs) > 0 {
 		d := value.NewDict()
 		dict, _ := d.Dict()
@@ -2016,7 +2085,11 @@ func filterSafe(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html), nil
 	}
-	return value.Safe(value.Str(v)), nil
+	text, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.Safe(text), nil
 }
 
 func filterEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -2026,7 +2099,11 @@ func filterEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html), nil
 	}
-	out, err := inChunks(s, value.Str(v), escapeHTML)
+	text, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	out, err := inChunks(s, text, escapeHTML)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -2076,7 +2153,11 @@ func inChunks(s *State, in string, f func(string) string) (string, error) {
 // filterForceEscape escapes even an already-safe value, which is how a
 // template un-trusts something it was handed as Markup.
 func filterForceEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	out, err := inChunks(s, value.Str(v), escapeHTML)
+	text, err := strictStr(v)
+	if err != nil {
+		return value.Undefined, err
+	}
+	out, err := inChunks(s, text, escapeHTML)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -2662,6 +2743,14 @@ func filterDefault(_ *State, v value.Value, args *value.CallArgs) (value.Value, 
 	if err != nil {
 		return value.Undefined, err
 	}
+	// do_default tests `isinstance(value, Undefined) or (boolean and not
+	// value)`, so an undefined is answered before anything asks it for a
+	// truth value -- which matters under StrictUndefined, where being
+	// asked is an error. `{{ nope|default("d", true) }}` is "d" there,
+	// not a failure.
+	if v.IsUndefined() {
+		return fallback, nil
+	}
 	if asBool {
 		truth, err := value.IsTrue(v)
 		if err != nil {
@@ -2670,10 +2759,6 @@ func filterDefault(_ *State, v value.Value, args *value.CallArgs) (value.Value, 
 		if !truth {
 			return fallback, nil
 		}
-		return v, nil
-	}
-	if v.IsUndefined() {
-		return fallback, nil
 	}
 	return v, nil
 }
