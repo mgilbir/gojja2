@@ -36,9 +36,48 @@ type Dict struct {
 	index  map[hashKey]int
 }
 
+// smallDict is how many entries a dict holds before it builds a string index.
+//
+// Below it the entries are scanned instead. A map costs an allocation and a
+// hash per lookup to save a comparison per entry, which does not pay for four
+// fields -- and four fields is what a record handed in as context looks like.
+// Converting a page of them was allocating one map per row.
+const smallDict = 8
+
+// scanString finds a string key by walking the entries.
+//
+// Only a str can equal a str in Python, so the walk can compare the raw
+// strings and skip every entry of another kind outright.
+func (d *Dict) scanString(key string) (int, bool) {
+	for i := range d.entries {
+		if e := &d.entries[i]; e.Key.kind == KindString && e.Key.str == key {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// indexStrings builds the string index once a dict is big enough to want one.
+//
+// It indexes the entries already there. Allocating an empty map instead would
+// hide every one of them: the lookup takes a non-nil index to mean the index
+// is authoritative, and stops scanning.
+func (d *Dict) indexStrings(capacity int) {
+	d.strIdx = make(map[string]int, max(capacity, len(d.entries)+1))
+	for i := range d.entries {
+		if e := &d.entries[i]; e.Key.kind == KindString {
+			d.strIdx[e.Key.str] = i
+		}
+	}
+}
+
 // lookupIdx finds the entry position for key.
 func (d *Dict) lookupIdx(key Value) (int, bool, error) {
 	if key.kind == KindString {
+		if d.strIdx == nil {
+			i, ok := d.scanString(key.str)
+			return i, ok, nil
+		}
 		i, ok := d.strIdx[key.str]
 		return i, ok, nil
 	}
@@ -54,7 +93,12 @@ func (d *Dict) lookupIdx(key Value) (int, bool, error) {
 func (d *Dict) storeIdx(key Value, i int) error {
 	if key.kind == KindString {
 		if d.strIdx == nil {
-			d.strIdx = make(map[string]int)
+			// i is the position this key is about to occupy, so the
+			// dict is about to hold i+1 entries.
+			if i+1 < smallDict {
+				return nil
+			}
+			d.indexStrings(0)
 		}
 		d.strIdx[key.str] = i
 		return nil
@@ -142,7 +186,15 @@ func (d *Dict) Get(key Value) (Value, bool, error) {
 
 // GetString is the common case: lookup by a str key.
 func (d *Dict) GetString(key string) (Value, bool) {
-	i, ok := d.strIdx[key]
+	var (
+		i  int
+		ok bool
+	)
+	if d.strIdx == nil {
+		i, ok = d.scanString(key)
+	} else {
+		i, ok = d.strIdx[key]
+	}
 	if !ok {
 		return Undefined, false
 	}
@@ -185,11 +237,12 @@ func (d *Dict) Reserve(n int) {
 		copy(grown, d.entries)
 		d.entries = grown
 	}
-	// The string index is the one sized ahead: the caller that reserves is
-	// converting a Go map, whose keys are all strings. A dict that turns
-	// out to hold other kinds builds the second map when it meets one.
-	if d.strIdx == nil {
-		d.strIdx = make(map[string]int, n)
+	// The string index is the one sized ahead, when there will be enough
+	// entries to want one: the caller that reserves is converting a Go
+	// map, whose keys are all strings. A dict that turns out to hold other
+	// kinds builds the second map when it meets one.
+	if d.strIdx == nil && len(d.entries)+n >= smallDict {
+		d.indexStrings(len(d.entries) + n)
 	}
 }
 
@@ -222,7 +275,9 @@ func (d *Dict) Delete(key Value) (bool, error) {
 	}
 	d.entries = append(d.entries[:i], d.entries[i+1:]...)
 	if key.kind == KindString {
-		delete(d.strIdx, key.str)
+		if d.strIdx != nil {
+			delete(d.strIdx, key.str)
+		}
 	} else {
 		h, err := hash(key)
 		if err != nil {
