@@ -150,6 +150,29 @@ func (d *Dict) Reserve(n int) {
 // SetString inserts or replaces a str key.
 func (d *Dict) SetString(key string, val Value) { _ = d.Set(String(key), val) }
 
+// setFresh inserts a key the caller knows is not present yet.
+//
+// Set has to ask the index whether the key is already there, which costs a
+// second hash and a second probe of the same map it is about to write to. A
+// dict being filled from a Go map cannot have a duplicate -- the keys came
+// from a map -- so that question has a known answer, and filling a page's
+// worth of records asked it once per field for nothing.
+func (d *Dict) setFresh(key, val Value) error {
+	h, err := hash(key)
+	if err != nil {
+		return err
+	}
+	// Reserve builds the index, and the one caller reserves first. Writing
+	// to a nil map panics, though, so the guard stays rather than resting
+	// on that -- a second caller added later would find out the hard way.
+	if d.index == nil {
+		d.index = make(map[hashKey]int)
+	}
+	d.index[h] = len(d.entries)
+	d.entries = append(d.entries, DictEntry{Key: key, Value: val})
+	return nil
+}
+
 // Delete removes key, reporting whether it was present.
 func (d *Dict) Delete(key Value) (bool, error) {
 	h, err := hash(key)

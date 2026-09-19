@@ -281,7 +281,8 @@ func (c *converter) fillStringMap(d Value, m map[string]any) {
 		if !c.step() {
 			return
 		}
-		dict.SetString(k, c.fromAny(m[k]))
+		// The keys came from a map, so none of them can repeat.
+		_ = dict.setFresh(String(k), c.fromAny(m[k]))
 	}
 }
 
