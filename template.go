@@ -80,7 +80,7 @@ func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[strin
 	// A bufio.Writer keeps the many small writes a template makes from
 	// becoming many small syscalls, and gives the render one place to
 	// flush from.
-	bw := bufio.NewWriter(w)
+	bw := getWriter(w)
 	defer func() {
 		// Flush either way: a render that failed has still produced
 		// whatever came before the failure, and leaving it in the buffer
@@ -89,6 +89,7 @@ func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[strin
 		if ferr := bw.Flush(); err == nil {
 			err = ferr
 		}
+		putWriter(bw)
 	}()
 	defer catchPanic(&err)
 	return t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env))
@@ -99,16 +100,46 @@ func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[strin
 // It carries the caller's map unconverted so the argument scope can convert one
 // name at a time; see the comment on scope.raw for why that is worth doing.
 func (t *Template) renderGo(ctx context.Context, w io.Writer, vars map[string]any) (err error) {
-	bw := bufio.NewWriter(w)
+	bw := getWriter(w)
 	defer func() {
 		if ferr := bw.Flush(); err == nil {
 			err = ferr
 		}
+		putWriter(bw)
 	}()
 	defer catchPanic(&err)
 	st := t.newState(nil, 0, newBudget(ctx, t.env))
 	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, t.env.methods, st
 	return t.renderState(st, &stringWriter{w: bw})
+}
+
+// writerPool holds the output buffers between renders.
+//
+// A render allocates one 4KiB buffer and then fills it a few bytes at a time,
+// which made it the largest single allocation of a small render. Reusing them
+// costs a Reset.
+var writerPool = sync.Pool{New: func() any { return bufio.NewWriterSize(nil, 4096) }}
+
+func getWriter(w io.Writer) *bufio.Writer {
+	bw, ok := writerPool.Get().(*bufio.Writer)
+	if !ok {
+		return bufio.NewWriterSize(w, 4096)
+	}
+	bw.Reset(w)
+	return bw
+}
+
+// putWriter returns a buffer to the pool.
+//
+// The Reset is hygiene rather than a guard: getWriter resets onto the new
+// destination, which is what actually keeps one render's bytes out of the
+// next, and sync.Pool is emptied by the collector, so a buffer cannot hold a
+// caller's writer alive for long either way. Dropping the reference on the way
+// in is still the right shape, and costs nothing -- but no test here fails
+// without it, and none pretends to.
+func putWriter(bw *bufio.Writer) {
+	bw.Reset(nil)
+	writerPool.Put(bw)
 }
 
 // catchPanic turns a panic into a render error.
