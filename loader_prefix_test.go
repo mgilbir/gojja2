@@ -67,3 +67,28 @@ func TestPrefixLoaderPassesARealErrorThrough(t *testing.T) {
 		t.Errorf("got %v, want the inner loader's own error", err)
 	}
 }
+
+// A missing template reports its name and nothing else. jinja2's
+// FileSystemLoader appends the directories it searched; an fs.FS has no such
+// path -- it may be a zip, an embed.FS or a synthesised map -- so there is
+// nothing to append. Documented in docs/divergences.md, and pinned here so it
+// cannot quietly become something else.
+func TestFSLoaderMissNamesOnlyTheTemplate(t *testing.T) {
+	loaders := map[string]gojja2.Loader{
+		"fs":     gojja2.FSLoader{FS: regularFileFS()},
+		"fsroot": gojja2.FSLoader{FS: regularFileFS(), Root: "dir"},
+		"dict":   gojja2.DictLoader{"page.html": "PAGE"},
+		"choice": gojja2.ChoiceLoader{gojja2.DictLoader{"page.html": "PAGE"}},
+	}
+	for label, l := range loaders {
+		env := gojja2.New(gojja2.WithLoader(l))
+		_, err := env.GetTemplate("missing.html")
+		if !errors.Is(err, errs.TemplateNotFound) {
+			t.Errorf("%s: got %v, want TemplateNotFound", label, err)
+			continue
+		}
+		if got := err.Error(); got != "missing.html" {
+			t.Errorf("%s: reported %q, want just the template name", label, got)
+		}
+	}
+}
