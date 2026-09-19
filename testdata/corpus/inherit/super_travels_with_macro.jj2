@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "base.html": "[{% block title %}base title{% endblock %}|{% block body %}base body{% endblock %}]"
+  }
+}
+---
+{% extends 'base.html' %}{% set ns = namespace(f=none) %}{% block body %}{% macro m() %}<{{ super() }}>{% endmacro %}{% set ns.f = m %}B{% endblock %}{% block title %}{{ ns.f() }}{% endblock %}

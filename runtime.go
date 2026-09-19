@@ -362,6 +362,14 @@ type macroObject struct {
 	tmpl           *Template
 	autoescape     bool
 	volatileEscape bool
+	// blockName and blockIndex are the block the macro was *written* in,
+	// which is where its body's super() resolves. jinja2 compiles super
+	// into a block function's frame, so a macro defined there closes over
+	// it: the macro carries that binding to wherever it is called, and a
+	// macro written outside any block has none however deep in one it is
+	// called. Lexical, like defScope and volatileEscape.
+	blockName  string
+	blockIndex int
 	// catchKwargs, catchVarargs and caller record whether the body reads
 	// `kwargs`, `varargs` or `caller`. jinja2 decides this when the macro
 	// is compiled and refuses the corresponding arguments otherwise, so a

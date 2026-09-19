@@ -511,6 +511,8 @@ func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaul
 		// Volatility is lexical too, so a macro written inside a
 		// volatile block keeps it wherever it is called from.
 		volatileEscape: ex.volatileEscape,
+		blockName:      ex.blockName,
+		blockIndex:     ex.blockIndex,
 		catchVarargs:   undeclared["varargs"],
 		catchKwargs:    undeclared["kwargs"],
 		caller:         undeclared["caller"],
