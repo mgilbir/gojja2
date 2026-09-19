@@ -142,8 +142,9 @@ implementations to agree on output, exception class, message and line.
 `make fuzz-props TIME=5m` needs nothing but Go, and is what CI runs. It cannot
 say what a template *means* -- only CPython can say that -- so it checks what
 the engine owes every input regardless of meaning: it does not panic, it does
-not run past its deadline, it does not write past its bound, and it does not
-return an error with no Kind on it. That is a weaker question asked far more
+not run past its deadline, it does not write past its bound, it does not return
+an error with no Kind on it, and -- under autoescape -- it does not let a plain
+string's markup reach the output as written. That is a weaker question asked far more
 often, and it has found what the differential fuzzer structurally cannot: a
 constant expression that hung `FromString`, where there is no render, no
 context and nothing for CPython to disagree with.

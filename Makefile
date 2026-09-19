@@ -259,6 +259,7 @@ fuzz: venv ## Coverage-guided differential fuzzing (make fuzz TIME=5m)
 fuzz-props: ## Coverage-guided property fuzzing, no oracle (make fuzz-props TIME=5m)
 	go test . -run xxx -fuzz FuzzParse -fuzztime $(if $(TIME),$(TIME),1m)
 	go test . -run xxx -fuzz FuzzRender -fuzztime $(if $(TIME),$(TIME),1m)
+	go test . -run xxx -fuzz FuzzAutoescape -fuzztime $(if $(TIME),$(TIME),1m)
 
 .PHONY: conformance
 conformance: ## Report conformance pass-rate against the full corpus
