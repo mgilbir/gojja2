@@ -571,9 +571,7 @@ func (ex *exec) execBlock(n *ast.Block) error {
 		// frame owns but has not assigned yet still resolves from the
 		// render arguments.
 		scoped := newScope(ex.st.contextVars)
-		for name, v := range ex.sc.vars {
-			scoped.set(name, v)
-		}
+		ex.sc.each(scoped.set)
 		ref.sc = scoped
 	}
 	v, err := ref.render()
@@ -798,8 +796,7 @@ func (m *moduleObject) GetAttr(name string) (value.Value, bool) {
 	if !m.st.exports[name] {
 		return value.Undefined, false
 	}
-	v, ok := m.st.ctx.vars[name]
-	return v, ok
+	return m.st.ctx.get(name)
 }
 
 // A TemplateModule is deliberately attribute-only: jinja2's is not a mapping
