@@ -168,5 +168,14 @@ func (p PrefixLoader) Load(name string) (string, error) {
 	if !ok {
 		return "", notFound(name)
 	}
-	return loader.Load(rest)
+	src, err := loader.Load(rest)
+	if errors.Is(err, errs.TemplateNotFound) {
+		// The name the caller asked for is the prefixed one, so that
+		// is the name the miss reports. Handing back the inner
+		// loader's error names a template nobody mentioned:
+		// `{% include "app/missing" %}` said "missing", which is a
+		// different name, and one that may well exist elsewhere.
+		return "", notFound(name)
+	}
+	return src, err
 }
