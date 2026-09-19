@@ -919,9 +919,12 @@ func affixMethod(name string, match func(string, string) bool) func(*State, valu
 		if !ok {
 			return value.Undefined, errs.New(errs.TypeError, "missing required argument")
 		}
-		within, _, err := strSliceBounds(r.AsString(), args, 1)
+		within, _, inRange, err := strSliceBounds(r.AsString(), args, 1)
 		if err != nil {
 			return value.Undefined, err
+		}
+		if !inRange {
+			return value.False, nil
 		}
 		if s, ok := v.Seq(); ok && v.Kind() == value.KindTuple {
 			for _, cand := range s.Items() {
@@ -950,7 +953,7 @@ func affixMethod(name string, match func(string, string) bool) func(*State, valu
 // are slice indices, counted in characters and clamped the way a slice clamps,
 // and anything that is not an integer or None is refused in the words CPython
 // uses for a slice.
-func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, error) {
+func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, bool, error) {
 	// Neither bound given is the common case -- `s.startswith("x")`,
 	// `s.count("x")` -- and it selects the whole subject, so there is
 	// nothing to work out.
@@ -964,10 +967,10 @@ func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, err
 	// ago -- "building one costs eight bytes for every byte of the string"
 	// -- and this did not.
 	if !bounded(args, first) && !bounded(args, first+1) {
-		return r, 0, nil
+		return r, 0, true, nil
 	}
 	n := utf8.RuneCountInString(r)
-	read := func(i, def int) (int, error) {
+	read := func(i, def int, clampUp bool) (int, error) {
 		v, ok := args.Arg(i)
 		if !ok || v.IsNone() {
 			return def, nil
@@ -989,29 +992,39 @@ func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, err
 				idx = 0
 			}
 		}
-		if idx > n {
+		if clampUp && idx > n {
 			idx = n
 		}
 		return idx, nil
 	}
-	start, err := read(first, 0)
+	start, err := read(first, 0, false)
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
-	end, err := read(first+1, n)
+	end, err := read(first+1, n, true)
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
+	// A window that ends before it starts matches nothing at all -- it is
+	// not the empty window at `start`. A start past the end of the subject
+	// is the same case and needs no test of its own: `end` is clamped to
+	// the length and `start` is not, so it always lands here too.
+	//
+	// The difference is only visible to an empty needle, which is why it
+	// went unnoticed: `"abcdef".startswith("", 4, 2)` is False in CPython
+	// and was True here, and count, find and rfind agreed with each other
+	// and disagreed with Python. The bytes methods, written later, had this
+	// right; bytesBounds is where the same rule is spelled out.
 	if end < start {
-		end = start
+		return "", 0, false, nil
 	}
 	// A forward unit-step slice is a span of the original, so this walks to
 	// the two offsets rather than building a table of all of them.
 	within, err := value.StrSlice(r, &start, &end, nil)
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
-	return within, start, nil
+	return within, start, true, nil
 }
 
 // bounded reports an argument that selects something other than the default,
@@ -1025,7 +1038,7 @@ func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value,
 	// The bounds are converted while the call is parsed, so they are
 	// refused before the substring is looked at: `"ab".count(1, 1.5)` is
 	// about the 1.5.
-	within, _, err := strSliceBounds(r.AsString(), args, 1)
+	within, _, inRange, err := strSliceBounds(r.AsString(), args, 1)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1034,13 +1047,16 @@ func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
+	if !inRange {
+		return value.Int(0), nil
+	}
 	return value.Int(int64(strings.Count(within, sub))), nil
 }
 
 // findMethod returns a code-point index, or -1, the way str.find does.
 func findMethod(search func(string, string) int) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		within, offset, err := strSliceBounds(r.AsString(), args, 1)
+		within, offset, inRange, err := strSliceBounds(r.AsString(), args, 1)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -1048,6 +1064,9 @@ func findMethod(search func(string, string) int) func(*State, value.Value, *valu
 		sub, err := bareStr(v)
 		if err != nil {
 			return value.Undefined, err
+		}
+		if !inRange {
+			return value.Int(-1), nil
 		}
 		at := search(within, sub)
 		if at < 0 {
