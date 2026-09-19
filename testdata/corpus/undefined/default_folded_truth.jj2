@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "default"
+  }
+}
+---
+{% if none.missing %}t{% else %}f{% endif %}

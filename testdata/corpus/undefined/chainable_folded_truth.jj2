@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{% if none.missing %}t{% else %}f{% endif %}
