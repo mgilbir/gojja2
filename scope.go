@@ -135,10 +135,31 @@ func (s *scope) convert(name string) (value.Value, bool, error) {
 	return v, true, nil
 }
 
-// realise converts everything still pending, for the callers that need the
+// realise converts everything still *pending*, for the callers that need the
 // whole context rather than one name of it.
+//
+// Pending is the load-bearing word. raw keeps the caller's map untouched -- it
+// is the caller's, and emptying it would leave the second render of a template
+// with nothing -- so a name stays in raw after it has been converted, and the
+// conversion lives in vars instead. Converting again is not merely the same
+// work twice:
+//
+//   - It is a *different value*. convert memoises precisely so that the second
+//     reference to a name is the same value as the first, which matters because
+//     a template can mutate what it was handed. A fresh conversion of the
+//     caller's original discards that: `{{ l.append(99) }}{% include "x" %}{{
+//     l|length }}` printed 3 where CPython prints 4, and an {% include %} after
+//     a dict.update silently put the dictionary back as it was.
+//   - It is the whole context, once per include. An include takes the context
+//     with it by default, so a loop with one inside re-converted every render
+//     argument on every iteration: 2,000 includes over an 8,000-entry argument
+//     took 333ms against 6ms with no argument at all, and the product is
+//     quadratic in a pattern nobody would think twice about writing.
 func (s *scope) realise() error {
 	for name := range s.raw {
+		if _, done := s.get(name); done {
+			continue
+		}
 		if _, _, err := s.convert(name); err != nil {
 			return err
 		}
