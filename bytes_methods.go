@@ -539,7 +539,11 @@ func bytesSplit(fromRight bool) func(*State, value.Value, *value.CallArgs) (valu
 			// No separator splits on runs of ASCII whitespace and
 			// drops the empties at both ends, so b"  x  ".split()
 			// has one element and not three.
-			return bytesList(s, splitWhitespace(src, limit, fromRight))
+			parts, err := splitWhitespace(s, src, limit, fromRight)
+			if err != nil {
+				return value.Undefined, err
+			}
+			return bytesList(s, parts)
 		}
 		sep, err := bytesLike(sepV)
 		if err != nil {
@@ -553,20 +557,29 @@ func bytesSplit(fromRight bool) func(*State, value.Value, *value.CallArgs) (valu
 			n = limit + 1
 		}
 		if fromRight {
-			return bytesList(s, rsplitN(src, sep, n))
+			parts, err := rsplitN(s, src, sep, n)
+			if err != nil {
+				return value.Undefined, err
+			}
+			return bytesList(s, parts)
 		}
 		return bytesList(s, strings.SplitN(src, sep, n))
 	}
 }
 
 // splitWhitespace is str.split()'s no-argument form over bytes.
-func splitWhitespace(s string, limit int, fromRight bool) []string {
+func splitWhitespace(st *State, s string, limit int, fromRight bool) ([]string, error) {
 	if fromRight {
-		return rsplitWhitespace(s, limit)
+		return rsplitWhitespace(st, s, limit)
 	}
 	var out []string
 	i := 0
 	for {
+		// Once per field, and a field always advances, so the walk
+		// yields in the number of pieces rather than at the end of them.
+		if err := st.Poll(); err != nil {
+			return nil, err
+		}
 		for i < len(s) && asciiIsSpace(s[i]) {
 			i++
 		}
@@ -584,13 +597,16 @@ func splitWhitespace(s string, limit int, fromRight bool) []string {
 		out = append(out, s[i:j])
 		i = j
 	}
-	return out
+	return out, nil
 }
 
-func rsplitWhitespace(s string, limit int) []string {
+func rsplitWhitespace(st *State, s string, limit int) ([]string, error) {
 	var out []string
 	j := len(s)
 	for {
+		if err := st.Poll(); err != nil {
+			return nil, err
+		}
 		for j > 0 && asciiIsSpace(s[j-1]) {
 			j--
 		}
@@ -611,16 +627,19 @@ func rsplitWhitespace(s string, limit int) []string {
 	for l, r := 0, len(out)-1; l < r; l, r = l+1, r-1 {
 		out[l], out[r] = out[r], out[l]
 	}
-	return out
+	return out, nil
 }
 
 // rsplitN is strings.SplitN counting from the right.
-func rsplitN(s, sep string, n int) []string {
+func rsplitN(st *State, s, sep string, n int) ([]string, error) {
 	if n == 0 {
-		return nil
+		return nil, nil
 	}
 	var out []string
 	for n < 0 || len(out) < n-1 {
+		if err := st.Poll(); err != nil {
+			return nil, err
+		}
 		at := strings.LastIndex(s, sep)
 		if at < 0 {
 			break
@@ -632,7 +651,7 @@ func rsplitN(s, sep string, n int) []string {
 	for l, r := 0, len(out)-1; l < r; l, r = l+1, r-1 {
 		out[l], out[r] = out[r], out[l]
 	}
-	return out
+	return out, nil
 }
 
 // bytesSplitlines splits on the three ASCII line boundaries bytes knows --

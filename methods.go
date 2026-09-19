@@ -749,7 +749,10 @@ func splitMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (val
 
 		var parts []string
 		if !hasSep || sep.IsNone() {
-			parts = strings.FieldsFunc(r.AsString(), unicode.IsSpace)
+			parts, err = fieldsYielding(st, r.AsString())
+			if err != nil {
+				return value.Undefined, err
+			}
 			if limit >= 0 && len(parts) > limit+1 {
 				parts = rejoinTail(r.AsString(), parts, limit, fromRight)
 			}
@@ -766,9 +769,12 @@ func splitMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (val
 				n = limit + 1
 			}
 			if fromRight && n > 0 {
-				parts = splitRightN(r.AsString(), sep.AsString(), n)
+				parts, err = splitRightN(st, r.AsString(), sep.AsString(), n)
 			} else {
-				parts = strings.SplitN(r.AsString(), sep.AsString(), n)
+				parts, err = splitNYielding(st, r.AsString(), sep.AsString(), n)
+			}
+			if err != nil {
+				return value.Undefined, err
 			}
 		}
 
@@ -809,13 +815,70 @@ func rejoinTail(src string, parts []string, limit int, fromRight bool) []string 
 	return append(keep, strings.TrimLeftFunc(rest, unicode.IsSpace))
 }
 
-func splitRightN(s, sep string, n int) []string {
-	all := strings.Split(s, sep)
+func splitRightN(st *State, s, sep string, n int) ([]string, error) {
+	all, err := splitNYielding(st, s, sep, -1)
+	if err != nil {
+		return nil, err
+	}
 	if len(all) <= n {
-		return all
+		return all, nil
 	}
 	head := strings.Join(all[:len(all)-n+1], sep)
-	return append([]string{head}, all[len(all)-n+1:]...)
+	return append([]string{head}, all[len(all)-n+1:]...), nil
+}
+
+// fieldsYielding is strings.FieldsFunc(s, unicode.IsSpace) with a yield.
+//
+// The pieces of a split are as many as the subject has words, and finding them
+// was one call into the standard library that nothing could interrupt. Written
+// out, the walk has somewhere to pause -- and TestSplitScansMatchTheStandard
+// requires it to agree with what it replaced on every input it is given.
+func fieldsYielding(st *State, s string) ([]string, error) {
+	var out []string
+	start := -1
+	for i, r := range s {
+		if err := st.Poll(); err != nil {
+			return nil, err
+		}
+		if unicode.IsSpace(r) {
+			if start >= 0 {
+				out = append(out, s[start:i])
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		out = append(out, s[start:])
+	}
+	return out, nil
+}
+
+// splitNYielding is strings.SplitN with a yield between pieces.
+//
+// What stays uninterrupted is the search for one separator, which is the
+// distance between two of them -- the same unit as str.find, and bounded by
+// what lies between rather than by the whole subject.
+func splitNYielding(st *State, s, sep string, n int) ([]string, error) {
+	if n == 0 {
+		return nil, nil
+	}
+	var out []string
+	for n < 0 || len(out) < n-1 {
+		if err := st.Poll(); err != nil {
+			return nil, err
+		}
+		i := strings.Index(s, sep)
+		if i < 0 {
+			break
+		}
+		out = append(out, s[:i])
+		s = s[i+len(sep):]
+	}
+	return append(out, s), nil
 }
 
 func methodSplitlines(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {

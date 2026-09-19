@@ -86,6 +86,16 @@ func buildSeq(kind string, n int) map[string]any {
 		// is, and the workload would be measuring memmove.
 		return map[string]any{kind: strings.Repeat(
 			"Héllo wörld, <b>this</b> &amp; a http://example.com sentence.\n", n)}
+	case "nospace":
+		// One enormous field. Splitting it produces a single piece, so
+		// the walk that finds it is the only thing that can yield --
+		// wrapping the pieces afterwards has just the one to wrap.
+		//
+		// There is no bytes twin here: scanning bytes for a space runs
+		// at about half a nanosecond each, so even the largest subject
+		// the output bound allows is under a tenth of a second, and a
+		// workload big enough to grade would be most of a gigabyte.
+		return map[string]any{kind: strings.Repeat("abcdefghij", n)}
 	case "bytes":
 		return map[string]any{kind: []byte(strings.Repeat(
 			"hello world this is a sentence\n", n))}
@@ -148,7 +158,7 @@ var sequenceWorkloads = map[string]workload{
 func TestSequenceFiltersYieldToTheDeadline(t *testing.T) {
 	for name, w := range sequenceWorkloads {
 		t.Run(name, func(t *testing.T) {
-			assertYieldsToDeadline(t, w)
+			assertYieldsToDeadline(t, name, w)
 		})
 	}
 }
@@ -167,6 +177,26 @@ const deadlineShare = 8
 // nothing rather than towards saying something wrong.
 const overrunShare = 0.6
 
+// tightBar overrides overrunShare for workloads where both sides have been
+// measured and the loose bar cannot tell them apart.
+//
+// The splits are the case. A filter that never yields runs to 95% of the render
+// and beyond, which is what overrunShare is set for; a split that stops yielding
+// runs to 39%, because finding the pieces is a small part of the work and
+// wrapping them -- which yields either way -- is most of it. Every workload here
+// stops at 13% when it is right, so 30% is more than twice the correct answer
+// and well under the defect.
+//
+// Keyed by the workload's own name, passed in rather than read back out of
+// the subtest, which has its spaces rewritten as underscores.
+var tightBar = map[string]float64{
+	"str.split":        0.30,
+	"str.rsplit":       0.30,
+	"str.split on sep": 0.30,
+	"bytes.split":      0.30,
+	"bytes.rsplit":     0.30,
+}
+
 // deadlineRuns is how many times the deadline is measured, the best standing
 // for the filter.
 //
@@ -179,7 +209,7 @@ const deadlineRuns = 3
 
 // assertYieldsToDeadline times the render, then requires a deadline at an
 // eighth of it to stop the render well short of finishing.
-func assertYieldsToDeadline(t *testing.T, w workload) {
+func assertYieldsToDeadline(t *testing.T, name string, w workload) {
 	t.Helper()
 	tmpl, err := gojja2.New().FromString(w.src)
 	if err != nil {
@@ -214,7 +244,14 @@ func assertYieldsToDeadline(t *testing.T, w workload) {
 		}
 		stopped = min(stopped, took)
 	}
-	if limit := time.Duration(overrunShare * float64(natural)); stopped > limit {
+
+	share := overrunShare
+	if b, ok := tightBar[name]; ok {
+		share = b
+	}
+	t.Logf("stopped at %.0f%% of the whole render, bar %.0f%%",
+		100*float64(stopped)/float64(natural), 100*share)
+	if limit := time.Duration(share * float64(natural)); stopped > limit {
 		t.Errorf("a %s deadline stopped the render after %s, %.0f%% of the "+
 			"%s it takes in full: the filter runs to the end of its "+
 			"work whatever the deadline says",
@@ -269,15 +306,23 @@ var stringWorkloads = map[string]workload{
 // State at all. Six case methods, both splits, translate, expandtabs and decode
 // all ran to the end of a 13MB subject whatever the deadline said.
 var methodWorkloads = map[string]workload{
-	"str.upper":        {"text", `{{ (text.upper()) and 1 or 1 }}`, 100000},
-	"str.lower":        {"text", `{{ (text.lower()) and 1 or 1 }}`, 120000},
-	"str.casefold":     {"text", `{{ (text.casefold()) and 1 or 1 }}`, 100000},
-	"str.title":        {"text", `{{ (text.title()) and 1 or 1 }}`, 100000},
-	"str.capitalize":   {"text", `{{ (text.capitalize()) and 1 or 1 }}`, 120000},
-	"str.swapcase":     {"text", `{{ (text.swapcase()) and 1 or 1 }}`, 80000},
-	"str.translate":    {"text", `{{ (text.translate({})) and 1 or 1 }}`, 50000},
-	"str.expandtabs":   {"text", `{{ (text.expandtabs()) and 1 or 1 }}`, 250000},
-	"bytes.decode":     {"bytes", `{{ (bytes.decode()) and 1 or 1 }}`, 400000},
+	"str.upper":             {"text", `{{ (text.upper()) and 1 or 1 }}`, 100000},
+	"str.lower":             {"text", `{{ (text.lower()) and 1 or 1 }}`, 120000},
+	"str.casefold":          {"text", `{{ (text.casefold()) and 1 or 1 }}`, 100000},
+	"str.title":             {"text", `{{ (text.title()) and 1 or 1 }}`, 100000},
+	"str.capitalize":        {"text", `{{ (text.capitalize()) and 1 or 1 }}`, 120000},
+	"str.swapcase":          {"text", `{{ (text.swapcase()) and 1 or 1 }}`, 80000},
+	"str.translate":         {"text", `{{ (text.translate({})) and 1 or 1 }}`, 50000},
+	"str.expandtabs":        {"text", `{{ (text.expandtabs()) and 1 or 1 }}`, 250000},
+	"bytes.decode":          {"bytes", `{{ (bytes.decode()) and 1 or 1 }}`, 400000},
+	"str.split":             {"text", `{{ (text.split()) and 1 or 1 }}`, 200000},
+	"str.rsplit":            {"text", `{{ (text.rsplit()) and 1 or 1 }}`, 200000},
+	"str.split on sep":      {"text", `{{ (text.split("o")) and 1 or 1 }}`, 2000000},
+	"bytes.split":           {"bytes", `{{ (bytes.split()) and 1 or 1 }}`, 1200000},
+	"bytes.rsplit":          {"bytes", `{{ (bytes.rsplit()) and 1 or 1 }}`, 400000},
+	"str.split, one field":  {"nospace", `{{ (nospace.split()) and 1 or 1 }}`, 2000000},
+	"str.rsplit, one field": {"nospace", `{{ (nospace.rsplit()) and 1 or 1 }}`, 2000000},
+
 	"bytes.expandtabs": {"bytes", `{{ (bytes.expandtabs()) and 1 or 1 }}`, 600000},
 }
 
@@ -286,7 +331,7 @@ var methodWorkloads = map[string]workload{
 func TestStringMethodsYieldToTheDeadline(t *testing.T) {
 	for name, w := range methodWorkloads {
 		t.Run(name, func(t *testing.T) {
-			assertYieldsToDeadline(t, w)
+			assertYieldsToDeadline(t, name, w)
 		})
 	}
 }
@@ -296,7 +341,7 @@ func TestStringMethodsYieldToTheDeadline(t *testing.T) {
 func TestStringFiltersYieldToTheDeadline(t *testing.T) {
 	for name, w := range stringWorkloads {
 		t.Run(name, func(t *testing.T) {
-			assertYieldsToDeadline(t, w)
+			assertYieldsToDeadline(t, name, w)
 		})
 	}
 }
