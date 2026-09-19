@@ -533,9 +533,12 @@ func envGetItem(s *State, base, key value.Value) value.Value {
 		return undefinedFor(s, value.UndefinedAttr(base, key.AsString()))
 	}
 	// Not a string, so the message says "element" and shows the key as
-	// Python would repr it: `True`, not the 1 it indexes with.
-	return undefinedFor(s, value.UndefinedHint("%s has no element %s",
-		value.ObjectTypeRepr(base), value.Repr(key)))
+	// Python would repr it: `True`, not the 1 it indexes with. It has to
+	// be the owner/key form and not a hint with the same text: jinja2
+	// keys DebugUndefined's rendering off the same distinction, and a
+	// hint renders as "undefined value printed: ..." instead of naming
+	// the subscript.
+	return undefinedFor(s, value.UndefinedElement(base, key))
 }
 
 // undefinedFor applies the render's Undefined class, when there is a render.

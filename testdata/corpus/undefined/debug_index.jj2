@@ -1,0 +1,12 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  },
+  "seq": [
+    1,
+    2,
+    3
+  ]
+}
+---
+{{ seq[42] }}

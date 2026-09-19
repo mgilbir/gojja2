@@ -406,7 +406,25 @@ func (f *constFolder) autoescapeBody(n *ast.AutoescapeBlock) {
 // containers of literals, and attribute or item access over them. Anything
 // else -- an operator, a filter, a call, a name -- reports false, which is
 // what keeps the fold as narrow as jinja2's.
+// constEval folds an expression, giving any undefined it produces the
+// environment's Undefined class.
+//
+// The stamp belongs here, at every level of the recursion, rather than once on
+// the way out: an undefined is an operand as well as a result, and a filter
+// applied to one inside the same fold has to see the class too. Without it
+// `{{ none.missing|string }}` folded to "" under DebugUndefined, because the
+// filter ran against a plain jinja2.Undefined and the stamp came afterwards.
 func (c *constEvaluator) constEval(e ast.Expr) (value.Value, bool) {
+	v, ok := c.constEvalNode(e)
+	// The comparison keeps the common case allocation-free: an undefined
+	// already of the environment's class is left exactly as it is.
+	if ok && v.IsUndefined() && v.UndefinedBehavior() != c.env.undefined {
+		v = v.WithBehavior(c.env.undefined)
+	}
+	return v, ok
+}
+
+func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 	switch n := e.(type) {
 	case *ast.Const:
 		return n.Value, true
@@ -739,20 +757,7 @@ func (c *constEvaluator) tryConstEval(e ast.Expr) (v value.Value, ok bool) {
 		}
 	}()
 	c.st.budget.resetAllowance()
-	v, ok = c.constEval(e)
-	// An undefined that folding produced is still one of the
-	// environment's, and every fold leaves through here. The evaluator
-	// builds them with the zero behaviour -- jinja2.Undefined -- so
-	// without this stamp a StrictUndefined environment folded
-	// `{{ none.missing }}` to the empty string at compile time and never
-	// raised, and a DebugUndefined one printed nothing where it owed the
-	// expression. Both are silent: the check in foldConstantPrints that
-	// keeps a strict undefined a run-time failure was already written, and
-	// could not fire because the value never said it was strict.
-	if ok && v.IsUndefined() {
-		v = v.WithBehavior(c.env.undefined)
-	}
-	return v, ok
+	return c.constEval(e)
 }
 
 // contextFilters take the render context in jinja2 and are therefore never
@@ -1034,8 +1039,12 @@ func (c *constEvaluator) constGetSlice(base value.Value, slice *ast.Slice) (valu
 	case err == nil:
 		return out, true
 	case errors.Is(err, errs.TypeError), errors.Is(err, errs.LookupError):
-		// What Environment.getitem swallows, it swallows here too.
-		return value.UndefinedHint("invalid slice"), true
+		// What Environment.getitem swallows, it swallows here too --
+		// and it swallows it into the same shape, an undefined naming
+		// the owner and the subscript. A hint would carry the right
+		// message and still render as "undefined value printed: ..."
+		// under DebugUndefined, where jinja2 names the slice.
+		return value.UndefinedSlice(base, start, stop, step), true
 	default:
 		// Anything else -- a step of zero is a ValueError -- comes back
 		// out of getitem and reaches the template, so the fold is

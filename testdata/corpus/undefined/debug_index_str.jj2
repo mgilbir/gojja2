@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  },
+  "s": "ab"
+}
+---
+{{ s[9] }}
