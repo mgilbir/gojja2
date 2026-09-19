@@ -73,7 +73,15 @@ func (l FSLoader) Load(name string) (string, error) {
 	// `{% include "x" ignore missing %}` failed on it rather than ignoring
 	// it.
 	if info, err := fs.Stat(l.FS, p); err != nil || !info.Mode().IsRegular() {
-		if err != nil && !os.IsNotExist(err) {
+		// A name the filesystem will not accept is a name that is not
+		// there. os.DirFS refuses one that is not valid UTF-8, or that
+		// carries a NUL byte, with fs.ErrInvalid -- and a template
+		// chooses the name an include resolves, so those arrive from
+		// expressions. jinja2 answers all of them with TemplateNotFound,
+		// because its os.path.isfile gate returns False rather than
+		// raising. Anything else -- a permission or I/O failure, which
+		// is about the system rather than the name -- still propagates.
+		if err != nil && !os.IsNotExist(err) && !errors.Is(err, fs.ErrInvalid) {
 			return "", err
 		}
 		return "", notFound(name)
