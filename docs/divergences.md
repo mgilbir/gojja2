@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the eighteen divergences below, **one** can change what a correct template
+Of the twenty divergences below, **one** can change what a correct template
 renders: jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`,
 `unique` and `items` return generators, and gojja2's return lists. A generator
 is always truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its
@@ -46,6 +46,7 @@ are safety controls rather than behavioural choices, and they live in
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
 | [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | a template cannot write to your objects | Changes what the *host* sees after the render, not what renders |
+| [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
 | [No automatic template reload](#no-automatic-template-reload) | no `auto_reload`; use `ClearCache` | Changes when an edit is picked up |
 | [The default autoescape extension set](#the-default-autoescape-extension-set) | adds `xhtml` to jinja2's three | Only ever escapes *more*, never less |
 
@@ -461,6 +462,27 @@ is part of the compiled tree, which every render of that template shares --
 including renders on other goroutines at the same time. `concurrency_test.go`
 pins all of it, and the version without the rebuild fails there with one
 goroutine's values appearing in another's output.
+
+### What a missing template's error says
+
+Both raise `TemplateNotFound` for the same names. jinja2's `FileSystemLoader`
+adds the directories it looked in:
+
+```
+TemplateNotFound: 'missing.html' not found in search path: '/srv/app/templates'
+```
+
+gojja2's `FSLoader` reports the template name alone, because there is no search
+path to name: it wraps an `fs.FS`, which may be a `zip.Reader`, an
+`embed.FS`, a `fstest.MapFS` or anything else with no filesystem path behind it
+at all. `DictLoader`, `ChoiceLoader` and `PrefixLoader` have the same shape in
+jinja2 and report the name alone there too.
+
+The error's class and the name it carries are identical, so anything that
+branches on the error -- `errors.Is(err, errs.TemplateNotFound)`,
+`{% include ... ignore missing %}`, `ChoiceLoader` falling through -- behaves
+the same. Only the human-readable detail differs, and only for the filesystem
+loader. Asserted by `TestFSLoaderMissNamesOnlyTheTemplate`.
 
 ### No automatic template reload
 
