@@ -144,6 +144,12 @@ rounding precision, a slice or batch count, `lipsum`'s paragraph count, the
 result of a `replace` -- is charged against the render budget *before* it is
 allocated, and refused outright past a hard ceiling of 2**31 bytes or elements.
 
+So is anything it sizes from a value it was *handed*: `~` and `*` both build a
+result as large as their operands, and both are charged for it whether or not
+the result is ever written. `{% set x = a ~ b %}` over an eight-megabyte
+argument is refused by a kilobyte output bound, the same as `{% set x = a * 2 %}`
+is.
+
 The ceiling exists because a zero or negative budget means "unbounded", and
 unbounded must still not mean "allocate 2**63 bytes". It is the same ceiling
 `value.repeat` has always applied to `*`, so both halves of the engine refuse

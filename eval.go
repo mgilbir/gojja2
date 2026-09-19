@@ -288,6 +288,21 @@ func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
 		if escaping && !v.IsSafe() {
 			text = escapeHTML(text)
 		}
+		// Charged before the buffer grows to hold it. `~` was the one
+		// sized allocation in the engine that asked nobody: `{% set x =
+		// b ~ b %}` over an 8MiB argument allocated sixteen with the
+		// output bound set to a kilobyte, and in a loop it allocated
+		// until the machine gave up. `*` next door has been charged all
+		// along, which is what makes this an oversight rather than a
+		// policy.
+		//
+		// A value that is concatenated and then printed is charged
+		// twice, as text captured by a block and written on is. That
+		// over-counts, deliberately: the buffers are the memory the
+		// bound exists to protect.
+		if err := ex.st.ChargeBytes(int64(len(text))); err != nil {
+			return value.Undefined, err
+		}
 		b.WriteString(text)
 	}
 	if escaping {
