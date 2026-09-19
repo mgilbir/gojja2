@@ -63,6 +63,21 @@ func (l FSLoader) Load(name string) (string, error) {
 	if !ok {
 		return "", notFound(name)
 	}
+	// jinja2 opens through os.path.isfile, so anything that is not a
+	// regular file -- a directory, a device, a socket -- is simply not
+	// found. Reading it and reporting what the filesystem said instead
+	// leaks an error of the wrong *kind*, and the kind is what callers
+	// branch on: ChoiceLoader stops the chain on anything that is not
+	// TemplateNotFound, so a name that is a directory in the first loader
+	// aborted the lookup rather than falling through to the next one, and
+	// `{% include "x" ignore missing %}` failed on it rather than ignoring
+	// it.
+	if info, err := fs.Stat(l.FS, p); err != nil || !info.Mode().IsRegular() {
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		return "", notFound(name)
+	}
 	data, err := fs.ReadFile(l.FS, p)
 	if err != nil {
 		if os.IsNotExist(err) {
