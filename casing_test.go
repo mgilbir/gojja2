@@ -40,7 +40,7 @@ func TestCaseMappingMatchesCPython(t *testing.T) {
 		s := string(r)
 		line.Reset()
 		fmt.Fprintf(&line, "%d\t%s\t%s\t%s\t%s\t%d%d%d\n",
-			cp, pyUpperString(s), pyLowerString(s), pyTitleString(s), pyCasefold(s),
+			cp, pyUpperString(s), pyLowerString(s), mustTitle(t, s), pyCasefold(s),
 			b2i(isLowerString(s)), b2i(isUpperString(s)), b2i(isTitleString(s)))
 		h.Write([]byte(line.String()))
 	}
@@ -80,7 +80,7 @@ func TestFullCaseMappingExpands(t *testing.T) {
 		case "lower":
 			got = pyLowerString(tc.in)
 		case "title":
-			got = pyTitleString(tc.in)
+			got = mustTitle(t, tc.in)
 		case "casefold":
 			got = pyCasefold(tc.in)
 		}
@@ -100,7 +100,7 @@ func TestTitleWordBoundaryIsCasedness(t *testing.T) {
 		{"x-ray", "X-Ray"},
 		{"2nd place", "2Nd Place"},
 	} {
-		if got := pyTitleString(tc.in); got != tc.want {
+		if got := mustTitle(t, tc.in); got != tc.want {
 			t.Errorf("%q.title() = %q, want %q", tc.in, got, tc.want)
 		}
 	}
@@ -165,4 +165,15 @@ func TestCaseOperationsAreWiredEverywhere(t *testing.T) {
 			t.Errorf("%s = %q, %v; want %q", tc.src, got, err, tc.want)
 		}
 	}
+}
+
+// mustTitle is str.title() with no render to charge it to, which is what every
+// call here is: a nil State polls nothing and cannot refuse.
+func mustTitle(t *testing.T, s string) string {
+	t.Helper()
+	out, err := pyTitleString(nil, s)
+	if err != nil {
+		t.Fatalf("title(%q): %v", s, err)
+	}
+	return out
 }

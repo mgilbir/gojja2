@@ -100,18 +100,27 @@ func encodeString(s, codec, handler string) ([]byte, error) {
 }
 
 // decodeBytes is bytes.decode.
-func decodeBytes(b []byte, codec, handler string) (string, error) {
+// Decoding walks a subject of the caller's length, so each of the three loops
+// yields. The charge for the result is made once by the caller, which consults
+// the context once and then leaves the walk out of reach of any deadline.
+func decodeBytes(st *State, b []byte, codec, handler string) (string, error) {
 	var out strings.Builder
 	switch codec {
 	case "latin-1":
 		// Every byte is the code point of the same value, so this is the
 		// one decode that cannot fail.
 		for _, c := range b {
+			if err := st.Poll(); err != nil {
+				return "", err
+			}
 			out.WriteRune(rune(c))
 		}
 		return out.String(), nil
 	case "ascii":
 		for pos, c := range b {
+			if err := st.Poll(); err != nil {
+				return "", err
+			}
 			if c < 0x80 {
 				out.WriteByte(c)
 				continue
@@ -128,6 +137,9 @@ func decodeBytes(b []byte, codec, handler string) (string, error) {
 	}
 	// utf-8
 	for i := 0; i < len(b); {
+		if err := st.Poll(); err != nil {
+			return "", err
+		}
 		r, size := utf8.DecodeRune(b[i:])
 		if r != utf8.RuneError || size > 1 {
 			out.WriteRune(r)
@@ -235,7 +247,7 @@ func methodDecode(s *State, r value.Value, args *value.CallArgs) (value.Value, e
 	if err := s.ChargeBytes(int64(len(raw))); err != nil {
 		return value.Undefined, err
 	}
-	out, err := decodeBytes(raw, codec, handler)
+	out, err := decodeBytes(s, raw, codec, handler)
 	if err != nil {
 		return value.Undefined, err
 	}

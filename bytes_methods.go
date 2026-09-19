@@ -185,12 +185,23 @@ func byteReplace(s, old, repl string, count int) string {
 	return b.String()
 }
 
-func bytesList(parts []string) value.Value {
+// bytesList wraps the pieces a split produced, charging one element each.
+//
+// A subject of the caller's length splits into as many pieces as it has words,
+// and every method that splits ends here -- so this is the one place that has
+// to count them and the one place a deadline can reach.
+func bytesList(st *State, parts []string) (value.Value, error) {
+	if err := st.ChargeItems(int64(len(parts))); err != nil {
+		return value.Undefined, err
+	}
 	items := make([]value.Value, len(parts))
 	for i, p := range parts {
+		if err := st.Poll(); err != nil {
+			return value.Undefined, err
+		}
 		items[i] = value.Bytes([]byte(p))
 	}
-	return value.NewList(items...)
+	return value.NewList(items...), nil
 }
 
 // --- the table ----------------------------------------------------------------
@@ -528,7 +539,7 @@ func bytesSplit(fromRight bool) func(*State, value.Value, *value.CallArgs) (valu
 			// No separator splits on runs of ASCII whitespace and
 			// drops the empties at both ends, so b"  x  ".split()
 			// has one element and not three.
-			return bytesList(splitWhitespace(src, limit, fromRight)), nil
+			return bytesList(s, splitWhitespace(src, limit, fromRight))
 		}
 		sep, err := bytesLike(sepV)
 		if err != nil {
@@ -542,9 +553,9 @@ func bytesSplit(fromRight bool) func(*State, value.Value, *value.CallArgs) (valu
 			n = limit + 1
 		}
 		if fromRight {
-			return bytesList(rsplitN(src, sep, n)), nil
+			return bytesList(s, rsplitN(src, sep, n))
 		}
-		return bytesList(strings.SplitN(src, sep, n)), nil
+		return bytesList(s, strings.SplitN(src, sep, n))
 	}
 }
 
@@ -628,7 +639,7 @@ func rsplitN(s, sep string, n int) []string {
 // \n, \r and \r\n -- and on nothing else. str.splitlines also breaks on the
 // vertical tab, the form feed and several Unicode separators; bytes does not,
 // because it has no encoding to recognise them in.
-func bytesSplitlines(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func bytesSplitlines(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	keep := false
 	if v, ok := args.Arg(0); ok {
 		n, err := indexOf(v, cInt)
@@ -660,7 +671,7 @@ func bytesSplitlines(_ *State, r value.Value, args *value.CallArgs) (value.Value
 		}
 		i = j
 	}
-	return bytesList(out), nil
+	return bytesList(st, out)
 }
 
 func bytesPartition(fromRight bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
@@ -813,6 +824,13 @@ func bytesExpandtabs(st *State, r value.Value, args *value.CallArgs) (value.Valu
 	var b strings.Builder
 	col := 0
 	for i := range len(s) {
+		// The charge above is the allocation, made once; this is the
+		// yield, which has to be in the walk. Charging the whole
+		// subject up front consults the context once and then runs to
+		// the end of it.
+		if err := st.Poll(); err != nil {
+			return value.Undefined, err
+		}
 		switch s[i] {
 		case '\t':
 			n := 0

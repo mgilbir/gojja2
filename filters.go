@@ -152,20 +152,39 @@ func definedFilter(f Filter) Filter {
 // first one from the rest.
 func runeFilter(f func(i int, r rune) string) Filter {
 	return func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		in := value.Str(v)
-		var b strings.Builder
-		b.Grow(len(in))
-		for i, r := range in {
-			if err := s.Poll(); err != nil {
-				return value.Undefined, err
-			}
-			b.WriteString(f(i, r))
+		out, err := mapRunesIn(s, value.Str(v), f)
+		if err != nil {
+			return value.Undefined, err
 		}
 		if v.IsSafe() {
-			return value.Safe(b.String()), nil
+			return value.Safe(out), nil
 		}
-		return value.String(b.String()), nil
+		return value.String(out), nil
 	}
+}
+
+// mapRunesIn maps each code point of a caller-sized string, yielding between
+// them.
+//
+// The filters and the methods share it because they are the same operation
+// reached two ways: `{{ s|upper }}` and `{{ s.upper() }}` both map every code
+// point of a string as long as the caller's data. Only the filters were made
+// interruptible at first, so `.upper()` went on running to the end of a 23MB
+// subject whatever the deadline said -- the method table hands its functions no
+// State at all, which is the same structural cause the filters had.
+//
+// i is the byte offset of the code point, which is what tells capitalize its
+// first one from the rest.
+func mapRunesIn(s *State, in string, f func(i int, r rune) string) (string, error) {
+	var b strings.Builder
+	b.Grow(len(in))
+	for i, r := range in {
+		if err := s.Poll(); err != nil {
+			return "", err
+		}
+		b.WriteString(f(i, r))
+	}
+	return b.String(), nil
 }
 
 // keepSafe carries a value's Markup-ness onto a derived string.
