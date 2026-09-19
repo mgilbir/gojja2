@@ -19,7 +19,55 @@ import (
 // silently return nothing for integer, float, tuple and None keys.
 type Dict struct {
 	entries []DictEntry
-	index   map[hashKey]int
+	// strIdx holds the string keys and index the rest.
+	//
+	// Every key a template writes as an attribute, and every key of a Go
+	// map handed in as context, is a string, so that is the case worth
+	// keeping cheap. A hashKey is forty bytes -- a kind, an int, a float
+	// and a string header -- and Go hashes all of it, so a string key was
+	// paying to hash twenty-four bytes of mostly-zero fields and to build
+	// the struct first. Keying strings by themselves skips both, and the
+	// hash() call with them.
+	//
+	// The two cannot be one map, and not only for speed: a bytes key
+	// carries its bytes in the same field a string key uses, and they must
+	// not collide.
+	strIdx map[string]int
+	index  map[hashKey]int
+}
+
+// lookupIdx finds the entry position for key.
+func (d *Dict) lookupIdx(key Value) (int, bool, error) {
+	if key.kind == KindString {
+		i, ok := d.strIdx[key.str]
+		return i, ok, nil
+	}
+	h, err := hash(key)
+	if err != nil {
+		return 0, false, err
+	}
+	i, ok := d.index[h]
+	return i, ok, nil
+}
+
+// storeIdx records that key lives at position i.
+func (d *Dict) storeIdx(key Value, i int) error {
+	if key.kind == KindString {
+		if d.strIdx == nil {
+			d.strIdx = make(map[string]int)
+		}
+		d.strIdx[key.str] = i
+		return nil
+	}
+	h, err := hash(key)
+	if err != nil {
+		return err
+	}
+	if d.index == nil {
+		d.index = make(map[hashKey]int)
+	}
+	d.index[h] = i
+	return nil
 }
 
 // DictEntry is one key/value pair, in insertion order.
@@ -85,20 +133,16 @@ func (d *Dict) Values() []Value {
 // Get looks up key. An unhashable key is reported as an error rather than a
 // miss, because Python raises TypeError for it.
 func (d *Dict) Get(key Value) (Value, bool, error) {
-	h, err := hash(key)
-	if err != nil {
+	i, ok, err := d.lookupIdx(key)
+	if err != nil || !ok {
 		return Undefined, false, err
-	}
-	i, ok := d.index[h]
-	if !ok {
-		return Undefined, false, nil
 	}
 	return d.entries[i].Value, true, nil
 }
 
 // GetString is the common case: lookup by a str key.
 func (d *Dict) GetString(key string) (Value, bool) {
-	i, ok := d.index[hashKey{kind: KindString, str: key}]
+	i, ok := d.strIdx[key]
 	if !ok {
 		return Undefined, false
 	}
@@ -111,18 +155,17 @@ func (d *Dict) GetString(key string) (Value, bool) {
 // {1: "a", True: "c"} is {1: 'c'} -- key 1, value from the later assignment --
 // exactly as CPython reports it.
 func (d *Dict) Set(key, val Value) error {
-	h, err := hash(key)
+	i, ok, err := d.lookupIdx(key)
 	if err != nil {
 		return err
 	}
-	if i, ok := d.index[h]; ok {
+	if ok {
 		d.entries[i].Value = val
 		return nil
 	}
-	if d.index == nil {
-		d.index = make(map[hashKey]int)
+	if err := d.storeIdx(key, len(d.entries)); err != nil {
+		return err
 	}
-	d.index[h] = len(d.entries)
 	d.entries = append(d.entries, DictEntry{Key: key, Value: val})
 	return nil
 }
@@ -142,8 +185,11 @@ func (d *Dict) Reserve(n int) {
 		copy(grown, d.entries)
 		d.entries = grown
 	}
-	if d.index == nil {
-		d.index = make(map[hashKey]int, n)
+	// The string index is the one sized ahead: the caller that reserves is
+	// converting a Go map, whose keys are all strings. A dict that turns
+	// out to hold other kinds builds the second map when it meets one.
+	if d.strIdx == nil {
+		d.strIdx = make(map[string]int, n)
 	}
 }
 
@@ -158,34 +204,39 @@ func (d *Dict) SetString(key string, val Value) { _ = d.Set(String(key), val) }
 // from a map -- so that question has a known answer, and filling a page's
 // worth of records asked it once per field for nothing.
 func (d *Dict) setFresh(key, val Value) error {
-	h, err := hash(key)
-	if err != nil {
+	// storeIdx builds whichever index it needs, so this does not rest on
+	// the caller having reserved -- writing to a nil map panics, and a
+	// second caller added later would find that out the hard way.
+	if err := d.storeIdx(key, len(d.entries)); err != nil {
 		return err
 	}
-	// Reserve builds the index, and the one caller reserves first. Writing
-	// to a nil map panics, though, so the guard stays rather than resting
-	// on that -- a second caller added later would find out the hard way.
-	if d.index == nil {
-		d.index = make(map[hashKey]int)
-	}
-	d.index[h] = len(d.entries)
 	d.entries = append(d.entries, DictEntry{Key: key, Value: val})
 	return nil
 }
 
 // Delete removes key, reporting whether it was present.
 func (d *Dict) Delete(key Value) (bool, error) {
-	h, err := hash(key)
-	if err != nil {
+	i, ok, err := d.lookupIdx(key)
+	if err != nil || !ok {
 		return false, err
 	}
-	i, ok := d.index[h]
-	if !ok {
-		return false, nil
-	}
 	d.entries = append(d.entries[:i], d.entries[i+1:]...)
-	delete(d.index, h)
-	// Entries after the hole shifted down by one.
+	if key.kind == KindString {
+		delete(d.strIdx, key.str)
+	} else {
+		h, err := hash(key)
+		if err != nil {
+			return false, err
+		}
+		delete(d.index, h)
+	}
+	// Entries after the hole shifted down by one, in both indexes -- they
+	// number positions in one shared entry list.
+	for k, j := range d.strIdx {
+		if j > i {
+			d.strIdx[k] = j - 1
+		}
+	}
 	for k, j := range d.index {
 		if j > i {
 			d.index[k] = j - 1
@@ -197,9 +248,17 @@ func (d *Dict) Delete(key Value) (bool, error) {
 // Clone returns a shallow copy.
 func (d *Dict) Clone() Value {
 	out := &Dict{entries: append([]DictEntry(nil), d.entries...)}
-	out.index = make(map[hashKey]int, len(d.index))
-	for k, v := range d.index {
-		out.index[k] = v
+	if d.strIdx != nil {
+		out.strIdx = make(map[string]int, len(d.strIdx))
+		for k, v := range d.strIdx {
+			out.strIdx[k] = v
+		}
+	}
+	if d.index != nil {
+		out.index = make(map[hashKey]int, len(d.index))
+		for k, v := range d.index {
+			out.index[k] = v
+		}
 	}
 	return Value{kind: KindDict, obj: out}
 }
