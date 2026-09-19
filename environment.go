@@ -173,6 +173,12 @@ func WithKeepTrailingNewline(on bool) Option {
 }
 
 // WithNewlineSequence sets what newlines in template data render as.
+//
+// Any string is accepted. jinja2 asserts that it is one of "\n", "\r\n" or
+// "\r", so a value outside those three renders here and raises there -- a
+// difference only a host can reach, since it is a setting rather than anything
+// a template says. The assertion is jinja2's own and is compiled out under
+// `python -O`, so it is a check rather than a guarantee even there.
 func WithNewlineSequence(seq string) Option {
 	return func(e *Environment) { e.syntax.NewlineSequence = seq }
 }
@@ -498,8 +504,15 @@ func (e *Environment) GetTemplate(name string) (*Template, error) {
 		return tmpl, nil
 	}
 
+	// No loader at all is a misconfiguration, not a missing template, and
+	// jinja2 says so: TypeError rather than TemplateNotFound. The
+	// difference is visible, because it is the one failure `ignore missing`
+	// does not swallow -- an environment with no loader rendered
+	// `{% include "x" ignore missing %}` as nothing at all here, quietly,
+	// where CPython reports the environment.
 	if e.loader == nil {
-		return nil, errs.New(errs.TemplateNotFound, "%s", name)
+		return nil, errs.New(errs.TypeError,
+			"no loader for this environment specified")
 	}
 	source, err := e.loader.Load(name)
 	if err != nil {
