@@ -235,6 +235,64 @@ func (ex *exec) renderValue(v value.Value) (string, error) {
 	return text, nil
 }
 
+// bodyRetainsScope reports whether running body could leave something holding
+// a reference to the frame it ran in.
+//
+// A macro closes over the scope it was written in -- that is what makes its
+// free names resolve there -- and a {% call %} block is compiled into one. Any
+// other construct that binds names builds its own scope and reads through the
+// parent chain, so nothing else outlives the frame; a `{% block scoped %}`
+// copies the bindings it needs rather than keeping the scope.
+//
+// The walk is over the whole body, not its top level: a macro inside a nested
+// loop captures that loop's scope, whose parent chain reaches this one.
+func bodyRetainsScope(body []ast.Stmt) bool {
+	for _, stmt := range body {
+		switch n := stmt.(type) {
+		case *ast.Macro, *ast.CallBlock:
+			return true
+		case *ast.For:
+			if bodyRetainsScope(n.Body) || bodyRetainsScope(n.Else) {
+				return true
+			}
+		case *ast.If:
+			if bodyRetainsScope(n.Body) || bodyRetainsScope(n.Else) {
+				return true
+			}
+			for _, elif := range n.Elif {
+				if bodyRetainsScope(elif.Body) {
+					return true
+				}
+			}
+		case *ast.With:
+			if bodyRetainsScope(n.Body) {
+				return true
+			}
+		case *ast.FilterBlock:
+			if bodyRetainsScope(n.Body) {
+				return true
+			}
+		case *ast.AssignBlock:
+			if bodyRetainsScope(n.Body) {
+				return true
+			}
+		case *ast.Block:
+			if bodyRetainsScope(n.Body) {
+				return true
+			}
+		case *ast.Scope:
+			if bodyRetainsScope(n.Body) {
+				return true
+			}
+		case *ast.AutoescapeBlock:
+			if bodyRetainsScope(n.Body) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (ex *exec) execIf(n *ast.If) error {
 	ok, err := ex.truth(n.Test)
 	if err != nil {
@@ -306,6 +364,15 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 	// `loop` is the iterator: a body that consumes it -- `{{ loop|list }}`
 	// -- advances this walk, and the walk has to see that.
 	ran := false
+	// A body that cannot let its scope outlive the iteration gets one
+	// frame reused for the whole loop instead of one per pass. See
+	// bodyRetainsScope: only a macro keeps a reference to the scope it was
+	// written in, so only a body containing one has to be given a fresh
+	// frame each time.
+	var reuse *exec
+	if !bodyRetainsScope(n.Body) {
+		reuse = ex.child(newScope(ex.sc))
+	}
 	for loop.index = 0; src.has(loop.index); loop.index++ {
 		if err := src.err(); err != nil {
 			return err
@@ -318,7 +385,18 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		// body does not carry into the next pass -- jinja2 rebinds
 		// every body-assigned symbol from the enclosing scope at the
 		// top of each iteration, which amounts to the same thing.
-		body := ex.child(newScope(ex.sc))
+		var body *exec
+		if reuse != nil {
+			// Reset to exactly what ex.child(newScope(ex.sc)) would
+			// have built, in the frame already allocated.
+			sc := reuse.sc
+			*sc = scope{parent: ex.sc}
+			*reuse = *ex
+			reuse.sc = sc
+			body = reuse
+		} else {
+			body = ex.child(newScope(ex.sc))
+		}
 		body.loop = loopValue
 		body.sc.set("loop", loopValue)
 		if err := declareFrameLocals(body.sc, ex.st, n, n.Body, body.sc.parent); err != nil {
