@@ -151,6 +151,7 @@ line:
 ```
 make soak N=200000      # seeded run, reproducible
 make fuzz TIME=5m       # coverage-guided, via go test -fuzz
+make fuzz-props TIME=5m # properties only, no oracle -- what CI runs
 ```
 
 Generation is structured rather than byte-level: random bytes are read as

@@ -128,6 +128,24 @@ jobs:
       - name: Race
         run: go test -race ./...
 
+      # Property fuzzing, which needs no oracle and therefore runs here.
+      #
+      # The differential fuzzer is sharper -- it is the one that can say what a
+      # template *means* -- and it needs CPython with jinja2, which this runner
+      # does not have. So the targets that can run on every commit are the ones
+      # that check what holds regardless of meaning: do not panic, do not run
+      # past the deadline, do not write past the bound, do not return an error
+      # the caller cannot classify.
+      #
+      # The time is short because this is a regression gate rather than a
+      # search: the committed corpus is replayed by `go test` above, and a
+      # minute on top explores around it. A real hunt is `make fuzz-props
+      # TIME=1h` on someone's machine, and what it finds is committed as a seed.
+      - name: Fuzz
+        run: |
+          go test . -run xxx -fuzz FuzzParse -fuzztime 60s
+          go test . -run xxx -fuzz FuzzRender -fuzztime 60s
+
   lint:
     needs: authorize
     if: needs.authorize.outputs.trusted == 'true'
