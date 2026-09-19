@@ -24,10 +24,6 @@ func registerDefaultTests(env *Environment) {
 		"escaped":   isEscaped,
 		"true":      func(v value.Value) bool { return v.Kind() == value.KindBool && v.AsBool() },
 		"false":     func(v value.Value) bool { return v.Kind() == value.KindBool && !v.AsBool() },
-		"sequence":  isSequenceValue,
-		"iterable":  isIterableValue,
-		"lower":     stringCased(isLowerString),
-		"upper":     stringCased(isUpperString),
 	}
 	simple["callable"] = isCallableValue
 	for name, fn := range simple {
@@ -35,6 +31,29 @@ func registerDefaultTests(env *Environment) {
 			return fn(v), nil
 		})
 	}
+
+	// These four ask the value for something a StrictUndefined refuses, so
+	// they cannot be registered as the plain predicates above: `sequence`
+	// swallows the refusal and answers False, and the other three let it
+	// out.
+	addTest(env, "sequence", func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
+		// jinja2 writes this as len(value) and value[0] inside a
+		// try/except, so a class that refuses len() is simply not a
+		// sequence rather than an error.
+		if value.StrictRefusal(v) != nil {
+			return false, nil
+		}
+		return isSequenceValue(v), nil
+	})
+	addTest(env, "iterable", func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
+		// iter() is not wrapped, so its refusal reaches the template.
+		if err := value.StrictRefusal(v); err != nil {
+			return false, err
+		}
+		return isIterableValue(v), nil
+	})
+	addTest(env, "lower", stringCased(isLowerString))
+	addTest(env, "upper", stringCased(isUpperString))
 
 	addTest(env, "odd", intParity(1))
 	addTest(env, "even", intParity(0))
@@ -128,8 +147,17 @@ func isCallableValue(v value.Value) bool {
 // The predicate itself is the one str.islower uses, so the test and the method
 // cannot disagree -- they did, because this rolled its own loop over Go's
 // category predicates while the method used another.
-func stringCased(f func(string) bool) func(value.Value) bool {
-	return func(v value.Value) bool { return f(value.Str(v)) }
+// stringCased builds `is lower` and `is upper`, which jinja2 writes as
+// str(value).islower(). The coercion is the operation, so a StrictUndefined
+// refuses it rather than being tested as "".
+func stringCased(f func(string) bool) Test {
+	return func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
+		text, err := strictStr(v)
+		if err != nil {
+			return false, err
+		}
+		return f(text), nil
+	}
 }
 
 // intParity implements `is odd` and `is even`.

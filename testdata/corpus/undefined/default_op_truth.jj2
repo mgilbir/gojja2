@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "default"
+  }
+}
+---
+{% if nope %}t{% else %}f{% endif %}

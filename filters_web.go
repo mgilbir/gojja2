@@ -291,6 +291,9 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return head + "...", nil
 	}
 
+	if err := value.StrictRefusal(v); err != nil {
+		return value.Undefined, err
+	}
 	escaped := value.Str(escapeIfNeeded(v))
 	words := splitKeepingSpace(escaped)
 

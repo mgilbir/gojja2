@@ -48,6 +48,16 @@ func equalDepth(a, b Value, depth int) (bool, error) {
 	if depth > maxCompareDepth {
 		return false, errs.New(errs.RecursionError, "%s", RecursionMessageComparison)
 	}
+	// StrictUndefined defines __eq__ and __ne__ as failures, so a
+	// comparison involving one is an error rather than an answer -- on
+	// either side, because Python tries both operands' __eq__. This is
+	// also what makes `nope in [1]` raise: list containment compares.
+	if err := StrictRefusal(a); err != nil {
+		return false, err
+	}
+	if err := StrictRefusal(b); err != nil {
+		return false, err
+	}
 	// Identity first, as Python's == does: a structure always equals
 	// itself, cyclic or not, and this is what makes `a == a` terminate.
 	if a.kind == b.kind && a.obj != nil && a.obj == b.obj {
@@ -392,6 +402,16 @@ func cmpFloat(a, b float64) int {
 // knows a better answer than a scan says so through Container, which is how a
 // range answers arithmetically rather than by searching.
 func Contains(item, container Value, budget Budget) (bool, error) {
+	// __contains__ on a StrictUndefined container fails; an item that is
+	// one fails through the comparison each candidate makes, which
+	// equalDepth reports, but a container that is empty or short-circuits
+	// would never reach it. Both are refused here.
+	if err := StrictRefusal(container); err != nil {
+		return false, err
+	}
+	if err := StrictRefusal(item); err != nil {
+		return false, err
+	}
 	if o, ok := container.obj.(Container); ok && container.kind == KindObject {
 		if found, known := o.Contains(item); known {
 			return found, nil

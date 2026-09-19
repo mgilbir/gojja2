@@ -211,7 +211,14 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 				b.WriteString(sep)
 			}
 			first = false
-			b.WriteString(value.Str(mapped))
+			// str.join converts each item as it takes it, so an
+			// item that refuses str() fails here rather than
+			// joining as "".
+			text, err := strictStr(mapped)
+			if err != nil {
+				return value.Undefined, err
+			}
+			b.WriteString(text)
 		}
 		return value.String(b.String()), nil
 	}
