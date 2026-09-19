@@ -250,6 +250,16 @@ soak: venv ## Differential-test generated templates: make soak N=200000 SEED=7
 fuzz: venv ## Coverage-guided differential fuzzing (make fuzz TIME=5m)
 	go test ./conformance/ -run xxx -fuzz FuzzTemplate -fuzztime $(if $(TIME),$(TIME),1m)
 
+# No venv, deliberately. `fuzz` above is the sharper tool and it cannot run
+# where there is no CPython with jinja2 installed -- which is everywhere CI
+# runs, so the fuzzer that could have run on every commit was the one nobody
+# ran. This one asserts what the engine owes every input regardless of meaning:
+# no panic, no overrun, no writing past the bound, no unclassifiable error.
+.PHONY: fuzz-props
+fuzz-props: ## Coverage-guided property fuzzing, no oracle (make fuzz-props TIME=5m)
+	go test . -run xxx -fuzz FuzzParse -fuzztime $(if $(TIME),$(TIME),1m)
+	go test . -run xxx -fuzz FuzzRender -fuzztime $(if $(TIME),$(TIME),1m)
+
 .PHONY: conformance
 conformance: ## Report conformance pass-rate against the full corpus
 	go test ./conformance/... -run TestConformance -v
