@@ -18,7 +18,7 @@ import (
 // indent", so `{{ x|tojson(0) }}` came out on one line. A template asking for
 // the broken-up form got the compact one, and nothing said so.
 func TestToJSONIndentZero(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// No argument, and an explicit None, are the compact form.
 		{`{{ [1,2]|tojson }}`, `[1, 2]`},
@@ -65,7 +65,7 @@ func TestToJSONIndentZero(t *testing.T) {
 // string before building any indentation, while everything else goes through
 // iterencode and does.
 func TestToJSONStringIndent(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// A string is the unit, repeated once per level.
 		{`{{ [1,2]|tojson("  ") }}`, "[\n  1,\n  2\n]"},
@@ -144,7 +144,7 @@ func TestToJSONIndentOverflows(t *testing.T) {
 		{`{{ [1,2]|tojson(indent=-1180591620717411303424) }}`, indexOverflow},
 		{`{{ 1|tojson(indent=-1180591620717411303424) }}`, indexOverflow},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -176,7 +176,7 @@ func TestToJSONIndentUnchangedElsewhere(t *testing.T) {
 		{`{{ "s"|tojson(indent=1180591620717411303424) }}`, `"s"`},
 		{`{{ "s"|tojson(indent=1.5) }}`, `"s"`},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -191,7 +191,7 @@ func TestToJSONIndentUnchangedElsewhere(t *testing.T) {
 		{`{{ [1,2]|tojson(indent=1.5) }}`, "can't multiply sequence by non-int of type 'float'"},
 		{`{{ 1|tojson(indent=[1]) }}`, "can't multiply sequence by non-int of type 'list'"},
 	} {
-		tmpl, _ := New().FromString(tc.src)
+		tmpl, _ := mustNew().FromString(tc.src)
 		if _, err := tmpl.RenderString(context.Background(), nil); err == nil || err.Error() != tc.want {
 			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
 		}
@@ -220,7 +220,7 @@ func TestToJSONSortsKeysAsKeys(t *testing.T) {
 		{`{{ {"10": 1, "9": 2}|tojson }}`, `{"10": 1, "9": 2}`},
 		{`{{ {"b": 1, "a": 2}|tojson }}`, `{"a": 2, "b": 1}`},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -243,7 +243,7 @@ func TestToJSONRefusesIncomparableKeys(t *testing.T) {
 		// A key type JSON has no spelling for is refused whatever the sort did.
 		{`{{ {(1,2): 1}|tojson }}`, "keys must be str, int, float, bool or None, not tuple"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -265,7 +265,7 @@ func TestToJSONKeySpellingIsJSON(t *testing.T) {
 		{`{{ {1: 1}|tojson }}`, `{"1": 1}`},
 		{`{{ {-0.0: 1}|tojson }}`, `{"-0.0": 1}`},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -286,7 +286,7 @@ func TestToJSONRefusesBytes(t *testing.T) {
 		`{{ ["a".encode()]|tojson }}`,
 		`{{ {"k": "a".encode()}|tojson }}`,
 	} {
-		tmpl, err := New().FromString(src)
+		tmpl, err := mustNew().FromString(src)
 		if err != nil {
 			t.Errorf("%s: %v", src, err)
 			continue

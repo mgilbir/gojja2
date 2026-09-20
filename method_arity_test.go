@@ -19,7 +19,7 @@ import (
 // differently, and the names in them are sometimes qualified and sometimes not.
 // They are probed out of CPython; see tools/oracle/gen_methods.py.
 func TestMethodArity(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// Takes nothing at all.
 		{`{{ "ab".upper(1) }}`, "str.upper() takes no arguments (1 given)"},
@@ -96,7 +96,7 @@ func TestMethodArity(t *testing.T) {
 // `{{ "ab".zfill(none) }}` padded to width 0 and `{{ [1].pop(none) }}` popped
 // the last element -- each a plausible answer to a call CPython rejects.
 func TestMethodNoneIsNotADefault(t *testing.T) {
-	env := New()
+	env := mustNew()
 	const index = "'NoneType' object cannot be interpreted as an integer"
 	for _, tc := range []struct{ src, want string }{
 		{`{{ "ab".expandtabs(none) }}`, index},
@@ -167,7 +167,7 @@ func TestMethodNoneIsNotADefault(t *testing.T) {
 // Unlike a string search's, these bounds have no None form: list.index declares
 // them as indices outright, so the message has no "or None" in it.
 func TestSeqIndexWindow(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{`{{ [1,2,1].index(1) }}|{{ [1,2,1].index(1, 1) }}`, "0|2"},
 		{`{{ [1,2,1].index(1, 1, 3) }}|{{ [1,2,1].index(1, -1) }}`, "2|2"},

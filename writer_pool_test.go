@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/mgilbir/gojja2"
 )
 
 // Output buffers are pooled between renders, so the thing to prove is that
@@ -37,7 +35,7 @@ func (f *failWriter) Write(p []byte) (int, error) {
 }
 
 func TestAFailedRenderLeavesNothingInThePool(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, err := env.FromString(strings.Repeat("SECRET", 200))
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +65,7 @@ func TestAFailedRenderLeavesNothingInThePool(t *testing.T) {
 // A partly-written render still delivers what it produced, which is what the
 // flush-either-way is for; pooling must not change that.
 func TestAFailedRenderStillDeliversWhatItWrote(t *testing.T) {
-	tmpl, err := gojja2.New().FromString(strings.Repeat("ab", 4000))
+	tmpl, err := mustEnv().FromString(strings.Repeat("ab", 4000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +80,7 @@ func TestAFailedRenderStillDeliversWhatItWrote(t *testing.T) {
 
 // Concurrent renders must each get their own buffer.
 func TestPooledWritersDoNotCrossBetweenRenders(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, err := env.FromString("{{ n }}:" + strings.Repeat("x", 300))
 	if err != nil {
 		t.Fatal(err)

@@ -18,7 +18,7 @@ import (
 // and they are three different sets, so `{{ "²".isdigit() }}` was False where
 // CPython says True, and isalnum inherited it.
 func TestStringMethodsMatchCPython(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// --- the three numeric predicates are three different sets ---
 		{`{{ "²".isdecimal() }}|{{ "²".isdigit() }}|{{ "²".isnumeric() }}`, "False|True|True"},
@@ -124,7 +124,7 @@ func TestStringMethodsMatchCPython(t *testing.T) {
 // They are slice indices: counted in characters, negative from the end, and
 // clamped rather than refused when out of range.
 func TestStringSearchSliceBounds(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// The window really is a window.
 		{`{{ "Hello World".find("o",1,2) }}|{{ "Hello World".count("o",1,2) }}`, `-1|0`},

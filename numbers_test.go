@@ -24,7 +24,7 @@ import (
 //
 // Expectations from CPython jinja2 3.1.6.
 func TestIntAndFloatAtTheEdges(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ expr, want string }{
 		// 2**63 exactly, by three routes.
 		{`'9.223372036854776e+18'|int`, "9223372036854775808"},
@@ -78,7 +78,7 @@ func TestIntAndFloatAtTheEdges(t *testing.T) {
 //
 // bool is an int subclass, so True.real is the integer 1, not True.
 func TestNumericAttributes(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// int properties.
 		{`{{ (3).real }}|{{ (3).imag }}|{{ (3).numerator }}|{{ (3).denominator }}`, `3|0|3|1`},
@@ -150,7 +150,7 @@ func TestNumericAttributes(t *testing.T) {
 // int(float(value)), which is why "010"|int(0, 0) is 10 even though Python
 // refuses that string with base 0.
 func TestIntFilterBaseParsing(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// Base 0 detects the prefix, in either case.
 		{`{{ '0x1f'|int(-1,0) }}|{{ '0X1F'|int(-1,0) }}`, `31|31`},
@@ -227,7 +227,7 @@ func TestIntFilterBaseParsing(t *testing.T) {
 // 2**53 cannot be scaled and divided back without losing the digits that decide
 // the answer.
 func TestRoundNegativePrecisionOnAnInteger(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// Ties go to the even multiple, both signs.
 		{`{{ (5)|round(-1) }}|{{ (15)|round(-1) }}|{{ (25)|round(-1) }}|{{ (35)|round(-1) }}`,
@@ -276,7 +276,7 @@ func TestRoundNegativePrecisionOnAnInteger(t *testing.T) {
 // ten for a negative precision, which lost digits at the top of the range and
 // produced NaN at the bottom.
 func TestRoundIsPythonsRound(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// No precision, or None, is an integer -- exactly, ties to even.
 		{`{{ 1.5|round(none) }}|{{ 2.5|round(none) }}|{{ 3.5|round(none) }}`, "2|2|4"},

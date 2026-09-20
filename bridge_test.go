@@ -46,7 +46,7 @@ func TestCyclicContextTerminates(t *testing.T) {
 	m := map[string]any{"k": "v"}
 	m["self"] = m
 
-	env := New()
+	env := mustNew()
 	got, err := renderVars(t, env, `{{ m.k }}/{{ m.self.k }}/{{ m.self.self.self.k }}`,
 		map[string]any{"m": m})
 	if err != nil {
@@ -64,7 +64,7 @@ func TestCyclicSliceTerminates(t *testing.T) {
 	list := []any{m}
 	m["list"] = list
 
-	got, err := renderVars(t, New(), `{{ m.n }}{{ m.list[0].n }}`, map[string]any{"m": m})
+	got, err := renderVars(t, mustNew(), `{{ m.n }}{{ m.list[0].n }}`, map[string]any{"m": m})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestCyclicSliceTerminates(t *testing.T) {
 func TestCyclicReprMarksRecursion(t *testing.T) {
 	m := map[string]any{"k": "v"}
 	m["self"] = m
-	got, err := renderVars(t, New(), `{{ m }}`, map[string]any{"m": m})
+	got, err := renderVars(t, mustNew(), `{{ m }}`, map[string]any{"m": m})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestCyclicReprMarksRecursion(t *testing.T) {
 func TestNonCyclicSharingIsStillExpanded(t *testing.T) {
 	shared := map[string]any{"x": 1}
 	outer := map[string]any{"p": shared, "q": shared}
-	got, err := renderVars(t, New(), `{{ m }}`, map[string]any{"m": outer})
+	got, err := renderVars(t, mustNew(), `{{ m }}`, map[string]any{"m": outer})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestNonCyclicSharingIsStillExpanded(t *testing.T) {
 func TestCyclicToJSONIsRefused(t *testing.T) {
 	m := map[string]any{"k": "v"}
 	m["self"] = m
-	_, err := renderVars(t, New(), `{{ m|tojson }}`, map[string]any{"m": m})
+	_, err := renderVars(t, mustNew(), `{{ m|tojson }}`, map[string]any{"m": m})
 	if err == nil {
 		t.Fatal("expected a circular-reference error, got none")
 	}
@@ -120,7 +120,7 @@ func TestCyclicToJSONIsRefused(t *testing.T) {
 func TestCyclicPPrintTerminates(t *testing.T) {
 	m := map[string]any{"padding": strings.Repeat("x", 200)}
 	m["self"] = m
-	if _, err := renderVars(t, New(), `{{ m|pprint }}`, map[string]any{"m": m}); err != nil {
+	if _, err := renderVars(t, mustNew(), `{{ m|pprint }}`, map[string]any{"m": m}); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 }
@@ -133,7 +133,7 @@ func TestCyclicComparisonRaises(t *testing.T) {
 	a["s"] = a
 	b := map[string]any{"s": nil}
 	b["s"] = b
-	_, err := renderVars(t, New(), `{{ a == b }}`, map[string]any{"a": a, "b": b})
+	_, err := renderVars(t, mustNew(), `{{ a == b }}`, map[string]any{"a": a, "b": b})
 	if err == nil {
 		t.Fatal("expected a RecursionError, got none")
 	}
@@ -147,7 +147,7 @@ func TestCyclicComparisonRaises(t *testing.T) {
 func TestSelfComparisonTerminates(t *testing.T) {
 	a := map[string]any{"s": nil}
 	a["s"] = a
-	got, err := renderVars(t, New(), `{{ a == a }}`, map[string]any{"a": a})
+	got, err := renderVars(t, mustNew(), `{{ a == a }}`, map[string]any{"a": a})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestSelfComparisonTerminates(t *testing.T) {
 // receiver style Go code actually uses. Dereferencing the pointer before
 // wrapping the struct discarded its method set entirely.
 func TestPointerReceiverMethodsAreReachable(t *testing.T) {
-	env := New()
+	env := mustNew()
 	got, err := renderVars(t, env, `{{ a.Label() }}`, map[string]any{"a": &ptrAccount{Name: "x"}})
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -186,14 +186,14 @@ func TestMethodsWithArgumentsAreNotExposedByDefault(t *testing.T) {
 		{"a": &ptrAccount{Name: "x"}},
 		{"a": valAccount{Name: "x"}},
 	} {
-		out, err := renderVars(t, New(), `{{ a.Rename("hacked") }}`, vars)
+		out, err := renderVars(t, mustNew(), `{{ a.Rename("hacked") }}`, vars)
 		if err == nil {
 			t.Errorf("a method taking arguments should not be callable, got %q", out)
 		}
 	}
 	// The receiver must be genuinely unchanged, not merely unrendered.
 	acct := &ptrAccount{Name: "original"}
-	_, _ = renderVars(t, New(), `{{ a.Rename("hacked") }}`, map[string]any{"a": acct})
+	_, _ = renderVars(t, mustNew(), `{{ a.Rename("hacked") }}`, map[string]any{"a": acct})
 	if acct.Name != "original" {
 		t.Errorf("the method ran anyway: name is now %q", acct.Name)
 	}
@@ -201,7 +201,7 @@ func TestMethodsWithArgumentsAreNotExposedByDefault(t *testing.T) {
 
 // TestWithMethodPolicyWidensExposure pins the explicit opt-in.
 func TestWithMethodPolicyWidensExposure(t *testing.T) {
-	env := New(WithMethodPolicy(value.AllMethods))
+	env := mustNew(WithMethodPolicy(value.AllMethods))
 	got, err := renderVars(t, env, `{{ a.Rename("new") }}`, map[string]any{"a": valAccount{Name: "old"}})
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -214,7 +214,7 @@ func TestWithMethodPolicyWidensExposure(t *testing.T) {
 // TestPanickingMethodBecomesAnError pins that host code reached from a
 // template cannot unwind the caller's goroutine.
 func TestPanickingMethodBecomesAnError(t *testing.T) {
-	out, err := renderVars(t, New(), `{{ a.Boom() }}`, map[string]any{"a": &ptrAccount{Name: "x"}})
+	out, err := renderVars(t, mustNew(), `{{ a.Boom() }}`, map[string]any{"a": &ptrAccount{Name: "x"}})
 	if err == nil {
 		t.Fatalf("expected an error from a panicking method, got %q", out)
 	}
@@ -253,7 +253,7 @@ func (h hostErrors) NotAnError() (string, bool) { return "v", false }
 // just an error had its failure reflected into an object and rendered as
 // "<errors.errorString object>" -- with the render reporting success.
 func TestHostMethodErrorReachesTheTemplate(t *testing.T) {
-	env := New()
+	env := mustNew()
 	h := map[string]any{"h": hostErrors{"bob"}}
 
 	for _, tc := range []struct {

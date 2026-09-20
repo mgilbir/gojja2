@@ -16,7 +16,7 @@ import (
 // attribute 'sort'` -- and the messages that named the wrong type or left out
 // the count CPython reports.
 func TestCollectionMethodsMatchCPython(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// list.sort is in place and answers None, so both halves matter.
 		{`{% set L = [3,1,2] %}{{ L.sort() }}|{{ L }}`, `None|[1, 2, 3]`},

@@ -55,7 +55,7 @@ func FuzzAutoescape(f *testing.F) {
 		if len(src) > 64<<10 || autoescapeExempt(src) {
 			t.Skip("oversized or allowed to emit raw markup")
 		}
-		env := gojja2.New(
+		env := mustEnv(
 			gojja2.WithAutoescape(true),
 			gojja2.WithMaxOutputBytes(fuzzMaxOutput),
 			gojja2.WithMaxIterations(fuzzMaxIterations),
@@ -96,7 +96,7 @@ func FuzzAutoescape(f *testing.F) {
 // template naming |safe -- so without this, deleting the check and deleting
 // escaping itself would look identical.
 func TestAutoescapeSentinelIsEscaped(t *testing.T) {
-	env := gojja2.New(gojja2.WithAutoescape(true))
+	env := mustEnv(gojja2.WithAutoescape(true))
 	for _, src := range []string{
 		`{{ xss }}`,
 		`{{ xss|upper }}`,

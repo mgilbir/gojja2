@@ -37,7 +37,7 @@ func benchVars() map[string]any {
 
 func benchRender(b *testing.B, src string, vars map[string]any, opts ...gojja2.Option) {
 	b.Helper()
-	env := gojja2.New(opts...)
+	env := mustEnv(opts...)
 	tmpl, err := env.FromString(src)
 	if err != nil {
 		b.Fatalf("compile: %v", err)
@@ -58,7 +58,7 @@ func benchRender(b *testing.B, src string, vars map[string]any, opts ...gojja2.O
 }
 
 func BenchmarkCompileSmall(b *testing.B) {
-	env := gojja2.New()
+	env := mustEnv()
 	src := `<h1>{{ title }}</h1>{% for u in users %}<p>{{ u.name }}</p>{% endfor %}`
 	b.ReportAllocs()
 	for b.Loop() {
@@ -69,7 +69,7 @@ func BenchmarkCompileSmall(b *testing.B) {
 }
 
 func BenchmarkCompileLarge(b *testing.B) {
-	env := gojja2.New()
+	env := mustEnv()
 	var sb strings.Builder
 	for i := range 200 {
 		fmt.Fprintf(&sb, "{%% if n > %d %%}<p>{{ users[%d].name|upper }}</p>{%% endif %%}\n", i, i%50)
@@ -134,7 +134,7 @@ func BenchmarkRenderMacro(b *testing.B) {
 }
 
 func BenchmarkRenderInheritance(b *testing.B) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.DictLoader{
+	env := mustEnv(gojja2.WithLoader(gojja2.DictLoader{
 		"base.html": `<html>{% block head %}<title>{{ title }}</title>{% endblock %}` +
 			`<body>{% block body %}empty{% endblock %}</body></html>`,
 	}))
@@ -159,7 +159,7 @@ func BenchmarkBridgeConversion(b *testing.B) {
 }
 
 func BenchmarkRenderToString(b *testing.B) {
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, err := env.FromString(`{% for u in users %}{{ u.name }}{% endfor %}`)
 	if err != nil {
 		b.Fatal(err)
@@ -175,7 +175,7 @@ func BenchmarkRenderToString(b *testing.B) {
 
 // Concurrent rendering of one template, which is how a server uses it.
 func BenchmarkRenderParallel(b *testing.B) {
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, err := env.FromString(`{% for u in users %}{{ u.name }}:{{ u.age }};{% endfor %}`)
 	if err != nil {
 		b.Fatal(err)

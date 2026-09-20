@@ -63,7 +63,7 @@ func TestCyclicOrderingRaises(t *testing.T) {
 		"eq":      `{{ a == b }}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New()
+			env := mustEnv()
 			err := renderWith(t, context.Background(), env, cyclicLists+expr)
 			wantRecursionError(t, expr, err)
 		})
@@ -79,7 +79,7 @@ func TestDeepNonCyclicOrderingRaises(t *testing.T) {
 	// fresh scope does not discard.
 	const build = `{% set ns = namespace(a=[0], b=[1]) %}` +
 		`{% for i in range(4000) %}{% set ns.a = [ns.a] %}{% set ns.b = [ns.b] %}{% endfor %}`
-	env := gojja2.New()
+	env := mustEnv()
 	err := renderWith(t, context.Background(), env, build+`{{ ns.a < ns.b }}`)
 	wantRecursionError(t, "deeply nested <", err)
 }
@@ -100,7 +100,7 @@ func TestSelfReferentialBlockRaises(t *testing.T) {
 		"in a set":   `{% block x %}{% set t = self.x() %}{{ t }}{% endblock %}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New()
+			env := mustEnv()
 			err := renderWith(t, context.Background(), env, src)
 			wantRecursionError(t, src, err)
 		})
@@ -123,7 +123,7 @@ func TestBlockRecursionAllowsRealTemplates(t *testing.T) {
 		"sibling blocks": {`{% block a %}A{% endblock %}{% block b %}{{ self.a() }}B{% endblock %}`, "AAB"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New(gojja2.WithLoader(loader))
+			env := mustEnv(gojja2.WithLoader(loader))
 			got, err := mustRender(t, env, tc.src)
 			if err != nil {
 				t.Fatalf("%s: %v", tc.src, err)
@@ -154,11 +154,11 @@ func TestBlockRecursionRespectsTheConfiguredLimit(t *testing.T) {
 	}
 	src := deep.String()
 
-	if _, err := mustRender(t, gojja2.New(gojja2.WithMaxRecursion(levels+10)), src); err != nil {
+	if _, err := mustRender(t, mustEnv(gojja2.WithMaxRecursion(levels+10)), src); err != nil {
 		t.Fatalf("%d nested blocks under a limit of %d: %v", levels, levels+10, err)
 	}
 	err := renderWith(t, context.Background(),
-		gojja2.New(gojja2.WithMaxRecursion(levels/2)), src)
+		mustEnv(gojja2.WithMaxRecursion(levels/2)), src)
 	wantRecursionError(t, "nested blocks past the limit", err)
 	var e *errs.Error
 	if errors.As(err, &e) && e.Limit != levels/2 {
@@ -207,7 +207,7 @@ func TestNestingBoundCoversEveryShape(t *testing.T) {
 	const limit = parser.MaxNestingDepth
 	for name, build := range nestingShapes {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New()
+			env := mustEnv()
 			// A shape whose statement or operator costs two nodes
 			// lands one short; what matters is that the limit is of
 			// the documented order and not half of it.
@@ -234,7 +234,7 @@ func TestNestingBoundCoversEveryShape(t *testing.T) {
 // long they run and everything that walks them iterates rather than recurses.
 // Charging them per operand would refuse a template CPython renders.
 func TestFlatShapesAreNotNesting(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	for name, src := range map[string]string{
 		"concat":  "{{ 0" + strings.Repeat("~1", 20000) + " }}",
 		"compare": "{{ 1" + strings.Repeat(" < 2", 20000) + " }}",
@@ -266,7 +266,7 @@ func TestNestingBoundSurvivesTheWholeCompile(t *testing.T) {
 		"unfolded add":   "{% set x = 1 %}{{ x" + strings.Repeat("+1", near) + " }}",
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New()
+			env := mustEnv()
 			if _, err := mustRender(t, env, src); err != nil {
 				t.Fatalf("%s: %v", name, err)
 			}
@@ -330,7 +330,7 @@ func TestDeepValueGraphDoesNotExhaustTheStack(t *testing.T) {
 		"equal a tuple": {"(", ",)", `{{ ns.t == ns.t }}`},
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New()
+			env := mustEnv()
 			src := nestValue(deepGraphLevels, tc.open, tc.close, tc.expr)
 			if _, err := mustRender(t, env, src); err != nil {
 				t.Fatalf("%s: %v", name, err)
@@ -351,7 +351,7 @@ func TestDeepValueGraphReportsWhereItCan(t *testing.T) {
 		"pprint": {`{{ ns.t|pprint }}`, "maximum recursion depth exceeded while getting the repr of an object"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New()
+			env := mustEnv()
 			src := nestValue(deepGraphLevels, "[", "]", tc.expr)
 			err := renderWith(t, context.Background(), env, src)
 			if err == nil {
@@ -370,7 +370,7 @@ func TestDeepValueGraphReportsWhereItCan(t *testing.T) {
 // TestShallowValueGraphsStillRender guards the other direction: the walls must
 // not fire on anything a template really prints.
 func TestShallowValueGraphsStillRender(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	for name, tc := range map[string]struct{ src, want string }{
 		"nested list":  {`{{ [[1, [2]], 3] }}`, "[[1, [2]], 3]"},
 		"nested tuple": {`{{ ((1,), 2) }}`, "((1,), 2)"},
@@ -431,7 +431,7 @@ func TestRecursionWordingIsOnlyPinnedForTwo(t *testing.T) {
 		{"recursive loop", `{% for i in [1] recursive %}{{ loop([1]) }}{% endfor %}`, plain},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tmpl, err := gojja2.New(gojja2.WithLoader(loader)).FromString(tc.src)
+			tmpl, err := mustEnv(gojja2.WithLoader(loader)).FromString(tc.src)
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}

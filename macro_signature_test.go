@@ -32,7 +32,7 @@ func TestDuplicateMacroParameterIsRefused(t *testing.T) {
 		{`{% call(a, a) m() %}{% endcall %}`, "duplicate argument 'a' in function definition"},
 		{`{% call(x, x) m() %}{% endcall %}`, "duplicate argument 'x' in function definition"},
 	} {
-		_, err := New().FromString(tc.src)
+		_, err := mustNew().FromString(tc.src)
 		if err == nil {
 			t.Errorf("%s compiled; want %q", tc.src, tc.want)
 			continue
@@ -54,7 +54,7 @@ func TestDuplicateNamesAllowedOutsideASignature(t *testing.T) {
 		{`{% macro m(a) %}{% endmacro %}{% macro m(a) %}{% endmacro %}ok`, "ok"},
 		{`{% macro m(a, b) %}{{ a }}{{ b }}{% endmacro %}{{ m(1, 2) }}`, "12"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.src, err)
 			continue
@@ -66,7 +66,7 @@ func TestDuplicateNamesAllowedOutsideASignature(t *testing.T) {
 	}
 	// The other thing this signature refuses is unchanged, and that one
 	// jinja2's own parser catches, so it matches word for word.
-	if _, err := New().FromString(`{% macro m(a=1, b) %}{% endmacro %}`); err == nil ||
+	if _, err := mustNew().FromString(`{% macro m(a=1, b) %}{% endmacro %}`); err == nil ||
 		err.Error() != "non-default argument follows default argument" {
 		t.Errorf("got %v, want the non-default wording", err)
 	}

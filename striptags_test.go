@@ -19,7 +19,7 @@ import "testing"
 // see tools/oracle/gen_entities.py. Expectations here are CPython jinja2
 // 3.1.6's.
 func TestStriptagsResolvesEveryCharacterReference(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ expr, want string }{
 		// The case that found this: upper-casing an entity leaves a
 		// spelling the standard still defines.

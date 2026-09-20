@@ -30,7 +30,7 @@ func TestFSLoaderDoesNotOpenAnIrregularFile(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(dir, "pipe.html"), 0o600); err != nil {
 		t.Skipf("cannot create a FIFO here: %v", err)
 	}
-	env := gojja2.New(gojja2.WithLoader(gojja2.FSLoader{FS: os.DirFS(dir)}))
+	env := mustEnv(gojja2.WithLoader(gojja2.FSLoader{FS: os.DirFS(dir)}))
 
 	done := make(chan error, 1)
 	go func() {

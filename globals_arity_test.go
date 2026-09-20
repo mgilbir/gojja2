@@ -20,7 +20,7 @@ import (
 // dropped in silence, a keyword to any of them was ignored, and range reported
 // one wording of its own for every wrong count.
 func TestGlobalArity(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// range: a keyword beats a wrong count, and a wrong count beats
 		// an argument that is not an integer.

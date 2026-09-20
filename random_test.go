@@ -17,7 +17,7 @@ import (
 // *index* and finds nothing unless that integer is a key; and only the empty
 // case happened to line up.
 func TestRandomIsChoice(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{`{{ 1|random }}`, "object of type 'int' has no len()"},
 		{`{{ 1.5|random }}`, "object of type 'float' has no len()"},

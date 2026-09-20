@@ -20,7 +20,7 @@ import "testing"
 //
 // Expectations from CPython jinja2 3.1.6.
 func TestLoopIsTheIterator(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// Consuming it ends the loop: one pass printed, none left.
 		{`{% for i in [1,2,3] %}[{{ loop|list }}]{% endfor %}`,
@@ -62,7 +62,7 @@ func TestLoopIsTheIterator(t *testing.T) {
 // than walked to the end -- which is what jinja2 does, and what tells the two
 // filters apart: |first iterates and takes one, |last reverses.
 func TestLastNeedsSomethingReversible(t *testing.T) {
-	env := New()
+	env := mustNew()
 	if _, err := renderVars(t, env, `{% for i in [1,2,3] %}{{ loop|last }}{% endfor %}`, nil); err == nil {
 		t.Error("loop|last answered; want the TypeError CPython raises")
 	} else if got, want := err.Error(), "'LoopContext' object is not reversible"; got != want {
@@ -96,7 +96,7 @@ func TestLastNeedsSomethingReversible(t *testing.T) {
 //
 // Expectations from CPython jinja2 3.1.6.
 func TestFilteredLoopWalksTuples(t *testing.T) {
-	env := New()
+	env := mustNew()
 	vars := map[string]any{
 		"pairs":  []any{[]any{1, 2}, []any{3, 4}},
 		"nested": []any{[]any{1, []any{2, 3}}, []any{4, []any{5, 6}}},
@@ -130,7 +130,7 @@ func TestFilteredLoopWalksTuples(t *testing.T) {
 // different one for an iterator something else is also walking: every pair
 // then reports the position the walk ended at rather than the one it was at.
 func TestURLEncodeRendersAsItWalks(t *testing.T) {
-	got, err := renderVars(t, New(), `{% for i in [1,2,3] %}[{{ loop|urlencode }}]{% endfor %}`, nil)
+	got, err := renderVars(t, mustNew(), `{% for i in [1,2,3] %}[{{ loop|urlencode }}]{% endfor %}`, nil)
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestURLEncodeRendersAsItWalks(t *testing.T) {
 //
 // Expectations from CPython jinja2 3.1.6.
 func TestLoopFilterRunsAsItWalks(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// The body sets the flag the filter reads, so only the first
 		// item survives.

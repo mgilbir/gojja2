@@ -26,7 +26,7 @@ func TestTemplateModuleIsItsBody(t *testing.T) {
 		"body.txt": `<b>{{ w|default("?") }}</b>`,
 	}
 	for _, auto := range []bool{false, true} {
-		env := New(WithLoader(DictLoader(load)), WithAutoescape(auto))
+		env := mustNew(WithLoader(DictLoader(load)), WithAutoescape(auto))
 		for _, tc := range []struct{ src, want string }{
 			// The body, not the repr -- and not escaped again, since
 			// it was rendered under the same setting.
@@ -57,7 +57,7 @@ func TestTemplateModuleIsItsBody(t *testing.T) {
 
 	// `~` is not __html__: markup_join calls soft_str first, which turns a
 	// non-str into a plain str, so the result is escaped as a whole.
-	env := New(WithLoader(DictLoader(load)), WithAutoescape(true))
+	env := mustNew(WithLoader(DictLoader(load)), WithAutoescape(true))
 	tmpl, err := env.FromString(`{% import "body.txt" as m %}{{ "" ~ m }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -71,7 +71,7 @@ func TestTemplateModuleIsItsBody(t *testing.T) {
 	}
 
 	// The names in the errors, and in the repr -- which pprint still uses.
-	plain := New(WithLoader(DictLoader(load)))
+	plain := mustNew(WithLoader(DictLoader(load)))
 	tmpl, err = plain.FromString(`{% import "mac.txt" as m %}{{ m|pprint }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -157,7 +157,7 @@ func TestImportOfAnExtendingTemplateRendersTheChain(t *testing.T) {
 		{"include agrees with import",
 			`[{% include "deep.html" %}]`, "[B[dx]]"},
 	} {
-		env := New(WithLoader(loader))
+		env := mustNew(WithLoader(loader))
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.name, err)

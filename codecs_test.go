@@ -16,7 +16,7 @@ import (
 // rather than the one latin-1 byte and `{{ "€".encode("ascii") }}` gave bytes
 // at all rather than raising. bytes had no methods, so nothing could decode.
 func TestEncodeDecodeCodecs(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// The codec is honoured, and its aliases are the same codec.
 		{`{{ "é".encode() }}`, `b'\xc3\xa9'`},

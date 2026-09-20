@@ -57,7 +57,7 @@ func TestCacheIsBounded(t *testing.T) {
 	for i := range 100 {
 		loader.set(fmt.Sprintf("t%d", i), "x")
 	}
-	env := New(WithLoader(loader), WithCacheSize(10))
+	env := mustNew(WithLoader(loader), WithCacheSize(10))
 	for i := range 100 {
 		if _, err := env.GetTemplate(fmt.Sprintf("t%d", i)); err != nil {
 			t.Fatalf("GetTemplate: %v", err)
@@ -76,7 +76,7 @@ func TestCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	for _, n := range []string{"hot", "a", "b", "c"} {
 		loader.set(n, "x")
 	}
-	env := New(WithLoader(loader), WithCacheSize(2))
+	env := mustNew(WithLoader(loader), WithCacheSize(2))
 
 	mustGet := func(name string) {
 		t.Helper()
@@ -106,7 +106,7 @@ func TestCacheEvictsLeastRecentlyUsed(t *testing.T) {
 func TestClearCachePicksUpAnEditedTemplate(t *testing.T) {
 	loader := newCountingLoader()
 	loader.set("page", "before")
-	env := New(WithLoader(loader))
+	env := mustNew(WithLoader(loader))
 
 	render := func() string {
 		t.Helper()
@@ -149,7 +149,7 @@ func TestCacheIsConcurrencySafe(t *testing.T) {
 	for i := range 50 {
 		loader.set(fmt.Sprintf("t%d", i), "x")
 	}
-	env := New(WithLoader(loader), WithCacheSize(8))
+	env := mustNew(WithLoader(loader), WithCacheSize(8))
 
 	var wg sync.WaitGroup
 	for g := range 16 {
@@ -181,7 +181,7 @@ func TestCacheIsConcurrencySafe(t *testing.T) {
 // config struct deserialised from YAML or flags, with fields nobody set,
 // therefore disabled two of the three safety controls in silence.
 func TestZeroMeansDefaultForEveryLimit(t *testing.T) {
-	env := New(WithMaxIterations(0), WithMaxOutputBytes(0), WithMaxRecursion(0), WithCacheSize(0))
+	env := mustNew(WithMaxIterations(0), WithMaxOutputBytes(0), WithMaxRecursion(0), WithCacheSize(0))
 	if env.maxIterations != defaultMaxIterations {
 		t.Errorf("WithMaxIterations(0) = %d, want the default %d",
 			env.maxIterations, int64(defaultMaxIterations))
@@ -210,7 +210,7 @@ func TestZeroMeansDefaultForEveryLimit(t *testing.T) {
 // TestWithoutLimitsIsExplicit pins that turning the bounds off still works, and
 // has to be said out loud.
 func TestWithoutLimitsIsExplicit(t *testing.T) {
-	env := New(WithoutLimits())
+	env := mustNew(WithoutLimits())
 	if env.maxIterations >= 0 || env.maxOutputBytes >= 0 {
 		t.Fatalf("WithoutLimits left bounds in place: iterations=%d bytes=%d",
 			env.maxIterations, env.maxOutputBytes)
@@ -235,7 +235,7 @@ func TestWithoutLimitsIsExplicit(t *testing.T) {
 // `range` is as easy to clobber as anything else, and the doc comment saying
 // "must not be mutated" is not a mechanism.
 func TestGlobalsIsACopy(t *testing.T) {
-	env := New()
+	env := mustNew()
 	g := env.Globals()
 	if _, ok := g["range"]; !ok {
 		t.Fatal("range is not among the globals")

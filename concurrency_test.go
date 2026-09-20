@@ -38,7 +38,7 @@ func renderStr(t *testing.T, tmpl *gojja2.Template, vars map[string]any) string 
 // mutates in place (`|sort` used to, `do_indent` still does to a list) would
 // otherwise reach into the caller's state.
 func TestRenderDoesNotMutateCallerData(t *testing.T) {
-	env := gojja2.New(gojja2.WithExtensions("do"))
+	env := mustEnv(gojja2.WithExtensions("do"))
 	for _, tc := range []struct {
 		name, src string
 		vars      func() (map[string]any, func() string)
@@ -85,7 +85,7 @@ func TestRenderDoesNotMutateCallerData(t *testing.T) {
 // mention would hand out a second copy, and a change made through the first --
 // which is legal, the copy is the render's own -- would vanish.
 func TestContextVariableIsOneValuePerRender(t *testing.T) {
-	env := gojja2.New(gojja2.WithExtensions("do"))
+	env := mustEnv(gojja2.WithExtensions("do"))
 	for _, tc := range []struct{ name, src, want string }{
 		{"append is visible later in the render",
 			`{% do xs.append(9) %}{{ xs }}`, "[1, 9]"},
@@ -114,7 +114,7 @@ func TestContextVariableIsOneValuePerRender(t *testing.T) {
 // purpose really is the caller's object, and a template calling its methods
 // changes it. Copying that away would break every host object with state.
 func TestHostObjectIsShared(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, err := env.FromString(`{{ c.Bump() }}{{ c.Bump() }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -134,7 +134,7 @@ func TestHostObjectIsShared(t *testing.T) {
 // TestGlobalsPersistAcrossRenders pins the one place mutation is meant to
 // survive, because jinja2 does the same: a global lives on the Environment.
 func TestGlobalsPersistAcrossRenders(t *testing.T) {
-	env := gojja2.New(gojja2.WithExtensions("do"))
+	env := mustEnv(gojja2.WithExtensions("do"))
 	env.AddGlobal("shared", value.FromGo([]any{1, 2}))
 	tmpl, err := env.FromString(`{% do shared.append(9) %}{{ shared }}`)
 	if err != nil {
@@ -152,7 +152,7 @@ func TestGlobalsPersistAcrossRenders(t *testing.T) {
 // the compiled tree, which every render shares. Handing that value out
 // directly would let one render's append be visible to the next.
 func TestLiteralsAreRebuiltEachRender(t *testing.T) {
-	env := gojja2.New(gojja2.WithExtensions("do"))
+	env := mustEnv(gojja2.WithExtensions("do"))
 	for _, tc := range []struct{ name, src, want string }{
 		{"list", `{% set L = [1, 2] %}{% do L.append(9) %}{{ L }}`, "[1, 2, 9]"},
 		{"dict", `{% set D = {"a": 1} %}{{ D.popitem() }}{{ D }}`, "('a', 1){}"},
@@ -176,7 +176,7 @@ func TestLiteralsAreRebuiltEachRender(t *testing.T) {
 // goroutines with different contexts. Anything a render keeps on the template
 // rather than on its own state shows up here as another goroutine's output.
 func TestConcurrentRendersDoNotInterfere(t *testing.T) {
-	env := gojja2.New(gojja2.WithExtensions("do"))
+	env := mustEnv(gojja2.WithExtensions("do"))
 	tmpl, err := env.FromString(
 		`{{ who }}|{% for i in range(8) %}{{ who }}{{ i }}{% endfor %}|` +
 			`{% macro m(x) %}<{{ x }}>{% endmacro %}{{ m(who) }}|` +
@@ -227,7 +227,7 @@ func TestConcurrentRendersDoNotInterfere(t *testing.T) {
 // which is what a server does: the Environment is built once and shared, and
 // its template cache is written by whichever request arrives first.
 func TestConcurrentCompileAndRender(t *testing.T) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.DictLoader{
+	env := mustEnv(gojja2.WithLoader(gojja2.DictLoader{
 		"a.txt": `{% block b %}A{% endblock %}`,
 		"b.txt": `{% extends "a.txt" %}{% block b %}B{{ n }}{% endblock %}`,
 	}))
@@ -293,7 +293,7 @@ func renderOK(t *gojja2.Template) string {
 // the entry is written by whichever render reaches the frame first, and read by
 // every render after it, including ones on other goroutines.
 func TestFrameLocalsCacheIsStableAndConcurrent(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	const src = `` +
 		`{% macro a() %}[{{ x }}{% set x = "A" %}{{ x }}]{% endmacro %}` +
 		`{% macro b() %}[{{ x }}]{% endmacro %}` +

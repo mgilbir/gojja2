@@ -19,7 +19,7 @@ import (
 // arguments used to take FromString down -- a function whose entire job is to
 // report whether a template is valid.
 func TestCompilePanicBecomesACompileFailure(t *testing.T) {
-	env := New()
+	env := mustNew()
 	env.AddFilter("boom", func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 		panic("filter exploded")
 	})
@@ -45,7 +45,7 @@ func TestCompilePanicBecomesACompileFailure(t *testing.T) {
 // template engine renders input its caller does not control, so unwinding the
 // caller's goroutine is never the right answer to a bad template.
 func TestRenderPanicBecomesAnError(t *testing.T) {
-	env := New()
+	env := mustNew()
 	env.AddFilter("boom", func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 		panic("filter exploded")
 	})
@@ -75,7 +75,7 @@ func TestFoldAllowanceIsPerExpression(t *testing.T) {
 	// swallowing lookup yields undefined and prints nothing; unfolded, the
 	// subscript raises.
 	const probe = `{{ 0[1:] }}`
-	alone, err := New().FromString(probe)
+	alone, err := mustNew().FromString(probe)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestFoldAllowanceIsPerExpression(t *testing.T) {
 		b.WriteString(`{{ "x" * 1000 }}`)
 	}
 	b.WriteString(probe)
-	crowded, err := New().FromString(b.String())
+	crowded, err := mustNew().FromString(b.String())
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestFoldAllowanceIsPerExpression(t *testing.T) {
 // namespace exempt from WithMaxIterations by construction.
 func TestGlobalsReceiveTheRenderState(t *testing.T) {
 	var sawState bool
-	env := New(WithMaxIterations(100))
+	env := mustNew(WithMaxIterations(100))
 	env.AddGlobal("probe", Func("probe", func(s *State, _ *value.CallArgs) (value.Value, error) {
 		if s == nil {
 			return value.Undefined, errors.New("global was called without a render state")
@@ -144,7 +144,7 @@ func TestGlobalsReceiveTheRenderState(t *testing.T) {
 // so a filter could bake an arbitrarily large constant into the compiled
 // template and keep it there for the life of the process.
 func TestFoldedFilterResultIsSizeChecked(t *testing.T) {
-	env := New()
+	env := mustNew()
 	tmpl, err := env.FromString(`{{ "x"|center(200000) }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)

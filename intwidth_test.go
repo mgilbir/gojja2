@@ -40,7 +40,7 @@ func TestIntegerWidthIsBounded(t *testing.T) {
 				`{% for i in range(10) %}{% set ns.x = ns.x * ns.x %}{% endfor %}DONE`},
 		{"power", wide + `{{ (x ** 2)|string|length }}`},
 	} {
-		env := New()
+		env := mustNew()
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.name, err)
@@ -61,7 +61,7 @@ func TestIntegerWidthIsBounded(t *testing.T) {
 // caller who turned the budget off asked for no accounting, not for the
 // process to be allowed to allocate until it dies.
 func TestIntegerWidthBoundSurvivesWithoutLimits(t *testing.T) {
-	env := New(WithoutLimits())
+	env := mustNew(WithoutLimits())
 	tmpl, err := env.FromString(`{% set x = 2 ** 524288 %}{{ (x * x)|string|length }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -77,7 +77,7 @@ func TestIntegerWidthBoundSurvivesWithoutLimits(t *testing.T) {
 // cost arbitrary precision at ordinary sizes, which is the whole reason
 // integers are arbitrary precision here.
 func TestIntegerWidthBoundLeavesOrdinaryArithmeticExact(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{`{{ 2 ** 100 }}`, "1267650600228229401496703205376"},
 		{`{{ (2 ** 100) * (2 ** 100) }}`, "1606938044258990275541962092341162602522202993782792835301376"},

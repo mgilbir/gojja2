@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/mgilbir/gojja2"
 )
 
 // A Go map reaches a template in sorted key order, every time.
@@ -42,7 +40,7 @@ func TestGoMapsConvertInKeyOrder(t *testing.T) {
 		"map[rune]int":   runeMap,
 	} {
 		t.Run(name, func(t *testing.T) {
-			tmpl, err := gojja2.New().FromString(
+			tmpl, err := mustEnv().FromString(
 				`{% for k, v in m|items %}{{ k }}={{ v }};{% endfor %}`)
 			if err != nil {
 				t.Fatalf("compile: %v", err)

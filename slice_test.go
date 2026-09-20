@@ -20,7 +20,7 @@ import (
 //
 // Expectations from CPython jinja2 3.1.6.
 func TestSliceAsksTheBaseFirst(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{`{% set q = 'abcdef' %}{{ q[1.5:] }}`,
 			"slice indices must be integers or None or have an __index__ method"},
@@ -47,7 +47,7 @@ func TestSliceAsksTheBaseFirst(t *testing.T) {
 // implementation: they had one each, and only the evaluator's knew that a
 // tuple subclass slices as a tuple. A constant expression took the other path.
 func TestFoldedSliceMatchesTheRunTimeOne(t *testing.T) {
-	env := New()
+	env := mustNew()
 	vars := map[string]any{"users": []any{map[string]any{"city": "Lisbon"}}}
 	for _, tc := range []struct{ src, want string }{
 		{`{{ ([2.675]|groupby('age')|list|max)[::2] }}`, "(Undefined,)"},
@@ -78,7 +78,7 @@ func TestFoldedSliceMatchesTheRunTimeOne(t *testing.T) {
 // `{{ xs[none] }}` is empty, and so is `{{ d[[]] }}`, where an unhashable key
 // would otherwise be an error.
 func TestSubscriptEdges(t *testing.T) {
-	env := New()
+	env := mustNew()
 	ctx := map[string]any{
 		"xs": []any{1, 2, 3},
 		"d":  map[string]any{"a": 1},
@@ -120,7 +120,7 @@ func TestSubscriptEdges(t *testing.T) {
 
 	// A strict undefined says what was missing, which is how the message
 	// stays visible when the class asks for it.
-	strict := New(WithUndefined(value.UndefinedStrict))
+	strict := mustNew(WithUndefined(value.UndefinedStrict))
 	tmpl, err := strict.FromString(`{{ xs[none] }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)

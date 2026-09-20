@@ -11,7 +11,10 @@ If you are adding a filter or exposing your own Go type, that is
 ## Loading templates
 
 ```go
-env := gojja2.New(gojja2.WithLoader(gojja2.FSLoader{FS: os.DirFS("templates")}))
+env, err := gojja2.New(gojja2.WithLoader(gojja2.FSLoader{FS: os.DirFS("templates")}))
+if err != nil {
+    return err // a configuration New cannot honour: see below
+}
 tmpl, err := env.GetTemplate("page.html")
 ```
 
@@ -191,6 +194,29 @@ both engines report the same `Encountered unknown tag 'do'.` without them.
 
 `a\n{% if 1 %}\nb\n{% endif %}\nc` renders `a\n\nb\n\nc` by default and
 `a\nb\nc` under `WithTrimBlocks(true)`.
+
+## What New refuses
+
+`New` returns an error rather than accepting a configuration it cannot honour.
+There is no environment to use when it does -- it returns `nil` and the error.
+
+| refused | because |
+|---|---|
+| an unknown name in `WithExtensions` | a typo used to be ignored, so the feature you asked for was simply off, and the template said so later by failing on a tag that should have existed |
+| `WithNewlineSequence` outside `"\n"`, `"\r\n"`, `"\r"` | jinja2 asserts the same three; anything else rendered here and raised there |
+| two of the block, variable and comment *opening* strings being equal | a template cannot be read two ways, and guessing which is worse than saying so |
+| a negative `TruncateLeeway` | `truncate` refuses it when it runs, so the environment built and then failed on every render that reached the filter |
+
+Two things that look like they should be refused and are not. An **empty**
+delimiter means "leave this one alone", which is how one can be overridden
+without restating the rest. And a **line-statement or line-comment prefix may
+equal a delimiter** -- `WithLineStatementPrefix("%")` with `%` as the block
+opening is a configuration jinja2 accepts and renders, and so does this.
+
+The delimiter check is stricter than jinja2's in one place. jinja2 writes its
+assertion as `a != b != c`, a chained comparison, so it never compares the
+block opening against the comment one and accepts them being equal. That
+configuration is ambiguous, so it is refused here.
 
 ## Filter policies
 

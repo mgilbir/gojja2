@@ -40,7 +40,7 @@ func TestWithMaxIntBits(t *testing.T) {
 		// like the 2**31 caps it also leaves alone, so it survives.
 		{"WithoutLimits keeps it", []Option{WithoutLimits()}, square, "", "over the 1048576 bit limit"},
 	} {
-		tmpl, err := New(tc.opts...).FromString(tc.src)
+		tmpl, err := mustNew(tc.opts...).FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.name, err)
 			continue
@@ -67,7 +67,7 @@ func TestIntWidthIsStillChargedWhenTheCeilingIsGone(t *testing.T) {
 	const squaringLoop = `{% set ns = namespace(x = 2 ** 500000) %}` +
 		`{% for i in range(40) %}{% set ns.x = ns.x * ns.x %}{% endfor %}DONE`
 
-	tmpl, err := New(
+	tmpl, err := mustNew(
 		WithMaxIntBits(-1),
 		WithMaxOutputBytes(1<<12),
 		WithMaxIterations(1000),
@@ -83,7 +83,7 @@ func TestIntWidthIsStillChargedWhenTheCeilingIsGone(t *testing.T) {
 // The default is the package's, and the engine and the value package agree on
 // what it is.
 func TestIntBitLimitDefaults(t *testing.T) {
-	env := New()
+	env := mustNew()
 	if got := env.maxIntBits; got != value.MaxIntBits {
 		t.Errorf("default maxIntBits = %d, want %d", got, value.MaxIntBits)
 	}

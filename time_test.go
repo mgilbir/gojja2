@@ -7,8 +7,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/mgilbir/gojja2"
 )
 
 // A Go time.Time reaches a template as a datetime, and prints as one: str() is
@@ -23,7 +21,7 @@ import (
 
 func renderTime(t *testing.T, src string, v time.Time) string {
 	t.Helper()
-	tmpl, err := gojja2.New().FromString(src)
+	tmpl, err := mustEnv().FromString(src)
 	if err != nil {
 		t.Fatalf("FromString(%q): %v", src, err)
 	}

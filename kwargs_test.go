@@ -43,7 +43,7 @@ func TestKwargExpansionIsLinear(t *testing.T) {
 
 	render := func(src string) time.Duration {
 		t.Helper()
-		tmpl, err := gojja2.New(gojja2.WithoutLimits()).FromString(src)
+		tmpl, err := mustEnv(gojja2.WithoutLimits()).FromString(src)
 		if err != nil {
 			t.Fatalf("compile %s: %v", src, err)
 		}
@@ -94,7 +94,7 @@ func TestKwargExpansionIsBounded(t *testing.T) {
 		for i := range small {
 			little[fmt.Sprintf("k%07d", i)] = i
 		}
-		env := gojja2.New(gojja2.WithMaxIterations(small + small/2))
+		env := mustEnv(gojja2.WithMaxIterations(small + small/2))
 		if out, err := mustCompile(t, env, `{{ d|length }}`).
 			RenderString(context.Background(), map[string]any{"d": little}); err != nil {
 			t.Fatalf("reaching the mapping alone should fit the bound: %v (%q)", err, out)
@@ -111,7 +111,7 @@ func TestKwargExpansionIsBounded(t *testing.T) {
 	})
 
 	t.Run("interruptible", func(t *testing.T) {
-		tmpl, err := gojja2.New(gojja2.WithoutLimits()).FromString(`{{ dict(**d)|length }}`)
+		tmpl, err := mustEnv(gojja2.WithoutLimits()).FromString(`{{ dict(**d)|length }}`)
 		if err != nil {
 			t.Fatalf("compile: %v", err)
 		}
@@ -134,7 +134,7 @@ func TestKwargExpansionKeepsItsErrors(t *testing.T) {
 		{`{% set l = [1,2] %}{{ l|join(**["db"]) }}`,
 			"argument after ** must be a mapping, not list"},
 	} {
-		tmpl, err := gojja2.New().FromString(tc.src)
+		tmpl, err := mustEnv().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.src, err)
 			continue
@@ -153,7 +153,7 @@ func TestKwargExpansionKeepsItsErrors(t *testing.T) {
 	// A duplicate between two keys of the same expansion cannot arise -- a
 	// mapping has each key once -- so the check is against what was already
 	// merged. Over a name written out, it still fires.
-	tmpl, err := gojja2.New().FromString(`{% macro m() %}{{ kwargs }}{% endmacro %}{{ m(a=1, **{"a": 2}) }}`)
+	tmpl, err := mustEnv().FromString(`{% macro m() %}{{ kwargs }}{% endmacro %}{{ m(a=1, **{"a": 2}) }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestKwargExpansionKeepsItsErrors(t *testing.T) {
 // only has to look at the keywords written out. If the grammar ever grows a
 // second expansion, this fails and the check has to grow with it.
 func TestOnlyOneKeywordExpansion(t *testing.T) {
-	_, err := gojja2.New().FromString(
+	_, err := mustEnv().FromString(
 		`{% macro m() %}{{ kwargs }}{% endmacro %}{{ m(**{"a":1}, **{"b":2}) }}`)
 	if err == nil {
 		t.Fatal("two ** expansions compiled; the merge's duplicate check " +
@@ -181,7 +181,7 @@ func TestOnlyOneKeywordExpansion(t *testing.T) {
 // A Markup key and a plain key of the same text are one entry, as they are in
 // Python, which is the other half of what the merge relies on.
 func TestMarkupKeyIsNotASecondKey(t *testing.T) {
-	tmpl, err := gojja2.New().FromString(
+	tmpl, err := mustEnv().FromString(
 		`{% macro m() %}{{ kwargs }}{% endmacro %}{{ m(**{("a"|safe): 1, "a": 2}) }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)

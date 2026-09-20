@@ -32,7 +32,7 @@ func renderWith(t *testing.T, ctx context.Context, env *gojja2.Environment, src 
 // materialises one. The second reaches no {% for %} at all, so the loop
 // counter alone would not see it.
 func TestIterationBudget(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxIterations(1000))
+	env := mustEnv(gojja2.WithMaxIterations(1000))
 	for _, src := range []string{
 		`{% for i in range(10000000000) %}{% endfor %}`,
 		`{% for i in range(10000000000) if i %}{% endfor %}`,
@@ -50,7 +50,7 @@ func TestIterationBudget(t *testing.T) {
 // TestIterationBudgetAllowsRealTemplates guards the other direction: the bound
 // must not fire on work a template legitimately does.
 func TestIterationBudgetAllowsRealTemplates(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxIterations(1000))
+	env := mustEnv(gojja2.WithMaxIterations(1000))
 	out, err := mustRender(t, env, `{% for i in range(999) %}{{ i }},{% endfor %}`)
 	if err != nil {
 		t.Fatalf("999 iterations should be under a 1000 bound: %v", err)
@@ -83,7 +83,7 @@ func TestBudgetCrossesEveryTemplateBoundary(t *testing.T) {
 		"extends":     `{% for i in range(6) %}{% endfor %}{% extends "parent.txt" %}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New(gojja2.WithMaxIterations(10), gojja2.WithLoader(loader))
+			env := mustEnv(gojja2.WithMaxIterations(10), gojja2.WithLoader(loader))
 			err := renderWith(t, context.Background(), env, src)
 			if !errors.Is(err, gojja2.ErrTooManyIterations) {
 				t.Fatalf("got %v, want ErrTooManyIterations across the %s boundary", err, name)
@@ -132,7 +132,7 @@ func TestCancellationCrossesEveryTemplateBoundary(t *testing.T) {
 		"extends":     `{% extends "base.txt" %}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New(gojja2.WithoutLimits(), gojja2.WithLoader(loader))
+			env := mustEnv(gojja2.WithoutLimits(), gojja2.WithLoader(loader))
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 			defer cancel()
 			start := time.Now()
@@ -150,7 +150,7 @@ func TestCancellationCrossesEveryTemplateBoundary(t *testing.T) {
 // to charge them. Each of these allocated until the machine gave up before the
 // walk itself was charged.
 func TestIterationBudgetCoversCollects(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxIterations(1000))
+	env := mustEnv(gojja2.WithMaxIterations(1000))
 	for name, src := range map[string]string{
 		"star args":     `{% macro m() %}{% endmacro %}{{ m(*range(10000000000)) }}`,
 		"tuple unpack":  `{% set a, b = range(10000000000) %}`,
@@ -171,7 +171,7 @@ func TestIterationBudgetCoversCollects(t *testing.T) {
 // into the AST, every render of that template would run it unbounded. Aliasing
 // it through {% set %} must not lose the budget either.
 func TestBoundMethodKeepsItsBudget(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxIterations(1000))
+	env := mustEnv(gojja2.WithMaxIterations(1000))
 	for name, src := range map[string]string{
 		"direct":           `{% set l = [] %}{{ l.extend(range(10000000000)) }}`,
 		"on a literal":     `{{ [].extend(range(10000000000)) }}`,
@@ -187,7 +187,7 @@ func TestBoundMethodKeepsItsBudget(t *testing.T) {
 }
 
 func TestOutputBudget(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxOutputBytes(4096))
+	env := mustEnv(gojja2.WithMaxOutputBytes(4096))
 	err := renderWith(t, context.Background(), env,
 		`{% for i in range(100000) %}0123456789{% endfor %}`)
 	if !errors.Is(err, gojja2.ErrOutputTooLarge) {
@@ -199,7 +199,7 @@ func TestOutputBudget(t *testing.T) {
 // the writer directly, so a bound that only counted the writer would miss the
 // buffer that actually holds the memory.
 func TestOutputBudgetCountsCaptures(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxOutputBytes(4096))
+	env := mustEnv(gojja2.WithMaxOutputBytes(4096))
 	err := renderWith(t, context.Background(), env,
 		`{% filter upper %}{% for i in range(100000) %}abcdefghij{% endfor %}{% endfilter %}`)
 	if !errors.Is(err, gojja2.ErrOutputTooLarge) {
@@ -216,20 +216,20 @@ func TestRepetitionIsCharged(t *testing.T) {
 		src  string
 		want error
 	}{
-		"string": {gojja2.New(gojja2.WithMaxOutputBytes(4096)),
+		"string": {mustEnv(gojja2.WithMaxOutputBytes(4096)),
 			`{{ "x" * 1000000000 }}`, gojja2.ErrOutputTooLarge},
-		"string, count first": {gojja2.New(gojja2.WithMaxOutputBytes(4096)),
+		"string, count first": {mustEnv(gojja2.WithMaxOutputBytes(4096)),
 			`{{ 1000000000 * "x" }}`, gojja2.ErrOutputTooLarge},
-		"list": {gojja2.New(gojja2.WithMaxIterations(1000)),
+		"list": {mustEnv(gojja2.WithMaxIterations(1000)),
 			`{% set l = [1, 2] * 1000000000 %}`, gojja2.ErrTooManyIterations},
-		"tuple": {gojja2.New(gojja2.WithMaxIterations(1000)),
+		"tuple": {mustEnv(gojja2.WithMaxIterations(1000)),
 			`{% set t = (1, 2) * 1000000000 %}`, gojja2.ErrTooManyIterations},
 		// The count overflows int64 when multiplied by the width, so a
 		// wrapped negative would read as a tiny allocation. Past the
 		// hard ceiling the answer is CPython's own OverflowError rather
 		// than a budget error: the repetition is refused outright, and
 		// no budget large enough to matter exists.
-		"overflowing count": {gojja2.New(gojja2.WithMaxOutputBytes(4096)),
+		"overflowing count": {mustEnv(gojja2.WithMaxOutputBytes(4096)),
 			`{{ "xx" * 9000000000000000000 }}`, errs.OverflowError},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -244,7 +244,7 @@ func TestRepetitionIsCharged(t *testing.T) {
 // there is no render and so no budget. Each of these built its result during
 // FromString, before anyone asked for a render, and took the process with it.
 func TestCompilingDoesNotAllocate(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	for name, src := range map[string]string{
 		"repeat":         `{{ "x" * 1000000000 }}`,
 		"list repeat":    `{{ ([0] * 1000000000)|length }}`,
@@ -289,7 +289,7 @@ func TestSizedAllocationsAreCharged(t *testing.T) {
 		"through format":  {`{% set w = "%1000000s" %}{{ w|format("x") }}`, gojja2.ErrOutputTooLarge},
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New(
+			env := mustEnv(
 				gojja2.WithMaxOutputBytes(4096),
 				gojja2.WithMaxIterations(1000),
 			)
@@ -303,7 +303,7 @@ func TestSizedAllocationsAreCharged(t *testing.T) {
 // TestFoldingStillHappens guards the other direction: declining to fold a huge
 // constant must not stop the optimizer folding ordinary ones.
 func TestFoldingStillHappens(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	out, err := mustRender(t, env, `{{ "ab" * 3 }}{{ 2 + 3 }}{{ [1] * 2 }}`)
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +316,7 @@ func TestFoldingStillHappens(t *testing.T) {
 // TestRepetitionAllowsRealTemplates: padding and separator lines are what
 // repetition is actually for, and must still work.
 func TestRepetitionAllowsRealTemplates(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxOutputBytes(4096), gojja2.WithMaxIterations(1000))
+	env := mustEnv(gojja2.WithMaxOutputBytes(4096), gojja2.WithMaxIterations(1000))
 	out, err := mustRender(t, env, `{{ "-" * 40 }}|{{ ([0] * 3)|length }}`)
 	if err != nil {
 		t.Fatalf("ordinary repetition must not trip a bound: %v", err)
@@ -327,7 +327,7 @@ func TestRepetitionAllowsRealTemplates(t *testing.T) {
 }
 
 func TestContextCancellation(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxIterations(0)) // only the context bounds this
+	env := mustEnv(gojja2.WithMaxIterations(0)) // only the context bounds this
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := renderWith(t, ctx, env, `{% for i in range(10000000000) %}{% endfor %}`)
@@ -337,7 +337,7 @@ func TestContextCancellation(t *testing.T) {
 }
 
 func TestContextDeadline(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxIterations(0))
+	env := mustEnv(gojja2.WithMaxIterations(0))
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	start := time.Now()
@@ -366,7 +366,7 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 // TestRenderStreams: the template writes well past the buffer and then fails.
 // A render that buffered the whole document would hand the writer nothing.
 func TestRenderStreams(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, err := env.FromString(`{% for i in range(8192) %}x{% endfor %}{{ 1/0 }}`)
 	if err != nil {
 		t.Fatal(err)
@@ -382,7 +382,7 @@ func TestRenderStreams(t *testing.T) {
 
 // TestRenderStringIsAllOrNothing: the string form keeps the old contract.
 func TestRenderStringIsAllOrNothing(t *testing.T) {
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, err := env.FromString(`before{{ 1/0 }}`)
 	if err != nil {
 		t.Fatal(err)
@@ -409,7 +409,7 @@ func mustRender(t *testing.T, env *gojja2.Environment, src string) (string, erro
 // short-circuit. `in` over a long sequence is a walk, and a walk that consults
 // neither the budget nor the context is a region nothing can interrupt.
 func TestMembershipIsBounded(t *testing.T) {
-	env := gojja2.New(gojja2.WithMaxIterations(1000))
+	env := mustEnv(gojja2.WithMaxIterations(1000))
 	for name, src := range map[string]string{
 		"list":        `{% set l = range(100000)|list %}{{ -1 in l }}`,
 		"not in list": `{% set l = range(100000)|list %}{{ -1 not in l }}`,
@@ -438,7 +438,7 @@ func TestSustainedFiltersStopWhenCancelled(t *testing.T) {
 		"dictsort": `{{ mapping|dictsort|length }}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New(gojja2.WithoutLimits())
+			env := mustEnv(gojja2.WithoutLimits())
 			tmpl, err := env.FromString(src)
 			if err != nil {
 				t.Fatalf("compile: %v", err)
@@ -487,7 +487,7 @@ func TestRepeatingNothingDoesNotHangTheCompiler(t *testing.T) {
 	} {
 		done := make(chan error, 1)
 		go func() {
-			tmpl, err := gojja2.New().FromString(src)
+			tmpl, err := mustEnv().FromString(src)
 			if err != nil {
 				done <- err
 				return

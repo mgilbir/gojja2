@@ -41,7 +41,7 @@ func TestAttributeIsAnItemLookup(t *testing.T) {
 		{`{{ [[1,2]]|map(attribute="-1")|list }}`, "[Undefined]"},
 		{`{{ ["ab"]|map(attribute=" 1")|list }}`, "[Undefined]"},
 	} {
-		got, err := renderVars(t, New(), tc.src, nil)
+		got, err := renderVars(t, mustNew(), tc.src, nil)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -56,7 +56,7 @@ func TestAttributeIsAnItemLookup(t *testing.T) {
 		{`{{ "ab cd"|max(attribute=true) }}`, "str object has no element True"},
 		{`{{ "ab cd"|max(attribute=[1]) }}`, "str object has no element [1]"},
 	} {
-		_, err := renderVars(t, New(), tc.src, nil)
+		_, err := renderVars(t, mustNew(), tc.src, nil)
 		if err == nil {
 			t.Errorf("%s: rendered; want %q", tc.src, tc.want)
 			continue
@@ -88,7 +88,7 @@ func TestAttrNameMustBeAString(t *testing.T) {
 		// names what actually stopped it.
 		{`{{ "ab"|attr(name=(1,[2])) }}`, "unhashable type: 'list'"},
 	} {
-		_, err := renderVars(t, New(), tc.src, nil)
+		_, err := renderVars(t, mustNew(), tc.src, nil)
 		if err == nil {
 			t.Errorf("%s: rendered; want %q", tc.src, tc.want)
 			continue

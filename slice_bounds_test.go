@@ -7,8 +7,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/mgilbir/gojja2"
 )
 
 // The optional [start[, end]] bounds, graded against CPython.
@@ -72,7 +70,7 @@ func TestSliceBoundsMatchCPython(t *testing.T) {
 		{`"abcdef".startswith(("z", ""), 4, 2)`, "False"},
 		{`"abcdef".startswith(("z", "c"), 2, 4)`, "True"},
 	} {
-		tmpl, err := gojja2.New().FromString("{{ " + tc.expr + " }}")
+		tmpl, err := mustEnv().FromString("{{ " + tc.expr + " }}")
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.expr, err)
 			continue
@@ -97,7 +95,7 @@ func TestInvertedBoundsRaiseForIndex(t *testing.T) {
 		`"abcdef".index("c", 4, 2)`,
 		`"abcdef".index("", 99)`,
 	} {
-		tmpl, err := gojja2.New().FromString("{{ " + expr + " }}")
+		tmpl, err := mustEnv().FromString("{{ " + expr + " }}")
 		if err != nil {
 			t.Errorf("%s: compile: %v", expr, err)
 			continue
@@ -121,7 +119,7 @@ func TestBytesSliceBoundsAgree(t *testing.T) {
 		{`b.count(e, 3, 3)`, "1"},
 		{`b.find(e, 3, 3)`, "3"},
 	} {
-		tmpl, err := gojja2.New().FromString("{{ " + tc.expr + " }}")
+		tmpl, err := mustEnv().FromString("{{ " + tc.expr + " }}")
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.expr, err)
 			continue

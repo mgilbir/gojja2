@@ -18,7 +18,7 @@ import (
 // a comparison of two Nones, and `{{ xs|map(attribute="nope", default=none) }}`
 // from a list of undefineds into a list of Nones.
 func TestAttributeDefaultOfNoneIsNoDefault(t *testing.T) {
-	env := New()
+	env := mustNew()
 	ctx := map[string]any{"rows": []any{
 		map[string]any{"a": 1},
 		map[string]any{},

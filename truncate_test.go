@@ -19,7 +19,7 @@ import (
 // asserts, and the assertion reported a bool as 1 rather than True. The end was
 // stringified, so a list end quietly appended "['z']" instead of failing.
 func TestTruncateArgumentsAreCompared(t *testing.T) {
-	env := New()
+	env := mustNew()
 	ctx := map[string]any{"t": "  the quick brown fox jumps over the lazy dog  "}
 
 	for _, tc := range []struct{ src, want string }{

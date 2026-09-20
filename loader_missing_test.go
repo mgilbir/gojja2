@@ -31,7 +31,7 @@ func TestNoLoaderIsAMisconfiguration(t *testing.T) {
 		`{% import 'nope.txt' as m %}`,
 		`{% from 'nope.txt' import x %}`,
 	} {
-		tmpl, err := gojja2.New().FromString(src)
+		tmpl, err := mustEnv().FromString(src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", src, err)
 			continue
@@ -50,7 +50,7 @@ func TestNoLoaderIsAMisconfiguration(t *testing.T) {
 // With a loader, nothing changes: a template that is genuinely missing is
 // missing, and `ignore missing` still ignores it.
 func TestMissingWithALoaderIsStillMissing(t *testing.T) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.DictLoader(map[string]string{"a": "A"})))
+	env := mustEnv(gojja2.WithLoader(gojja2.DictLoader(map[string]string{"a": "A"})))
 	for _, tc := range []struct{ src, want, wantErr string }{
 		{`A{% include 'nope.txt' ignore missing %}B`, "AB", ""},
 		{`[{% include 'a' %}]`, "[A]", ""},

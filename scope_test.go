@@ -111,7 +111,7 @@ func TestFramesBindingPastTheSlots(t *testing.T) {
 		// Shadowing an outer name from inside a frame that has overflowed.
 		{`{% set x = 1 %}{% with a=1, b=2, c=3, x=9 %}{{ x }}{% endwith %}{{ x }}`, "91"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.src, err)
 			continue
@@ -133,7 +133,7 @@ func TestFramesBindingPastTheSlots(t *testing.T) {
 // context flattens the chain. Either one reading only the map would drop
 // whatever was still in the slots -- which is nearly everything.
 func TestWholeFramesCrossBoundaries(t *testing.T) {
-	env := New(WithLoader(DictLoader(map[string]string{
+	env := mustNew(WithLoader(DictLoader(map[string]string{
 		"inc":    `{{ a }}{{ b }}{{ c }}{{ d }}`,
 		"parent": `{% block b scoped %}{% endblock %}`,
 	})))
@@ -161,7 +161,7 @@ func TestWholeFramesCrossBoundaries(t *testing.T) {
 // An imported template's exports are read out of its context scope directly,
 // so they have to be found wherever that scope put them.
 func TestModuleExportsCrossTheBoundary(t *testing.T) {
-	env := New(WithLoader(DictLoader(map[string]string{
+	env := mustNew(WithLoader(DictLoader(map[string]string{
 		"mod": `{% set a = 1 %}{% set b = 2 %}{% set c = 3 %}{% set d = 4 %}`,
 	})))
 	tmpl, err := env.FromString(`{% import "mod" as m %}{{ m.a }}{{ m.b }}{{ m.c }}{{ m.d }}`)

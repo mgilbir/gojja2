@@ -22,7 +22,7 @@ import (
 // argument that was not written, and an explicit None reaches str.center and is
 // refused. gojja2 took None for "use the default" and centred in 80 columns.
 func TestIntegerArgumentsAreNotOptionalNones(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{`{{ [3,1,2]|sort(none) }}`, "'NoneType' object cannot be interpreted as an integer"},
 		// And it is read after the value has been walked, because

@@ -155,7 +155,7 @@ func TestCaseOperationsAreWiredEverywhere(t *testing.T) {
 		{`{{ "a1b".title() }}`, "A1B"},
 		{`{{ "x-ray"|title }}`, "X-Ray"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.src, err)
 			continue

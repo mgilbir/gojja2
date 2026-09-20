@@ -13,7 +13,7 @@ import "testing"
 // makes the enclosing one accept a caller too, and {% call %} on the outer
 // macro works instead of refusing the argument it was handed.
 func TestCallerCrossesANestedMacro(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{`{% macro mm(x) %}{% macro nn() %}{{ caller() }}{% endmacro %}{% call nn() %}I{% endcall %}{% endmacro %}{% call mm(1) %}B{% endcall %}`, "I"},
 		{`{% macro mm(x) %}{% macro nn() %}{{ caller() }}{% endmacro %}{% endmacro %}{% call mm(1) %}B{% endcall %}`, ""},

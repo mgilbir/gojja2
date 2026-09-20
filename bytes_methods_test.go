@@ -108,7 +108,7 @@ func TestBytesMethodRefusals(t *testing.T) {
 		{`{{ (0.0).fromhex(5) }}`, "bad argument type for built-in operation"},
 		{`{{ (0.0).fromhex("zz") }}`, "invalid hexadecimal floating-point string"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.src, err)
 			continue
@@ -152,7 +152,7 @@ func TestBytesConversions(t *testing.T) {
 
 func checkBytesMethod(t *testing.T, src, want string) {
 	t.Helper()
-	tmpl, err := New().FromString(src)
+	tmpl, err := mustNew().FromString(src)
 	if err != nil {
 		t.Errorf("%s: compile: %v", src, err)
 		return

@@ -118,7 +118,7 @@ func TestARefusedFoldDoesNotPoisonLaterFolds(t *testing.T) {
 	// Trivially foldable, and its value says so.
 	cheap := foldExpr(t, `2 + 3`)
 
-	c := newConstEvaluator(New(), "t", true)
+	c := newConstEvaluator(mustNew(), "t", true)
 	if _, ok := c.tryConstEval(heavy); ok {
 		t.Fatal("the heavy expression folded, so it never exhausts the " +
 			"allowance and this test cannot detect poisoning")
@@ -159,7 +159,7 @@ func foldExpr(t *testing.T, expr string) ast.Expr {
 // one would; the render still has to fail, because the alternative is handing
 // back output that the budget already said could not be produced.
 func TestRenderFailsAfterADroppedRefusal(t *testing.T) {
-	env := New(WithMaxIterations(100))
+	env := mustNew(WithMaxIterations(100))
 	env.AddGlobal("sloppy", Func("sloppy", func(s *State, _ *value.CallArgs) (value.Value, error) {
 		_ = s.Step(1000) // refused, and dropped
 		return value.String("output the budget refused"), nil

@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/conformance"
 )
 
@@ -119,7 +118,7 @@ func TestUnusedContextEntryIsNotConverted(t *testing.T) {
 	small := map[string]any{"title": "t"}
 	large := map[string]any{"title": "t", "unused": big}
 
-	tmpl, err := gojja2.New().FromString(`{{ title }}`)
+	tmpl, err := mustEnv().FromString(`{{ title }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}

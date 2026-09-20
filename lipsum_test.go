@@ -23,7 +23,7 @@ import (
 // The invariants below are the ones the algorithm guarantees, checked over
 // enough paragraphs that a missing rule cannot hide behind the randomness.
 func TestLipsumShape(t *testing.T) {
-	env := New()
+	env := mustNew()
 	tmpl, err := env.FromString(`{{ lipsum(n, html, 40, 60) }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)

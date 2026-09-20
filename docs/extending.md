@@ -13,7 +13,7 @@ without the build noticing.
 ## The four shapes
 
 ```go
-env := gojja2.New()
+env, err := gojja2.New()
 
 env.AddFilter("name", func(s *gojja2.State, v value.Value, args *value.CallArgs) (value.Value, error))
 env.AddTest("name",   func(s *gojja2.State, v value.Value, args *value.CallArgs) (bool, error))

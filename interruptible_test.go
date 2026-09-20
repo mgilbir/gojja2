@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mgilbir/gojja2"
 )
 
 // workload is one filter driven over a sequence of the caller's length.
@@ -211,7 +209,7 @@ const deadlineRuns = 3
 // eighth of it to stop the render well short of finishing.
 func assertYieldsToDeadline(t *testing.T, name string, w workload) {
 	t.Helper()
-	tmpl, err := gojja2.New().FromString(w.src)
+	tmpl, err := mustEnv().FromString(w.src)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -361,7 +359,7 @@ func TestRewordedIterationErrorsKeepTheRealFailure(t *testing.T) {
 			`{{ range(4000000)|last }}`, "is not reversible"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tmpl, err := gojja2.New().FromString(tc.src)
+			tmpl, err := mustEnv().FromString(tc.src)
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
@@ -380,7 +378,7 @@ func TestRewordedIterationErrorsKeepTheRealFailure(t *testing.T) {
 			// cancelled render is refused there instead -- which
 			// would exercise the conversion rather than this
 			// filter's handling of a refusal.
-			big, err := gojja2.New().FromString(tc.big)
+			big, err := mustEnv().FromString(tc.big)
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
