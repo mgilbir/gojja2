@@ -1,0 +1,3 @@
+{}
+---
+{{ "ab".encode().islower() }}|{{ "aB".encode().islower() }}|{{ "1".encode().islower() }}|{{ "".encode().islower() }}|{{ "é".encode().islower() }}

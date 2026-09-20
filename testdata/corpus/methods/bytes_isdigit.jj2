@@ -1,0 +1,3 @@
+{}
+---
+{{ "12".encode().isdigit() }}|{{ "1a".encode().isdigit() }}|{{ "".encode().isdigit() }}|{{ "²".encode().isdigit() }}

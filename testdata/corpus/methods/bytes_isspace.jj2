@@ -1,0 +1,4 @@
+{}
+---
+{{ " 	
+".encode().isspace() }}|{{ "".encode().isspace() }}|{{ "a ".encode().isspace() }}|{{ " ".encode().isspace() }}

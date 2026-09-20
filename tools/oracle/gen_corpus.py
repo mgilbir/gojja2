@@ -2362,6 +2362,92 @@ case("macro/duplicate_parameter", "{% macro m(a, a) %}{{ a }}{% endmacro %}{{ m(
 #
 # Not the lazy-sequence divergence: that is about the map/select/items
 # *filters*, which return generators in jinja2 and lists here on purpose.
+# --- the methods coverage says nothing has ever run ---------------------------
+# Five surfaces a template can reach that no corpus case mentioned. None of
+# them turned out to be wrong, which is worth recording: the point of grading
+# them is that until now nothing could have told.
+
+# bytes classification: only isalpha, isascii and istitle were graded. All of
+# these are ASCII-only, all but isascii are false for the empty bytes, and the
+# non-ASCII bytes of an encoded character are never any class.
+case("methods/bytes_isalnum",
+     '{{ "a1".encode().isalnum() }}|{{ "a b".encode().isalnum() }}|'
+     '{{ "".encode().isalnum() }}|{{ "_".encode().isalnum() }}|'
+     '{{ "\u00e9".encode().isalnum() }}')
+case("methods/bytes_isdigit",
+     '{{ "12".encode().isdigit() }}|{{ "1a".encode().isdigit() }}|'
+     '{{ "".encode().isdigit() }}|{{ "\u00b2".encode().isdigit() }}')
+case("methods/bytes_isspace",
+     '{{ " \t\n".encode().isspace() }}|{{ "".encode().isspace() }}|'
+     '{{ "a ".encode().isspace() }}|{{ "\u00a0".encode().isspace() }}')
+case("methods/bytes_islower",
+     '{{ "ab".encode().islower() }}|{{ "aB".encode().islower() }}|'
+     '{{ "1".encode().islower() }}|{{ "".encode().islower() }}|'
+     '{{ "\u00e9".encode().islower() }}')
+case("methods/bytes_isupper",
+     '{{ "AB".encode().isupper() }}|{{ "Ab".encode().isupper() }}|'
+     '{{ "1".encode().isupper() }}|{{ "".encode().isupper() }}')
+
+# dict.setdefault returns what is already there and only stores when nothing
+# is, and its own default default is None.
+case("methods/dict_setdefault",
+     "{% set d = {'a': 1} %}{{ d.setdefault('a', 9) }}|{{ d.setdefault('b', 2) }}|"
+     "{{ d }}|{{ d.setdefault('c') }}|{{ d }}")
+case("errors/dict_setdefault_no_args", "{% set d = {} %}{{ d.setdefault() }}")
+
+# list.remove drops the first equal element, returns None, and raises for one
+# that is not there.
+case("methods/list_remove",
+     "{% set l = [1, 2, 1] %}{{ l.remove(1) }}|{{ l }}|{{ l.remove(1) }}|{{ l }}")
+case("errors/list_remove_missing", "{% set l = [1] %}{{ l.remove(9) }}")
+case("errors/list_remove_no_args", "{% set l = [] %}{{ l.remove() }}")
+
+# truncate past its length check slices the value and then either splits it or
+# adds the end to it, so a non-string gets that far and fails on one of those
+# rather than on being the wrong kind of input -- and with an end its own kind,
+# succeeds.
+case("methods/truncate_list_killwords",
+     "{{ [1,2,3,4,5,6,7,8,9,10]|truncate(2, true, [0], 0) }}")
+case("errors/truncate_list_end_is_a_string",
+     "{{ [1,2,3,4,5,6,7,8,9,10]|truncate(2, true, '', 0) }}")
+case("errors/truncate_tuple_end_is_a_string",
+     "{{ (1,2,3,4,5,6,7,8,9,10)|truncate(3, true, '', 0) }}")
+case("errors/truncate_list_not_killwords",
+     "{{ [1,2,3,4,5,6,7,8,9,10]|truncate(2, false, '', 0) }}")
+case("errors/truncate_range", "{{ range(10)|truncate(2, true, '', 0) }}")
+case("errors/truncate_int", "{{ 1234567890|truncate(2, true, '', 0) }}")
+case("errors/truncate_dict", "{{ {'a':1,'b':2,'c':3}|truncate(1, true, '', 0) }}")
+# The cut itself was a second implementation of the evaluator's slice, and it
+# had drifted the way the folder's copy once did: it asked for a sequence and
+# handed back anything else untouched. A bytes has no sequence, so it came back
+# whole and the end was appended to all of it -- a wrong answer rather than an
+# error. A dict has none either, so the failure came from the `+` afterwards
+# and said the wrong thing; `s[:n]` on a mapping is a slice used as a key.
+case("methods/truncate_bytes_killwords",
+     "{{ 'abcdefghij'.encode()|truncate(2, true, 'x'.encode(), 0) }}")
+case("methods/truncate_tuple_killwords",
+     "{{ (1,2,3,4,5,6,7,8,9,10)|truncate(2, true, (0,), 0) }}")
+case("errors/truncate_dict_end_is_a_list",
+     "{{ {'a':1,'b':2,'c':3}|truncate(1, true, [0], 0) }}")
+case("errors/truncate_range_end_is_a_list",
+     "{{ range(10)|truncate(2, true, [0], 0) }}")
+case("errors/truncate_range_end_is_a_range",
+     "{{ range(10)|truncate(2, true, range(1), 0) }}")
+case("errors/truncate_list_end_is_a_tuple",
+     "{{ [1,2,3,4,5,6,7,8,9,10]|truncate(2, true, (0,), 0) }}")
+case("errors/truncate_tuple_end_is_a_list",
+     "{{ (1,2,3,4,5,6,7,8,9,10)|truncate(2, true, [0], 0) }}")
+
+# int() and float() read Python's own numeric text, which allows a single
+# underscore between two digits and nowhere else. A string the rule rejects is
+# not an error: the filters fall back on their default.
+case("methods/int_float_underscores",
+     '{{ "1_000"|int }}|{{ "1_"|int }}|{{ "_1"|int }}|{{ "1__0"|int }}|'
+     '{{ "1_0.5"|float }}|{{ " 1_0 "|int }}|{{ "1_000_000"|int }}|{{ "1_0e1_0"|float }}')
+case("methods/int_underscores_with_base",
+     '{{ "1_f"|int(0,16) }}|{{ "0x_1f"|int(0,16) }}|{{ "a_b"|int(0,16) }}|'
+     '{{ "1_0"|int(0,2) }}|{{ "0b_1_0"|int(0,0) }}')
+
 case("methods/dict_view_reprs", "{% set d = {'b': 2, 'a': 1} %}{{ d.keys() }}|{{ d.values() }}|{{ d.items() }}")
 case("methods/dict_view_is_not_a_sequence",
      "{% set d = {'b': 2, 'a': 1} %}{{ d.keys() is sequence }}|{{ d.keys() is iterable }}|{{ d.keys()[0] }}|{{ d.keys()|length }}")
