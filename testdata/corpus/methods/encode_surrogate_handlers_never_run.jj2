@@ -1,0 +1,3 @@
+{}
+---
+{{ 'é'.encode('utf-8','surrogateescape') }}|{{ 'é'.encode('utf-8','surrogatepass') }}

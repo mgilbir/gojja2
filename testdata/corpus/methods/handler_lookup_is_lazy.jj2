@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.encode('ascii','nosuch') }}|{{ 'abc'.encode().decode('utf-8','nosuch') }}

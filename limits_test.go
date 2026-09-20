@@ -240,6 +240,58 @@ func TestRepetitionIsCharged(t *testing.T) {
 	}
 }
 
+// TestCodecExpansionIsCharged: a decode can hand back more bytes than it was
+// given -- a latin-1 byte above 0x7f becomes two of UTF-8, U+FFFD is three,
+// and a backslash escape is four -- and an encode's escaping handlers do the
+// same in the other direction, since U+0080 is two bytes of UTF-8 and
+// "&#128;" is six.
+//
+// Both charged the length of their *input*, under a comment on the encode side
+// that claimed otherwise. A result that is only bound to a name never reaches
+// the writer, so nothing else charged it either: a template could hold several
+// times its budget in one string.
+func TestCodecExpansionIsCharged(t *testing.T) {
+	// Chosen by measurement, not by arithmetic: every case below renders
+	// on a budget of 6001 when the codecs charge their input's length, and
+	// none of them renders on 9000 when they charge what they can produce.
+	// A budget between the two is what tells the second from the first --
+	// on 4096 the input alone would exhaust it and every case would pass
+	// for the wrong reason.
+	const codecBudget = 8000
+
+	// 3000 bytes in and 6000 or more back: over the budget, while the input
+	// alone is comfortably under it.
+	for name, src := range map[string]string{
+		"latin-1 doubles":                 `{% set s = ("\u00e9" * 1500).encode().decode("latin-1") %}`,
+		"replace triples":                 `{% set s = ((255).to_bytes(1,"big") * 3000).decode("utf-8", "replace") %}`,
+		"backslashreplace quadruples":     `{% set s = ((255).to_bytes(1,"big") * 3000).decode("utf-8", "backslashreplace") %}`,
+		"xmlcharrefreplace expands":       `{% set b = ("\u0080" * 1500).encode("ascii", "xmlcharrefreplace") %}`,
+		"encode backslashreplace expands": `{% set b = ("\u0080" * 1500).encode("ascii", "backslashreplace") %}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := mustEnv(gojja2.WithMaxOutputBytes(codecBudget))
+			if err := renderWith(t, context.Background(), env, src); !errors.Is(err, gojja2.ErrOutputTooLarge) {
+				t.Errorf("%s: got %v, want ErrOutputTooLarge", src, err)
+			}
+		})
+	}
+	// The same shapes inside the budget still render, so the charge is not
+	// simply refusing everything that passes through a codec.
+	for name, src := range map[string]string{
+		"latin-1":           `{% set s = ("\u00e9" * 100).encode().decode("latin-1") %}`,
+		"replace":           `{% set s = ((255).to_bytes(1,"big") * 100).decode("utf-8", "replace") %}`,
+		"backslashreplace":  `{% set s = ((255).to_bytes(1,"big") * 100).decode("utf-8", "backslashreplace") %}`,
+		"xmlcharrefreplace": `{% set b = ("\u0080" * 100).encode("ascii", "xmlcharrefreplace") %}`,
+	} {
+		t.Run(name+", within budget", func(t *testing.T) {
+			env := mustEnv(gojja2.WithMaxOutputBytes(codecBudget))
+			if err := renderWith(t, context.Background(), env, src); err != nil {
+				t.Errorf("%s: %v", src, err)
+			}
+		})
+	}
+}
+
 // TestCompilingDoesNotAllocate: constant folding runs at compile time, where
 // there is no render and so no budget. Each of these built its result during
 // FromString, before anyone asked for a render, and took the process with it.

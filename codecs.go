@@ -91,6 +91,14 @@ func encodeString(s, codec, handler string) ([]byte, error) {
 			out = append(out, fmt.Sprintf("&#%d;", r)...)
 		case "backslashreplace":
 			out = append(out, charEscape(r)...)
+		case "surrogateescape", "surrogatepass":
+			// Both exist to carry a lone surrogate through, and
+			// fall back on strict for anything else. A Go string
+			// holds no surrogates, so "anything else" is every
+			// character that can reach here.
+			return nil, errs.New(errs.UnicodeEncodeError,
+				"'%s' codec can't encode character '%s' in position %d: ordinal not in range(%d)",
+				codec, charEscape(r), pos, limit)
 		default:
 			return nil, errs.New(errs.LookupError,
 				"unknown error handler name '%s'", handler)
@@ -125,7 +133,7 @@ func decodeBytes(st *State, b []byte, codec, handler string) (string, error) {
 				out.WriteByte(c)
 				continue
 			}
-			if err := decodeError(&out, handler, func() error {
+			if err := decodeError(&out, handler, b[pos:pos+1], func() error {
 				return errs.New(errs.UnicodeDecodeError,
 					"'ascii' codec can't decode byte 0x%02x in position %d: ordinal not in range(128)",
 					c, pos)
@@ -149,7 +157,7 @@ func decodeBytes(st *State, b []byte, codec, handler string) (string, error) {
 		// One error covers `bad` bytes, so one replacement character
 		// stands for all of them and the walk resumes past the lot.
 		start, end := i, i+bad
-		if err := decodeError(&out, handler, func() error {
+		if err := decodeError(&out, handler, b[start:end], func() error {
 			if bad == 1 {
 				return errs.New(errs.UnicodeDecodeError,
 					"'utf-8' codec can't decode byte 0x%02x in position %d: %s",
@@ -270,9 +278,19 @@ func utf8Step(b []byte, i int) (r rune, size int, reason string, bad int) {
 	return 0, 0, utf8InvalidStart, 1
 }
 
-// decodeError applies the handler to one undecodable byte, writing whatever it
-// substitutes and returning an error only for "strict".
-func decodeError(out *strings.Builder, handler string, strict func() error) error {
+// decodeError applies the handler to one undecodable run of bytes, writing
+// whatever it substitutes and returning an error only for "strict".
+//
+// The run is the unit and not the byte. CPython calls the handler once per
+// error with the whole range the error covers, so "replace" writes a single
+// U+FFFD for a truncated sequence however long it was, and "backslashreplace"
+// writes one \xNN for each byte of it.
+//
+// Two of CPython's handlers are encode-only -- its callback looks for a
+// UnicodeEncodeError and refuses anything else by type -- and two more answer
+// with a lone surrogate, which a Go string cannot hold; see
+// docs/divergences.md for the second pair.
+func decodeError(out *strings.Builder, handler string, bad []byte, strict func() error) error {
 	switch handler {
 	case "strict":
 		return strict()
@@ -281,7 +299,19 @@ func decodeError(out *strings.Builder, handler string, strict func() error) erro
 	case "replace":
 		out.WriteRune(utf8.RuneError)
 		return nil
+	case "backslashreplace":
+		// A byte is below 0x100, so charEscape always answers the
+		// \xNN form here -- the same escape the encode side writes.
+		for _, c := range bad {
+			out.WriteString(charEscape(rune(c)))
+		}
+		return nil
+	case "xmlcharrefreplace", "namereplace":
+		return errs.New(errs.TypeError,
+			"don't know how to handle UnicodeDecodeError in error callback")
 	default:
+		// Including "surrogateescape" and "surrogatepass", which
+		// CPython has and gojja2 cannot represent.
 		return errs.New(errs.LookupError, "unknown error handler name '%s'", handler)
 	}
 }
@@ -318,14 +348,48 @@ func codecArgs(args *value.CallArgs, method string) (codec, handler string, err 
 	return codec, handler, nil
 }
 
+// encodeExpansion and decodeExpansion are how much longer than its input a
+// codec can make its result. The budget is charged before the work, so it has
+// to be charged for the largest the pair can produce:
+//
+//	encode  xmlcharrefreplace turns U+0080 -- two bytes of UTF-8 -- into the
+//	        six of "&#128;", and backslashreplace into the six of a u escape
+//	decode  a latin-1 byte above 0x7f becomes two bytes of UTF-8, U+FFFD is
+//	        three, and a backslash escape is four
+//
+// Four is the widest of those, and only an input already past half the 2**31
+// ceiling can notice the difference between four and the exact ratio.
+const codecMaxExpansion = 4
+
+func encodeExpansion(handler string) int64 {
+	switch handler {
+	case "xmlcharrefreplace", "backslashreplace":
+		return codecMaxExpansion
+	}
+	return 1
+}
+
+func decodeExpansion(codec, handler string) int64 {
+	if codec == "latin-1" {
+		return 2
+	}
+	switch handler {
+	case "replace", "backslashreplace":
+		return codecMaxExpansion
+	}
+	return 1
+}
+
 func methodEncode(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	codec, handler, err := codecArgs(args, "encode")
 	if err != nil {
 		return value.Undefined, err
 	}
-	// An escaping handler can make the result longer than the input, so the
-	// size is charged rather than assumed.
-	if err := s.ChargeBytes(int64(len(r.AsString()))); err != nil {
+	// An escaping handler makes the result longer than the input -- U+0080
+	// is two bytes and "&#128;" is six -- so what is charged is the largest
+	// this pair can produce, not the input's own length. The comment here
+	// said that for some time while the arithmetic did not.
+	if err := s.ChargeBytes(int64(len(r.AsString())) * encodeExpansion(handler)); err != nil {
 		return value.Undefined, err
 	}
 	out, err := encodeString(r.AsString(), codec, handler)
@@ -341,7 +405,7 @@ func methodDecode(s *State, r value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, err
 	}
 	raw := []byte(r.AsString())
-	if err := s.ChargeBytes(int64(len(raw))); err != nil {
+	if err := s.ChargeBytes(int64(len(raw)) * decodeExpansion(codec, handler)); err != nil {
 		return value.Undefined, err
 	}
 	out, err := decodeBytes(s, raw, codec, handler)

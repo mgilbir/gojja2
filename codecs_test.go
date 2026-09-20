@@ -42,6 +42,23 @@ func TestEncodeDecodeCodecs(t *testing.T) {
 		{`{{ "é".encode().decode("latin-1") }}`, `Ã©`},
 		// The bytes are unchanged by how they are described.
 		{`{{ "héllo wörld".encode()|length }}|{{ "héllo wörld"|length }}`, `13|11`},
+		// backslashreplace goes both ways, and on a decode it writes
+		// one escape per byte of the error -- so a truncated sequence,
+		// which is one error, still gets an escape each.
+		{`{{ (255).to_bytes(1,'big').decode('utf-8','backslashreplace') }}`, `\xff`},
+		{`{{ ((240).to_bytes(1,'big') + (159).to_bytes(1,'big')).decode('utf-8','backslashreplace') }}`,
+			`\xf0\x9f`},
+		{`{{ "é".encode().decode('ascii','backslashreplace') }}`, `\xc3\xa9`},
+		// surrogateescape and surrogatepass exist to carry a lone
+		// surrogate. Encoding a Go string never produces one, so both
+		// fall back on strict exactly as CPython's do -- which is the
+		// half of the pair gojja2 can answer.
+		{`{{ "é".encode("utf-8", "surrogateescape") }}`, `b'\xc3\xa9'`},
+		{`{{ "é".encode("utf-8", "surrogatepass") }}`, `b'\xc3\xa9'`},
+		// The handler is looked up only when there is an error to give
+		// it, so a name nobody has heard of is fine until then.
+		{`{{ "abc".encode("ascii", "nosuch") }}`, `b'abc'`},
+		{`{{ "abc".encode().decode("utf-8", "nosuch") }}`, `abc`},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {
@@ -78,6 +95,29 @@ func TestEncodeDecodeCodecs(t *testing.T) {
 		// answered in some other encoding; see docs/divergences.md.
 		{`{{ "é".encode("cp1252") }}`, errs.LookupError, "unknown encoding: cp1252"},
 		{`{{ "é".encode("bogus") }}`, errs.LookupError, "unknown encoding: bogus"},
+		// xmlcharrefreplace and namereplace are declared for an encode,
+		// and CPython's callback refuses a UnicodeDecodeError by type
+		// rather than by name -- so this is a TypeError there too, and
+		// not the LookupError an unregistered name gets.
+		{`{{ (255).to_bytes(1,'big').decode("utf-8", "xmlcharrefreplace") }}`, errs.TypeError,
+			"don't know how to handle UnicodeDecodeError in error callback"},
+		{`{{ (255).to_bytes(1,'big').decode("utf-8", "namereplace") }}`, errs.TypeError,
+			"don't know how to handle UnicodeDecodeError in error callback"},
+		// The two handlers gojja2 does not have, and the one encode
+		// handler it does not have. All three are in
+		// docs/divergences.md; asserting them here is what stops the
+		// refusal quietly turning into a wrong answer.
+		{`{{ (255).to_bytes(1,'big').decode("utf-8", "surrogateescape") }}`, errs.LookupError,
+			"unknown error handler name 'surrogateescape'"},
+		{`{{ (255).to_bytes(1,'big').decode("utf-8", "surrogatepass") }}`, errs.LookupError,
+			"unknown error handler name 'surrogatepass'"},
+		{`{{ "é".encode("ascii", "namereplace") }}`, errs.LookupError,
+			"unknown error handler name 'namereplace'"},
+		// And a name that is not a handler at all, in both directions.
+		{`{{ "é".encode("ascii", "nosuch") }}`, errs.LookupError,
+			"unknown error handler name 'nosuch'"},
+		{`{{ (255).to_bytes(1,'big').decode("utf-8", "nosuch") }}`, errs.LookupError,
+			"unknown error handler name 'nosuch'"},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {
