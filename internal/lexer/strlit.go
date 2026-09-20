@@ -155,17 +155,34 @@ func unicodeEscapeDecode(s string) (string, error) {
 
 		case c == 'N':
 			// Named code points need the full Unicode name database,
-			// which gojja2 does not carry. Malformed spellings still
-			// get CPython's message; a well-formed name is reported
-			// as unknown. See docs/divergences.md.
+			// which gojja2 does not carry. A malformed spelling is
+			// wrong under CPython too, so it gets CPython's own
+			// message; see docs/divergences.md.
 			if i+1 >= len(s) || s[i+1] != '{' {
 				return "", errs.New(errs.TemplateSyntaxError, `malformed \N character escape`)
 			}
 			end := strings.IndexByte(s[i+1:], '}')
-			if end < 0 {
+			// An empty name is malformed to CPython, while anything
+			// at all between the braces is a name it looks up --
+			// even a single space, which is "unknown" and not
+			// "malformed". So the two are split exactly there.
+			// end indexes from the brace, so the name is end-1 long
+			// and an empty one puts the closing brace at 1.
+			if end < 2 {
 				return "", errs.New(errs.TemplateSyntaxError, `malformed \N character escape`)
 			}
-			return "", errs.New(errs.TemplateSyntaxError, "unknown Unicode character name")
+			// A well-formed one is not. CPython's message there is
+			// "unknown Unicode character name", which is its answer
+			// for a name that does not exist -- and this refuses
+			// every name, including the 32,647 real ones. Borrowing
+			// the wording sent readers hunting a typo that was not
+			// there, so this says which of the two it is.
+			return "", errs.New(errs.TemplateSyntaxError,
+				`\N{%s} needs the Unicode name database, which gojja2 does `+
+					`not carry; every \N{...} is refused, including a `+
+					`correct name. Spell the character with \uNNNN or `+
+					`\UNNNNNNNN, both of which are exact`,
+				s[i+2:i+1+end])
 
 		default:
 			// Not an escape at all: the backslash is literal.

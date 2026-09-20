@@ -1,0 +1,16 @@
+{
+  "case": "errors/n_escape_malformed_empty.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateSyntaxError",
+    "message": "malformed \\N character escape",
+    "lineno": 1,
+    "name": "errors/n_escape_malformed_empty.jj2"
+  }
+}
