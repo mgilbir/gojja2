@@ -75,6 +75,12 @@ type Environment struct {
 	maxIterations  int64
 	maxOutputBytes int64
 
+	// unsupportedLeniency and unsupportedReport decide what compiling a
+	// template does about a construct gojja2 cannot honour the way jinja2
+	// does. See unsupported.go.
+	unsupportedLeniency UnsupportedLeniency
+	unsupportedReport   func(Unsupported)
+
 	// maxIntBits bounds the width of an integer an expression computes.
 	// Unlike the others it is a conformance question as much as a safety
 	// one -- CPython computes what this refuses -- which is why it is
@@ -880,6 +886,13 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	if berr != nil {
 		return nil, berr
 	}
+	// After the fold, so a handler spelled as constant pieces is a literal
+	// by now, and last, so a template that is broken outright says so
+	// before it is told about a construct that merely diverges.
+	found := findUnsupported(tree.Body, source, name)
+	if uerr := e.reportUnsupported(found, name, source); uerr != nil {
+		return nil, uerr
+	}
 	return &Template{
 		env:          e,
 		name:         name,
@@ -888,6 +901,7 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 		tree:         tree,
 		blocks:       blocks,
 		countsChunks: hasFilterBlock(tree.Body),
+		unsupported:  found,
 	}, nil
 }
 

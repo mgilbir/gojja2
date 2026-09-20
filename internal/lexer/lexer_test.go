@@ -176,6 +176,23 @@ func expectedToken(t *testing.T, row []json.RawMessage) string {
 	return fmt.Sprintf("%d %s %q", line, name, text)
 }
 
+// divergentMessages are lexer errors gojja2 words differently from jinja2 on
+// purpose, keyed by the source that produces one. The exception class and the
+// line still have to match; only the sentence differs, and the value here is
+// what gojja2's must contain.
+//
+// This is an admission, not a waiver, and it works like
+// testdata/known_failures.txt: a case listed here that starts matching jinja2
+// exactly fails the test, so the list can only shrink deliberately.
+var divergentMessages = map[string]string{
+	// jinja2 says "unknown Unicode character name", which is its answer for
+	// a name that does not exist. gojja2 carries no name database at all,
+	// so it refuses every \N{...}, DASH included -- and borrowing that
+	// wording sent readers hunting a typo that was not there. See
+	// docs/divergences.md.
+	`{{ "\N{DASH}" }}`: `needs the Unicode name database`,
+}
+
 func TestLexerMatchesJinja2(t *testing.T) {
 	cases := loadLexCorpus(t)
 	errorCases := 0
@@ -203,7 +220,16 @@ func TestLexerMatchesJinja2(t *testing.T) {
 				if got := errs.KindOf(err).String(); got != c.Err {
 					t.Errorf("error class: got %s, jinja2 raises %s", got, c.Err)
 				}
-				if err.Error() != c.Msg {
+				if want, deliberate := divergentMessages[c.Src]; deliberate {
+					if err.Error() == c.Msg {
+						t.Errorf("this now matches jinja2 exactly; "+
+							"drop it from divergentMessages:\n  %s", err.Error())
+					} else if !strings.Contains(err.Error(), want) {
+						t.Errorf("the deliberate divergence does not say what it "+
+							"should:\n  gojja2: %s\n  wanted to contain: %s",
+							err.Error(), want)
+					}
+				} else if err.Error() != c.Msg {
 					t.Errorf("error message:\n  gojja2: %s\n  jinja2: %s", err.Error(), c.Msg)
 				}
 				var e *errs.Error
@@ -251,5 +277,16 @@ func TestLexerMatchesJinja2(t *testing.T) {
 			}
 		})
 	}
-	t.Logf("checked %d lexer cases", len(cases))
+	seen := make(map[string]bool, len(cases))
+	for _, c := range cases {
+		seen[c.Src] = true
+	}
+	for src := range divergentMessages {
+		if !seen[src] {
+			t.Errorf("divergentMessages lists a source the corpus no longer "+
+				"has, so nothing checks it: %s", src)
+		}
+	}
+	t.Logf("checked %d lexer cases, %d of them deliberate divergences",
+		len(cases), len(divergentMessages))
 }

@@ -1448,6 +1448,25 @@ case("errors/encode_ascii_position", "{{ 'a\u00e9b'.encode('ascii') }}")
 case("errors/encode_latin1_range", "{{ '\u20ac'.encode('latin-1') }}")
 case("errors/decode_ascii_range", "{{ '\u00e9'.encode().decode('ascii') }}")
 
+# --- where a \N escape is malformed rather than merely unknown ----------------
+# gojja2 carries no Unicode name database, so every well-formed \N{...} is
+# refused -- that is in docs/divergences.md and asserted in strlit_test.go. The
+# *malformed* spellings are a different thing: they are wrong under CPython too,
+# so the two agree and these grade that they keep agreeing.
+#
+# The boundary is exact and not obvious. An empty name is malformed; anything at
+# all between the braces is a name CPython looks up, including a single space,
+# which is "unknown" and not "malformed". gojja2 split the two one character off
+# and called `\N{}` unknown.
+for _n, _esc in [
+    ("empty", r"\N{}"),
+    ("empty_then_brace", r"\N{}}"),
+    ("no_closing_brace", r"\N{BULLET"),
+    ("no_brace_at_all", r"\N"),
+    ("followed_by_text", r"\NX"),
+]:
+    case("errors/n_escape_malformed_" + _n, '{{ "' + _esc + '" }}')
+
 # --- which error handler belongs to which direction ---------------------------
 # The handlers are not one set. xmlcharrefreplace and namereplace are declared
 # for an encode and CPython's callback refuses a UnicodeDecodeError by type, so

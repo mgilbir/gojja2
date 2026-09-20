@@ -222,15 +222,38 @@ branch.
 {{ "\N{BULLET}" }}
 ```
 
-Resolving a code point by its Unicode name needs the full name database, which
-Go's standard library does not carry and which is not worth a megabyte of
-generated tables for a construct no real template uses.
+Resolving a code point by its Unicode name needs the full name database: 32,647
+stored names, about 500 KB once word-compressed, which is roughly two and a half
+times every generated table gojja2 carries put together and about 7% onto every
+binary that imports it. `golang.org/x/text/unicode/runenames` does not help --
+it costs more still, returns `<CJK Ideograph>` where CPython computes
+`CJK UNIFIED IDEOGRAPH-4E00`, and tracks a different Unicode version, so it
+disagrees with CPython about 104,025 code points. Across the ten upstream
+projects the corpora are drawn from, `\N{` appears twice, both times inside
+Jinja's own test suite.
 
-gojja2 reports `unknown Unicode character name` for any `\N{...}`, and CPython's
-own `malformed \N character escape` for a malformed one. Every other escape --
-`\xNN`, `\uNNNN`, `\UNNNNNNNN`, octal, and the single-character escapes -- is
-exact, including CPython's quirk that `"\é"` decodes to the four characters
-`\xe9`.
+So gojja2 refuses every `\N{...}`, and **says that** rather than borrowing
+CPython's wording:
+
+```
+\N{BULLET} needs the Unicode name database, which gojja2 does not carry;
+every \N{...} is refused, including a correct name. Spell the character
+with \uNNNN or \UNNNNNNNN, both of which are exact
+```
+
+CPython's own message there is `unknown Unicode character name`, which is its
+answer for a name that does not *exist*. `BULLET` exists, so borrowing the
+wording sent readers hunting a typo that was not there.
+
+A **malformed** escape is wrong under CPython too, so that one keeps CPython's
+`malformed \N character escape` exactly. The boundary between the two is not
+where it looks: an empty name is malformed, while anything at all between the
+braces is a name, including a single space. `testdata/corpus/errors/n_escape_malformed_*`
+grades it.
+
+Every other escape -- `\xNN`, `\uNNNN`, `\UNNNNNNNN`, octal, and the
+single-character escapes -- is exact, including CPython's quirk that `"\é"`
+decodes to the four characters `\xe9`.
 
 ### Which codecs and error handlers `.encode()` and `.decode()` know
 
@@ -288,6 +311,39 @@ answer, and substituting anything else would be the silent wrong one. On an
 encode the question never arises, because no character that reaches the encoder
 is a surrogate -- which is exactly when CPython's own handlers fall back on
 `strict`, so that direction matches.
+
+#### These three are found when the template compiles
+
+An error handler is looked up only when a character actually needs it. CPython
+works that way and gojja2 matches, which makes these three the *latent* kind of
+divergence: a template naming one compiles, renders, passes its tests, and
+raises the first time a payload reaches the handler.
+`.encode("ascii", "namereplace")` is fine for every ASCII string and fails on
+the first accented letter; `.decode("utf-8", "surrogateescape")` is fine for
+every well-formed input and fails on the first malformed byte, which is the
+moment nobody wants a surprise.
+
+So compiling a template looks for them and puts what it finds on
+[`Template.Unsupported`](extending.md), whether or not anyone asked:
+
+```go
+tmpl, err := env.GetTemplate("page.html")
+for _, u := range tmpl.Unsupported() {
+    log.Printf("%s:%d: %s", u.Template, u.Line, u.Error())
+}
+```
+
+`WithUnsupportedReport` routes each finding somewhere as it is found -- gojja2
+has no logger of its own and writes to no stream -- and
+`WithUnsupportedLeniency(RefuseUnsupported)` makes it a compile error instead,
+so the template cannot reach production carrying a failure only some inputs
+show. Reporting is the default: refusing would reject a template that works
+today, having never handed its handler anything to do.
+
+The check reads the handler where a template writes one -- positionally, as
+`errors=`, or assembled from constants, since it runs after folding. A handler
+that is genuinely dynamic, `s.encode("ascii", h)`, is not guessed at; that one
+still surfaces as the `LookupError` it always did.
 
 ## Where the answer was never reproducible
 
