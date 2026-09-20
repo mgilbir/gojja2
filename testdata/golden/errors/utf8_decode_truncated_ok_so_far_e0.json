@@ -1,0 +1,14 @@
+{
+  "case": "errors/utf8_decode_truncated_ok_so_far_e0.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "UnicodeDecodeError",
+    "message": "'utf-8' codec can't decode bytes in position 0-1: unexpected end of data"
+  }
+}

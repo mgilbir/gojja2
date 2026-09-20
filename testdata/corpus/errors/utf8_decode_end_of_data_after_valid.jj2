@@ -1,0 +1,3 @@
+{}
+---
+{{ ((195).to_bytes(1,'big') + (169).to_bytes(1,'big') + (240).to_bytes(1,'big') + (159).to_bytes(1,'big')).decode() }}
