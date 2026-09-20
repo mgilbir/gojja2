@@ -1,0 +1,3 @@
+{}
+---
+{{ '\ta\tb\tc\t'.encode().rsplit() }}

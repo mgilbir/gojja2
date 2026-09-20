@@ -1,0 +1,3 @@
+{}
+---
+{{ '  spaced  out  words  here  '.encode().rsplit(none, 0) }}
