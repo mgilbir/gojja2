@@ -49,6 +49,12 @@ type exec struct {
 	blockIndex int
 	// loop is the innermost `loop` value, for recursive loop() calls.
 	loop value.Value
+	// chunks counts the pieces written into this frame's output, which is
+	// what jinja2's concat numbers when one of them is not a string. It is
+	// a pointer because child shares a frame's output by copying the exec:
+	// a loop body writing into its parent's stream has to advance the
+	// parent's count, not a copy of it.
+	chunks *int
 }
 
 // Loop control travels as sentinel errors, which keeps the happy path free of
@@ -72,6 +78,10 @@ func (ex *exec) capture(sc *scope, fn func(*exec) error) (string, error) {
 	sub := *ex
 	sub.sc = sc
 	sub.out = &buf
+	sub.chunks = nil
+	if ex.chunks != nil {
+		sub.chunks = new(int)
+	}
 	if err := fn(&sub); err != nil {
 		return "", err
 	}
@@ -91,11 +101,24 @@ func (ex *exec) captureFunction(sc *scope, fn func(*exec) error) (string, error)
 // budget first. Every byte a template produces goes through here.
 func (ex *exec) write(s string) error { return ex.writeTo(ex.out, s) }
 
+// chunkCount is how many pieces this frame's output already holds.
+func (ex *exec) chunkCount() int {
+	if ex.chunks == nil {
+		return 0
+	}
+	return *ex.chunks
+}
+
 // writeTo is write aimed somewhere other than this frame's output, which only
 // a context-free {% include %} needs.
 func (ex *exec) writeTo(w writer, s string) error {
 	if err := ex.st.budget.account(len(s)); err != nil {
 		return err
+	}
+	// The nil check first: it is almost always nil, and comparing two
+	// interface values is not free on a path that runs once per write.
+	if ex.chunks != nil && w == ex.out {
+		*ex.chunks++
 	}
 	_, err := w.WriteString(s)
 	return err
@@ -286,6 +309,59 @@ func bodyRetainsScope(body []ast.Stmt) bool {
 			}
 		case *ast.AutoescapeBlock:
 			if bodyRetainsScope(n.Body) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasFilterBlock reports whether body contains a {% filter %} anywhere, which
+// is the only construct that asks how many pieces of output a frame holds.
+func hasFilterBlock(body []ast.Stmt) bool {
+	for _, stmt := range body {
+		switch n := stmt.(type) {
+		case *ast.FilterBlock:
+			return true
+		case *ast.For:
+			if hasFilterBlock(n.Body) || hasFilterBlock(n.Else) {
+				return true
+			}
+		case *ast.If:
+			if hasFilterBlock(n.Body) || hasFilterBlock(n.Else) {
+				return true
+			}
+			for _, elif := range n.Elif {
+				if hasFilterBlock(elif.Body) {
+					return true
+				}
+			}
+		case *ast.With:
+			if hasFilterBlock(n.Body) {
+				return true
+			}
+		case *ast.AssignBlock:
+			if hasFilterBlock(n.Body) {
+				return true
+			}
+		case *ast.Macro:
+			if hasFilterBlock(n.Body) {
+				return true
+			}
+		case *ast.CallBlock:
+			if hasFilterBlock(n.Body) {
+				return true
+			}
+		case *ast.Block:
+			if hasFilterBlock(n.Body) {
+				return true
+			}
+		case *ast.Scope:
+			if hasFilterBlock(n.Body) {
+				return true
+			}
+		case *ast.AutoescapeBlock:
+			if hasFilterBlock(n.Body) {
 				return true
 			}
 		}
@@ -644,7 +720,7 @@ func (ex *exec) execFilterBlock(n *ast.FilterBlock) error {
 	// docs/divergences.md.
 	if v.Kind() != value.KindString {
 		return errs.New(errs.TypeError,
-			"sequence item 0: expected str instance, %s found", v.TypeName())
+			"sequence item %d: expected str instance, %s found", ex.chunkCount(), v.TypeName())
 	}
 	out, err := ex.renderValue(v)
 	if err != nil {

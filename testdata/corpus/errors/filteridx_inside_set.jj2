@@ -1,0 +1,5 @@
+{
+  "v": "V"
+}
+---
+{% set z %}{{ v }}{% filter length %}abc{% endfilter %}{% endset %}{{ z }}

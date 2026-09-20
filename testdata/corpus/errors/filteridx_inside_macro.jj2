@@ -1,0 +1,5 @@
+{
+  "v": "V"
+}
+---
+{% macro m() %}{% filter length %}abc{% endfilter %}{% endmacro %}{{ m() }}
