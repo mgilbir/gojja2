@@ -61,7 +61,7 @@ func dictOf(t *testing.T, k, v value.Value) value.Value {
 // unfoldable branch means the condition beside it runs, and running it raises.
 func TestFoldingDoesNotSwallowAnError(t *testing.T) {
 	src := `{% with w = blank if (-1)[-2:] else d|batch(2)|list|groupby('city')|list %}{% endwith %}`
-	_, err := renderVars(t, New(), src, map[string]any{"blank": "", "d": map[string]any{"1": "a"}})
+	_, err := renderVars(t, mustNew(), src, map[string]any{"blank": "", "d": map[string]any{"1": "a"}})
 	if err == nil {
 		t.Fatal("rendered; want the TypeError CPython raises for a slice of an int")
 	}
@@ -101,7 +101,7 @@ func TestFrameLocalsAliasTheEnclosingFrame(t *testing.T) {
 		{`{% block a %}[{{ m }}]{% set m = 1 %}{% endblock %}`, "[10]"},
 		{`[{{ m }}]{% set m = 1 %}`, "[10]"},
 	} {
-		got, err := renderVars(t, New(), tc.src, vars)
+		got, err := renderVars(t, mustNew(), tc.src, vars)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -142,7 +142,7 @@ func TestDynamicArgsFold(t *testing.T) {
 		// then happens for real.
 		{`{% set l = [1,2] %}{{ l|join(*["-"]) }}`, "1-2"},
 	} {
-		got, err := renderVars(t, New(), tc.src, nil)
+		got, err := renderVars(t, mustNew(), tc.src, nil)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -166,7 +166,7 @@ func TestDynamicArgsThatCannotFold(t *testing.T) {
 		{`{% set l = [1,2] %}{{ l|join(**["db"]) }}`,
 			"argument after ** must be a mapping, not list"},
 	} {
-		_, err := renderVars(t, New(), tc.src, nil)
+		_, err := renderVars(t, mustNew(), tc.src, nil)
 		if err == nil {
 			t.Errorf("%s: rendered; want %q", tc.src, tc.want)
 			continue

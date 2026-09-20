@@ -33,7 +33,7 @@ func TestBytesSlicing(t *testing.T) {
 		// easy to miss.
 		{`{{ "ab".encode()[0] }}`, "97"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -70,7 +70,7 @@ func TestBytesMembershipTakesAnInteger(t *testing.T) {
 		{`{{ 1.5 in "ab".encode() }}`, "", "a bytes-like object is required, not 'float'"},
 		{`{{ none in "ab".encode() }}`, "", "a bytes-like object is required, not 'NoneType'"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.src, err)
 			continue

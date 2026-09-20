@@ -16,10 +16,13 @@ template language, built to be behaviourally identical to CPython's `jinja2`.
 ## Using it
 
 ```go
-env := gojja2.New(
+env, err := gojja2.New(
     gojja2.WithLoader(gojja2.FSLoader{FS: os.DirFS("templates")}),
     gojja2.WithAutoescapeFunc(gojja2.SelectAutoescape(".html")),
 )
+if err != nil {
+    return err
+}
 
 tmpl, err := env.GetTemplate("page.html")
 if err != nil {

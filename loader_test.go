@@ -46,7 +46,7 @@ func TestFSLoaderRefusesNamesThatClimbOut(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			for _, root := range []string{"tpl", ""} {
-				env := gojja2.New(gojja2.WithLoader(
+				env := mustEnv(gojja2.WithLoader(
 					gojja2.FSLoader{FS: loaderFS(), Root: root}))
 				_, err := env.GetTemplate(name)
 				if err == nil {
@@ -63,7 +63,7 @@ func TestFSLoaderRefusesNamesThatClimbOut(t *testing.T) {
 // TestFSLoaderResolvesOrdinaryNames guards the other direction, with the
 // segments jinja2 drops rather than refuses.
 func TestFSLoaderResolvesOrdinaryNames(t *testing.T) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.FSLoader{FS: loaderFS(), Root: "tpl"}))
+	env := mustEnv(gojja2.WithLoader(gojja2.FSLoader{FS: loaderFS(), Root: "tpl"}))
 	for _, tc := range []struct{ name, want string }{
 		{"page.html", "PAGE"},
 		{"./page.html", "PAGE"},
@@ -87,7 +87,7 @@ func TestFSLoaderResolvesOrdinaryNames(t *testing.T) {
 // TestIncludeIgnoreMissingCoversARefusedName: a refused name is a missing
 // template, so the tag that tolerates one still does.
 func TestIncludeIgnoreMissingCoversARefusedName(t *testing.T) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.FSLoader{FS: loaderFS(), Root: "tpl"}))
+	env := mustEnv(gojja2.WithLoader(gojja2.FSLoader{FS: loaderFS(), Root: "tpl"}))
 	out, err := mustRender(t, env, `[{% include "../secret.html" ignore missing %}]`)
 	if err != nil {
 		t.Fatalf("ignore missing should tolerate a refused name: %v", err)
@@ -133,7 +133,7 @@ func TestLoaderMissIsRecognisedInEveryDocumentedShape(t *testing.T) {
 		missing := missLoader{err: tc.miss}
 
 		// ChoiceLoader must fall through to the loader that has it.
-		env := gojja2.New(gojja2.WithLoader(gojja2.ChoiceLoader{missing, gojja2.DictLoader{"t.html": "SECOND"}}))
+		env := mustEnv(gojja2.WithLoader(gojja2.ChoiceLoader{missing, gojja2.DictLoader{"t.html": "SECOND"}}))
 		tmpl, err := env.GetTemplate("t.html")
 		if err != nil {
 			t.Errorf("%s: ChoiceLoader: %v, want the second loader's template", tc.name, err)
@@ -142,7 +142,7 @@ func TestLoaderMissIsRecognisedInEveryDocumentedShape(t *testing.T) {
 		}
 
 		// `ignore missing` must swallow it.
-		env2 := gojja2.New(gojja2.WithLoader(missing))
+		env2 := mustEnv(gojja2.WithLoader(missing))
 		t2, err := env2.FromString(`[{% include "gone.html" ignore missing %}]`)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.name, err)
@@ -158,7 +158,7 @@ func TestLoaderMissIsRecognisedInEveryDocumentedShape(t *testing.T) {
 // or failing loader reads as "not here" and the next one quietly answers.
 func TestLoaderRealErrorStopsTheSearch(t *testing.T) {
 	boom := errors.New("disk on fire")
-	env := gojja2.New(gojja2.WithLoader(gojja2.ChoiceLoader{
+	env := mustEnv(gojja2.WithLoader(gojja2.ChoiceLoader{
 		missLoader{err: boom}, gojja2.DictLoader{"t.html": "SECOND"},
 	}))
 	if _, err := env.GetTemplate("t.html"); !errors.Is(err, boom) {

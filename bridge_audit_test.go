@@ -67,7 +67,7 @@ func bridgeFixture() *bridgeHost {
 
 func renderBridge(t *testing.T, src string, vars map[string]any, opts ...gojja2.Option) (string, error) {
 	t.Helper()
-	tmpl, err := gojja2.New(opts...).FromString(src)
+	tmpl, err := mustEnv(opts...).FromString(src)
 	if err != nil {
 		t.Fatalf("compile %q: %v", src, err)
 	}

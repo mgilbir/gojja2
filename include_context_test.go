@@ -18,7 +18,7 @@ func includeEnv(extra ...string) *gojja2.Environment {
 	for i := 0; i+1 < len(extra); i += 2 {
 		sources[extra[i]] = extra[i+1]
 	}
-	return gojja2.New(gojja2.WithLoader(gojja2.DictLoader(sources)))
+	return mustEnv(gojja2.WithLoader(gojja2.DictLoader(sources)))
 }
 
 // Handing the context to an include must not undo what the template did to it.
@@ -123,7 +123,7 @@ func TestContextIsConvertedOnce(t *testing.T) {
 	}
 	// Converting is charged per element, so a budget just over one
 	// conversion admits one and refuses two.
-	env := gojja2.New(
+	env := mustEnv(
 		gojja2.WithMaxIterations(n+n/2),
 		gojja2.WithLoader(gojja2.DictLoader(map[string]string{"inc": "|"})),
 	)

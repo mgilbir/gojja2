@@ -75,7 +75,7 @@ func TestStringSearchBoundsClampLikeASlice(t *testing.T) {
 		{`{{ "abc".index("b",1.5) }}`, "", "slice indices must be integers or None or have an __index__ method"},
 		{`{{ "abc".rindex("b",1.5) }}`, "", "slice indices must be integers or None or have an __index__ method"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.src, err)
 			continue

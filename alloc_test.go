@@ -52,7 +52,7 @@ var hostileTemplates = []string{
 func TestHostileTemplatesAreRefused(t *testing.T) {
 	// A deliberately tiny budget. Every case below is far past it, so the
 	// bound is what decides, not the size of the machine.
-	env := New(WithMaxOutputBytes(4096), WithMaxIterations(10000))
+	env := mustNew(WithMaxOutputBytes(4096), WithMaxIterations(10000))
 	for _, src := range hostileTemplates {
 		t.Run(src, func(t *testing.T) {
 			tmpl, err := env.FromString(src)
@@ -78,7 +78,7 @@ func TestHostileTemplatesAreRefused(t *testing.T) {
 // A bound that cannot be exceeded is better than one that has to be checked, so
 // what is pinned here is the answer and the absence of a refusal.
 func TestHugeRoundPrecisionIsBoundedNotRefused(t *testing.T) {
-	env := New(WithMaxOutputBytes(4096), WithMaxIterations(10000))
+	env := mustNew(WithMaxOutputBytes(4096), WithMaxIterations(10000))
 	for _, tc := range []struct{ src, want string }{
 		{`{{ 1.5|round(2000000000) }}`, "1.5"},
 		{`{{ 1.5|round(9223372036854775807) }}`, "1.5"},
@@ -108,7 +108,7 @@ func TestHugeRoundPrecisionIsBoundedNotRefused(t *testing.T) {
 // reachable with no render, no context and no variables -- which put them
 // beyond every bound the caller can configure.
 func TestHostileTemplatesAreRefusedAtCompileTime(t *testing.T) {
-	env := New(WithMaxOutputBytes(4096), WithMaxIterations(10000))
+	env := mustNew(WithMaxOutputBytes(4096), WithMaxIterations(10000))
 	for _, src := range hostileTemplates {
 		if _, err := env.FromString(src); err != nil {
 			continue // refused outright, which is fine
@@ -120,7 +120,7 @@ func TestHostileTemplatesAreRefusedAtCompileTime(t *testing.T) {
 // budget means "unbounded", and unbounded must still not mean "allocate 2**63
 // bytes" -- the process has a limit even when the caller has not set one.
 func TestBoundsHoldWithoutABudget(t *testing.T) {
-	env := New(WithMaxOutputBytes(0), WithMaxIterations(0))
+	env := mustNew(WithMaxOutputBytes(0), WithMaxIterations(0))
 	for _, src := range []string{
 		`{{ "a".center(9223372036854775807) }}`,
 		`{{ "a"|indent(4611686018427387904) }}`,
@@ -161,7 +161,7 @@ func TestSizedOperationsStillWork(t *testing.T) {
 		{`{{ ", ".join(["a", "b"]) }}`, "a, b"},
 		{`{{ "x" * 5 }}`, "xxxxx"},
 	}
-	env := New()
+	env := mustNew()
 	for _, tc := range cases {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {
@@ -182,7 +182,7 @@ func TestSizedOperationsStillWork(t *testing.T) {
 // TestLipsumMatchesCPythonOnEdgeCases pins the argument handling. lipsum's own
 // text is random and ungradable, but its refusals and its shape are not.
 func TestLipsumMatchesCPythonOnEdgeCases(t *testing.T) {
-	env := New()
+	env := mustNew()
 	// jinja2 calls randrange(min, max), which raises on an empty range.
 	// Quietly repairing the range is what used to create a zero-word
 	// paragraph and then panic formatting it.
@@ -229,7 +229,7 @@ func TestIntFilterRejectsAnInvalidBase(t *testing.T) {
 		{`{{ "10"|int(0, 2) }}`, "2"},
 		{`{{ "10"|int(0, 36) }}`, "36"},
 	}
-	env := New()
+	env := mustNew()
 	for _, tc := range cases {
 		got, err := renderVars(t, env, tc.src, nil)
 		if err != nil {
@@ -246,7 +246,7 @@ func TestIntFilterRejectsAnInvalidBase(t *testing.T) {
 // Python, rather than a panic from strings.Repeat.
 func TestIndentAcceptsANegativeWidth(t *testing.T) {
 	for _, src := range []string{`{{ "a"|indent(-1) }}`, `{{ "a"|center(-5) }}`, `{{ "1".zfill(-3) }}`} {
-		got, err := renderVars(t, New(), src, nil)
+		got, err := renderVars(t, mustNew(), src, nil)
 		if err != nil {
 			t.Errorf("%s: %v", src, err)
 			continue
@@ -267,7 +267,7 @@ func TestIndentAcceptsANegativeWidth(t *testing.T) {
 // gojja2 required a positive integer up front, so every one of these was a
 // ValueError or a TypeError of its own invention.
 func TestBatchOnlyComparesItsLinecount(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// Nothing equals these, so nothing is ever cut.
 		{`{{ [1,2,3]|batch("x")|list }}`, "[[1, 2, 3]]"},
@@ -352,7 +352,7 @@ func TestBatchOnlyComparesItsLinecount(t *testing.T) {
 // gojja2 demanded a positive integer up front and answered one ValueError for
 // all of them.
 func TestSliceDividesAndRangesItsCount(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{`{{ [1,2,3]|slice("x")|list }}`,
 			"unsupported operand type(s) for //: 'int' and 'str'"},

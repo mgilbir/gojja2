@@ -16,7 +16,7 @@ import (
 // mentioned -- and one that may well exist under a different prefix, so the
 // message points at the wrong file rather than merely being terse.
 func TestPrefixLoaderMissNamesTheFullTemplate(t *testing.T) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.PrefixLoader{
+	env := mustEnv(gojja2.WithLoader(gojja2.PrefixLoader{
 		Mapping: map[string]gojja2.Loader{
 			"app":   gojja2.DictLoader{"i.txt": "I"},
 			"other": gojja2.DictLoader{"missing": "DECOY"},
@@ -40,7 +40,7 @@ func TestPrefixLoaderMissNamesTheFullTemplate(t *testing.T) {
 
 // A custom delimiter changes where the name is cut and nothing else.
 func TestPrefixLoaderMissNamesTheFullTemplateWithACustomDelimiter(t *testing.T) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.PrefixLoader{
+	env := mustEnv(gojja2.WithLoader(gojja2.PrefixLoader{
 		Mapping:   map[string]gojja2.Loader{"app": gojja2.DictLoader{"i": "I"}},
 		Delimiter: "::",
 	}))
@@ -60,7 +60,7 @@ func TestPrefixLoaderMissNamesTheFullTemplateWithACustomDelimiter(t *testing.T) 
 // only the not-found case is renamed.
 func TestPrefixLoaderPassesARealErrorThrough(t *testing.T) {
 	boom := errors.New("disk on fire")
-	env := gojja2.New(gojja2.WithLoader(gojja2.PrefixLoader{
+	env := mustEnv(gojja2.WithLoader(gojja2.PrefixLoader{
 		Mapping: map[string]gojja2.Loader{"app": missLoader{err: boom}},
 	}))
 	if _, err := env.GetTemplate("app/x"); !errors.Is(err, boom) {
@@ -81,7 +81,7 @@ func TestFSLoaderMissNamesOnlyTheTemplate(t *testing.T) {
 		"choice": gojja2.ChoiceLoader{gojja2.DictLoader{"page.html": "PAGE"}},
 	}
 	for label, l := range loaders {
-		env := gojja2.New(gojja2.WithLoader(l))
+		env := mustEnv(gojja2.WithLoader(l))
 		_, err := env.GetTemplate("missing.html")
 		if !errors.Is(err, errs.TemplateNotFound) {
 			t.Errorf("%s: got %v, want TemplateNotFound", label, err)

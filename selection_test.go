@@ -24,7 +24,7 @@ func TestTemplateSelection(t *testing.T) {
 		"inc.txt": "<inc>",
 		"mac.txt": `{% macro m(x) %}({{ x }}){% endmacro %}`,
 	}
-	env := New(WithLoader(DictLoader(load)))
+	env := mustNew(WithLoader(DictLoader(load)))
 
 	for _, tc := range []struct{ src, want string }{
 		{`{% include "inc.txt" %}`, "<inc>"},

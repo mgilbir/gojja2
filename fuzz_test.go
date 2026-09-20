@@ -96,7 +96,7 @@ const (
 )
 
 func fuzzEnv() *gojja2.Environment {
-	return gojja2.New(
+	return mustEnv(
 		gojja2.WithMaxOutputBytes(fuzzMaxOutput),
 		gojja2.WithMaxIterations(fuzzMaxIterations),
 		gojja2.WithLoader(gojja2.DictLoader(map[string]string{

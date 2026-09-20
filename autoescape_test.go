@@ -38,7 +38,7 @@ func renderWith(t *testing.T, env *Environment, name, source string) string {
 // A template compiled from a string has no name to match, and jinja2 escapes it
 // rather than falling through to the default.
 func TestSelectAutoescapeEscapesStringTemplates(t *testing.T) {
-	env := New(WithAutoescapeFunc(SelectAutoescape(".html")))
+	env := mustNew(WithAutoescapeFunc(SelectAutoescape(".html")))
 	if got := renderWith(t, env, "", `{{ evil }}`); got != evilEscaped {
 		t.Errorf("FromString template was not escaped:\n got %q\nwant %q", got, evilEscaped)
 	}
@@ -68,7 +68,7 @@ func TestSelectAutoescapeIsCaseInsensitive(t *testing.T) {
 		{"HTML", "page.HTML"},
 	}
 	for _, tc := range cases {
-		env := New(WithAutoescapeFunc(SelectAutoescape(tc.ext)))
+		env := mustNew(WithAutoescapeFunc(SelectAutoescape(tc.ext)))
 		if got := renderWith(t, env, tc.name, `{{ evil }}`); got != evilEscaped {
 			t.Errorf("SelectAutoescape(%q) on %q did not escape:\n got %q\nwant %q",
 				tc.ext, tc.name, got, evilEscaped)
@@ -80,7 +80,7 @@ func TestSelectAutoescapeIsCaseInsensitive(t *testing.T) {
 // whole extension and not on any trailing substring, as jinja2's normalisation
 // to ".ext" enforces.
 func TestSelectAutoescapeMatchesOnExtensionBoundary(t *testing.T) {
-	env := New(WithAutoescapeFunc(SelectAutoescape("tml")))
+	env := mustNew(WithAutoescapeFunc(SelectAutoescape("tml")))
 	if got := renderWith(t, env, "page.html", `{{ evil }}`); got != evil {
 		t.Errorf(`SelectAutoescape("tml") must not match "page.html":`+"\n got %q\nwant %q",
 			got, evil)
@@ -94,7 +94,7 @@ func TestSelectAutoescapeMatchesOnExtensionBoundary(t *testing.T) {
 // TestSelectAutoescapeDefaults pins that the zero SelectAutoescapeConfig
 // reproduces jinja2's own defaults.
 func TestSelectAutoescapeDefaults(t *testing.T) {
-	env := New(WithAutoescapeFunc(SelectAutoescapeWith(SelectAutoescapeConfig{})))
+	env := mustNew(WithAutoescapeFunc(SelectAutoescapeWith(SelectAutoescapeConfig{})))
 	for _, name := range []string{"page.html", "page.htm", "page.xml", "page.xhtml", "PAGE.HTML"} {
 		if got := renderWith(t, env, name, `{{ evil }}`); got != evilEscaped {
 			t.Errorf("default config should escape %q, got %q", name, got)
@@ -112,7 +112,7 @@ func TestSelectAutoescapeDefaults(t *testing.T) {
 // "escape everything except .txt" configuration, which the previous API could
 // not express at all.
 func TestSelectAutoescapeDisabledAndDefault(t *testing.T) {
-	env := New(WithAutoescapeFunc(SelectAutoescapeWith(SelectAutoescapeConfig{
+	env := mustNew(WithAutoescapeFunc(SelectAutoescapeWith(SelectAutoescapeConfig{
 		Disabled: []string{"txt"},
 		Default:  true,
 	})))
@@ -131,7 +131,7 @@ func TestSelectAutoescapeDisabledAndDefault(t *testing.T) {
 
 // TestSelectAutoescapeDisableForString pins the one explicit opt-out.
 func TestSelectAutoescapeDisableForString(t *testing.T) {
-	env := New(WithAutoescapeFunc(SelectAutoescapeWith(SelectAutoescapeConfig{
+	env := mustNew(WithAutoescapeFunc(SelectAutoescapeWith(SelectAutoescapeConfig{
 		Enabled:          []string{"html"},
 		DisableForString: true,
 	})))
@@ -147,7 +147,7 @@ func TestSelectAutoescapeDisableForString(t *testing.T) {
 // two cases apart, which is the whole reason the parameter exists.
 func TestAutoescapeFuncSeesFromString(t *testing.T) {
 	var sawFromString, sawNamed bool
-	env := New(WithAutoescapeFunc(func(name string, fromString bool) bool {
+	env := mustNew(WithAutoescapeFunc(func(name string, fromString bool) bool {
 		if fromString {
 			sawFromString = true
 			if name != "" {
@@ -173,14 +173,14 @@ func TestAutoescapeFuncSeesFromString(t *testing.T) {
 // TestWithAutoescapeAppliesToStringTemplates pins that the blanket switch still
 // covers both kinds.
 func TestWithAutoescapeAppliesToStringTemplates(t *testing.T) {
-	on := New(WithAutoescape(true))
+	on := mustNew(WithAutoescape(true))
 	if got := renderWith(t, on, "", `{{ evil }}`); got != evilEscaped {
 		t.Errorf("WithAutoescape(true) should escape a string template, got %q", got)
 	}
 	if got := renderWith(t, on, "page.txt", `{{ evil }}`); got != evilEscaped {
 		t.Errorf("WithAutoescape(true) should escape any named template, got %q", got)
 	}
-	off := New(WithAutoescape(false))
+	off := mustNew(WithAutoescape(false))
 	if got := renderWith(t, off, "", `{{ evil }}`); got != evil {
 		t.Errorf("WithAutoescape(false) should not escape, got %q", got)
 	}
@@ -232,7 +232,7 @@ func TestSelectAutoescapeEmptyExtension(t *testing.T) {
 //
 // Expectations taken from CPython jinja2 3.1.6 with autoescape on.
 func TestJoinIsMarkupOnlyWhenMarkupIsInvolved(t *testing.T) {
-	env := New(WithAutoescape(true))
+	env := mustNew(WithAutoescape(true))
 	vars := map[string]any{"a": "a'", "b": "<i>", "sep": "&"}
 
 	// |safe on the pprint keeps the repr readable here: without it the
@@ -279,7 +279,7 @@ func TestJoinIsMarkupOnlyWhenMarkupIsInvolved(t *testing.T) {
 //
 // Expectations from CPython jinja2 3.1.6 with autoescape on.
 func TestReplaceEscapesWhatJinja2Escapes(t *testing.T) {
-	env := New(WithAutoescape(true))
+	env := mustNew(WithAutoescape(true))
 	vars := map[string]any{"s": "a&<b", "o": "&", "n": "<i>"}
 
 	for _, tc := range []struct{ expr, want string }{
@@ -364,7 +364,7 @@ func TestAutoescapeScope(t *testing.T) {
 		// Whether the result is trusted is the call's decision.
 		{false, `{% macro m(x) %}{{ [x, mk|safe]|join(sep) }}{% endmacro %}{% autoescape true %}[{{ m(s) is escaped }}][{{ m(s) }}]{% endautoescape %}`, "[True][a&amp;&]"},
 	} {
-		got, err := renderVars(t, New(WithAutoescape(tc.env)), tc.src, vars)
+		got, err := renderVars(t, mustNew(WithAutoescape(tc.env)), tc.src, vars)
 		if err != nil {
 			t.Errorf("env=%v %s: %v", tc.env, tc.src, err)
 			continue
@@ -385,7 +385,7 @@ func TestAutoescapeScope(t *testing.T) {
 //
 // Expectations from CPython jinja2 3.1.6 with autoescape on.
 func TestConcatIsMarkupOnlyWhenMarkupIsInvolved(t *testing.T) {
-	env := New(WithAutoescape(true))
+	env := mustNew(WithAutoescape(true))
 	vars := map[string]any{"sv": "a<b", "n": 5, "mk": "<i>"}
 
 	for _, tc := range []struct{ expr, want string }{
@@ -443,7 +443,7 @@ func TestVolatileAutoescapeFoldsAndDefers(t *testing.T) {
 		{false, `{% autoescape true %}{{ {'a': 1} }}|{{ '<x>'|upper }}{% endautoescape %}`,
 			`{&#39;a&#39;: 1}|&lt;X&gt;`},
 	} {
-		got, err := renderVars(t, New(WithAutoescape(tc.env)), tc.src, vars)
+		got, err := renderVars(t, mustNew(WithAutoescape(tc.env)), tc.src, vars)
 		if err != nil {
 			t.Errorf("env=%v %s: %v", tc.env, tc.src, err)
 			continue
@@ -469,7 +469,7 @@ func TestAutoescapeIsAScope(t *testing.T) {
 		// Inside the block the assignment is visible, as in any scope.
 		{`{% autoescape true %}{% set q = 1 %}[{{ q }}]{% endautoescape %}`, "[1]"},
 	} {
-		got, err := renderVars(t, New(), tc.src, vars)
+		got, err := renderVars(t, mustNew(), tc.src, vars)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -516,7 +516,7 @@ func TestVolatileConcatNeverEscapes(t *testing.T) {
 		{`{% autoescape yes %}{% macro q() %}{{ (mk|safe) ~ s }}{% endmacro %}{{ q() }}{% endautoescape %}`,
 			"&lt;i&gt;a&amp;b"},
 	} {
-		got, err := renderVars(t, New(), tc.src, vars)
+		got, err := renderVars(t, mustNew(), tc.src, vars)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -540,7 +540,7 @@ func TestMarkupTimesUndefined(t *testing.T) {
 		{`nope * (s|safe)`, "'nope' is undefined"},
 		{`(s|safe) * (0|attr('q'))`, "'Undefined' object cannot be interpreted as an integer"},
 	} {
-		_, err := renderVars(t, New(), "{{ "+tc.expr+" }}", map[string]any{"s": "a"})
+		_, err := renderVars(t, mustNew(), "{{ "+tc.expr+" }}", map[string]any{"s": "a"})
 		if err == nil {
 			t.Errorf("%s: no error, want %q", tc.expr, tc.want)
 			continue
@@ -559,7 +559,7 @@ func TestMarkupTimesUndefined(t *testing.T) {
 // folded key as a plain string was invisible in the sorted output and visible
 // in the error a failed comparison raises, which names the folded key's type.
 func TestSortKeepsMarkupInItsKey(t *testing.T) {
-	env := New()
+	env := mustNew()
 	vars := map[string]any{"mk": "<i>"}
 
 	_, err := renderVars(t, env, `{{ [false, mk|safe]|sort }}`, vars)
@@ -605,7 +605,7 @@ func TestSortKeepsMarkupInItsKey(t *testing.T) {
 // Every expectation here was measured against CPython jinja2; a first draft
 // guessed them and got three of six wrong in both directions.
 func TestAutoescapeAndScopeBodiesAreFrames(t *testing.T) {
-	env := New(WithLoader(DictLoader{
+	env := mustNew(WithLoader(DictLoader{
 		"mac.txt": `{% macro m(x) %}({{ x }}){% endmacro %}`,
 	}))
 	for _, tc := range []struct{ name, src, want string }{
@@ -690,7 +690,7 @@ func TestInnerFrameAliasesAnOuterReference(t *testing.T) {
 		} {
 			t.Run(name+"/"+tc.what, func(t *testing.T) {
 				src := tc.pre + body + tc.post
-				tmpl, err := New().FromString(src)
+				tmpl, err := mustNew().FromString(src)
 				if err != nil {
 					t.Fatalf("compile: %v", err)
 				}
@@ -707,7 +707,7 @@ func TestInnerFrameAliasesAnOuterReference(t *testing.T) {
 	}
 
 	// A block body has no enclosing frame, so it never aliases.
-	tmpl, err := New().FromString(
+	tmpl, err := mustNew().FromString(
 		`{{ m }}{% block b %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endblock %}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)

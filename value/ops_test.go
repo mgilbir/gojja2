@@ -39,8 +39,8 @@ func pool() []value.Value {
 		value.NewList(), value.NewList(value.Int(1)), value.NewList(value.Int(1), value.Int(2)),
 		value.NewTuple(), value.NewTuple(value.Int(1)), value.NewTuple(value.Int(1), value.Int(2)),
 		value.NewDict(),
-		value.DictOf(value.String("a"), value.Int(1)),
-		value.DictOf(value.String("a"), value.Int(1), value.String("b"), value.Int(2)),
+		dictOf(value.String("a"), value.Int(1)),
+		dictOf(value.String("a"), value.Int(1), value.String("b"), value.Int(2)),
 	}
 }
 

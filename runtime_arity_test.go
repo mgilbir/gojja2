@@ -22,7 +22,7 @@ import (
 //   - a block reference named the block rather than itself;
 //   - the caller macro has no name, and CPython prints that as None, not ”.
 func TestRuntimeArity(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// loop.cycle and loop.changed take *args and no keywords, and a
 		// keyword is refused before the body runs.

@@ -27,7 +27,7 @@ import (
 // finishes in milliseconds, quadratic cannot finish in ten seconds.
 func TestURLEncodeIsLinear(t *testing.T) {
 	const n = 1_000_000
-	env := New(WithoutLimits())
+	env := mustNew(WithoutLimits())
 	tmpl, err := env.FromString(`{{ text|urlencode|length }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -63,7 +63,7 @@ func TestURLEncodeMatchesCPythonOnLowBytes(t *testing.T) {
 		{"~_.-", "~_.-"},
 		{"\n\t\n", "%0A%09%0A"},
 	}
-	env := New()
+	env := mustNew()
 	tmpl, err := env.FromString(`{{ text|urlencode }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -89,7 +89,7 @@ func TestURLEncodeMatchesCPythonOnLowBytes(t *testing.T) {
 // eventually returned was the output bound rather than the deadline. State.Poll
 // is the yield point; this pins that a filter using it stops.
 func TestCancellationInterruptsAFilter(t *testing.T) {
-	env := New(WithoutLimits())
+	env := mustNew(WithoutLimits())
 	started := make(chan struct{})
 	env.AddFilter("spin", func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 		close(started)
@@ -141,7 +141,7 @@ func TestPollIsSafeWithoutARender(t *testing.T) {
 	if err := nilState.Poll(); err != nil {
 		t.Errorf("Poll on a nil State: %v", err)
 	}
-	env := New()
+	env := mustNew()
 	env.AddFilter("polls", func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 		for range 10000 {
 			if err := s.Poll(); err != nil {
@@ -177,7 +177,7 @@ func TestTupleHashIsLinear(t *testing.T) {
 	fmt.Fprintf(&src, `{%% for i in range(%d) %%}{%% set ns.t = (ns.t,) %%}{%% endfor %%}`, n)
 	src.WriteString(`{{ {ns.t: "v"}[ns.t] }}`)
 
-	env := New()
+	env := mustNew()
 	tmpl, err := env.FromString(src.String())
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -218,7 +218,7 @@ func TestLexingIsLinearInTheSource(t *testing.T) {
 	const tags = 400_000
 	src := strings.Repeat("{{1}}", tags)
 
-	env := New()
+	env := mustNew()
 	start := time.Now()
 	_, err := env.FromString(src)
 	elapsed := time.Since(start)
@@ -239,7 +239,7 @@ func TestLexingIsLinearInTheSource(t *testing.T) {
 // elements, consulting neither the budget nor the context, and a three-second
 // deadline was still running ninety seconds later.
 func TestRangeMembershipIsConstantTime(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct {
 		src  string
 		want string
@@ -277,7 +277,7 @@ func TestRangeMembershipIsConstantTime(t *testing.T) {
 // were still being compared ninety seconds later.
 func TestUniqueIsLinear(t *testing.T) {
 	const n = 200_000
-	env := New(WithoutLimits())
+	env := mustNew(WithoutLimits())
 	tmpl, err := env.FromString(`{{ range(N)|list|unique|length }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)

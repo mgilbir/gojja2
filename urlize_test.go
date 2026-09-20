@@ -21,7 +21,7 @@ import (
 //   - every extra scheme is matched against a regexp before any linking
 //     happens, which gojja2 skipped entirely.
 func TestURLizeArguments(t *testing.T) {
-	env := New()
+	env := mustNew()
 	ctx := map[string]any{
 		"u":     "go https://example.com/long/path now",
 		"plain": "no links here",
@@ -128,7 +128,7 @@ func TestURLizeUnicodeClasses(t *testing.T) {
 		return `<a href="mailto:` + addr + `">` + addr + `</a>`
 	}
 
-	env := New()
+	env := mustNew()
 	tmpl, err := env.FromString(`{{ u|urlize }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)

@@ -43,7 +43,7 @@ func TestCenterPutsTheOddCharacterOnTheRightSide(t *testing.T) {
 		{`{{ "ab".ljust(5) }}`, "ab   "},
 		{`{{ "ab".rjust(5) }}`, "   ab"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue

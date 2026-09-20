@@ -29,7 +29,7 @@ func regularFileFS() fstest.MapFS {
 }
 
 func TestFSLoaderReportsADirectoryAsNotFound(t *testing.T) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.FSLoader{FS: regularFileFS()}))
+	env := mustEnv(gojja2.WithLoader(gojja2.FSLoader{FS: regularFileFS()}))
 	for _, name := range []string{"dir", "dir/"} {
 		_, err := env.GetTemplate(name)
 		if !errors.Is(err, errs.TemplateNotFound) {
@@ -42,7 +42,7 @@ func TestFSLoaderReportsADirectoryAsNotFound(t *testing.T) {
 // than the error text alone.
 
 func TestChoiceLoaderFallsThroughADirectory(t *testing.T) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.ChoiceLoader{
+	env := mustEnv(gojja2.WithLoader(gojja2.ChoiceLoader{
 		gojja2.FSLoader{FS: regularFileFS()},
 		gojja2.DictLoader{"dir": "FALLBACK"},
 	}))
@@ -60,7 +60,7 @@ func TestChoiceLoaderFallsThroughADirectory(t *testing.T) {
 }
 
 func TestIncludeIgnoreMissingCoversADirectory(t *testing.T) {
-	env := gojja2.New(gojja2.WithLoader(gojja2.FSLoader{FS: regularFileFS()}))
+	env := mustEnv(gojja2.WithLoader(gojja2.FSLoader{FS: regularFileFS()}))
 	tmpl, err := env.FromString(`[{% include "dir" ignore missing %}]`)
 	if err != nil {
 		t.Fatalf("FromString: %v", err)
@@ -92,7 +92,7 @@ func TestFSLoaderReportsAnUnusableNameAsNotFound(t *testing.T) {
 		"nul byte":       "a\x00b.html",
 	}
 	for _, root := range []string{"", "sub"} {
-		env := gojja2.New(gojja2.WithLoader(
+		env := mustEnv(gojja2.WithLoader(
 			gojja2.FSLoader{FS: os.DirFS(dir), Root: root}))
 		for label, name := range names {
 			_, err := env.GetTemplate(name)
@@ -107,7 +107,7 @@ func TestFSLoaderReportsAnUnusableNameAsNotFound(t *testing.T) {
 // reaches the caller, so a misconfigured deployment is not silently a miss.
 func TestFSLoaderPassesARealStatErrorThrough(t *testing.T) {
 	boom := errors.New("disk on fire")
-	env := gojja2.New(gojja2.WithLoader(gojja2.FSLoader{FS: errFS{err: boom}}))
+	env := mustEnv(gojja2.WithLoader(gojja2.FSLoader{FS: errFS{err: boom}}))
 	if _, err := env.GetTemplate("page.html"); !errors.Is(err, boom) {
 		t.Errorf("got %v, want the filesystem's own error", err)
 	}

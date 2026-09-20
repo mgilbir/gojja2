@@ -45,7 +45,7 @@ import (
 const allocFactor = 32
 
 func TestRenderAllocationStaysInProportion(t *testing.T) {
-	env := gojja2.New(
+	env := mustEnv(
 		gojja2.WithMaxOutputBytes(1<<20),
 		gojja2.WithMaxIterations(200_000),
 		gojja2.WithLoader(gojja2.DictLoader(map[string]string{

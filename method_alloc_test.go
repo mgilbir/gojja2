@@ -44,7 +44,7 @@ func TestBoundedMethodsDoNotCopyTheSubject(t *testing.T) {
 		"count, bounded":      `{{ s.count("a", 1, 3) }}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			tmpl, err := gojja2.New(gojja2.WithoutLimits()).FromString(src)
+			tmpl, err := mustEnv(gojja2.WithoutLimits()).FromString(src)
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
@@ -93,7 +93,7 @@ func TestUnboundedMethodsDoNotWalkTheSubject(t *testing.T) {
 	// would understate what the walk costs.
 	const n = 1 << 21
 	vars := map[string]any{"s": strings.Repeat("é", n)}
-	env := gojja2.New(gojja2.WithoutLimits())
+	env := mustEnv(gojja2.WithoutLimits())
 
 	timeOf := func(src string) time.Duration {
 		t.Helper()

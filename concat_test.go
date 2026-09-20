@@ -38,7 +38,7 @@ func TestConcatIsChargedLikeRepetition(t *testing.T) {
 		"repeat, result discarded": `{% set x = b * 2 %}ok`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := gojja2.New(
+			env := mustEnv(
 				gojja2.WithMaxOutputBytes(1024),
 				gojja2.WithMaxIterations(1000),
 			)
@@ -68,7 +68,7 @@ func TestConcatStillWorks(t *testing.T) {
 		{`{% set s = "x" %}{{ s ~ s ~ s }}`, "xxx"},
 		{`{{ ("a" ~ "b")|length }}`, "2"},
 	} {
-		tmpl, err := gojja2.New().FromString(tc.src)
+		tmpl, err := mustEnv().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.src, err)
 			continue
@@ -106,7 +106,7 @@ func TestFoldingAChainOfConcatsIsLinear(t *testing.T) {
 		best := time.Duration(1<<63 - 1)
 		for range 5 {
 			start := time.Now()
-			if _, err := gojja2.New().FromString(src); err != nil {
+			if _, err := mustEnv().FromString(src); err != nil {
 				t.Fatalf("compile: %v", err)
 			}
 			best = min(best, time.Since(start))
@@ -150,7 +150,7 @@ func TestFoldingAChainStopsAtTheConstantLimit(t *testing.T) {
 	src := "{{ " + unit + strings.Repeat(" ~ "+unit, 5000) + " }}"
 
 	compile := func() {
-		if _, err := gojja2.New().FromString(src); err != nil {
+		if _, err := mustEnv().FromString(src); err != nil {
 			t.Fatalf("compile: %v", err)
 		}
 	}

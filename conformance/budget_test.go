@@ -36,7 +36,7 @@ import (
 // tinyBudget is deliberately far below anything a real template needs, so that
 // the bound is what decides the outcome rather than the size of the machine.
 func tinyBudget() *gojja2.Environment {
-	return gojja2.New(
+	return mustEnv(
 		gojja2.WithMaxOutputBytes(64<<10),
 		gojja2.WithMaxIterations(50_000),
 		gojja2.WithExtensions("do", "loopcontrols"),
@@ -187,7 +187,7 @@ var pastTheCeiling = []string{
 // asked for no limits is entitled to, so exercising it would measure the
 // machine rather than the engine.
 func TestSizedConstructsRefusedWithoutABudget(t *testing.T) {
-	env := gojja2.New(gojja2.WithoutLimits())
+	env := mustEnv(gojja2.WithoutLimits())
 	for _, shape := range sizedConstructs {
 		for _, size := range append(append([]string{}, pastTheCeiling...), "1", "0", "-1") {
 			src := fmt.Sprintf(shape, size)

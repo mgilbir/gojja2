@@ -7,8 +7,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/mgilbir/gojja2"
 )
 
 // `ns.attr` parses to an NSRef, and only ever as an assignment target: the
@@ -30,7 +28,7 @@ func TestNamespaceAssignmentAndReads(t *testing.T) {
 		{"block form", "{% set ns = namespace() %}{% set ns.b %}body{% endset %}{{ ns.b }}", "body"},
 		{"filtered block form", "{% set ns = namespace() %}{% set ns.b | upper %}body{% endset %}{{ ns.b }}", "BODY"},
 	} {
-		tmpl, err := gojja2.New().FromString(tc.src)
+		tmpl, err := mustEnv().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: FromString: %v", tc.name, err)
 			continue
@@ -54,7 +52,7 @@ func TestDottedTargetOnlyParsesInSet(t *testing.T) {
 		"{% with ns.a = 1 %}{% endwith %}",
 		"{% macro m(ns.a) %}{% endmacro %}",
 	} {
-		_, err := gojja2.New().FromString(src)
+		_, err := mustEnv().FromString(src)
 		if err == nil {
 			t.Errorf("%s: parsed, want a syntax error", src)
 			continue

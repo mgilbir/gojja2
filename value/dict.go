@@ -123,20 +123,25 @@ type DictEntry struct {
 // NewDict returns an empty dict.
 func NewDict() Value { return Value{kind: KindDict, obj: &Dict{}} }
 
-// DictOf builds a dict from alternating key/value pairs, which must be of even
-// length. It panics otherwise, since that is always a programming error.
-func DictOf(kv ...Value) Value {
+// DictOf builds a dict from alternating key/value pairs.
+//
+// It reports an odd number of arguments, and a key Python would refuse to
+// hash, rather than panicking on either: a caller building a dict from data it
+// did not write cannot know in advance that every key is hashable.
+func DictOf(kv ...Value) (Value, error) {
 	if len(kv)%2 != 0 {
-		panic("value.DictOf: odd number of arguments")
+		return Undefined, errs.New(errs.TypeError,
+			"DictOf needs an even number of arguments, got %d", len(kv))
 	}
 	v := NewDict()
 	d, _ := v.Dict()
+	d.Reserve(len(kv) / 2)
 	for i := 0; i < len(kv); i += 2 {
 		if err := d.Set(kv[i], kv[i+1]); err != nil {
-			panic("value.DictOf: " + err.Error())
+			return Undefined, err
 		}
 	}
-	return v
+	return v, nil
 }
 
 // StringDict builds a dict with str keys, in the order given by keys.

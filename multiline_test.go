@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/errs"
 )
 
@@ -39,7 +38,7 @@ func TestMultiLineTagsRender(t *testing.T) {
 		{"{% filter\n upper %}y{% endfilter %}", "Y"},
 		{"{% with x =\n 1 %}{{ x }}{% endwith %}", "1"},
 	} {
-		tmpl, err := gojja2.New().FromString(tc.src)
+		tmpl, err := mustEnv().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%q: FromString: %v", tc.src, err)
 			continue
@@ -77,7 +76,7 @@ func TestErrorLineInsideAMultiLineTag(t *testing.T) {
 		{"line1\n{% if true\n and true %}\n{{ boom() }}\n{% endif %}", 4},
 		{"a\nb\n{% for i in [1]\n %}\n{{ 1/0 }}\n{% endfor %}", 5},
 	} {
-		tmpl, err := gojja2.New().FromString(tc.src)
+		tmpl, err := mustEnv().FromString(tc.src)
 		if err == nil {
 			_, err = tmpl.RenderString(context.Background(), nil)
 		}

@@ -20,7 +20,7 @@ import (
 // is checked against nothing. Both are worth knowing about the moment they
 // happen rather than the next time somebody compares the two by hand.
 func TestRegisteredNamesMatchJinja2(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct {
 		what  string
 		mine  []string
@@ -51,7 +51,7 @@ func TestRegisteredNamesMatchJinja2(t *testing.T) {
 // declared **kwargs takes any keyword -- so the exemptions are jinja2's rather
 // than a list kept here.
 func TestArityIsCheckedForEveryFilter(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct {
 		kind string
 		sigs map[string]signature
@@ -134,7 +134,7 @@ func difference(a, b []string) []string {
 // Every expectation is CPython jinja2 3.1.6's, and the wordings in arity.go are
 // probed out of the same place rather than written here twice.
 func TestBuiltinArityMessagesAreCPythonsOwn(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{"{{ 1 is eq(1,2) }}", "eq expected 2 arguments, got 3"},
 		{"{{ 1 is eq }}", "eq expected 2 arguments, got 1"},
@@ -204,7 +204,7 @@ func TestDynamicKwargsNameTheCallee(t *testing.T) {
 		// something before it, so CPython builds that list on its own.
 		{`{{ lst|join(*5) }}`, "Value after * must be an iterable, not int"},
 	} {
-		_, err := renderVars(t, New(), tc.src, map[string]any{"lst": []any{1, 2}})
+		_, err := renderVars(t, mustNew(), tc.src, map[string]any{"lst": []any{1, 2}})
 		if err == nil {
 			t.Errorf("%s: rendered; want %q", tc.src, tc.want)
 			continue
@@ -237,7 +237,7 @@ func TestTestArgumentsTakeTheirName(t *testing.T) {
 		{`{{ "a" is in(seq="ab") }}`, "True"},
 		{`{{ lst is in(seq=[1,2]) }}`, "False"},
 	} {
-		got, err := renderVars(t, New(), tc.src, vars)
+		got, err := renderVars(t, mustNew(), tc.src, vars)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -253,7 +253,7 @@ func TestTestArgumentsTakeTheirName(t *testing.T) {
 			"test_divisibleby() got an unexpected keyword argument 'nummm'"},
 		{`{{ 2 is eq(b=2) }}`, "_operator.eq() takes no keyword arguments"},
 	} {
-		_, err := renderVars(t, New(), tc.src, vars)
+		_, err := renderVars(t, mustNew(), tc.src, vars)
 		if err == nil {
 			t.Errorf("%s: rendered; want %q", tc.src, tc.want)
 			continue
@@ -273,7 +273,7 @@ func TestTestArgumentsTakeTheirName(t *testing.T) {
 // it asked |map to apply, so the extras were dropped in silence:
 // `|map("upper", "x")` upper-cased everything and said nothing.
 func TestInnerFilterAndTestArity(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// Too many positional arguments for the inner filter.
 		{`{{ ["a"]|map("upper","x")|list }}`,
@@ -365,7 +365,7 @@ func TestInnerFilterAndTestArity(t *testing.T) {
 // its own -- "expected an integer, not str" -- that no Python produces, and it
 // reached every filter, method and global that takes a count or a width.
 func TestIntegerArgumentUsesTheIndexMessage(t *testing.T) {
-	env := New()
+	env := mustNew()
 	const want = "'str' object cannot be interpreted as an integer"
 	for _, src := range []string{
 		// Filters.

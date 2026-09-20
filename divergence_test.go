@@ -15,7 +15,7 @@ import (
 // render is a bare render with no context and default limits.
 func render(t *testing.T, source string) (string, error) {
 	t.Helper()
-	tmpl, err := New().FromString(source)
+	tmpl, err := mustNew().FromString(source)
 	if err != nil {
 		return "", err
 	}

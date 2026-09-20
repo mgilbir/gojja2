@@ -34,7 +34,7 @@ func TestEmptyRawAtEndOfTemplate(t *testing.T) {
 		{`x{% raw %}y`, "", "Missing end of raw directive"},
 		{`{% raw %}{% raw %}`, "", "Missing end of raw directive"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if tc.wantErr != "" {
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("%q: compile gave %v, want %q", tc.src, err, tc.wantErr)

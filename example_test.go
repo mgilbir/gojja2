@@ -16,7 +16,7 @@ import (
 
 func ExampleEnvironment_FromString() {
 	ctx := context.Background()
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, err := env.FromString("Hello {{ name|title }}! You have {{ items|length }} item(s).")
 	if err != nil {
 		log.Fatal(err)
@@ -39,7 +39,7 @@ func ExampleTemplate_Render_structs() {
 		Name string `json:"name"`
 		Age  int    `json:"age"`
 	}
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, _ := env.FromString(
 		`{% for u in users|sort(attribute="age") %}{{ u.name }}({{ u.age }}) {% endfor %}`)
 	out, err := tmpl.RenderString(ctx, map[string]any{
@@ -55,7 +55,7 @@ func ExampleTemplate_Render_structs() {
 // Template inheritance needs a loader, so the child can find its parent.
 func ExampleWithLoader() {
 	ctx := context.Background()
-	env := gojja2.New(gojja2.WithLoader(gojja2.DictLoader{
+	env := mustEnv(gojja2.WithLoader(gojja2.DictLoader{
 		"base.html": `<title>{% block title %}Untitled{% endblock %}</title>`,
 		"page.html": `{% extends "base.html" %}{% block title %}{{ super() }} - Home{% endblock %}`,
 	}))
@@ -72,7 +72,7 @@ func ExampleWithLoader() {
 // and |safe opts a value out.
 func ExampleWithAutoescape() {
 	ctx := context.Background()
-	env := gojja2.New(gojja2.WithAutoescape(true))
+	env := mustEnv(gojja2.WithAutoescape(true))
 	tmpl, _ := env.FromString(`<p>{{ comment }}</p><p>{{ trusted|safe }}</p>`)
 	out, _ := tmpl.RenderString(ctx, map[string]any{
 		"comment": `<script>alert("x")</script>`,
@@ -86,7 +86,7 @@ func ExampleWithAutoescape() {
 // than stringifying keys.
 func ExampleTemplate_Render_integerDictKeys() {
 	ctx := context.Background()
-	env := gojja2.New()
+	env := mustEnv()
 	tmpl, _ := env.FromString(`{% set d = {1: "one", 2: "two",} %}{{ d[1] }}/{{ d[2] }}/{{ d }}`)
 	out, _ := tmpl.RenderString(ctx, nil)
 	fmt.Println(out)
@@ -97,7 +97,7 @@ func ExampleTemplate_Render_integerDictKeys() {
 // can be matched with errors.Is.
 func ExampleEnvironment_errors() {
 	ctx := context.Background()
-	env := gojja2.New(gojja2.WithUndefined(value.UndefinedStrict))
+	env := mustEnv(gojja2.WithUndefined(value.UndefinedStrict))
 	tmpl, _ := env.FromString("{{ missing }}")
 	_, err := tmpl.RenderString(ctx, nil)
 	fmt.Println(err)
@@ -127,7 +127,7 @@ func bannerFilter(s *gojja2.State, v value.Value, args *value.CallArgs) (value.V
 // A filter of your own is a Go func, registered by name.
 func ExampleEnvironment_AddFilter() {
 	ctx := context.Background()
-	env := gojja2.New()
+	env := mustEnv()
 	env.AddFilter("banner", bannerFilter)
 
 	tmpl, err := env.FromString(`{{ "" | banner(10) }}`)
@@ -142,7 +142,7 @@ func ExampleEnvironment_AddFilter() {
 
 	// The same filter under a budget the template's chosen width would blow:
 	// refused before a byte is allocated.
-	small := gojja2.New(gojja2.WithMaxOutputBytes(64))
+	small := mustEnv(gojja2.WithMaxOutputBytes(64))
 	small.AddFilter("banner", bannerFilter)
 	tmpl, _ = small.FromString(`{{ "" | banner(1000000) }}`)
 	_, err = tmpl.RenderString(ctx, nil)
@@ -179,7 +179,7 @@ func (t tempC) HTML() string { return fmt.Sprintf("<b>%.1f&deg;C</b>", float64(t
 // reflected over, by implementing value.Object.
 func Example_customObject() {
 	ctx := context.Background()
-	env := gojja2.New(gojja2.WithAutoescape(true))
+	env := mustEnv(gojja2.WithAutoescape(true))
 	tmpl, err := env.FromString(
 		`{{ t.celsius }} = {{ t.fahrenheit }}` + "\n" +
 			`printed: {{ t|string }}` + "\n" +
@@ -210,7 +210,7 @@ func Example_customObject() {
 // does sustained work without writing output, so it polls the context: without
 // that, it is a region a cancelled render cannot interrupt.
 func ExampleFunc() {
-	env := gojja2.New()
+	env := mustEnv()
 	env.AddGlobal("countdown", gojja2.Func("countdown",
 		func(s *gojja2.State, args *value.CallArgs) (value.Value, error) {
 			n, _ := args.Arg(0)

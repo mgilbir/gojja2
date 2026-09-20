@@ -19,7 +19,7 @@ import (
 // "unhashable type: 'list'". gojja2 answered False for everything that was not
 // a string, which made a question nothing could answer look answered.
 func TestIsFilterAndIsTestHashTheirValue(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{`{{ "upper" is filter }}|{{ "bogus" is filter }}`, "True|False"},
 		// A name can be one and not the other.
@@ -73,7 +73,7 @@ func TestIsFilterAndIsTestHashTheirValue(t *testing.T) {
 //
 // TestSameAsEmptyTuple covers the one container CPython shares.
 func TestDivisiblebyComparesAgainstZero(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// % on a string is formatting, and no format produces "".
 		{`{{ "" is divisibleby([]) }}`, "False"},
@@ -103,7 +103,7 @@ func TestDivisiblebyComparesAgainstZero(t *testing.T) {
 // TestSameAsEmptyTuple: CPython shares one empty tuple, so `() is ()` is true
 // where every other pair of separately built containers is not.
 func TestSameAsEmptyTuple(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		{`{{ () is sameas(()) }}`, "True"},
 		{`{{ (1,) is sameas((1,)) }}`, "False"},

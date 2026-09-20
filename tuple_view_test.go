@@ -94,7 +94,7 @@ func TestTupleSubclassBehavesAsTuple(t *testing.T) {
 		{"[p, (1,2)]|unique|list", "[(1, 2)]"},
 		{`{"k": p} == {"k": (1,2)}`, "True"},
 	} {
-		got, err := renderVars(t, New(), "{{ "+tc.expr+" }}", vars)
+		got, err := renderVars(t, mustNew(), "{{ "+tc.expr+" }}", vars)
 		if err != nil {
 			t.Errorf("%s: %v", tc.expr, err)
 			continue
@@ -136,7 +136,7 @@ func TestTupleSubclassErrorsNameTheSubclass(t *testing.T) {
 		// Two placeholders' worth of arguments, one placeholder.
 		{`"%s" % p`, "not all arguments converted during string formatting"},
 	} {
-		_, err := renderVars(t, New(), "{{ "+tc.expr+" }}", vars)
+		_, err := renderVars(t, mustNew(), "{{ "+tc.expr+" }}", vars)
 		if err == nil {
 			t.Errorf("%s: no error, want %q", tc.expr, tc.want)
 			continue

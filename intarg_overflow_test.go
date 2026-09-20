@@ -66,7 +66,7 @@ func TestIntegerArgumentOverflowsAtItsCType(t *testing.T) {
 
 func checkOverflow(t *testing.T, name, src, ctype string) {
 	t.Helper()
-	tmpl, err := New().FromString(src)
+	tmpl, err := mustNew().FromString(src)
 	if err != nil {
 		t.Errorf("%s: compile: %v", name, err)
 		return
@@ -93,7 +93,7 @@ func TestNonIntegerArgumentStaysATypeError(t *testing.T) {
 		{`{{ [3,1]|sort(reverse="x") }}`, "'str' object cannot be interpreted as an integer"},
 		{`{{ "a\nb".splitlines(1.5)|list }}`, "'float' object cannot be interpreted as an integer"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -115,7 +115,7 @@ func TestIntegerArgumentInRangeStillWorks(t *testing.T) {
 		{`{{ "a\nb".splitlines(2147483647)|list }}`, "['a\\n', 'b']"},
 		{`{{ [3,1]|sort(reverse=0) }}`, "[1, 3]"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue

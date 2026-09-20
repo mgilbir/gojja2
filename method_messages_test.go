@@ -19,7 +19,7 @@ import (
 // argument parser generates call the None singleton "None" where a hand-written
 // check says "NoneType".
 func TestMethodArgumentMessages(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// The searches and partitions: no method, no parameter.
 		{`{{ "ab".count(1) }}`, "must be str, not int"},
@@ -102,7 +102,7 @@ func TestMethodArgumentMessages(t *testing.T) {
 // gojja2 required a dict up front in both, which refused calls CPython answers
 // and answered with a complaint CPython never makes.
 func TestFormatMapAndTranslateAreLazy(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// Nothing to translate, so the table is never consulted.
 		{`[{{ ""|string|trim }}{{ "".translate(1) }}]`, "[]"},

@@ -64,7 +64,7 @@ func TestDictViewIsNotJSONSerializable(t *testing.T) {
 		{`{{ {'a': 1}.values()|tojson }}`, "Object of type dict_values is not JSON serializable"},
 		{`{{ {'a': 1}.items()|tojson }}`, "Object of type dict_items is not JSON serializable"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -94,7 +94,7 @@ func TestDictViewEquality(t *testing.T) {
 
 func checkView(t *testing.T, src, want string) {
 	t.Helper()
-	tmpl, err := New().FromString(src)
+	tmpl, err := mustNew().FromString(src)
 	if err != nil {
 		t.Errorf("%s: compile: %v", src, err)
 		return

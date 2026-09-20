@@ -29,7 +29,7 @@ func angle(v value.Value) value.Value {
 func renderFinalized(t *testing.T, src string, opts ...gojja2.Option) string {
 	t.Helper()
 	opts = append([]gojja2.Option{gojja2.WithFinalize(angle)}, opts...)
-	tmpl, err := gojja2.New(opts...).FromString(src)
+	tmpl, err := mustEnv(opts...).FromString(src)
 	if err != nil {
 		t.Fatalf("FromString(%q): %v", src, err)
 	}
@@ -84,7 +84,7 @@ func TestBlockOutputUnchangedWithoutFinalize(t *testing.T) {
 		{"{% macro w() %}[{{ caller() }}]{% endmacro %}{% call w() %}{{ x }}{% endcall %}", "[a]"},
 		{"{% set s %}{{ x }}{% endset %}{{ s }}", "a"},
 	} {
-		tmpl, err := gojja2.New().FromString(tc.src)
+		tmpl, err := mustEnv().FromString(tc.src)
 		if err != nil {
 			t.Fatalf("FromString(%q): %v", tc.src, err)
 		}

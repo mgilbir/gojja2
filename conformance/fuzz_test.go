@@ -75,7 +75,7 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 		}
 	}()
 
-	env := gojja2.New(
+	env := mustEnv(
 		gojja2.WithLoader(gojja2.DictLoader(sources)),
 		gojja2.WithAutoescape(c.Autoescape),
 	)

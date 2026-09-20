@@ -98,11 +98,18 @@ func defaultPolicies() Policies {
 	return Policies{URLizeRel: "noopener", TruncateLeeway: 5}
 }
 
-// Option configures an Environment.
-type Option func(*Environment)
+// Option configures an Environment. It reports what it could not accept, so
+// that a misconfiguration is refused at New rather than surfacing later as a
+// template that behaves oddly.
+type Option func(*Environment) error
 
 // New returns an Environment with jinja2's defaults, adjusted by opts.
-func New(opts ...Option) *Environment {
+//
+// It reports an error for a configuration it cannot honour -- an unknown
+// extension, a newline sequence that is not one, delimiters that collide --
+// rather than accepting it and rendering something the caller did not ask
+// for. The returned Environment is nil when the error is not.
+func New(opts ...Option) (*Environment, error) {
 	env := &Environment{
 		syntax:         lexer.DefaultSyntax(),
 		undefined:      value.UndefinedDefault,
@@ -128,59 +135,97 @@ func New(opts ...Option) *Environment {
 		env.stockTests[name] = true
 	}
 	for _, opt := range opts {
-		opt(env)
+		if err := opt(env); err != nil {
+			return nil, err
+		}
 	}
-	return env
+	if err := env.validate(); err != nil {
+		return nil, err
+	}
+	return env, nil
+}
+
+// validate checks what only the finished configuration can show, which is the
+// settings that have to differ from one another.
+func (e *Environment) validate() error {
+	// jinja2 asserts that the three tag openings are distinct. Its own
+	// check is `a != b != c`, a chained comparison, so it never compares
+	// the block opening against the comment one -- this does, because a
+	// template cannot be read two ways and guessing is worse than saying
+	// so. A line-statement prefix may equal any of them: jinja2 allows
+	// that and renders it, and so does this.
+	for _, pair := range []struct{ aName, a, bName, b string }{
+		{"block", e.syntax.BlockStart, "variable", e.syntax.VariableStart},
+		{"block", e.syntax.BlockStart, "comment", e.syntax.CommentStart},
+		{"variable", e.syntax.VariableStart, "comment", e.syntax.CommentStart},
+	} {
+		if pair.a == pair.b {
+			return errs.New(errs.TemplateError,
+				"the %s and %s start strings are both %q; they must differ",
+				pair.aName, pair.bName, pair.a)
+		}
+	}
+	return nil
 }
 
 // WithLoader sets where templates are loaded from.
-func WithLoader(l Loader) Option { return func(e *Environment) { e.loader = l } }
+func WithLoader(l Loader) Option { return func(e *Environment) error { e.loader = l; return nil } }
 
 // WithBlockDelimiters overrides `{%` and `%}`.
 func WithBlockDelimiters(start, end string) Option {
-	return func(e *Environment) { e.syntax.BlockStart, e.syntax.BlockEnd = start, end }
+	return func(e *Environment) error { e.syntax.BlockStart, e.syntax.BlockEnd = start, end; return nil }
 }
 
 // WithVariableDelimiters overrides `{{` and `}}`.
 func WithVariableDelimiters(start, end string) Option {
-	return func(e *Environment) { e.syntax.VariableStart, e.syntax.VariableEnd = start, end }
+	return func(e *Environment) error { e.syntax.VariableStart, e.syntax.VariableEnd = start, end; return nil }
 }
 
 // WithCommentDelimiters overrides `{#` and `#}`.
 func WithCommentDelimiters(start, end string) Option {
-	return func(e *Environment) { e.syntax.CommentStart, e.syntax.CommentEnd = start, end }
+	return func(e *Environment) error { e.syntax.CommentStart, e.syntax.CommentEnd = start, end; return nil }
 }
 
 // WithLineStatementPrefix enables line statements, e.g. "#".
 func WithLineStatementPrefix(prefix string) Option {
-	return func(e *Environment) { e.syntax.LineStatementPrefix = prefix }
+	return func(e *Environment) error { e.syntax.LineStatementPrefix = prefix; return nil }
 }
 
 // WithLineCommentPrefix enables line comments, e.g. "##".
 func WithLineCommentPrefix(prefix string) Option {
-	return func(e *Environment) { e.syntax.LineCommentPrefix = prefix }
+	return func(e *Environment) error { e.syntax.LineCommentPrefix = prefix; return nil }
 }
 
 // WithTrimBlocks removes the first newline after a block tag.
-func WithTrimBlocks(on bool) Option { return func(e *Environment) { e.syntax.TrimBlocks = on } }
+func WithTrimBlocks(on bool) Option {
+	return func(e *Environment) error { e.syntax.TrimBlocks = on; return nil }
+}
 
 // WithLstripBlocks strips indentation in front of a block tag.
-func WithLstripBlocks(on bool) Option { return func(e *Environment) { e.syntax.LstripBlocks = on } }
+func WithLstripBlocks(on bool) Option {
+	return func(e *Environment) error { e.syntax.LstripBlocks = on; return nil }
+}
 
 // WithKeepTrailingNewline keeps a template's final newline.
 func WithKeepTrailingNewline(on bool) Option {
-	return func(e *Environment) { e.syntax.KeepTrailingNewline = on }
+	return func(e *Environment) error { e.syntax.KeepTrailingNewline = on; return nil }
 }
 
 // WithNewlineSequence sets what newlines in template data render as.
 //
-// Any string is accepted. jinja2 asserts that it is one of "\n", "\r\n" or
-// "\r", so a value outside those three renders here and raises there -- a
-// difference only a host can reach, since it is a setting rather than anything
-// a template says. The assertion is jinja2's own and is compiled out under
-// `python -O`, so it is a check rather than a guarantee even there.
+// It must be one of "\n", "\r\n" or "\r", which is what jinja2 asserts. Any
+// other string used to be accepted and rendered, so a template that worked
+// here raised under CPython for a reason the template could not see.
 func WithNewlineSequence(seq string) Option {
-	return func(e *Environment) { e.syntax.NewlineSequence = seq }
+	return func(e *Environment) error {
+		switch seq {
+		case "\n", "\r\n", "\r":
+			e.syntax.NewlineSequence = seq
+			return nil
+		}
+		return errs.New(errs.TemplateError,
+			`newline sequence %q is not one of "\n", "\r\n" or "\r"`, seq)
+	}
 }
 
 // AutoescapeFunc decides whether a template autoescapes.
@@ -195,19 +240,20 @@ type AutoescapeFunc func(name string, fromString bool) bool
 
 // WithAutoescape turns HTML escaping on or off for every template.
 func WithAutoescape(on bool) Option {
-	return func(e *Environment) {
+	return func(e *Environment) error {
 		if !on {
 			e.autoescape = nil
-			return
+			return nil
 		}
 		e.autoescape = func(string, bool) bool { return true }
+		return nil
 	}
 }
 
 // WithAutoescapeFunc decides escaping per template, the way jinja2's
 // select_autoescape does.
 func WithAutoescapeFunc(fn AutoescapeFunc) Option {
-	return func(e *Environment) { e.autoescape = fn }
+	return func(e *Environment) error { e.autoescape = fn; return nil }
 }
 
 // SelectAutoescapeConfig mirrors the parameters of jinja2's select_autoescape.
@@ -313,7 +359,7 @@ func hasAnySuffix(name string, patterns []string) bool {
 
 // WithUndefined selects the Undefined behaviour for missing values.
 func WithUndefined(b value.UndefinedBehavior) Option {
-	return func(e *Environment) { e.undefined = b }
+	return func(e *Environment) error { e.undefined = b; return nil }
 }
 
 // WithMethodPolicy decides which methods of a Go value in the render context a
@@ -325,37 +371,47 @@ func WithUndefined(b value.UndefinedBehavior) Option {
 // arguments a host method is called with, so it is worth doing only where
 // template authors are as trusted as the Go code they call into.
 func WithMethodPolicy(p value.MethodPolicy) Option {
-	return func(e *Environment) { e.methods = p }
+	return func(e *Environment) error { e.methods = p; return nil }
 }
 
 // WithFinalize post-processes every value before it is printed.
 func WithFinalize(fn func(value.Value) value.Value) Option {
-	return func(e *Environment) { e.finalize = fn }
+	return func(e *Environment) error { e.finalize = fn; return nil }
 }
 
 // WithExtensions enables the optional tags. `do` provides `{% do %}`;
 // `loopcontrols` provides `{% break %}` and `{% continue %}`.
 func WithExtensions(names ...string) Option {
-	return func(e *Environment) {
+	return func(e *Environment) error {
 		for _, name := range names {
 			switch name {
 			case "do", "jinja2.ext.do":
 				e.parseOpts.Do = true
 			case "loopcontrols", "jinja2.ext.loopcontrols":
 				e.parseOpts.LoopControls = true
+			default:
+				// Ignoring this turned a typo into a feature
+				// that was asked for and not enabled, and the
+				// template only said so later, by failing on a
+				// tag that should have existed.
+				return errs.New(errs.TemplateError,
+					"unknown extension %q: the known ones are do and loopcontrols",
+					name)
 			}
 		}
+		return nil
 	}
 }
 
 // WithMaxRecursion bounds how deeply templates may include, extend or call
 // into each other. Zero restores the default.
 func WithMaxRecursion(n int) Option {
-	return func(e *Environment) {
+	return func(e *Environment) error {
 		if n <= 0 {
 			n = 100
 		}
 		e.maxRecursion = n
+		return nil
 	}
 }
 
@@ -368,11 +424,12 @@ func WithMaxRecursion(n int) Option {
 // use [WithoutLimits]; do that only when the templates are trusted and a context
 // deadline is doing the job instead.
 func WithMaxIterations(n int64) Option {
-	return func(e *Environment) {
+	return func(e *Environment) error {
 		if n == 0 {
 			n = defaultMaxIterations
 		}
 		e.maxIterations = n
+		return nil
 	}
 }
 
@@ -383,11 +440,12 @@ func WithMaxIterations(n int64) Option {
 //
 // Zero restores the default, with the same caveat as [WithMaxIterations].
 func WithMaxOutputBytes(n int64) Option {
-	return func(e *Environment) {
+	return func(e *Environment) error {
 		if n == 0 {
 			n = defaultMaxOutputBytes
 		}
 		e.maxOutputBytes = n
+		return nil
 	}
 }
 
@@ -417,11 +475,12 @@ func WithMaxOutputBytes(n int64) Option {
 // before it is allocated -- so removing this bound and keeping that one is the
 // combination that gives CPython's answers without giving up the floor.
 func WithMaxIntBits(n int64) Option {
-	return func(e *Environment) {
+	return func(e *Environment) error {
 		if n == 0 {
 			n = value.MaxIntBits
 		}
 		e.maxIntBits = n
+		return nil
 	}
 }
 
@@ -435,14 +494,27 @@ func WithMaxIntBits(n int64) Option {
 // means "default" for all three, and turning a safety control off has to be
 // said out loud.
 func WithoutLimits() Option {
-	return func(e *Environment) {
+	return func(e *Environment) error {
 		e.maxIterations = -1
 		e.maxOutputBytes = -1
+		return nil
 	}
 }
 
 // WithPolicies overrides the filter default policies.
-func WithPolicies(p Policies) Option { return func(e *Environment) { e.policies = p } }
+func WithPolicies(p Policies) Option {
+	return func(e *Environment) error {
+		// truncate refuses a negative leeway when it runs, which meant
+		// a misconfigured environment compiled and then failed on
+		// every render that reached the filter.
+		if p.TruncateLeeway < 0 {
+			return errs.New(errs.TemplateError,
+				"truncate leeway must not be negative, got %d", p.TruncateLeeway)
+		}
+		e.policies = p
+		return nil
+	}
+}
 
 // Policies returns the environment's filter defaults.
 func (e *Environment) Policies() Policies { return e.policies }
@@ -535,11 +607,12 @@ func (e *Environment) GetTemplate(name string) (*Template, error) {
 // influence grows for the life of the process -- and retains the constants
 // folded into each tree along with it.
 func WithCacheSize(n int) Option {
-	return func(e *Environment) {
+	return func(e *Environment) error {
 		if n == 0 {
 			n = defaultCacheSize
 		}
 		e.cache = newTemplateCache(n)
+		return nil
 	}
 }
 

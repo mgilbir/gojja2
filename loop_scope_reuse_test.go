@@ -6,8 +6,6 @@ package gojja2_test
 import (
 	"context"
 	"testing"
-
-	"github.com/mgilbir/gojja2"
 )
 
 // A loop body whose scope cannot outlive the iteration is run in one reused
@@ -21,7 +19,7 @@ import (
 
 func renderLoop(t *testing.T, src string) string {
 	t.Helper()
-	tmpl, err := gojja2.New().FromString(src)
+	tmpl, err := mustEnv().FromString(src)
 	if err != nil {
 		t.Fatalf("FromString(%q): %v", src, err)
 	}

@@ -22,7 +22,7 @@ import "testing"
 //
 // Every expectation is CPython jinja2 3.1.6's.
 func TestWrapAndIndentFollowPythonsOrder(t *testing.T) {
-	env := New()
+	env := mustNew()
 	vars := map[string]any{"text": "  the quick brown fox jumps over the lazy dog  "}
 
 	for _, tc := range []struct{ expr, want string }{
@@ -88,7 +88,7 @@ func TestWrapAndIndentFollowPythonsOrder(t *testing.T) {
 //
 // Expectations from CPython jinja2 3.1.6.
 func TestNegativeConstantPowerFollowsTheGeneratedSource(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// Folded: the grouping survives.
 		{`{{ (-8) ** 2 }}`, "64"},
@@ -137,7 +137,7 @@ func TestNegativeConstantPowerFollowsTheGeneratedSource(t *testing.T) {
 //
 // Expectations from CPython jinja2 3.1.6.
 func TestHyphenChunksFollowTextwrap(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ expr, want string }{
 		// One letter before the hyphen is not two, so a-b holds.
 		{`'well-known a-b ab-cd a-b-c-d co-op-er-ate'|wordwrap(6)`,

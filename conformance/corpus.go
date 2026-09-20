@@ -265,7 +265,7 @@ func DecodeContext(raw json.RawMessage) (map[string]value.Value, error) {
 }
 
 // Environment builds the environment a case runs under.
-func (c *Case) Environment() *gojja2.Environment {
+func (c *Case) Environment() (*gojja2.Environment, error) {
 	sources := make(map[string]string, len(c.Templates)+1)
 	for name, src := range c.Templates {
 		sources[name] = src
@@ -302,9 +302,12 @@ func (c *Case) Environment() *gojja2.Environment {
 	if len(s.Extensions) > 0 {
 		opts = append(opts, gojja2.WithExtensions(s.Extensions...))
 	}
-	env := gojja2.New(opts...)
+	env, err := gojja2.New(opts...)
+	if err != nil {
+		return nil, err
+	}
 	applyProfile(env, c.Profile)
-	return env
+	return env, nil
 }
 
 func undefinedBehavior(name string) value.UndefinedBehavior {
@@ -322,7 +325,10 @@ func undefinedBehavior(name string) value.UndefinedBehavior {
 
 // Render runs the case and reports what gojja2 produced.
 func (c *Case) Render() (string, error) {
-	env := c.Environment()
+	env, err := c.Environment()
+	if err != nil {
+		return "", err
+	}
 	tmpl, err := env.GetTemplate(c.Rel)
 	if err != nil {
 		return "", err
@@ -391,7 +397,10 @@ func holdsOrderedDict(v value.Value, depth int) bool {
 }
 
 func (c *Case) RenderViaGo() (string, error) {
-	env := c.Environment()
+	env, err := c.Environment()
+	if err != nil {
+		return "", err
+	}
 	tmpl, err := env.GetTemplate(c.Rel)
 	if err != nil {
 		return "", err

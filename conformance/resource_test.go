@@ -38,9 +38,9 @@ func TestResourceError(t *testing.T) {
 		env *gojja2.Environment
 		src string
 	}{
-		"iteration budget": {gojja2.New(gojja2.WithMaxIterations(10)),
+		"iteration budget": {mustEnv(gojja2.WithMaxIterations(10)),
 			`{% for i in range(1000) %}{% endfor %}`},
-		"output budget": {gojja2.New(gojja2.WithMaxOutputBytes(16)),
+		"output budget": {mustEnv(gojja2.WithMaxOutputBytes(16)),
 			`{% for i in range(1000) %}xxxxxxxx{% endfor %}`},
 	} {
 		tmpl, err := tc.env.FromString(tc.src)
@@ -54,7 +54,7 @@ func TestResourceError(t *testing.T) {
 	}
 
 	// An ordinary template failure must still be graded.
-	tmpl, err := gojja2.New().FromString(`{{ 1/0 }}`)
+	tmpl, err := mustEnv().FromString(`{{ 1/0 }}`)
 	if err != nil {
 		t.Fatal(err)
 	}

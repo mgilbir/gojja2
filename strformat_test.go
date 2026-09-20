@@ -15,7 +15,7 @@ import (
 // value unpadded and `{!r}` returned str() instead of repr(), both without
 // complaint, which is the shape of bug a template renders rather than reports.
 func TestStrFormatSpecs(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// --- conversions ---
 		{`{{ '{!r}'.format('ab') }}`, `'ab'`},
@@ -139,7 +139,7 @@ func TestStrFormatSpecs(t *testing.T) {
 // failed outright and a number reported a missing key rather than not being
 // subscriptable.
 func TestFormatFieldSubscript(t *testing.T) {
-	env := New()
+	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// A string indexes by character.
 		{`{{ '{0[0]}{0[1]}'.format('Hello') }}`, `He`},

@@ -67,7 +67,7 @@ func TestFilesizeformatRefusalWording(t *testing.T) {
 		{`{{ "a"|filesizeformat }}`, "could not convert string to float: 'a'"},
 		{`{{ [1]|filesizeformat }}`, "float() argument must be a string or a real number, not 'list'"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -92,7 +92,7 @@ func TestWordwrapOnBytes(t *testing.T) {
 		{`{{ [1]|wordwrap }}`, "", "'list' object has no attribute 'splitlines'"},
 		{`{{ none|wordwrap }}`, "", "'NoneType' object has no attribute 'splitlines'"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -119,7 +119,7 @@ func TestToJSONIndentIsResolvedBeforeBytesIsRefused(t *testing.T) {
 		{`{{ "a".encode()|tojson([1]) }}`, "can't multiply sequence by non-int of type 'list'"},
 		{`{{ "a".encode()|tojson }}`, "Object of type bytes is not JSON serializable"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: %v", tc.src, err)
 			continue
@@ -134,7 +134,7 @@ func TestToJSONIndentIsResolvedBeforeBytesIsRefused(t *testing.T) {
 
 func checkNum(t *testing.T, src, want string) {
 	t.Helper()
-	tmpl, err := New().FromString(src)
+	tmpl, err := mustNew().FromString(src)
 	if err != nil {
 		t.Errorf("%s: compile: %v", src, err)
 		return

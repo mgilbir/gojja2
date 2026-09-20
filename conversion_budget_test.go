@@ -71,7 +71,7 @@ func convEnv(opts ...gojja2.Option) *gojja2.Environment {
 	opts = append(opts, gojja2.WithLoader(gojja2.DictLoader(map[string]string{
 		"inner": `{{ anySlice|length }}`,
 	})))
-	return gojja2.New(opts...)
+	return mustEnv(opts...)
 }
 
 // Converting a render argument is work proportional to the argument, and it
@@ -216,7 +216,7 @@ func TestRefusedConversionYieldsNoValue(t *testing.T) {
 // The budget crosses into a nested render, so an include cannot convert the
 // context it was handed on a fresh allowance.
 func TestConversionBudgetIsSharedWithIncludes(t *testing.T) {
-	env := gojja2.New(
+	env := mustEnv(
 		gojja2.WithMaxIterations(1000),
 		gojja2.WithLoader(gojja2.DictLoader(map[string]string{
 			"inner": `{{ anySlice|length }}`,

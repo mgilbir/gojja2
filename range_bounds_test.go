@@ -49,7 +49,7 @@ func TestRangeBoundsAreExact(t *testing.T) {
 		{`{{ range(1.5) }}`, "", "'float' object cannot be interpreted as an integer"},
 		{`{{ range(1180591620717411303424,1,0) }}`, "", "range() arg 3 must not be zero"},
 	} {
-		tmpl, err := New().FromString(tc.src)
+		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
 			t.Errorf("%s: compile: %v", tc.src, err)
 			continue
@@ -71,7 +71,7 @@ func TestRangeBoundsAreExact(t *testing.T) {
 // than the range refusing to exist. That is the whole point of keeping the
 // bounds exact -- the refusal belongs to the walk, not to the construction.
 func TestWideRangeIsWalkedUnderTheBudget(t *testing.T) {
-	env := New(WithMaxIterations(1000))
+	env := mustNew(WithMaxIterations(1000))
 	tmpl, err := env.FromString(`{% for i in range(1180591620717411303424) %}x{% endfor %}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)

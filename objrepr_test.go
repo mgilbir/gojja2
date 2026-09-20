@@ -22,7 +22,7 @@ import (
 //
 // The address is this object's, as reproducible as CPython's own.
 func TestDefaultObjectRepr(t *testing.T) {
-	env := New()
+	env := mustNew()
 	addr := regexp.MustCompile(`^<([\w.]+) object at 0x[0-9a-f]+>$`)
 	for _, tc := range []struct{ src, qualified string }{
 		{`{{ cycler(1) }}`, "jinja2.utils.Cycler"},
@@ -84,7 +84,7 @@ func TestDefaultObjectRepr(t *testing.T) {
 	}
 
 	// A loaded template does have a name.
-	named := New(WithLoader(DictLoader(map[string]string{
+	named := mustNew(WithLoader(DictLoader(map[string]string{
 		"t.html": `{% block b %}{% endblock %}{{ self }}`,
 	})))
 	tmpl, err = named.GetTemplate("t.html")
