@@ -1042,7 +1042,37 @@ for _i, _subj in enumerate(["a,b,c,d", ",a,,b,", "a,,b", ",,,", "abc"]):
     for _n in (0, 1, 2, 3):
         case(f"methods/split_sep_maxsplit_{_i}_{_n}", "{{ %r.split(',', %d) }}" % (_subj, _n))
         case(f"methods/rsplit_sep_maxsplit_{_i}_{_n}", "{{ %r.rsplit(',', %d) }}" % (_subj, _n))
-        case(f"bytes/rsplit_maxsplit_{_i}_{_n}", "{{ b%r.rsplit(b',', %d) }}" % (_subj, _n))
+
+# jinja2 has no bytes literal: `b'a'` lexes as the name b followed by a string,
+# and the print statement ends at the name. The cases that meant to grade
+# bytes.rsplit were written that way, so all twenty graded this refusal and
+# nothing reached a bytes at all -- both of the bytes split helpers sat at zero
+# coverage with a corpus that looked like it covered them. One case is enough
+# to hold the refusal down.
+case("errors/bytes_literal_is_not_syntax", "{{ b'a,b'.rsplit(b',', 1) }}")
+
+# A bytes is spelled `.encode()`, which is how the rest of the bytes cases make
+# one. Both branches of both methods are graded: a separator walks from one end
+# or the other, and None -- or no argument at all -- splits on runs of ASCII
+# whitespace and drops the empties at the edges.
+_BYTESEP = ".encode().SPLIT(','.encode(), N) }}"
+for _i, _subj in enumerate(["a,b,c,d", ",a,,b,", "a,,b", ",,,", "abc", ""]):
+    for _n in (0, 1, 2, 3, 9):
+        for _side in ("split", "rsplit"):
+            body = "{{ " + repr(_subj) + _BYTESEP.replace("SPLIT", _side).replace("N", str(_n))
+            case(f"bytes/{_side}_sep_maxsplit_{_i}_{_n}", body)
+    for _side in ("split", "rsplit"):
+        case(f"bytes/{_side}_sep_nomax_{_i}",
+             "{{ " + repr(_subj) + ".encode()." + _side + "(','.encode()) }}")
+
+for _i, _subj in enumerate(_SPLITSUBJECTS + ["", "   ", "\u00e9 \u00e9"]):
+    for _n in (0, 1, 2, 3, 9):
+        for _side in ("split", "rsplit"):
+            case(f"bytes/{_side}_ws_maxsplit_{_i}_{_n}",
+                 "{{ " + repr(_subj) + ".encode()." + _side + "(none, " + str(_n) + ") }}")
+    for _side in ("split", "rsplit"):
+        case(f"bytes/{_side}_ws_noarg_{_i}",
+             "{{ " + repr(_subj) + ".encode()." + _side + "() }}")
 
 
 # A line statement whose prefix is also the block delimiter. The lexer decided

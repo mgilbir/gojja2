@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a   b   c'.encode().split(none, 3) }}

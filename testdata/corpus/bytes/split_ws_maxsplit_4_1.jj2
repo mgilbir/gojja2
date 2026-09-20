@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a\tb\nc d'.encode().split(none, 1) }}
