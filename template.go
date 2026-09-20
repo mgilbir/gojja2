@@ -29,6 +29,12 @@ type Template struct {
 	tree       *ast.Template
 	blocks     map[string]*ast.Block
 
+	// countsChunks records that the template contains a {% filter %} block,
+	// which is the only construct that reads how many pieces of output a
+	// frame already holds. Templates without one do not count, so they pay
+	// a predictable branch per write and nothing else.
+	countsChunks bool
+
 	// frameLocals caches, per AST node that owns a frame body, the names
 	// that body assigns. See Template.frameLocalsOf.
 	frameLocals sync.Map
@@ -177,6 +183,9 @@ func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int
 // renderState runs a prepared state, which is where the two entry points meet.
 func (t *Template) renderState(st *State, out writer) error {
 	ex := &exec{st: st, sc: st.ctx, out: out, stream: out, autoescape: st.autoescape}
+	if t.countsChunks {
+		ex.chunks = new(int)
+	}
 
 	if err := ex.execBody(t.tree.Body); err != nil {
 		return err

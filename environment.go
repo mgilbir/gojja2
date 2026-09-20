@@ -881,12 +881,13 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 		return nil, berr
 	}
 	return &Template{
-		env:        e,
-		name:       name,
-		fromString: fromString,
-		source:     source,
-		tree:       tree,
-		blocks:     blocks,
+		env:          e,
+		name:         name,
+		fromString:   fromString,
+		source:       source,
+		tree:         tree,
+		blocks:       blocks,
+		countsChunks: hasFilterBlock(tree.Body),
 	}, nil
 }
 

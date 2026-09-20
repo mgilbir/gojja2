@@ -67,6 +67,7 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			// so nothing escapes it a second time.
 			out.Nodes[i] = &ast.TemplateData{Pos: ast.At(node.Line()), Data: text}
 		}
+		mergeAdjacentData(out)
 	})
 }
 
@@ -1145,4 +1146,39 @@ func blockEscaping(c *constEvaluator, n *ast.AutoescapeBlock, enclosing bool) (e
 		return enclosing, true
 	}
 	return truth, false
+}
+
+// mergeAdjacentData joins literal runs that folding left next to one another,
+// so that `x{{ 1 }}y` is one piece of output rather than three -- which is what
+// jinja2's code generator emits for it, and so what its output is numbered by.
+//
+// Each run is joined once. Appending to the previous node instead is quadratic
+// in the length of the run, and a template that is mostly constant prints is
+// one long run: two megabytes of them took thirteen seconds to compile, which
+// the linearity guard caught.
+func mergeAdjacentData(out *ast.Output) {
+	isData := func(n ast.Expr) bool { _, ok := n.(*ast.TemplateData); return ok }
+	merged := out.Nodes[:0]
+	for i := 0; i < len(out.Nodes); {
+		if !isData(out.Nodes[i]) {
+			merged = append(merged, out.Nodes[i])
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(out.Nodes) && isData(out.Nodes[j]) {
+			j++
+		}
+		first := out.Nodes[i].(*ast.TemplateData)
+		if j-i > 1 {
+			var b strings.Builder
+			for _, n := range out.Nodes[i:j] {
+				b.WriteString(n.(*ast.TemplateData).Data)
+			}
+			first = &ast.TemplateData{Pos: ast.At(first.Line()), Data: b.String()}
+		}
+		merged = append(merged, first)
+		i = j
+	}
+	out.Nodes = merged
 }

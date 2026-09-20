@@ -1,0 +1,5 @@
+{
+  "v": "V"
+}
+---
+a{{ v }}b{{ v }}c{% filter length %}abc{% endfilter %}

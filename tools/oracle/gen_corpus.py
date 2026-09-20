@@ -1081,6 +1081,32 @@ for _n, _src, _st in [
     case(f"syntax/{_n}", _src, __settings__=_st)
 
 
+# The index in "sequence item N" is how many pieces of output the frame already
+# held. jinja2 yields a piece per literal run and per runtime print, merges a
+# constant print into the literal beside it, and yields once per loop
+# iteration -- so N depends on what the render did, not only on the template.
+# gojja2 reported 0 always; it counts now.
+_FILTERIDX = [
+    ("alone", "{% filter length %}abc{% endfilter %}"),
+    ("after_text", "x{% filter length %}abc{% endfilter %}"),
+    ("after_folded_print", "x{{ 1 }}y{% filter length %}abc{% endfilter %}"),
+    ("after_print", "{{ v }}{% filter length %}abc{% endfilter %}"),
+    ("after_two_prints", "{{ v }}{{ v }}{% filter length %}abc{% endfilter %}"),
+    ("interleaved", "a{{ v }}b{{ v }}c{% filter length %}abc{% endfilter %}"),
+    ("after_if", "{% if true %}zz{% endif %}{% filter length %}abc{% endfilter %}"),
+    ("after_loop", "{% for i in [1,2] %}{{ i }}{% endfor %}{% filter length %}abc{% endfilter %}"),
+    ("after_longer_loop", "{% for i in [1,2,3] %}{{ i }}{% endfor %}{% filter length %}abc{% endfilter %}"),
+    ("inside_loop", "{% for i in [1] %}{% filter length %}abc{% endfilter %}{% endfor %}"),
+    ("inside_loop_after_text", "{% for i in [1] %}q{% filter length %}abc{% endfilter %}{% endfor %}"),
+    ("inside_filter", "{% filter upper %}{% filter length %}abc{% endfilter %}{% endfilter %}"),
+    ("inside_macro", "{% macro m() %}{% filter length %}abc{% endfilter %}{% endmacro %}{{ m() }}"),
+    ("inside_set", "{% set z %}{{ v }}{% filter length %}abc{% endfilter %}{% endset %}{{ z }}"),
+    ("after_set_and_print", "{% set x %}s{% endset %}{{ x }}{% filter length %}abc{% endfilter %}"),
+]
+for _n, _src in _FILTERIDX:
+    case(f"errors/filteridx_{_n}", _src, v="V")
+
+
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
 case("errors/syntax_unexpected", "{{ 1 + }}")

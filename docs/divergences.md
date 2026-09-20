@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-four divergences below, **one** is worth going looking for:
+Of the twenty-three divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -50,7 +50,6 @@ are safety controls rather than behavioural choices, and they live in
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
 | [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | a template cannot write to your objects | Changes what the *host* sees after the render, not what renders |
-| [Which item a filter block's type error names](#which-item-a-filter-blocks-type-error-names) | the message says item 0; jinja2 counts its own output chunks | No -- same error, same type |
 | [finalize and a constant print](#finalize-and-a-constant-print) | a constant print is not finalized at compile time | Only with `WithFinalize` and autoescape |
 | [Subscripting the `dict` global](#subscripting-the-dict-global) | `dict['k']` is undefined; in Python it is a generic alias | No -- it is a type annotation, not a lookup |
 | [Which line an error inside a multi-line tag names](#which-line-an-error-inside-a-multi-line-tag-names) | the failing token's line, not the tag's | No -- same error, different line number |
@@ -481,28 +480,6 @@ is part of the compiled tree, which every render of that template shares --
 including renders on other goroutines at the same time. `concurrency_test.go`
 pins all of it, and the version without the rebuild fails there with one
 goroutine's values appearing in another's output.
-
-### Which item a filter block's type error names
-
-A `{% filter %}` whose filter answers with something other than a string is a
-`TypeError` in both, with the same wording and the same type named:
-
-```
-TypeError: sequence item 0: expected str instance, int found
-```
-
-The index is jinja2's position in *its* output buffer, and it depends on how
-its code generator grouped the surrounding nodes rather than on anything about
-the template. `{% filter length %}abc{% endfilter %}` is item 0; put `x` in
-front and it is item 1; put `x{{ 'q' }}y` in front and it is still item 1,
-because those three merge into one chunk. gojja2 streams its output and has no
-such buffer to count, so it always reports 0.
-
-Everything a template can act on -- the class, that it is raised at all, and
-the type it names -- is identical. This is the same kind of artifact as the
-recursion wordings in [limits.md](limits.md#a-bound-on-nesting-depth): a number that describes
-CPython's internals, not the template. Asserted by the `errors/filterblock_*`
-corpus cases.
 
 ### finalize and a constant print
 
