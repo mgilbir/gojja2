@@ -54,8 +54,8 @@ func TestNewRefusesAConfigurationItCannotHonour(t *testing.T) {
 		},
 		{
 			// jinja2's own check is a chained comparison and never
-			// compares these two, so it accepts this; a template
-			// cannot be read two ways, so it is refused here.
+			// compares these two, so it accepts this. Refused by
+			// default here; see TestDelimiterLeniency.
 			"block and comment openings collide",
 			[]gojja2.Option{gojja2.WithCommentDelimiters("{%", "%}")},
 			"block and comment start strings are both",
@@ -155,5 +155,39 @@ func TestNewStopsAtTheFirstBadOption(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown extension") {
 		t.Errorf("got %v, want the first option's error", err)
+	}
+}
+
+// The one pair jinja2 does not compare is a knob: refused by default, accepted
+// under MatchJinja2Delimiters, which is jinja2's own behaviour.
+func TestDelimiterLeniency(t *testing.T) {
+	collide := gojja2.WithCommentDelimiters("{%", "%}") // block is {% too
+
+	if _, err := gojja2.New(collide); err == nil {
+		t.Error("the default accepted colliding block and comment openings")
+	}
+	if _, err := gojja2.New(collide,
+		gojja2.WithDelimiterLeniency(gojja2.MatchJinja2Delimiters)); err != nil {
+		t.Errorf("MatchJinja2Delimiters refused what jinja2 accepts: %v", err)
+	}
+	// The two pairs jinja2 *does* compare stay refused at either setting.
+	for _, tc := range []struct {
+		name string
+		opt  gojja2.Option
+	}{
+		{"block == variable", gojja2.WithBlockDelimiters("{{", "}}")},
+		{"variable == comment", gojja2.WithVariableDelimiters("{#", "#}")},
+	} {
+		for _, l := range []gojja2.DelimiterLeniency{
+			gojja2.RefuseCollidingDelimiters, gojja2.MatchJinja2Delimiters,
+		} {
+			if _, err := gojja2.New(tc.opt, gojja2.WithDelimiterLeniency(l)); err == nil {
+				t.Errorf("%s accepted under %v; jinja2 asserts on it", tc.name, l)
+			}
+		}
+	}
+	// The zero value is the strict one.
+	if got := gojja2.RefuseCollidingDelimiters.String(); got != "RefuseCollidingDelimiters" {
+		t.Errorf("zero value names itself %q", got)
 	}
 }

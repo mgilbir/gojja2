@@ -236,7 +236,7 @@ There is no environment to use when it does -- it returns `nil` and the error.
 |---|---|
 | an unknown name in `WithExtensions` | a typo used to be ignored, so the feature you asked for was simply off, and the template said so later by failing on a tag that should have existed |
 | `WithNewlineSequence` outside `"\n"`, `"\r\n"`, `"\r"` | jinja2 asserts the same three; anything else rendered here and raised there |
-| two of the block, variable and comment *opening* strings being equal | a template cannot be read two ways, and guessing which is worse than saying so |
+| two of the block, variable and comment *opening* strings being equal | a template cannot be read two ways, and guessing which is worse than saying so. `WithDelimiterLeniency` turns this down; see below |
 | a negative `TruncateLeeway` | `truncate` refuses it when it runs, so the environment built and then failed on every render that reached the filter |
 
 Two things that look like they should be refused and are not. An **empty**
@@ -245,10 +245,26 @@ without restating the rest. And a **line-statement or line-comment prefix may
 equal a delimiter** -- `WithLineStatementPrefix("%")` with `%` as the block
 opening is a configuration jinja2 accepts and renders, and so does this.
 
-The delimiter check is stricter than jinja2's in one place. jinja2 writes its
-assertion as `a != b != c`, a chained comparison, so it never compares the
-block opening against the comment one and accepts them being equal. That
-configuration is ambiguous, so it is refused here.
+The delimiter check is stricter than jinja2's in one place, and that is a knob.
+jinja2 writes its assertion as `a != b != c`, a chained comparison, so it never
+compares the block opening against the comment one and accepts them being
+equal:
+
+```go
+// the default: all three pairs compared
+gojja2.New(gojja2.WithCommentDelimiters("{%", "%}"))   // error, block is {% too
+
+// jinja2's check exactly: block vs variable, variable vs comment, and no more
+gojja2.New(
+    gojja2.WithCommentDelimiters("{%", "%}"),
+    gojja2.WithDelimiterLeniency(gojja2.MatchJinja2Delimiters),
+)
+```
+
+Under `MatchJinja2Delimiters` such a template renders exactly as CPython
+renders it -- which of the two tags a `{%` opens is then settled by the lexer's
+ordering rather than by anything the template says. The two pairs jinja2 *does*
+compare are refused at either setting.
 
 ## Filter policies
 

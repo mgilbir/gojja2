@@ -55,6 +55,9 @@ type Environment struct {
 	stockFilters map[string]bool
 	stockTests   map[string]bool
 
+	// delimiterLeniency decides whether the block and comment openings may
+	// be equal, which is the one pair jinja2's own check does not compare.
+	delimiterLeniency DelimiterLeniency
 	// policies mirror jinja2's environment policies, which some filters
 	// read for their defaults.
 	policies Policies
@@ -145,20 +148,62 @@ func New(opts ...Option) (*Environment, error) {
 	return env, nil
 }
 
+// DelimiterLeniency is how strictly [New] checks that the tag openings differ.
+//
+// The zero value is the strict one, so a caller who says nothing gets the
+// reading that cannot be ambiguous.
+type DelimiterLeniency int
+
+const (
+	// RefuseCollidingDelimiters refuses any two of the block, variable and
+	// comment openings being equal. A template cannot be read two ways,
+	// and which reading wins is a detail of the lexer rather than
+	// something a template author chose.
+	//
+	// This is stricter than jinja2 in one case; see MatchJinja2Delimiters.
+	RefuseCollidingDelimiters DelimiterLeniency = iota
+
+	// MatchJinja2Delimiters reproduces jinja2's check exactly.
+	//
+	// jinja2 writes it as `assert block != variable != comment`, a chained
+	// comparison, so it compares block against variable and variable
+	// against comment and never compares block against comment. Setting
+	// the block and comment openings to the same string is therefore
+	// accepted there, and is accepted here under this setting. Which of
+	// the two such a template opens is then decided by the lexer's
+	// ordering rather than by the template.
+	MatchJinja2Delimiters
+)
+
+func (l DelimiterLeniency) String() string {
+	if l == MatchJinja2Delimiters {
+		return "MatchJinja2Delimiters"
+	}
+	return "RefuseCollidingDelimiters"
+}
+
+// WithDelimiterLeniency selects how strictly the tag openings are checked
+// against one another. See [RefuseCollidingDelimiters], which is the default.
+func WithDelimiterLeniency(l DelimiterLeniency) Option {
+	return func(e *Environment) error { e.delimiterLeniency = l; return nil }
+}
+
 // validate checks what only the finished configuration can show, which is the
 // settings that have to differ from one another.
+//
+// A line-statement or line-comment prefix may equal any delimiter: jinja2
+// allows that and renders it, and so does this.
 func (e *Environment) validate() error {
-	// jinja2 asserts that the three tag openings are distinct. Its own
-	// check is `a != b != c`, a chained comparison, so it never compares
-	// the block opening against the comment one -- this does, because a
-	// template cannot be read two ways and guessing is worse than saying
-	// so. A line-statement prefix may equal any of them: jinja2 allows
-	// that and renders it, and so does this.
-	for _, pair := range []struct{ aName, a, bName, b string }{
+	pairs := []struct{ aName, a, bName, b string }{
 		{"block", e.syntax.BlockStart, "variable", e.syntax.VariableStart},
-		{"block", e.syntax.BlockStart, "comment", e.syntax.CommentStart},
 		{"variable", e.syntax.VariableStart, "comment", e.syntax.CommentStart},
-	} {
+	}
+	if e.delimiterLeniency == RefuseCollidingDelimiters {
+		// The pair jinja2's chained comparison skips.
+		pairs = append(pairs, struct{ aName, a, bName, b string }{
+			"block", e.syntax.BlockStart, "comment", e.syntax.CommentStart})
+	}
+	for _, pair := range pairs {
 		if pair.a == pair.b {
 			return errs.New(errs.TemplateError,
 				"the %s and %s start strings are both %q; they must differ",
