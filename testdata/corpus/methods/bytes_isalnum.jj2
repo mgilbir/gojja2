@@ -1,0 +1,3 @@
+{}
+---
+{{ "a1".encode().isalnum() }}|{{ "a b".encode().isalnum() }}|{{ "".encode().isalnum() }}|{{ "_".encode().isalnum() }}|{{ "é".encode().isalnum() }}

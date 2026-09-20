@@ -1006,7 +1006,9 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	// fails on one of those rather than on being the wrong kind of input.
 	if !v.IsString() {
 		if killwords {
-			sliced, err := sliceValue(v, cut)
+			// `s[:cut]`, through the evaluator's own slice, so
+			// every kind answers here exactly as it answers there.
+			sliced, err := sliceOf(v, value.None, value.Int(int64(cut)), value.None)
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -2862,24 +2864,4 @@ func augmentedAssign(err error) error {
 		e.Msg = strings.Replace(e.Msg, "for +:", "for +=:", 1)
 	}
 	return err
-}
-
-// sliceValue takes the first n elements of a sequence value.
-func sliceValue(v value.Value, n int) (value.Value, error) {
-	seq, ok := v.Seq()
-	if !ok {
-		return v, nil
-	}
-	begin, stride, count, err := value.SliceSpan(seq.Len(), nil, &n, nil)
-	if err != nil {
-		return value.Undefined, err
-	}
-	items := make([]value.Value, count)
-	for i := range count {
-		items[i] = seq.At(begin + i*stride)
-	}
-	if v.Kind() == value.KindTuple {
-		return value.NewTuple(items...), nil
-	}
-	return value.NewList(items...), nil
 }

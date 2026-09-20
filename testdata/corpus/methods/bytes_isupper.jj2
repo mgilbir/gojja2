@@ -1,0 +1,3 @@
+{}
+---
+{{ "AB".encode().isupper() }}|{{ "Ab".encode().isupper() }}|{{ "1".encode().isupper() }}|{{ "".encode().isupper() }}
