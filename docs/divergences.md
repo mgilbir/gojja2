@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-three divergences below, **one** is worth going looking for:
+Of the twenty-four divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -53,6 +53,7 @@ are safety controls rather than behavioural choices, and they live in
 | [Which item a filter block's type error names](#which-item-a-filter-blocks-type-error-names) | the message says item 0; jinja2 counts its own output chunks | No -- same error, same type |
 | [finalize and a constant print](#finalize-and-a-constant-print) | a constant print is not finalized at compile time | Only with `WithFinalize` and autoescape |
 | [Subscripting the `dict` global](#subscripting-the-dict-global) | `dict['k']` is undefined; in Python it is a generic alias | No -- it is a type annotation, not a lookup |
+| [Which line an error inside a multi-line tag names](#which-line-an-error-inside-a-multi-line-tag-names) | the failing token's line, not the tag's | No -- same error, different line number |
 | [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
 | [No automatic template reload](#no-automatic-template-reload) | no `auto_reload`; use `ClearCache` | Changes when an edit is picked up |
 | [The default autoescape extension set](#the-default-autoescape-extension-set) | adds `xhtml` to jinja2's three | Only ever escapes *more*, never less |
@@ -548,6 +549,35 @@ which is what the global is for -- is identical in both.
 
 The other class globals are unaffected: `range['k']` raises in CPython too,
 because only a handful of builtins accept the annotation form.
+
+### Which line an error inside a multi-line tag names
+
+A tag's expression may span lines, and both engines parse and render those the
+same. They differ on which line an error *inside* one is reported at:
+
+```jinja
+{% if true
+   and x|nope %}X{% endif %}
+```
+
+jinja2 says line 1, gojja2 says line 2.
+
+gojja2 names the line of the token that failed. jinja2 names the line its code
+generator attributed the surrounding statement to, which for an `{% if %}`,
+`{% set %}` or `{% with %}` is where the tag opened. The two agree everywhere a
+tag fits on one line -- which is every single-line template -- and they agree
+for an error in a tag's *body* rather than its expression.
+
+They also agree in the places jinja2 happens to attribute to the expression
+instead of the statement: a print tag (`{{\n nosuch|nope\n}}` is line 2 in
+both), a loop filter (`{% for i in [1]\n if i|nope %}` is line 2 in both) and a
+macro's defaults. Matching jinja2 everywhere would mean reproducing where its
+code generator emits each line marker, which is a fact about its compiler
+rather than about the template -- the same kind of detail as the recursion
+wordings in [limits.md](limits.md#a-bound-on-nesting-depth).
+
+Both engines raise the same error with the same message; only the line number
+attached to it differs. Asserted by the tests in `multiline_test.go`.
 
 ### What a missing template's error says
 
