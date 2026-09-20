@@ -153,9 +153,41 @@ name into a failure instead of a silently empty page.
 ## Autoescaping
 
 ```go
-gojja2.New(gojja2.WithAutoescape(true))                               // always
-gojja2.New(gojja2.WithAutoescapeFunc(gojja2.SelectAutoescape(".html"))) // by name
+gojja2.New(gojja2.WithAutoescape(true))                  // always
+gojja2.New(gojja2.WithAutoescapeExtensions(".html"))     // by name
 ```
+
+Prefer `WithAutoescapeExtensions`. Extensions are matched as a *suffix*, so an
+argument that is not an extension never matches -- and never matching means
+never escaping. `SelectAutoescape("*.html")`, which is how you would write it
+thinking of a glob, leaves every `.html` template unescaped and says nothing;
+jinja2 does the same.
+
+`WithAutoescapeExtensions` refuses that, because this is the one setting whose
+failure mode is cross-site scripting. How much it refuses is a knob:
+
+```go
+// the default: refuses a glob, a path, an empty string, whitespace
+gojja2.WithAutoescapeExtensions("*.html")   // error
+
+// jinja2's behaviour exactly: taken literally, matches nothing, escapes nothing
+gojja2.WithAutoescapeSelection(gojja2.SelectAutoescapeConfig{
+    Enabled:  []string{"*.html"},
+    Leniency: gojja2.AcceptAnyExtension,
+})
+```
+
+The zero value of `Leniency` is `RefuseImpossibleExtensions`, so a caller who
+says nothing gets the checking. `Disabled` entries are checked the same way --
+one that cannot match errs toward escaping *more*, which is safe, but it is
+still not the configuration you wrote down.
+
+`SelectAutoescape` and `SelectAutoescapeWith` are unchanged and always lenient:
+they return an `AutoescapeFunc` and have nowhere to report a refusal, so the
+checking lives in the option, which has an error to return.
+
+A typo that is still a plausible extension -- `hmtl` -- cannot be told from a
+suffix somebody really uses, and is accepted at either setting.
 
 `SelectAutoescape` follows jinja2's `select_autoescape`: matching ignores case
 on both sides, a leading dot is optional, and matching happens on a whole

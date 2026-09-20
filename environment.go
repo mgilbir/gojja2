@@ -264,6 +264,36 @@ func WithAutoescapeFunc(fn AutoescapeFunc) Option {
 // not. That is deliberate -- every field here is written so that the quiet
 // reading is the safe one, and a caller has to say something explicit to
 // escape less.
+// AutoescapeLeniency is how much [WithAutoescapeSelection] and
+// [WithAutoescapeExtensions] will accept in an extension list.
+//
+// The zero value is the strict one, so a caller who says nothing gets the
+// safer reading -- as everywhere else in [SelectAutoescapeConfig].
+type AutoescapeLeniency int
+
+const (
+	// RefuseImpossibleExtensions refuses an entry that cannot be a file
+	// extension: a glob, a path, an empty or dots-only string, or one
+	// containing whitespace. Extensions are matched as a suffix, so such
+	// an entry matches nothing -- and in Enabled, matching nothing means
+	// escaping nothing. This is the default and the recommended setting.
+	RefuseImpossibleExtensions AutoescapeLeniency = iota
+
+	// AcceptAnyExtension accepts every entry, which is what jinja2's
+	// select_autoescape does. `Enabled: []string{"*.html"}` is then taken
+	// literally, matches no template, and escapes none of them -- exactly
+	// as CPython behaves. Choose this when matching jinja2 matters more
+	// than catching the mistake.
+	AcceptAnyExtension
+)
+
+func (l AutoescapeLeniency) String() string {
+	if l == AcceptAnyExtension {
+		return "AcceptAnyExtension"
+	}
+	return "RefuseImpossibleExtensions"
+}
+
 type SelectAutoescapeConfig struct {
 	// Enabled lists the extensions that turn escaping on. A leading dot is
 	// optional and case is ignored. Empty means html, htm, xml and xhtml.
@@ -282,6 +312,15 @@ type SelectAutoescapeConfig struct {
 	DisableForString bool
 	// Default is what a template matching neither list gets.
 	Default bool
+	// Leniency decides what [WithAutoescapeSelection] accepts in Enabled
+	// and Disabled. The zero value refuses entries that cannot be
+	// extensions.
+	//
+	// [SelectAutoescapeWith] ignores it: that function returns an
+	// AutoescapeFunc and has nowhere to report a refusal, so it is always
+	// jinja2's behaviour. The checking lives in the Option, which has an
+	// error to return.
+	Leniency AutoescapeLeniency
 }
 
 // SelectAutoescape escapes templates whose name ends in one of the given
@@ -298,6 +337,76 @@ type SelectAutoescapeConfig struct {
 // knobs.
 func SelectAutoescape(extensions ...string) AutoescapeFunc {
 	return SelectAutoescapeWith(SelectAutoescapeConfig{Enabled: extensions})
+}
+
+// WithAutoescapeExtensions turns escaping on for the templates whose names end
+// in one of these extensions, and checks that each one could be an extension.
+//
+// It is [WithAutoescapeSelection] with only Enabled set, which means the strict
+// default: see [RefuseImpossibleExtensions] for what that refuses and why. To
+// match jinja2 instead, use WithAutoescapeSelection with
+// Leniency: AcceptAnyExtension.
+func WithAutoescapeExtensions(extensions ...string) Option {
+	return WithAutoescapeSelection(SelectAutoescapeConfig{Enabled: extensions})
+}
+
+// WithAutoescapeSelection is [WithAutoescapeFunc] over [SelectAutoescapeWith],
+// with the extension lists checked according to cfg.Leniency.
+//
+// SelectAutoescapeWith returns an AutoescapeFunc and so has nowhere to report
+// a mistake in what it was given. Extensions are matched as a suffix, so an
+// entry that is not one matches nothing -- and an Enabled entry that matches
+// nothing escapes nothing. `SelectAutoescape("*.html")`, which is how one
+// would write it thinking of a glob, leaves every .html template unescaped and
+// says so nowhere; jinja2 does the same.
+//
+// The default refuses that. Being stricter than jinja2 here is the reasoning
+// [SelectAutoescapeConfig.Enabled] already carries: this is the one setting
+// whose failure mode is cross-site scripting, so the quiet reading has to be
+// the safe one. Set Leniency to [AcceptAnyExtension] to have jinja2's
+// behaviour exactly.
+//
+// A Disabled entry is checked too. One that cannot match errs toward escaping
+// *more*, which is the safe direction, but it is still not the configuration
+// the caller wrote down.
+func WithAutoescapeSelection(cfg SelectAutoescapeConfig) Option {
+	return func(e *Environment) error {
+		if cfg.Leniency == RefuseImpossibleExtensions {
+			for _, group := range []struct {
+				field string
+				exts  []string
+			}{{"Enabled", cfg.Enabled}, {"Disabled", cfg.Disabled}} {
+				for _, ext := range group.exts {
+					if err := checkAutoescapeExtension(group.field, ext); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		e.autoescape = SelectAutoescapeWith(cfg)
+		return nil
+	}
+}
+
+// checkAutoescapeExtension rejects what cannot be a file extension.
+func checkAutoescapeExtension(field, ext string) error {
+	reject := func(why string) error {
+		return errs.New(errs.TemplateError,
+			"autoescape %s extension %q %s; extensions are matched as a suffix, so it "+
+				"would never match. Set Leniency to AcceptAnyExtension to take it "+
+				"literally, as jinja2 does", field, ext, why)
+	}
+	switch {
+	case strings.TrimLeft(ext, ".") == "":
+		return reject("is empty")
+	case strings.ContainsAny(ext, "*?[]"):
+		return reject("looks like a glob")
+	case strings.ContainsAny(ext, `/\`):
+		return reject("looks like a path")
+	case strings.ContainsAny(ext, " \t\n\r"):
+		return reject("contains whitespace")
+	}
+	return nil
 }
 
 // defaultAutoescapeExtensions is what an empty Enabled means. See the note on

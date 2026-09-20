@@ -18,7 +18,7 @@ template language, built to be behaviourally identical to CPython's `jinja2`.
 ```go
 env, err := gojja2.New(
     gojja2.WithLoader(gojja2.FSLoader{FS: os.DirFS("templates")}),
-    gojja2.WithAutoescapeFunc(gojja2.SelectAutoescape(".html")),
+    gojja2.WithAutoescapeExtensions(".html"),
 )
 if err != nil {
     return err
