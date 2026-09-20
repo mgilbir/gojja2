@@ -140,23 +140,134 @@ func decodeBytes(st *State, b []byte, codec, handler string) (string, error) {
 		if err := st.Poll(); err != nil {
 			return "", err
 		}
-		r, size := utf8.DecodeRune(b[i:])
-		if r != utf8.RuneError || size > 1 {
+		r, size, reason, bad := utf8Step(b, i)
+		if reason == "" {
 			out.WriteRune(r)
 			i += size
 			continue
 		}
-		pos, bad := i, b[i]
+		// One error covers `bad` bytes, so one replacement character
+		// stands for all of them and the walk resumes past the lot.
+		start, end := i, i+bad
 		if err := decodeError(&out, handler, func() error {
+			if bad == 1 {
+				return errs.New(errs.UnicodeDecodeError,
+					"'utf-8' codec can't decode byte 0x%02x in position %d: %s",
+					b[start], start, reason)
+			}
 			return errs.New(errs.UnicodeDecodeError,
-				"'utf-8' codec can't decode byte 0x%02x in position %d: %s",
-				bad, pos, utf8Reason(b, pos))
+				"'utf-8' codec can't decode bytes in position %d-%d: %s",
+				start, end-1, reason)
 		}); err != nil {
 			return "", err
 		}
-		i++
+		i = end
 	}
 	return out.String(), nil
+}
+
+// The three things CPython's decoder can say about a byte it will not take.
+const (
+	utf8InvalidStart = "invalid start byte"
+	utf8InvalidCont  = "invalid continuation byte"
+	utf8EndOfData    = "unexpected end of data"
+)
+
+// isContinuation is CPython's IS_CONTINUATION_BYTE.
+func isContinuation(c byte) bool { return c >= 0x80 && c < 0xc0 }
+
+// utf8Step is CPython's own UTF-8 state machine, transcribed from
+// stringlib/codecs.h, decoding the sequence that begins at i. A good sequence
+// comes back as its rune and length with an empty reason; a bad one comes back
+// as the reason and the number of bytes the error covers.
+//
+// That count is not decoration. It is the endinpos CPython hands the error
+// handler, so it decides three visible things at once: whether the message
+// names one byte or a range of them, how far the walk resumes past the damage,
+// and -- because "replace" substitutes one character per error and not per
+// byte -- how many replacement characters a bad sequence becomes. A decoder
+// that reports every bad byte separately gets all three wrong for a truncated
+// sequence: `b"\xf0\x9f"` is one error over two bytes, printed as "position
+// 0-1" and replaced by a single U+FFFD.
+//
+// The three ranges CPython rejects before looking at a continuation byte are
+// the ones that could only encode something already spelled shorter or not at
+// all: \xc0-\xc1 (a code point below 0x80), \xe0 followed by under \xa0 (below
+// 0x800), \xf0 followed by under \x90 (below 0x10000), \xed followed by \xa0 or
+// more (a surrogate), \xf4 followed by \x90 or more (above U+10FFFF), and
+// \xf5-\xff (above U+10FFFF whatever follows).
+func utf8Step(b []byte, i int) (r rune, size int, reason string, bad int) {
+	c := b[i]
+	left := len(b) - i
+	switch {
+	case c < 0x80:
+		return rune(c), 1, "", 0
+
+	case c < 0xc2:
+		// \x80-\xbf continues nothing; \xc0-\xc1 is overlong.
+		return 0, 0, utf8InvalidStart, 1
+
+	case c < 0xe0:
+		if left < 2 {
+			return 0, 0, utf8EndOfData, left
+		}
+		if !isContinuation(b[i+1]) {
+			return 0, 0, utf8InvalidCont, 1
+		}
+		return rune(c&0x1f)<<6 | rune(b[i+1]&0x3f), 2, "", 0
+
+	case c < 0xf0:
+		if left < 2 {
+			return 0, 0, utf8EndOfData, left
+		}
+		c2 := b[i+1]
+		// CPython's `ch2 < 0xA0 ? ch == 0xE0 : ch == 0xED`: a low
+		// second byte is overlong after \xe0, and a high one is a
+		// surrogate after \xed.
+		outOfRange := c == 0xed
+		if c2 < 0xa0 {
+			outOfRange = c == 0xe0
+		}
+		if !isContinuation(c2) || outOfRange {
+			return 0, 0, utf8InvalidCont, 1
+		}
+		if left < 3 {
+			return 0, 0, utf8EndOfData, left
+		}
+		if !isContinuation(b[i+2]) {
+			return 0, 0, utf8InvalidCont, 2
+		}
+		return rune(c&0x0f)<<12 | rune(c2&0x3f)<<6 | rune(b[i+2]&0x3f), 3, "", 0
+
+	case c < 0xf5:
+		if left < 2 {
+			return 0, 0, utf8EndOfData, left
+		}
+		c2 := b[i+1]
+		// CPython's `ch2 < 0x90 ? ch == 0xF0 : ch == 0xF4`: overlong
+		// after \xf0, past U+10FFFF after \xf4.
+		outOfRange := c == 0xf4
+		if c2 < 0x90 {
+			outOfRange = c == 0xf0
+		}
+		if !isContinuation(c2) || outOfRange {
+			return 0, 0, utf8InvalidCont, 1
+		}
+		if left < 3 {
+			return 0, 0, utf8EndOfData, left
+		}
+		if !isContinuation(b[i+2]) {
+			return 0, 0, utf8InvalidCont, 2
+		}
+		if left < 4 {
+			return 0, 0, utf8EndOfData, left
+		}
+		if !isContinuation(b[i+3]) {
+			return 0, 0, utf8InvalidCont, 3
+		}
+		return rune(c&0x07)<<18 | rune(c2&0x3f)<<12 | rune(b[i+2]&0x3f)<<6 | rune(b[i+3]&0x3f), 4, "", 0
+	}
+	return 0, 0, utf8InvalidStart, 1
 }
 
 // decodeError applies the handler to one undecodable byte, writing whatever it
@@ -172,20 +283,6 @@ func decodeError(out *strings.Builder, handler string, strict func() error) erro
 		return nil
 	default:
 		return errs.New(errs.LookupError, "unknown error handler name '%s'", handler)
-	}
-}
-
-// utf8Reason is CPython's explanation for a byte that does not decode: a byte
-// that cannot begin a sequence is an invalid start byte, and one that could
-// begin a sequence whose continuation is missing or wrong names the
-// continuation instead.
-func utf8Reason(b []byte, i int) string {
-	c := b[i]
-	switch {
-	case c < 0xc0 || c > 0xf4:
-		return "invalid start byte"
-	default:
-		return "invalid continuation byte"
 	}
 }
 

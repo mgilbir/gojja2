@@ -1448,6 +1448,76 @@ case("errors/encode_ascii_position", "{{ 'a\u00e9b'.encode('ascii') }}")
 case("errors/encode_latin1_range", "{{ '\u20ac'.encode('latin-1') }}")
 case("errors/decode_ascii_range", "{{ '\u00e9'.encode().decode('ascii') }}")
 
+# --- what the UTF-8 decoder says about a byte it will not take ---------------
+# Refusing is not one answer. CPython names one of three reasons, covers a
+# number of bytes that the message reports as either "byte 0xNN in position P"
+# or "bytes in position P-Q", and calls the error handler once per error rather
+# than once per byte -- so `replace` writes one U+FFFD for a truncated sequence
+# and several for a run of bad start bytes. gojja2 asked utf8.DecodeRune and
+# reported one byte at a time, which got all three wrong; utf8digest.go walks
+# the whole state machine, and these are the ones worth reading.
+#
+# to_bytes and + are the only way to say an arbitrary byte in a template: there
+# is no bytes literal, and .encode() cannot produce invalid UTF-8.
+def _bs(*bytes_):
+    return " + ".join("(%d).to_bytes(1,'big')" % b for b in bytes_)
+
+for _name, _seq, _handler in [
+    # An invalid start byte: a continuation with nothing to continue, and the
+    # two leads that could only encode something already spelled shorter.
+    ("start_byte", (0xff,), ""),
+    ("start_byte_bare_continuation", (0x80,), ""),
+    ("start_byte_overlong_c0", (0xc0, 0x80), ""),
+    ("start_byte_overlong_c1", (0xc1, 0xbf), ""),
+    ("start_byte_above_max", (0xf5, 0x80, 0x80, 0x80), ""),
+    # A continuation byte that is wrong rather than missing, at each of the
+    # three positions it can be wrong at.
+    ("continuation_1", (0xc3, 0x28), ""),
+    ("continuation_2", (0xe2, 0x82, 0x28), ""),
+    ("continuation_3", (0xf0, 0x90, 0x80, 0x28), ""),
+    ("continuation_overlong_e0", (0xe0, 0x80, 0x80), ""),
+    ("continuation_surrogate_ed", (0xed, 0xa0, 0x80), ""),
+    ("continuation_overlong_f0", (0xf0, 0x80, 0x80, 0x80), ""),
+    ("continuation_above_max_f4", (0xf4, 0x90, 0x80, 0x80), ""),
+    # Missing rather than wrong, which is the case the old decoder had no
+    # wording for at all -- and the only one whose message names a range.
+    ("end_of_data_1", (0xc3,), ""),
+    ("end_of_data_2", (0xf0, 0x9f), ""),
+    ("end_of_data_3", (0xf0, 0x9f, 0x92), ""),
+    ("end_of_data_mid_string", (0x41, 0xe0, 0xa0), ""),
+    ("end_of_data_after_valid", (0xc3, 0xa9, 0xf0, 0x9f), ""),
+    # The truncated forms that are still decided before the end is reached.
+    ("truncated_overlong_e0", (0xe0, 0x80), ""),
+    ("truncated_surrogate_ed", (0xed, 0xa0), ""),
+    ("truncated_ok_so_far_ed", (0xed, 0x9f), ""),
+    ("truncated_ok_so_far_e0", (0xe0, 0xa0), ""),
+    ("truncated_overlong_f0", (0xf0, 0x80), ""),
+    ("truncated_above_max_f4", (0xf4, 0x90), ""),
+]:
+    case(f"errors/utf8_decode_{_name}", "{{ (" + _bs(*_seq) + ").decode() }}")
+
+# One error is one replacement character, however many bytes it covered, and
+# one skipped run for ignore. A run of bad start bytes is several errors; a
+# truncated sequence is one.
+for _name, _seq in [
+    ("one_bad_byte", (0xff,)),
+    ("run_of_bad_bytes", (0x80, 0x80)),
+    ("truncated_pair", (0xf0, 0x9f)),
+    ("truncated_triple", (0xf0, 0x9f, 0x92)),
+    ("surrogate_three_errors", (0xed, 0xa0, 0x80)),
+    ("above_max_four_errors", (0xf5, 0x80, 0x80, 0x80)),
+    ("interrupted_text", (0x61, 0xff, 0x62)),
+    ("lead_then_ascii", (0xf0, 0x28, 0x8c, 0x28)),
+    ("valid_then_truncated", (0xc3, 0xa9, 0xe2, 0x82)),
+]:
+    _e = _bs(*_seq)
+    case(f"methods/utf8_decode_replace_{_name}",
+         "{{ (" + _e + ").decode('utf-8','replace')|length }}:"
+         "{{ (" + _e + ").decode('utf-8','replace') }}")
+    case(f"methods/utf8_decode_ignore_{_name}",
+         "{{ (" + _e + ").decode('utf-8','ignore')|length }}:"
+         "{{ (" + _e + ").decode('utf-8','ignore') }}")
+
 # CPython picks between three recursion wordings by where its own stack ran
 # out, which for most constructs is not a property of the template: the same
 # macro recursion reports two different messages one frame apart. Only these
