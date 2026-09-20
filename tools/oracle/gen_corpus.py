@@ -1448,6 +1448,39 @@ case("errors/encode_ascii_position", "{{ 'a\u00e9b'.encode('ascii') }}")
 case("errors/encode_latin1_range", "{{ '\u20ac'.encode('latin-1') }}")
 case("errors/decode_ascii_range", "{{ '\u00e9'.encode().decode('ascii') }}")
 
+# --- which error handler belongs to which direction ---------------------------
+# The handlers are not one set. xmlcharrefreplace and namereplace are declared
+# for an encode and CPython's callback refuses a UnicodeDecodeError by type, so
+# asking for one on a decode is a TypeError and not a LookupError.
+# backslashreplace goes both ways, and on a decode it writes one \xNN per byte
+# of the error -- a truncated three-byte sequence is one error and three
+# escapes. surrogateescape and surrogatepass are the two gojja2 does not have:
+# both answer with a lone surrogate, which a Go string cannot hold. On an
+# encode they have nothing to carry, because no character that reaches them is
+# one, so they are strict.
+case("methods/decode_backslashreplace",
+     "{{ (255).to_bytes(1,'big').decode('utf-8','backslashreplace') }}|"
+     "{{ ((240).to_bytes(1,'big') + (159).to_bytes(1,'big')).decode('utf-8','backslashreplace') }}|"
+     "{{ ('a'.encode() + (255).to_bytes(1,'big') + 'b'.encode()).decode('utf-8','backslashreplace') }}|"
+     "{{ '\u00e9'.encode().decode('ascii','backslashreplace') }}")
+case("errors/decode_xmlcharrefreplace_is_encode_only",
+     "{{ (255).to_bytes(1,'big').decode('utf-8','xmlcharrefreplace') }}")
+case("errors/decode_namereplace_is_encode_only",
+     "{{ (255).to_bytes(1,'big').decode('utf-8','namereplace') }}")
+case("errors/encode_surrogateescape_is_strict",
+     "{{ '\u00e9'.encode('ascii','surrogateescape') }}")
+case("errors/encode_surrogatepass_is_strict",
+     "{{ '\u20ac'.encode('latin-1','surrogatepass') }}")
+case("methods/encode_surrogate_handlers_never_run",
+     "{{ '\u00e9'.encode('utf-8','surrogateescape') }}|{{ '\u00e9'.encode('utf-8','surrogatepass') }}")
+# The handler is looked up only when there is an error to hand it, so a name
+# nobody has ever heard of is fine as long as everything encodes.
+case("methods/handler_lookup_is_lazy",
+     "{{ 'abc'.encode('ascii','nosuch') }}|{{ 'abc'.encode().decode('utf-8','nosuch') }}")
+case("errors/encode_unknown_handler", "{{ '\u00e9'.encode('ascii','nosuch') }}")
+case("errors/decode_unknown_handler",
+     "{{ (255).to_bytes(1,'big').decode('utf-8','nosuch') }}")
+
 # --- what the UTF-8 decoder says about a byte it will not take ---------------
 # Refusing is not one answer. CPython names one of three reasons, covers a
 # number of bytes that the message reports as either "byte 0xNN in position P"

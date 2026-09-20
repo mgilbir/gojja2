@@ -40,7 +40,7 @@ are safety controls rather than behavioural choices, and they live in
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
 | [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | Only `self is iterable`, which answers differently |
 | [`\N{...}` escapes](#n-escapes-in-string-literals) | refused; needs the Unicode name database | Only if you write `\N{...}` |
-| [Which codecs are known](#which-codecs-encode-and-decode-know) | utf-8, ascii, latin-1; jinja2 has ~100 | Only outside those three |
+| [Which codecs and handlers are known](#which-codecs-and-error-handlers-encode-and-decode-know) | utf-8, ascii, latin-1; jinja2 has ~100. Three error handlers are missing too | Only outside those three, or with `namereplace` or a surrogate handler on a decode |
 | [Objects whose repr carries an address](#objects-whose-repr-carries-an-address) | a different address | No -- unreproducible in CPython too |
 | [`\|pprint` of a value that contains itself](#pprint-of-a-value-that-contains-itself) | a different address | No -- likewise |
 | [lipsum() and random](#lipsum-and-random) | a different random draw | No -- likewise |
@@ -232,7 +232,7 @@ own `malformed \N character escape` for a malformed one. Every other escape --
 exact, including CPython's quirk that `"\é"` decodes to the four characters
 `\xe9`.
 
-### Which codecs `.encode()` and `.decode()` know
+### Which codecs and error handlers `.encode()` and `.decode()` know
 
 ```jinja
 {{ "€"|string.encode("cp1252") }}
@@ -240,10 +240,9 @@ exact, including CPython's quirk that `"\é"` decodes to the four characters
 
 CPython ships about a hundred codecs. gojja2 implements the three a template
 plausibly asks for -- `utf-8`, `ascii` and `latin-1`, under all the aliases
-CPython accepts for them -- with every error handler (`strict`, `ignore`,
-`replace`, `xmlcharrefreplace`, `backslashreplace`) and CPython's own
-`UnicodeEncodeError` and `UnicodeDecodeError` wording, positions counted in
-characters as CPython counts them.
+CPython accepts for them -- with CPython's own `UnicodeEncodeError` and
+`UnicodeDecodeError` wording, positions counted in characters as CPython counts
+them, and all but three of its error handlers.
 
 Anything else raises the `LookupError` CPython raises for an encoding it does
 not have:
@@ -260,6 +259,35 @@ The line is drawn at codecs that need a character table: `utf-8`, `ascii` and
 and carried. Refusing is the point -- encode used to ignore its argument
 entirely and answer UTF-8 whatever was asked for, so a template asking for
 latin-1 silently got two bytes where it wanted one.
+
+#### The error handlers
+
+The handlers are not one set, and CPython's own asymmetry is reproduced.
+`xmlcharrefreplace` and `namereplace` are declared for an encode, and CPython's
+callback refuses a `UnicodeDecodeError` by type rather than by name, so asking
+for either on a `.decode()` is a `TypeError` there and here -- not the
+`LookupError` an unregistered name gets.
+
+| handler | `.encode()` | `.decode()` |
+|---|---|---|
+| `strict`, `ignore`, `replace` | yes | yes |
+| `backslashreplace` | yes | yes -- one `\xNN` per byte of the error |
+| `xmlcharrefreplace` | yes | `TypeError`, as in CPython |
+| `namereplace` | **`LookupError`** -- jinja2 writes `b'\N{EURO SIGN}'` | `TypeError`, as in CPython |
+| `surrogateescape`, `surrogatepass` | yes: nothing a Go string holds is a surrogate, so both are `strict`, which is what CPython's do for the same input | **`LookupError`** -- jinja2 answers with a lone surrogate |
+
+`namereplace` is refused for the same reason as `\N{...}` above: it needs
+CPython's Unicode name database, which is data to generate and carry rather
+than arithmetic.
+
+`surrogateescape` and `surrogatepass` exist to carry bytes that are not valid
+UTF-8 through a decode, as lone surrogates in the range U+DC80-U+DCFF or as the
+surrogate the bytes encode. A Go string is UTF-8 and cannot hold a lone
+surrogate at all, so there is nothing to hand back; refusing is the honest
+answer, and substituting anything else would be the silent wrong one. On an
+encode the question never arises, because no character that reaches the encoder
+is a surrogate -- which is exactly when CPython's own handlers fall back on
+`strict`, so that direction matches.
 
 ## Where the answer was never reproducible
 
