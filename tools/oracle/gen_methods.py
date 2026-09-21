@@ -28,6 +28,8 @@ from pathlib import Path
 
 import jinja2
 
+import pyversions
+
 ROOT = Path(__file__).resolve().parents[2]
 DST = ROOT / "method_arity.go"
 METHODS_GO = ROOT / "methods.go"
@@ -337,7 +339,7 @@ def main() -> int:
             )
             n += 1
     dst.write_text(
-        HEADER.format(python=sys.version.split()[0], rows="".join(sorted(rows))),
+        HEADER.format(python=pyversions.running(), rows="".join(sorted(rows))),
         encoding="utf-8",
     )
     print(f"wrote {n} method signatures into {dst}", file=sys.stderr)

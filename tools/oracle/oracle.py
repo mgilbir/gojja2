@@ -37,6 +37,8 @@ from pathlib import Path
 
 import jinja2
 
+import pyversions
+
 from jinjaoracle import (  # noqa: E402 - sibling module, not a package
     SETTING_KEYS,
     CaseError,
@@ -54,7 +56,9 @@ ORACLE = {
     "impl": "cpython-jinja2",
     "version": jinja2.__version__,
     "markupsafe": importlib.metadata.version("markupsafe"),
-    "python": platform.python_version(),
+    # The minor version, not the build: see pyversions.running(). Recording
+    # the patch made every golden churn between two machines a patch apart.
+    "python": pyversions.running(),
 }
 
 SEPARATOR = "\n---\n"

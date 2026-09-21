@@ -4,7 +4,7 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.13.14"
+    "python": "3.13"
   },
   "ok": true,
   "output": "[{'age': 30, 'city': 'Lisbon', 'name': 'ana'},\n {'age': 25, 'city': 'Porto', 'name': 'bo'},\n {'age': 30, 'city': 'Lisbon', 'name': 'cy'}]|{'a': [{'age': 30, 'city': 'Lisbon', 'name': 'ana'},\n       {'age': 25, 'city': 'Porto', 'name': 'bo'},\n       {'age': 30, 'city': 'Lisbon', 'name': 'cy'}]}"
