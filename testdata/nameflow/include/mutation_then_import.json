@@ -1,6 +1,6 @@
 {
   "case": "include/mutation_then_import.jj2",
   "variables": {
-    "d": "o?"
+    "d": "o"
   }
 }

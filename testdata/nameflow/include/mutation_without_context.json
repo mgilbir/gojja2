@@ -1,6 +1,6 @@
 {
   "case": "include/mutation_without_context.jj2",
   "variables": {
-    "l": "o?"
+    "l": "o"
   }
 }

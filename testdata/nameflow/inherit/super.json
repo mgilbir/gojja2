@@ -1,6 +1,6 @@
 {
   "case": "inherit/super.jj2",
   "variables": {
-    "super": "o?"
+    "super": "o"
   }
 }

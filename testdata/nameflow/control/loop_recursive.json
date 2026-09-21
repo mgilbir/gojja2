@@ -1,6 +1,6 @@
 {
   "case": "control/loop_recursive.jj2",
   "variables": {
-    "tree": "of?"
+    "tree": "of"
   }
 }

@@ -1,6 +1,6 @@
 {
   "case": "include/mutation_survives.jj2",
   "variables": {
-    "l": "o?"
+    "l": "o"
   }
 }

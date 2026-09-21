@@ -376,12 +376,22 @@ class Analysis:
             if isinstance(fn, nodes.Name) and fn.name == "namespace":
                 self.taint(out)
                 return out
-            # A call to something this cannot see the body of: getattr, a
-            # macro held in a variable, a global. Its result derives from its
-            # arguments and from whatever it closed over, which is not visible.
-            out |= self.expr(fn)
-            self.taint(out)
-            return out
+            # A call whose body this cannot see: a method on a value, a
+            # global, a macro held in a variable.
+            #
+            # Giving up here cost more than it bought: `{{ msg.strip() }}`
+            # reads out of msg and puts the result in the document, which is
+            # not in doubt.
+            #
+            # What the giving-up was for is mutation. `{{ l.append(x) }}`
+            # renders nothing and leaves x inside l, so a later `{{ l }}`
+            # prints x. That is a dependency rather than a reason to stop: the
+            # receiver may now hold the arguments, so it gets an edge from
+            # them. The cost is over-reporting, which is the safe direction.
+            recv = self.expr(fn.node if isinstance(fn, nodes.Getattr) else fn)
+            for sid in recv:
+                self.syms[sid].deps |= out
+            return out | recv
 
         # Everything else -- operators, comparisons, tests, attribute access,
         # containers, slices, concatenation -- is ordinary data flow: the

@@ -1,6 +1,6 @@
 {
   "case": "classes/attr_dunder_used.jj2",
   "variables": {
-    "nope": "o?"
+    "nope": "o"
   }
 }

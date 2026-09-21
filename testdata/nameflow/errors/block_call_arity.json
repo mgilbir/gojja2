@@ -1,6 +1,6 @@
 {
   "case": "errors/block_call_arity.jj2",
   "variables": {
-    "self": "o?"
+    "self": "o"
   }
 }

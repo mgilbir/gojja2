@@ -1,6 +1,6 @@
 {
   "case": "inherit/super_macro_called_twice.jj2",
   "variables": {
-    "super": "o?"
+    "super": "o"
   }
 }

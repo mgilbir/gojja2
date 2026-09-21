@@ -108,11 +108,34 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 				return out
 			}
 		}
-		// A call whose body this cannot see: a global, a macro held in a
-		// variable, getattr. The result derives from the arguments and
-		// from whatever it closed over, which is not visible.
-		out.add(a.expr(callee))
-		a.taint(out)
+		// A call whose body this cannot see: a method on a value, a
+		// global, a macro held in a variable.
+		//
+		// Giving up here was costing more than it bought. `{{ msg.strip() }}`
+		// reads out of msg and puts the result in the document, which is
+		// not in doubt, and answering "might" about it was the single
+		// largest source of unknowns left -- every one of them on real
+		// chat templates.
+		//
+		// What the giving-up was actually for is mutation. `{{ l.append(x) }}`
+		// renders nothing and leaves x inside l, so a later `{{ l }}`
+		// prints x, and a rule that only followed results would miss it
+		// and report a negative that is not true. That is a dependency,
+		// not a reason to stop: the receiver may now hold the arguments,
+		// so it gets an edge from them.
+		//
+		// The cost is over-reporting. `{{ s.split(sep) }}` does not
+		// mutate s, and sep now inherits whatever s does. That is the
+		// safe direction -- a variable reported as printed when it is not
+		// is a worse answer, not a wrong one.
+		recv := a.expr(callee)
+		if callee != nil && callee.Kind == syntax.KindGetattr {
+			recv = a.expr(callee.Child(syntax.RoleSubject))
+		}
+		for s := range recv {
+			a.depend(s, out)
+		}
+		out.add(recv)
 		return out
 	}
 
