@@ -1,0 +1,14 @@
+{
+  "case": "errors/zero_to_negative_power_float.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.14.7"
+  },
+  "ok": false,
+  "error": {
+    "type": "ZeroDivisionError",
+    "message": "zero to a negative power"
+  }
+}

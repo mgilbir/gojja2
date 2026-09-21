@@ -23,9 +23,12 @@ func TestDictOfReportsWhatItCannotBuild(t *testing.T) {
 		{"odd count", []value.Value{value.String("a")}, "DictOf needs an even number of arguments, got 1"},
 		{"odd count, three", []value.Value{
 			value.String("a"), value.Int(1), value.String("b")}, "DictOf needs an even number of arguments, got 3"},
+		// Worded for the pinned interpreter: before 3.14 the refusal named
+		// only the unhashable type, and DictOf takes the version for
+		// exactly that reason.
 		{"list key", []value.Value{
-			value.NewList(value.Int(1)), value.Int(1)}, "cannot use 'list' as a dict key (unhashable type: 'list')"},
-		{"dict key", []value.Value{value.NewDict(), value.Int(1)}, "cannot use 'dict' as a dict key (unhashable type: 'dict')"},
+			value.NewList(value.Int(1)), value.Int(1)}, unhashableWant("list", "list", value.AsDictKey)},
+		{"dict key", []value.Value{value.NewDict(), value.Int(1)}, unhashableWant("dict", "dict", value.AsDictKey)},
 	} {
 		got, err := value.DictOf(value.DefaultPythonVersion, tc.kv...)
 		if err == nil {
@@ -60,4 +63,21 @@ func TestDictOfBuildsWhatItCan(t *testing.T) {
 	if got := value.Repr(empty); got != "{}" {
 		t.Errorf("got %s, want {}", got)
 	}
+}
+
+// unhashableWant is the refusal DictOf gives for a key that cannot be hashed,
+// as the pinned interpreter words it. Built from the production helper rather
+// than written out, so a bump to DefaultPythonVersion does not leave this
+// asserting some other interpreter's sentence.
+func unhashableWant(outer, inner string, use value.HashUse) string {
+	var v value.Value
+	switch inner {
+	case "list":
+		v = value.NewList(value.Int(1))
+	case "dict":
+		v = value.NewDict()
+	default:
+		panic("unhashableWant: no sample value for " + inner)
+	}
+	return value.ErrUnhashable(outer, v, value.DefaultPythonVersion, use).Error()
 }

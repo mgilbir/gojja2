@@ -309,6 +309,15 @@ def gojja2_methods() -> dict[str, list[str]]:
 
 
 def main() -> int:
+    # --out lets gen_arity_matrix.py probe an older interpreter without
+    # disturbing the committed table, which is the pinned one's.
+    dst = DST
+    argv = sys.argv[1:]
+    if argv[:1] == ["--out"] and len(argv) == 2:
+        dst = Path(argv[1])
+    elif argv:
+        raise SystemExit(f"usage: {sys.argv[0]} [--out PATH]")
+
     rows = []
     n = 0
     for tname, names in gojja2_methods().items():
@@ -327,11 +336,11 @@ def main() -> int:
                 f'anyKw: {str(d["anyKw"]).lower()}}},\n'
             )
             n += 1
-    DST.write_text(
+    dst.write_text(
         HEADER.format(python=sys.version.split()[0], rows="".join(sorted(rows))),
         encoding="utf-8",
     )
-    print(f"wrote {n} method signatures into {DST.relative_to(ROOT)}", file=sys.stderr)
+    print(f"wrote {n} method signatures into {dst}", file=sys.stderr)
     _ = jinja2.__version__  # the pinned environment is the one that was probed
     return 0
 

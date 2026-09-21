@@ -100,7 +100,16 @@ def main() -> int:
                 cases.append(case)
 
     # One JSON object per line: compact enough to commit, still diffable.
-    lines = [json.dumps({"pool": [repr(v) for v in POOL]}, ensure_ascii=False)]
+    # The interpreter goes in the header because several operators word a
+    # failure differently by release -- every division by zero collapsed to one
+    # sentence in 3.14 -- so a corpus replayed against the wrong version
+    # disagrees about a hundred cases for no reason anyone would look for. The
+    # Go test refuses to run if this does not match value.DefaultPythonVersion.
+    header = {
+        "python": ".".join(map(str, sys.version_info[:2])),
+        "pool": [repr(v) for v in POOL],
+    }
+    lines = [json.dumps(header, ensure_ascii=False)]
     lines += [json.dumps(c, ensure_ascii=False, separators=(",", ":")) for c in cases]
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")

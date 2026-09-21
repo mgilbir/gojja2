@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Write one line per code point describing what this interpreter makes of it.
 
-Run under each CPython gojja2 reproduces. gen_unicode_older.py reads the
+Run under each CPython gojja2 reproduces. gen_unicode_matrix.py reads the
 results and records where the older ones differ from the default.
 
 Kept separate from the generator, and free of every import but the two it

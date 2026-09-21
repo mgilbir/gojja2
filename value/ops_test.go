@@ -45,8 +45,9 @@ func pool() []value.Value {
 }
 
 // corpusPythonVersion is the interpreter value/testdata/ops.jsonl was recorded
-// under. It is the default: the corpus is regenerated with `make ops` from the
-// pinned CPython, and the pin and the default move together.
+// under. It is the default: the corpus is regenerated with `make ops-corpus`
+// from the pinned CPython, and the pin and the default move together.
+// loadOpCorpus checks the file's own header agrees.
 const corpusPythonVersion = value.DefaultPythonVersion
 
 // binaryOps maps each operator to the gojja2 entry point that implements it,
@@ -113,10 +114,21 @@ func loadOpCorpus(t *testing.T) ([]string, []opCase) {
 		t.Fatal("corpus is empty")
 	}
 	var header struct {
-		Pool []string `json:"pool"`
+		Python string   `json:"python"`
+		Pool   []string `json:"pool"`
 	}
 	if err := json.Unmarshal(sc.Bytes(), &header); err != nil {
 		t.Fatalf("parse corpus header: %v", err)
+	}
+	// The corpus is one interpreter's answers, and several operators word a
+	// failure differently by release. Replaying it against another version
+	// disagrees about a hundred cases for a reason that has nothing to do
+	// with the operators, so this is checked rather than assumed -- it was
+	// assumed once, in a comment claiming the file carried its version when
+	// it did not.
+	if header.Python != corpusPythonVersion.String() {
+		t.Fatalf("testdata/ops.jsonl was recorded under CPython %s but the default "+
+			"is %s; run `make ops-corpus`", header.Python, corpusPythonVersion)
 	}
 
 	var cases []opCase

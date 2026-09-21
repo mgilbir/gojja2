@@ -14,18 +14,28 @@ import (
 // pythonVersions are the interpreters gojja2 reproduces, with the goldens that
 // record what each one answered.
 //
-// Only the differences are stored. 2,159 of the 2,197 cases answer identically
-// on all four, so an older version is a directory of the few dozen that do not
-// -- 38 files for 3.11, 25 for 3.12, 19 for 3.13 -- laid over the default
-// version's full set.
-var pythonVersions = []struct {
-	version  gojja2.PythonVersion
-	override string // relative to the repository root; empty for the default
-}{
-	{gojja2.Python311, "testdata/golden-3.11"},
-	{gojja2.Python312, "testdata/golden-3.12"},
-	{gojja2.Python313, "testdata/golden-3.13"},
-	{gojja2.Python314, ""},
+// Only the differences are stored. The great majority of the corpus answers
+// identically on all four, so a non-pinned version is a directory of the few
+// dozen cases that do not, laid over the pinned version's full set.
+//
+// Which one is pinned is read from gojja2.DefaultPythonVersion rather than
+// written out again here: the pin already lives in the Makefile and in that
+// constant, and a third copy is one more place a bump can be half-applied.
+// TestDefaultVersionMatchesThePin checks the first two agree.
+var pythonVersions = []gojja2.PythonVersion{
+	gojja2.Python311,
+	gojja2.Python312,
+	gojja2.Python313,
+	gojja2.Python314,
+}
+
+// overrideDir is where a version's differences live, or "" for the pinned one,
+// whose answers are testdata/golden itself.
+func overrideDir(v gojja2.PythonVersion) string {
+	if v == gojja2.DefaultPythonVersion {
+		return ""
+	}
+	return "testdata/golden-" + v.String()
 }
 
 // Every corpus case, against every interpreter gojja2 claims to reproduce.
@@ -51,10 +61,10 @@ func TestEveryPythonVersion(t *testing.T) {
 	known := loadKnownFailures(t, root)
 
 	for _, pv := range pythonVersions {
-		t.Run(pv.version.String(), func(t *testing.T) {
+		t.Run(pv.String(), func(t *testing.T) {
 			overrideRoot := ""
-			if pv.override != "" {
-				overrideRoot = filepath.Join(root, pv.override)
+			if o := overrideDir(pv); o != "" {
+				overrideRoot = filepath.Join(root, o)
 			}
 			var matched, failed int
 			for _, path := range paths {
@@ -67,7 +77,7 @@ func TestEveryPythonVersion(t *testing.T) {
 				if err != nil {
 					t.Fatalf("load golden for %s: %v", id, err)
 				}
-				out, renderErr := c.RenderFor(pv.version)
+				out, renderErr := c.RenderFor(pv)
 				d := conformance.Compare(golden.Expected(), out, renderErr)
 				if _, listed := known[id]; listed {
 					continue
@@ -75,16 +85,16 @@ func TestEveryPythonVersion(t *testing.T) {
 				if d != nil {
 					failed++
 					if failed <= 10 {
-						t.Errorf("%s under CPython %s\n%s", id, pv.version, indent(d.String()))
+						t.Errorf("%s under CPython %s\n%s", id, pv, indent(d.String()))
 					}
 					continue
 				}
 				matched++
 			}
 			if failed > 10 {
-				t.Errorf("... and %d more under CPython %s", failed-10, pv.version)
+				t.Errorf("... and %d more under CPython %s", failed-10, pv)
 			}
-			t.Logf("CPython %s: %d cases match", pv.version, matched)
+			t.Logf("CPython %s: %d cases match", pv, matched)
 		})
 	}
 }
@@ -100,17 +110,18 @@ func TestVersionOverridesAreAllUsed(t *testing.T) {
 	root := repoRoot(t)
 	goldenRoot := filepath.Join(root, "testdata/golden")
 	for _, pv := range pythonVersions {
-		if pv.override == "" {
+		dir := overrideDir(pv)
+		if dir == "" {
 			continue
 		}
-		overrideRoot := filepath.Join(root, pv.override)
+		overrideRoot := filepath.Join(root, dir)
 		files, err := filepath.Glob(filepath.Join(overrideRoot, "*", "*.json"))
 		if err != nil {
-			t.Fatalf("glob %s: %v", pv.override, err)
+			t.Fatalf("glob %s: %v", dir, err)
 		}
 		if len(files) == 0 {
 			t.Errorf("%s holds no overrides; if every case now agrees with "+
-				"the default, drop the directory and its entry", pv.override)
+				"the pin, drop the directory and the version's entry", dir)
 			continue
 		}
 		for _, f := range files {
@@ -122,12 +133,12 @@ func TestVersionOverridesAreAllUsed(t *testing.T) {
 				rel[:len(rel)-len(".json")]+".jj2")
 			if _, err := conformance.LoadCase(filepath.Join(root, "testdata/corpus"),
 				caseFile); err != nil {
-				t.Errorf("%s/%s overrides a case the corpus no longer has", pv.override, rel)
+				t.Errorf("%s/%s overrides a case the corpus no longer has", dir, rel)
 				continue
 			}
 			base, err := conformance.LoadGolden(goldenRoot, rel[:len(rel)-len(".json")]+".jj2")
 			if err != nil {
-				t.Errorf("%s/%s has no base golden to override", pv.override, rel)
+				t.Errorf("%s/%s has no base golden to override", dir, rel)
 				continue
 			}
 			over, err := conformance.LoadGoldenOver(overrideRoot, "", rel[:len(rel)-len(".json")]+".jj2")
@@ -136,7 +147,7 @@ func TestVersionOverridesAreAllUsed(t *testing.T) {
 			}
 			if base.Expected().Equal(over.Expected()) {
 				t.Errorf("%s/%s records the same answer as the default version; "+
-					"delete it", pv.override, rel)
+					"delete it", dir, rel)
 			}
 		}
 	}

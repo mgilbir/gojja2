@@ -193,8 +193,8 @@ func TestSeqIndexWindow(t *testing.T) {
 	}
 	const slice = "slice indices must be integers or have an __index__ method"
 	for _, tc := range []struct{ src, want string }{
-		{`{{ [1,2,1].index(1, 1, 2) }}`, "list.index(x): x not in list"},
-		{`{{ [1,2,1].index(1, 2**70) }}`, "list.index(x): x not in list"},
+		{`{{ [1,2,1].index(1, 1, 2) }}`, wantNotInList("1")},
+		{`{{ [1,2,1].index(1, 2**70) }}`, wantNotInList("1")},
 		{`{{ (1,2,1).index(1, 1, 2) }}`, "tuple.index(x): x not in tuple"},
 		{`{{ [1,2,1].index(1, none) }}`, slice},
 		{`{{ [1,2,1].index(1, 1.5) }}`, slice},

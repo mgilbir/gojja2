@@ -73,7 +73,7 @@ $ .venv/bin/python tools/oracle/oracle.py --template '{% set d = {1:"a",} %}{{ d
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.14.7"
+    "python": "3.13.14"
   },
   "ok": true,
   "output": "a"
@@ -103,21 +103,23 @@ error, how a division by zero is worded, and -- because CPython carries its own
 Unicode -- which characters are digits, how they case, and how `repr` escapes
 them.
 
-gojja2 reproduces **CPython 3.11 through 3.14**, newest by default:
+gojja2 reproduces **CPython 3.11 through 3.14**, and is generated against
+**3.13** — the pinned interpreter, which is what a caller who does not choose
+gets:
 
 ```go
 env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
 ```
 
-Across those four, 38 of the 2,233 committed cases answer differently, and every
-one of them answers exactly two ways rather than four. Each version is graded
-against its own recorded output, so the option is measured rather than asserted.
+Across those four, 66 of the 2,241 committed cases answer differently. Each
+version is graded against its own recorded output, so the option is measured
+rather than asserted.
 [docs/guide.md](docs/guide.md#which-cpython) has the shape of it and
 [docs/conformance.md](docs/conformance.md#which-cpython) the numbers.
 
 ## Conformance
 
-**4540 of 4553 gradable cases (99.7%)** match CPython jinja2 — eight corpora
+**4548 of 4561 gradable cases (99.7%)** match CPython jinja2 — eight corpora
 drawn from ten upstream projects, including Jinja's own test suite, MiniJinja's
 fixtures, minja, llama.cpp, the chat templates real models ship, a documentation
 theme and four project generators. Only their *inputs* are used; every expected

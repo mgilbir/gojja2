@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**4540 of 4553 gradable cases (99.7%)** match CPython jinja2, across eight
+**4548 of 4561 gradable cases (99.7%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The five that do not are listed with reasons
 in `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -22,7 +22,7 @@ flowchart LR
     U1 -->|"make suites"| TP["third_party/<br/><i>gitignored, never vendored</i>"]
     TP -->|"make import<br/>import_*.py, harvest_jinja.py"| GEN["testdata/generated/*<br/>+ SOURCES.md"]
 
-    ORA["CPython jinja2 3.1.6<br/>markupsafe 3.0.3 · Python 3.14.7<br/><i>.venv — the specification</i>"]
+    ORA["CPython jinja2 3.1.6<br/>markupsafe 3.0.3 · Python 3.13.14<br/><i>.venv — the specification</i>"]
     GEN -->|"oracle.py"| G2["*-golden/*.json"]
     ORA --> G2
 
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["4540 / 4553 gradable  (99.7%)"]
+    TC --> RATE["4548 / 4561 gradable  (99.7%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 2233 | 2224 |
+| gojja2's own (committed, with goldens) | 2241 | 2232 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **4553** | **4540 (99.7%)** |
+| **total** | **4561** | **4548 (99.7%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -149,16 +149,21 @@ but it runs on an interpreter, and the interpreter decides what `{{ d[0:1] }}`
 raises, whether `{{ xs|sort(reverse=none) }}` is an error, how a division by
 zero is worded, and which code points are digits.
 
-Across CPython 3.11 to 3.14 that is **58 of the 2,233 committed cases** — 2.6%,
-and every one of them answers exactly two ways rather than four:
+Across CPython 3.11 to 3.14 that is **66 of the 2,241 committed cases** — 2.9%:
 
 | | |
 |---|---|
-| identical on all four interpreters | 2,175 (97.4%) |
-| answer differently somewhere | 58 |
+| identical on all four interpreters | 2,175 (97.1%) |
+| answer differently somewhere | 66 |
 | of those, the Unicode tables — printability, digits, casing | 20 |
-| of those, error wording only | 27 |
-| of those, behaviour: raises where it now renders, or a different class | 11 |
+| of those, error wording only | 34 |
+| of those, behaviour: raises where it now renders, or a different class | 12 |
+
+63 of the 66 answer exactly two ways. The three that do not are `1.0 % 0` and
+its neighbours, which CPython words three ways: "float modulo" through 3.12,
+"float modulo by zero" in 3.13, and "division by zero" from 3.14. gojja2 knew
+about two of those and the corpus reached none of them, so the version that was
+wrong had nothing to answer for until the cases went in.
 
 The Unicode row is twenty cases because twenty were written; the corpus reached
 none of those code points until `testdata/corpus/unicode/` went in, which is why
@@ -168,33 +173,42 @@ the tables were wrong for so long without anything saying so.
 part of that specification rather than a convenience: CPython carries its own
 Unicode, so the interpreter also decides the case mappings, the decimal digits
 and how `repr` escapes them. It used to be whatever `uv venv` found on the
-machine, which meant the specification was chosen by accident.
+machine, which meant the specification was chosen by accident. It is **3.13**,
+and `value.DefaultPythonVersion` is the same fact for a caller who does not
+choose; `TestDefaultVersionMatchesThePin` fails if a bump moves one and not the
+other, since gojja2 rendering as one interpreter against tables generated from
+another is a wrong answer nothing else would catch.
 
-A render reproduces the newest by default and any of the four on request:
+A render reproduces the pinned version by default and any of the four on
+request:
 
 ```go
 env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
 ```
 
-The rules are a closed list -- fourteen, each named in `value/pyversion.go` with
-the release that moved it and the corpus case that grades it. The version is
+The rules are a closed list -- sixteen, each named in `value/pyversion.go` with
+the release that moved it and the corpus case that grades it, and
+`TestEveryVersionRuleNamesACorpusCase` fails a rule whose case does not exist. The version is
 passed as an argument to every function whose answer can depend on it rather
 than read from a package variable, so a signature carrying it declares "this
 differs by interpreter", and one that does not cannot quietly start differing.
 
-Only the differences are stored. `testdata/golden` is the default version's full
-set; `testdata/golden-3.11` and its two neighbours hold the few dozen cases that
-answer differently -- 58, 31 and 25 files, 114 in all -- laid over it.
+Only the differences are stored. `testdata/golden` is the pinned version's full
+set; `testdata/golden-3.11`, `-3.12` and `-3.14` hold the cases that answer
+differently -- 36, 9 and 33 files, 78 in all -- laid over it. `make golden-matrix`
+regenerates them by asking each interpreter through `uv run --python`, so the
+sets rotate on their own when the pin moves rather than being rebuilt by hand.
 `TestEveryPythonVersion` grades every case against every interpreter, and
 `TestVersionOverridesAreAllUsed` fails an override that records nothing or names
 a case the corpus no longer has, so the directories cannot rot as CPython moves.
 
 **The Unicode tables move with it too.** CPython carries its own Unicode, so the
 interpreter decides case mappings, which characters are digits, and how `repr`
-escapes them -- 10,311 code points between 3.11 and 3.14. Those are recorded per
-version as well, and the storage is small because the difference is simply which
-characters had been assigned yet: they arrive in blocks, so ten thousand code
-points collapse to seventy-five ranges and the whole table is about 22 KB.
+escapes them -- 10,311 code points on which the four do not all agree. Those are
+recorded per version as well, and the storage is small because the difference is
+simply which characters had been assigned yet: they arrive in blocks, so ten
+thousand code points collapse into a few dozen ranges and the whole table is
+about 15 KB.
 
 Doing it turned up a bug in the pinned version rather than only in the option.
 `isalpha` and `isprintable` were read straight off Go's tables, which are a

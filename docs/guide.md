@@ -277,11 +277,12 @@ on 3.11 and a forward sort on 3.12. A division by zero is worded six ways before
 3.14 and one way after. And CPython carries its own Unicode, so which characters
 are digits, how they case, and how `repr` escapes them all move too.
 
-Across 3.11 to 3.14 that is **38 of gojja2's 2,233 committed conformance cases**
--- 1.7%, and every one of them answers exactly two ways rather than four.
+Across 3.11 to 3.14 that is **66 of gojja2's 2,241 committed conformance cases**
+-- 2.9%. Most answer exactly two ways; a few, such as `{{ 1.0 % 0 }}`, answer
+three.
 
-A render reproduces the newest by default. Choose another to match a service
-already running on it:
+A render reproduces the pinned interpreter, 3.13, by default. Choose another to
+match a service already running on it:
 
 ```go
 env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
@@ -289,9 +290,10 @@ env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
 
 `Environment.PythonVersion` reports what an environment settled on. The
 constants are `Python311` through `Python314`, and `DefaultPythonVersion` is the
-newest.
+pinned one -- the interpreter every committed table and golden was generated
+from, which the Makefile's `PYTHON_VERSION` sets and a test holds the two to.
 
-What it changes is a closed list -- fourteen behaviour and wording rules, plus
+What it changes is a closed list -- sixteen behaviour and wording rules, plus
 the Unicode tables -- and every rule is named in `value/pyversion.go` with the
 release that moved it and the conformance case that grades it. Everything
 outside that list is identical on every interpreter, which is 98.3% of the

@@ -44,12 +44,12 @@ func TestIsFilterAndIsTestHashTheirValue(t *testing.T) {
 	}
 
 	for _, tc := range []struct{ src, want string }{
-		{`{{ [1] is filter }}`, "cannot use 'list' as a dict key (unhashable type: 'list')"},
-		{`{{ [] is test }}`, "cannot use 'list' as a dict key (unhashable type: 'list')"},
-		{`{{ {} is filter }}`, "cannot use 'dict' as a dict key (unhashable type: 'dict')"},
+		{`{{ [1] is filter }}`, wantUnhashable("list", "list", asDictKey)},
+		{`{{ [] is test }}`, wantUnhashable("list", "list", asDictKey)},
+		{`{{ {} is filter }}`, wantUnhashable("dict", "dict", asDictKey)},
 		// A tuple is hashable only when everything in it is, which is
 		// the same rule |attr's name goes through.
-		{`{{ (1,[2]) is test }}`, "cannot use 'tuple' as a dict key (unhashable type: 'list')"},
+		{`{{ (1,[2]) is test }}`, wantUnhashable("tuple", "list", asDictKey)},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {

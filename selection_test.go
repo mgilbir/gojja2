@@ -85,9 +85,9 @@ func TestTemplateSelection(t *testing.T) {
 		{`{% extends none %}`, "None"},
 		{`{% extends 1 %}`, "1"},
 		// A list or a dict is not even a cache key.
-		{`{% import ["a"] as m %}{{ m }}`, "cannot use 'tuple' as a dict key (unhashable type: 'list')"},
-		{`{% extends [] %}`, "cannot use 'tuple' as a dict key (unhashable type: 'list')"},
-		{`{% extends {} %}`, "cannot use 'tuple' as a dict key (unhashable type: 'dict')"},
+		{`{% import ["a"] as m %}{{ m }}`, wantUnhashable("tuple", "list", asDictKey)},
+		{`{% extends [] %}`, wantUnhashable("tuple", "list", asDictKey)},
+		{`{% extends {} %}`, wantUnhashable("tuple", "dict", asDictKey)},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {
