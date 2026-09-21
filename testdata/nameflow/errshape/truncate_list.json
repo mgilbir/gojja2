@@ -1,0 +1,6 @@
+{
+  "case": "errshape/truncate_list.jj2",
+  "variables": {
+    "long": "o"
+  }
+}

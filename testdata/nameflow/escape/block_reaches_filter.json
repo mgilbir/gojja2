@@ -1,0 +1,8 @@
+{
+  "case": "escape/block_reaches_filter.jj2",
+  "variables": {
+    "mk": "o",
+    "s": "o",
+    "sep": "o"
+  }
+}

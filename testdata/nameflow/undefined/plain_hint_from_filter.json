@@ -1,0 +1,6 @@
+{
+  "case": "undefined/plain_hint_from_filter.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

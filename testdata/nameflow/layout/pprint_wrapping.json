@@ -1,0 +1,6 @@
+{
+  "case": "layout/pprint_wrapping.jj2",
+  "variables": {
+    "users": "o"
+  }
+}

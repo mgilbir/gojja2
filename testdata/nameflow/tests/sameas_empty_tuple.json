@@ -1,0 +1,4 @@
+{
+  "case": "tests/sameas_empty_tuple.jj2",
+  "variables": {}
+}

@@ -1,0 +1,6 @@
+{
+  "case": "scope/autoescape_read_before_set.jj2",
+  "variables": {
+    "m": "o"
+  }
+}

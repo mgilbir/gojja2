@@ -1,0 +1,297 @@
+// Copyright 2026 The gojja2 Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package dataflow
+
+import "github.com/mgilbir/gojja2/syntax"
+
+// The walk reads the tree and nothing else. Where a value is *consumed*
+// decides what it does, and the edge label says which: a child under
+// [syntax.RoleTest] is steering, one under [syntax.RoleValue] of an output is
+// printed. There is no table of "which field of which node is a condition"
+// below, because the tree already carries that.
+
+// expr answers what a value derives from, and applies Steers itself at the one
+// steering position that lives inside an expression: a conditional's test.
+//
+// Everything else is data. `{{ x|length }}` and `{{ x is defined }}` both put a
+// value derived from x into the document, so both are printed; Steers is for
+// *choosing* between alternatives, which is what `{% if %}`, a loop's length
+// and `a if c else b` do. The line has to be drawn somewhere, and drawing it at
+// steering positions is the one place two implementations can agree on it
+// without comparing notes.
+func (a *analyzer) expr(n *syntax.Node) symset {
+	out := symset{}
+	if n == nil {
+		return out
+	}
+	switch n.Kind {
+	case syntax.KindName:
+		if s := a.tree.Info.Uses[n]; s != nil {
+			out[s] = true
+		}
+		return out
+
+	case syntax.KindNSRef:
+		// A namespace read. Following the field is a later layer; until
+		// then the honest answer is that anything could be in it.
+		if s := a.tree.Info.Uses[n]; s != nil {
+			out[s] = true
+			a.effects[s] |= Opaque
+		}
+		return out
+
+	case syntax.KindConst, syntax.KindText:
+		return out
+
+	case syntax.KindCond:
+		a.apply(a.expr(n.Child(syntax.RoleTest)), Steers)
+		out.add(a.expr(n.Child(syntax.RoleThen)))
+		out.add(a.expr(n.Child(syntax.RoleOther)))
+		return out
+
+	case syntax.KindGetitem:
+		out.add(a.expr(n.Child(syntax.RoleSubject)))
+		if idx := n.Child(syntax.RoleIndex); idx != nil && idx.Kind != syntax.KindConst {
+			// A computed key: which part of the container is read is
+			// not a static fact, so the whole of it is in play.
+			a.taint(out)
+			out.add(a.expr(idx))
+		}
+		return out
+
+	case syntax.KindFilter:
+		out.add(a.expr(n.Child(syntax.RoleSubject)))
+		out.add(a.callArgs(n))
+		if n.Attr("name") == "attr" {
+			a.taint(out)
+		}
+		return out
+
+	case syntax.KindCall:
+		out.add(a.callArgs(n))
+		callee := n.Child(syntax.RoleCallee)
+		if callee != nil && callee.Kind == syntax.KindName {
+			sym := a.tree.Info.Uses[callee]
+			if _, known := a.macroParams[sym]; known {
+				out.add(a.callMacro(sym, n))
+				return out
+			}
+			if callee.Attr("name") == "namespace" {
+				a.taint(out)
+				return out
+			}
+		}
+		// A call whose body this cannot see: a global, a macro held in a
+		// variable, getattr. The result derives from the arguments and
+		// from whatever it closed over, which is not visible.
+		out.add(a.expr(callee))
+		a.taint(out)
+		return out
+	}
+
+	// Everything else -- operators, comparisons, tests, attribute access,
+	// containers, slices, concatenation -- is ordinary data flow: the result
+	// derives from every operand. A node kind added later lands here, which
+	// is the sound default.
+	for _, e := range n.Edges {
+		out.add(a.expr(e.Node))
+	}
+	return out
+}
+
+// callArgs is every argument of a call, filter or test as one derived set.
+func (a *analyzer) callArgs(n *syntax.Node) symset {
+	out := symset{}
+	for _, role := range []syntax.Role{syntax.RoleArg, syntax.RoleKwarg,
+		syntax.RoleDynArgs, syntax.RoleDynKw} {
+		for _, c := range n.Children(role) {
+			out.add(a.expr(c))
+		}
+	}
+	return out
+}
+
+// callMacro binds a call's arguments to the macro's parameters and returns what
+// the macro's body would print.
+func (a *analyzer) callMacro(sym *syntax.Symbol, call *syntax.Node) symset {
+	if a.inMacro[sym] {
+		// Recursive. The fixpoint already carries effects around the
+		// cycle, and re-entering would not terminate.
+		return symset{}
+	}
+	a.inMacro[sym] = true
+	defer delete(a.inMacro, sym)
+
+	params := a.macroParams[sym]
+	args := call.Children(syntax.RoleArg)
+	for i, p := range params {
+		srcs := symset{}
+		if i < len(args) {
+			srcs.add(a.expr(args[i]))
+		}
+		for _, kw := range call.Children(syntax.RoleKwarg) {
+			if kw.Attr("name") == p.Name {
+				srcs.add(a.expr(kw.Child(syntax.RoleValue)))
+			}
+		}
+		a.depend(p, srcs)
+	}
+	return a.macroOut[sym]
+}
+
+// captureBody is what a block set's or filter block's body would have printed.
+func (a *analyzer) captureBody(n *syntax.Node) symset {
+	a.capture = append(a.capture, symset{})
+	a.stmts(n)
+	out := a.capture[len(a.capture)-1]
+	a.capture = a.capture[:len(a.capture)-1]
+	return out
+}
+
+func (a *analyzer) stmts(n *syntax.Node) {
+	for _, c := range n.Children(syntax.RoleBody) {
+		a.stmt(c)
+	}
+}
+
+// scopeSymbol looks a name up the chain of enclosing scopes, which is how a
+// macro is found: its name is an attribute of the macro node rather than a name
+// node, so nothing in Defs points at it.
+func (a *analyzer) scopeSymbol(name string) *syntax.Symbol {
+	for i := len(a.scopes) - 1; i >= 0; i-- {
+		for _, s := range a.tree.Info.Scopes[a.scopes[i]] {
+			if s.Name == name {
+				return s
+			}
+		}
+	}
+	return nil
+}
+
+func (a *analyzer) enterScope(n *syntax.Node) bool {
+	if _, ok := a.tree.Info.Scopes[n]; !ok {
+		return false
+	}
+	a.scopes = append(a.scopes, n)
+	return true
+}
+
+func (a *analyzer) leaveScope(entered bool) {
+	if entered {
+		a.scopes = a.scopes[:len(a.scopes)-1]
+	}
+}
+
+func (a *analyzer) stmt(n *syntax.Node) {
+	if n == nil {
+		return
+	}
+	entered := a.enterScope(n)
+	defer a.leaveScope(entered)
+
+	switch n.Kind {
+	case syntax.KindTemplate, syntax.KindScope, syntax.KindBlock:
+		a.stmts(n)
+
+	case syntax.KindOutput:
+		for _, c := range n.Children(syntax.RoleValue) {
+			a.emit(a.expr(c))
+		}
+
+	case syntax.KindIf:
+		a.apply(a.expr(n.Child(syntax.RoleTest)), Steers)
+		a.stmts(n)
+		for _, c := range n.Children(syntax.RoleElse) {
+			a.stmt(c)
+		}
+
+	case syntax.KindFor:
+		// The sequence's length decides how many times the body runs, so
+		// it can change the output without appearing in it; its elements
+		// reach the output through the target.
+		srcs := a.expr(n.Child(syntax.RoleIter))
+		a.apply(srcs, Steers)
+		a.bind(n.Child(syntax.RoleTarget), srcs)
+		// `loop` reports on the sequence, so it derives from it too.
+		if loop := a.scopeSymbol("loop"); loop != nil {
+			a.depend(loop, srcs)
+		}
+		a.apply(a.expr(n.Child(syntax.RoleTest)), Steers)
+		a.stmts(n)
+		for _, c := range n.Children(syntax.RoleElse) {
+			a.stmt(c)
+		}
+
+	case syntax.KindAssign:
+		a.bind(n.Child(syntax.RoleTarget), a.expr(n.Child(syntax.RoleValue)))
+
+	case syntax.KindAssignBlk:
+		srcs := a.captureBody(n)
+		srcs.add(a.expr(n.Child(syntax.RoleFilter)))
+		a.bind(n.Child(syntax.RoleTarget), srcs)
+
+	case syntax.KindFilterBlk:
+		srcs := a.captureBody(n)
+		srcs.add(a.expr(n.Child(syntax.RoleFilter)))
+		a.emit(srcs)
+
+	case syntax.KindMacro:
+		sym := a.scopeSymbol(n.Attr("name"))
+		var params []*syntax.Symbol
+		for _, s := range a.tree.Info.Scopes[n] {
+			if s.Kind == syntax.SymParam {
+				params = append(params, s)
+			}
+		}
+		if sym != nil {
+			a.macroParams[sym] = params
+		}
+		for _, d := range n.Children(syntax.RoleDefault) {
+			a.expr(d)
+		}
+		out := a.captureBody(n)
+		if sym != nil {
+			a.macroOut[sym] = out
+		}
+
+	case syntax.KindCallBlock:
+		a.stmts(n)
+		a.emit(a.expr(n.Child(syntax.RoleCallee)))
+
+	case syntax.KindWith:
+		values := n.Children(syntax.RoleValue)
+		for i, target := range n.Children(syntax.RoleTarget) {
+			if i < len(values) {
+				a.bind(target, a.expr(values[i]))
+			}
+		}
+		a.stmts(n)
+
+	case syntax.KindAutoescape:
+		// Whether output is escaped changes what is rendered.
+		a.apply(a.expr(n.Child(syntax.RoleValue)), Steers)
+		a.stmts(n)
+
+	case syntax.KindExtends, syntax.KindInclude, syntax.KindImport,
+		syntax.KindFromImport:
+		// Another template receives this context and can print any of it,
+		// so until the edge is followed every symbol is in play. The
+		// template reference itself is ordinary data.
+		a.expr(n.Child(syntax.RoleTemplate))
+		a.opaqueSink = true
+
+	case syntax.KindExprStmt:
+		a.expr(n.Child(syntax.RoleValue))
+
+	case syntax.KindBreak, syntax.KindContinue:
+		// Leaves.
+
+	default:
+		// A statement nobody taught this about must not read as "nothing
+		// happens here".
+		for _, e := range n.Edges {
+			a.taint(a.expr(e.Node))
+		}
+	}
+}

@@ -1,0 +1,4 @@
+{
+  "case": "errors/utf8_decode_truncated_overlong_e0.jj2",
+  "variables": {}
+}

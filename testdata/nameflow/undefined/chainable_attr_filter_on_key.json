@@ -1,0 +1,6 @@
+{
+  "case": "undefined/chainable_attr_filter_on_key.jj2",
+  "variables": {
+    "d": "o?"
+  }
+}

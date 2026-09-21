@@ -1,0 +1,7 @@
+{
+  "case": "tests/defined.jj2",
+  "variables": {
+    "nope": "o",
+    "x": "o"
+  }
+}

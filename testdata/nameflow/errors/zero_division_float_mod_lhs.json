@@ -1,0 +1,4 @@
+{
+  "case": "errors/zero_division_float_mod_lhs.jj2",
+  "variables": {}
+}

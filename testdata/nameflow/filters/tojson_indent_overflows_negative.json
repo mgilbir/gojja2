@@ -1,0 +1,4 @@
+{
+  "case": "filters/tojson_indent_overflows_negative.jj2",
+  "variables": {}
+}

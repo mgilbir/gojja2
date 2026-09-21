@@ -1,0 +1,4 @@
+{
+  "case": "errors/index_at_ssize_t_max.jj2",
+  "variables": {}
+}

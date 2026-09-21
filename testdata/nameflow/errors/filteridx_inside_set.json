@@ -1,0 +1,6 @@
+{
+  "case": "errors/filteridx_inside_set.jj2",
+  "variables": {
+    "v": "o"
+  }
+}

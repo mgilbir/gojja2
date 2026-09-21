@@ -1,0 +1,6 @@
+{
+  "case": "errors/urlize_limit_float.jj2",
+  "variables": {
+    "u": "o"
+  }
+}

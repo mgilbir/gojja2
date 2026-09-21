@@ -1,0 +1,6 @@
+{
+  "case": "escape/volatile_folds_constant.jj2",
+  "variables": {
+    "yes": "f"
+  }
+}

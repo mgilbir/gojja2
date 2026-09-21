@@ -1,0 +1,6 @@
+{
+  "case": "scope/inner_frame_aliases_an_outer_read.jj2",
+  "variables": {
+    "m": "o"
+  }
+}

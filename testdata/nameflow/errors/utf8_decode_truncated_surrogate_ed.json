@@ -1,0 +1,4 @@
+{
+  "case": "errors/utf8_decode_truncated_surrogate_ed.jj2",
+  "variables": {}
+}

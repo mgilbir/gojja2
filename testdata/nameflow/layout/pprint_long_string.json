@@ -1,0 +1,6 @@
+{
+  "case": "layout/pprint_long_string.jj2",
+  "variables": {
+    "users": "o"
+  }
+}

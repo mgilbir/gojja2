@@ -1,0 +1,8 @@
+{
+  "case": "escape/join_markup_sep.jj2",
+  "variables": {
+    "a": "o",
+    "b": "o",
+    "sep": "o"
+  }
+}

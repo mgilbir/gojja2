@@ -1,0 +1,6 @@
+{
+  "case": "errshape/grouptuple_percent_extra.jj2",
+  "variables": {
+    "users": "o"
+  }
+}

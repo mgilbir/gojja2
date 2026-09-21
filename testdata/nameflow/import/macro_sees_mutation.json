@@ -1,0 +1,6 @@
+{
+  "case": "import/macro_sees_mutation.jj2",
+  "variables": {
+    "l": "o?"
+  }
+}

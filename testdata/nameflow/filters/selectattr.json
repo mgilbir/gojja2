@@ -1,0 +1,6 @@
+{
+  "case": "filters/selectattr.jj2",
+  "variables": {
+    "users": "o"
+  }
+}

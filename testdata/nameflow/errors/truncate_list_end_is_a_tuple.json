@@ -1,0 +1,4 @@
+{
+  "case": "errors/truncate_list_end_is_a_tuple.jj2",
+  "variables": {}
+}

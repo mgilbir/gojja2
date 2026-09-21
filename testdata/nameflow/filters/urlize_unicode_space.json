@@ -1,0 +1,9 @@
+{
+  "case": "filters/urlize_unicode_space.jj2",
+  "variables": {
+    "a": "o",
+    "b": "o",
+    "c": "o",
+    "d": "o"
+  }
+}

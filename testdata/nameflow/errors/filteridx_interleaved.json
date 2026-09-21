@@ -1,0 +1,6 @@
+{
+  "case": "errors/filteridx_interleaved.jj2",
+  "variables": {
+    "v": "o"
+  }
+}

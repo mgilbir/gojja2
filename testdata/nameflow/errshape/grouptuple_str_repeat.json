@@ -1,0 +1,6 @@
+{
+  "case": "errshape/grouptuple_str_repeat.jj2",
+  "variables": {
+    "users": "o"
+  }
+}

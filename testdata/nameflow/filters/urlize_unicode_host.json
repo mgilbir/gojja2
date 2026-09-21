@@ -1,0 +1,8 @@
+{
+  "case": "filters/urlize_unicode_host.jj2",
+  "variables": {
+    "a": "o",
+    "b": "o",
+    "c": "o"
+  }
+}

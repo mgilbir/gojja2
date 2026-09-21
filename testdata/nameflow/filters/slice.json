@@ -1,0 +1,6 @@
+{
+  "case": "filters/slice.jj2",
+  "variables": {
+    "seq": "o"
+  }
+}

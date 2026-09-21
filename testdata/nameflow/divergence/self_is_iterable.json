@@ -1,0 +1,6 @@
+{
+  "case": "divergence/self_is_iterable.jj2",
+  "variables": {
+    "self": "o"
+  }
+}

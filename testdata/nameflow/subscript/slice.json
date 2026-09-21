@@ -1,0 +1,6 @@
+{
+  "case": "subscript/slice.jj2",
+  "variables": {
+    "seq": "o?"
+  }
+}

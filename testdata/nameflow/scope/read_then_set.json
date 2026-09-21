@@ -1,0 +1,6 @@
+{
+  "case": "scope/read_then_set.jj2",
+  "variables": {
+    "x": "o"
+  }
+}

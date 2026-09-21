@@ -1,0 +1,7 @@
+{
+  "case": "errshape/undefined_times_markup.jj2",
+  "variables": {
+    "nope": "o",
+    "s": "o"
+  }
+}

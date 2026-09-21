@@ -414,6 +414,43 @@ form for every committed conformance case, so a query written against this
 reaches the conclusion jinja2 would have reached. See
 [docs/contributing.md](contributing.md) for how that is checked.
 
+## What a template does with your variables
+
+The [`dataflow`](https://pkg.go.dev/github.com/mgilbir/gojja2/dataflow) package
+is a worked query over that tree. It answers, for each variable, whether its
+**value can reach the output**, whether it only **steers** what is rendered, or
+neither:
+
+```go
+tree := tmpl.Syntax()
+for name, e := range dataflow.Analyze(tree).Context(tree) {
+    fmt.Println(name, e&dataflow.Printed != 0, e&dataflow.Steers != 0)
+}
+```
+
+The two are independent and a variable can be neither: `{% set unused = x %}`
+with nothing reading `unused` means `x` cannot change the output at all. That
+negative is the useful part, and it is why this is a dataflow analysis rather
+than a scan for names — `{% set y = x %}{{ y }}` prints `x` without ever naming
+it at an output position, and `{{ "yes" if flag else "no" }}` prints neither
+operand while `flag` decides which.
+
+`Opaque` means the answer has no reliable negative: a computed lookup like
+`{{ data[key] }}`, a `namespace()`, or a template pulled in by `{% include %}`
+are routes the analysis does not follow. Nothing is ever reported as unable to
+reach the output when it might.
+
+`Flow.Derives` is the dependency graph the verdict was propagated over, exposed
+because the interesting question is not always "can this be printed" — "what
+would change if I stopped passing x" and "which of these bindings is dead" are
+the same graph asked differently.
+
+**It reads only the public tree.** Everything in the package works from
+`syntax.Tree` and its `Info`, which is the demonstration that the exposed tree is
+enough to reason with: an answer it can reach is an answer you can reach. It is
+graded against an independent implementation over jinja2's own AST for every
+committed case.
+
 ## Filter policies
 
 `WithPolicies` overrides the defaults jinja2 keeps in `Environment.policies`:

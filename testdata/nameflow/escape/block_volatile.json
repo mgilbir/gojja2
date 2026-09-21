@@ -1,0 +1,10 @@
+{
+  "case": "escape/block_volatile.jj2",
+  "variables": {
+    "mk": "o",
+    "s": "o",
+    "sep": "o",
+    "v": "f",
+    "w": "f"
+  }
+}

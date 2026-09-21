@@ -1,0 +1,6 @@
+{
+  "case": "scope/loop_conditional_set.jj2",
+  "variables": {
+    "c": "o"
+  }
+}
