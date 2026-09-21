@@ -1,4 +1,6 @@
 {
   "case": "import/context_carries_set.jj2",
-  "variables": {}
+  "variables": {
+    "x": "-"
+  }
 }

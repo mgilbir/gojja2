@@ -1,4 +1,6 @@
 {
   "case": "include/in_loop.jj2",
-  "variables": {}
+  "variables": {
+    "v": "o"
+  }
 }

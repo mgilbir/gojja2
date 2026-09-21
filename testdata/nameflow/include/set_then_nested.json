@@ -1,4 +1,7 @@
 {
   "case": "include/set_then_nested.jj2",
-  "variables": {}
+  "variables": {
+    "l": "o",
+    "x": "o"
+  }
 }

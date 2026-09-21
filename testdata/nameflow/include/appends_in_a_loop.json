@@ -1,4 +1,6 @@
 {
   "case": "include/appends_in_a_loop.jj2",
-  "variables": {}
+  "variables": {
+    "l3": "o"
+  }
 }

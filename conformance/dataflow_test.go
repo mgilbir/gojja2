@@ -13,6 +13,7 @@ import (
 
 	"github.com/mgilbir/gojja2/conformance"
 	"github.com/mgilbir/gojja2/dataflow"
+	"github.com/mgilbir/gojja2/syntax"
 )
 
 // dataflow.Analyze answers which of the caller's variables a template can print
@@ -51,13 +52,28 @@ func TestDataflowMatchesTheReference(t *testing.T) {
 		if err := json.Unmarshal(raw, &ref); err != nil {
 			t.Fatalf("parse the reference: %v", err)
 		}
-		tmpl, err := compileCase(c)
+		env, err := c.Environment()
+		if err != nil {
+			continue
+		}
+		tmpl, err := env.GetTemplate(c.Rel)
 		if err != nil {
 			continue
 		}
 		tree := tmpl.Syntax()
+		// The case's own templates are what its references resolve to. This
+		// is also the shape a caller wires up: three lines, and the package
+		// keeps depending on nothing but syntax.
+		resolve := func(name string) *syntax.Tree {
+			other, err := env.GetTemplate(name)
+			if err != nil {
+				return nil
+			}
+			return other.Syntax()
+		}
+		flow := dataflow.Analyze(tree, dataflow.WithResolver(resolve))
 		got := map[string]string{}
-		for name, e := range dataflow.Analyze(tree).Context(tree) {
+		for name, e := range flow.Context(tree) {
 			got[name] = encodeEffect(e)
 		}
 		checked++

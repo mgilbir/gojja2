@@ -1,6 +1,6 @@
 {
   "case": "include/set_inside_does_not_leak.jj2",
   "variables": {
-    "x": "o?"
+    "x": "o"
   }
 }

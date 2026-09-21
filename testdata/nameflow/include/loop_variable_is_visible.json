@@ -1,4 +1,6 @@
 {
   "case": "include/loop_variable_is_visible.jj2",
-  "variables": {}
+  "variables": {
+    "i": "o"
+  }
 }

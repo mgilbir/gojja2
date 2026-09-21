@@ -1,4 +1,6 @@
 {
   "case": "include/basic.jj2",
-  "variables": {}
+  "variables": {
+    "v": "o"
+  }
 }
