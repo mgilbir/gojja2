@@ -747,7 +747,7 @@ func (ex *exec) execBlock(n *ast.Block) error {
 	}
 	if chain[0].node.Required && len(chain) == 1 {
 		return errs.New(errs.TemplateRuntimeError,
-			"Required block %s not found", value.Repr(value.String(n.Name)))
+			"Required block %s not found", value.ReprFor(value.String(n.Name), ex.pyVersion()))
 	}
 
 	ref := &blockReference{st: ex.st, name: n.Name, index: 0}
@@ -895,8 +895,8 @@ func (ex *exec) execFromImport(n *ast.FromImport) error {
 			// every template compiled from a string.
 			v = value.UndefinedHint(
 				"the template %s (imported on line %d) does not export the requested name %s",
-				value.Repr(value.String(mod.name)), n.Line(),
-				value.Repr(value.String(entry.Name)))
+				value.ReprFor(value.String(mod.name), ex.pyVersion()), n.Line(),
+				value.ReprFor(value.String(entry.Name), ex.pyVersion()))
 			v = ex.st.Undefined(v)
 		}
 		ex.sc.set(entry.Alias, v)

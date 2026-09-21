@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+
+	"github.com/mgilbir/gojja2/value"
 )
 
 // Every code point's case answer, checked against CPython's.
@@ -40,8 +42,8 @@ func TestCaseMappingMatchesCPython(t *testing.T) {
 		s := string(r)
 		line.Reset()
 		fmt.Fprintf(&line, "%d\t%s\t%s\t%s\t%s\t%d%d%d\n",
-			cp, pyUpperString(s), pyLowerString(s), mustTitle(t, s), pyCasefold(s),
-			b2i(isLowerString(s)), b2i(isUpperString(s)), b2i(isTitleString(s)))
+			cp, pyUpperString(s, value.DefaultPythonVersion), pyLowerString(s, value.DefaultPythonVersion), mustTitle(t, s), pyCasefold(s, value.DefaultPythonVersion),
+			b2i(isLowerString(s, nil)), b2i(isUpperString(s, nil)), b2i(isTitleString(s, nil)))
 		h.Write([]byte(line.String()))
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != caseMapDigest {
@@ -76,13 +78,13 @@ func TestFullCaseMappingExpands(t *testing.T) {
 		var got string
 		switch tc.op {
 		case "upper":
-			got = pyUpperString(tc.in)
+			got = pyUpperString(tc.in, value.DefaultPythonVersion)
 		case "lower":
-			got = pyLowerString(tc.in)
+			got = pyLowerString(tc.in, value.DefaultPythonVersion)
 		case "title":
 			got = mustTitle(t, tc.in)
 		case "casefold":
-			got = pyCasefold(tc.in)
+			got = pyCasefold(tc.in, value.DefaultPythonVersion)
 		}
 		if got != tc.want {
 			t.Errorf("%q.%s() = %q, want %q", tc.in, tc.op, got, tc.want)

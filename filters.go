@@ -25,8 +25,8 @@ func registerDefaultFilters(env *Environment) {
 	add := func(name string, f Filter) { env.AddFilter(name, f) }
 
 	// text
-	add("upper", runeFilter(func(_ int, r rune) string { return pyUpperRune(r) }))
-	add("lower", runeFilter(func(_ int, r rune) string { return pyLowerRune(r) }))
+	add("upper", runeFilter(func(_ int, r rune, u *value.UnicodeOverrides) string { return pyUpperRune(r, u) }))
+	add("lower", runeFilter(func(_ int, r rune, u *value.UnicodeOverrides) string { return pyLowerRune(r, u) }))
 	// title is the one case filter that does not preserve Markup: jinja2
 	// assembles it with "".join(...), and joining on a plain str gives a
 	// plain str.
@@ -43,12 +43,7 @@ func registerDefaultFilters(env *Environment) {
 	})
 	// capitalize is upper on the first code point and lower on the rest,
 	// which is the index the mapping is given for.
-	add("capitalize", runeFilter(func(i int, r rune) string {
-		if i == 0 {
-			return pyTitleRune(r)
-		}
-		return pyLowerRune(r)
-	}))
+	add("capitalize", runeFilter(capitalizeRune))
 	add("trim", filterTrim)
 	add("string", filterString)
 	add("replace", filterReplace)
@@ -168,13 +163,16 @@ func strictStr(v value.Value) (string, error) {
 	return value.Str(v), nil
 }
 
-func runeFilter(f func(i int, r rune) string) Filter {
+func runeFilter(f func(i int, r rune, u *value.UnicodeOverrides) string) Filter {
 	return func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 		text, err := strictStr(v)
 		if err != nil {
 			return value.Undefined, err
 		}
-		out, err := mapRunesIn(s, text, f)
+		// Resolved once per call, so a ten-kilobyte string pays one
+		// map lookup rather than one per code point.
+		u := value.UnicodeFor(s.PythonVersion())
+		out, err := mapRunesIn(s, text, func(i int, r rune) string { return f(i, r, u) })
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -396,7 +394,7 @@ func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 			// by changing its case. Dropping that here made a
 			// comparison error inside a sort name 'str' where
 			// CPython names 'Markup'.
-			return keepSafe(v, pyLowerString(v.AsString()))
+			return keepSafe(v, pyLowerString(v.AsString(), s.PythonVersion()))
 		}
 		return v
 	}
@@ -436,7 +434,7 @@ func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 			// by changing its case. Dropping that here made a
 			// comparison error inside a sort name 'str' where
 			// CPython names 'Markup'.
-			return keepSafe(v, pyLowerString(v.AsString()))
+			return keepSafe(v, pyLowerString(v.AsString(), s.PythonVersion()))
 		}
 		return v
 	}
@@ -1148,7 +1146,7 @@ func wrapLine(s *State, text string, widthVal value.Value, breakLong, breakOnHyp
 	}
 	if tooNarrow {
 		return nil, errs.New(errs.ValueError,
-			"invalid width %s (must be > 0)", value.Repr(widthVal))
+			"invalid width %s (must be > 0)", value.ReprFor(widthVal, s.PythonVersion()))
 	}
 	// Past that, the width is only compared against -- so a float wraps as
 	// its value -- until a word has to be cut at it, which is a slice, and
@@ -1728,7 +1726,7 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 	}
 	// Charged and interruptible: this is the repr of the whole value, so for
 	// a Markup string it is the entire output and as long as the data.
-	rep, err := value.ReprBudget(v, st)
+	rep, err := value.ReprBudget(v, st, st.PythonVersion())
 	if err != nil {
 		return err
 	}
@@ -1782,7 +1780,7 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 		d, _ := v.Dict()
 		b.WriteString("{")
 		err := pformatItems(st, b, d.Keys(), indent, allowance+1, func(b *strings.Builder, key value.Value, at, room int) error {
-			keyRep, err := value.ReprBudget(key, st)
+			keyRep, err := value.ReprBudget(key, st, st.PythonVersion())
 			if err != nil {
 				return err
 			}
@@ -1879,7 +1877,7 @@ func pformatString(st *State, b *strings.Builder, text, rep string, indent, allo
 		// the whole of a 23MB string was the rest of what made this
 		// filter run for four seconds without pausing.
 		if len(line) <= limit {
-			if lineRep := value.Repr(value.String(line)); len(lineRep) <= limit {
+			if lineRep := value.ReprFor(value.String(line), st.PythonVersion()); len(lineRep) <= limit {
 				chunks = append(chunks, lineRep)
 				continue
 			}
@@ -1904,9 +1902,9 @@ func pformatString(st *State, b *strings.Builder, text, rep string, indent, allo
 			if j == len(parts)-1 && i == len(lines)-1 {
 				limit -= allowance
 			}
-			if len(value.Repr(value.String(candidate))) > limit {
+			if len(value.ReprFor(value.String(candidate), st.PythonVersion())) > limit {
 				if current != "" {
-					chunks = append(chunks, value.Repr(value.String(current)))
+					chunks = append(chunks, value.ReprFor(value.String(current), st.PythonVersion()))
 				}
 				current = part
 				continue
@@ -1914,7 +1912,7 @@ func pformatString(st *State, b *strings.Builder, text, rep string, indent, allo
 			current = candidate
 		}
 		if current != "" {
-			chunks = append(chunks, value.Repr(value.String(current)))
+			chunks = append(chunks, value.ReprFor(value.String(current), st.PythonVersion()))
 		}
 	}
 
@@ -2187,7 +2185,7 @@ func filterAbs(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) 
 		"bad operand type for abs(): '%s'", v.TypeName())
 }
 
-func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterInt(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	def, hasDef := arg(args, 0, "default")
 	if !hasDef {
 		def = value.Int(0)
@@ -2242,7 +2240,7 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 			useBase = 10
 		}
 		if baseOK || !v.IsString() {
-			if n, ok := pyParseInt(raw, useBase); ok {
+			if n, ok := pyParseInt(raw, useBase, s.PythonVersion()); ok {
 				return value.BigInt(n), nil
 			}
 		}
@@ -2250,7 +2248,7 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		// and int() of a float is exact however large it is -- which a
 		// raw int64 conversion is not: "9.223372036854776e+18"|int
 		// came out as the most negative int64 rather than 2**63.
-		if f, ok := value.ParseFloat(text); ok {
+		if f, ok := value.ParseFloat(text, s.PythonVersion()); ok {
 			if math.IsNaN(f) || math.IsInf(f, 0) {
 				// The second attempt is int(float(value)), and
 				// that one *does* catch OverflowError -- so
@@ -2275,12 +2273,12 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 // Failure is not an error here: do_int catches it and falls back to
 // int(float(value)), which is why `"010"|int(0, 0)` is 10 even though Python
 // refuses that string with base 0.
-func pyParseInt(text string, base int) (*big.Int, bool) {
+func pyParseInt(text string, base int, py value.PythonVersion) (*big.Int, bool) {
 	// The same transform the %-format path runs, and the same function:
 	// both used to read ASCII digits only, so `{{ "\u0664\u0662"|int }}`
 	// answered this filter's default of 0 -- a wrong number, and no error
 	// to say so.
-	s := strings.TrimSpace(value.DecimalASCII(text))
+	s := strings.TrimSpace(value.DecimalASCII(text, py))
 	neg := false
 	if s != "" && (s[0] == '+' || s[0] == '-') {
 		neg, s = s[0] == '-', s[1:]
@@ -2383,7 +2381,7 @@ func isNumericText(v value.Value) bool {
 // validIntBase reports whether Python's int() would accept this base.
 func validIntBase(base int) bool { return base == 0 || (base >= 2 && base <= 36) }
 
-func filterFloat(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterFloat(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	def, hasDef := arg(args, 0, "default")
 	if !hasDef {
 		def = value.Float(0)
@@ -2392,7 +2390,7 @@ func filterFloat(_ *State, v value.Value, args *value.CallArgs) (value.Value, er
 		return value.Float(f), nil
 	}
 	if text, ok := numericText(v); ok {
-		if f, ok := value.ParseFloat(strings.TrimSpace(text)); ok {
+		if f, ok := value.ParseFloat(strings.TrimSpace(text), s.PythonVersion()); ok {
 			return value.Float(f), nil
 		}
 	}
@@ -2696,7 +2694,7 @@ func filterSum(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 	return total, nil
 }
 
-func filterFilesizeformat(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	binary, err := boolArg(args, 0, "binary", false)
 	if err != nil {
 		return value.Undefined, err
@@ -2711,7 +2709,7 @@ func filterFilesizeformat(_ *State, v value.Value, args *value.CallArgs) (value.
 				"float() argument must be a string or a real number, not '%s'",
 				v.TypeName())
 		}
-		f, ok := value.ParseFloat(strings.TrimSpace(text))
+		f, ok := value.ParseFloat(strings.TrimSpace(text), s.PythonVersion())
 		if !ok {
 			return value.Undefined, errs.New(errs.ValueError,
 				"could not convert string to float: %s", value.Repr(v))
@@ -2795,7 +2793,7 @@ func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	if name.Kind() != value.KindString {
 		return value.Undefined, errs.New(errs.TypeError,
 			"attribute name must be string, not %s",
-			value.Repr(value.String(name.TypeName())))
+			value.ReprFor(value.String(name.TypeName()), s.PythonVersion()))
 	}
 	attrName := name.AsString()
 	if attr, ok := lookupAttr(s, v, attrName); ok {
@@ -2862,8 +2860,8 @@ func jinjaTitle(st *State, s string) (string, error) {
 		// jinja2 builds this as `item[0].upper() + item[1:].lower()`,
 		// which are full case mappings over *slices* -- so the first
 		// character of a word may become several.
-		b.WriteString(pyUpperString(string(word[0])))
-		b.WriteString(pyLowerString(string(word[1:])))
+		b.WriteString(pyUpperString(string(word[0]), st.PythonVersion()))
+		b.WriteString(pyLowerString(string(word[1:]), st.PythonVersion()))
 	}
 	return b.String(), nil
 }

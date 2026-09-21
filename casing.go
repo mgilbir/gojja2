@@ -6,6 +6,8 @@ package gojja2
 import (
 	"strings"
 	"unicode"
+
+	"github.com/mgilbir/gojja2/value"
 )
 
 // Python's case operations are full case mappings over cased characters, and
@@ -26,21 +28,36 @@ import (
 // pyUpperRune, pyLowerRune, pyTitleRune and pyFoldRune are the per-character
 // full mappings. Where Python's answer is a single rune, Go's table already
 // holds it.
-func pyUpperRune(r rune) string {
+func pyUpperRune(r rune, u *value.UnicodeOverrides) string {
+	if u != nil {
+		if m, ok := u.Upper()[r]; ok {
+			return m
+		}
+	}
 	if m, ok := upperSpecial[r]; ok {
 		return m
 	}
 	return string(unicode.ToUpper(r))
 }
 
-func pyLowerRune(r rune) string {
+func pyLowerRune(r rune, u *value.UnicodeOverrides) string {
+	if u != nil {
+		if m, ok := u.Lower()[r]; ok {
+			return m
+		}
+	}
 	if m, ok := lowerSpecial[r]; ok {
 		return m
 	}
 	return string(unicode.ToLower(r))
 }
 
-func pyTitleRune(r rune) string {
+func pyTitleRune(r rune, u *value.UnicodeOverrides) string {
+	if u != nil {
+		if m, ok := u.Title()[r]; ok {
+			return m
+		}
+	}
 	if m, ok := titleSpecial[r]; ok {
 		return m
 	}
@@ -50,17 +67,26 @@ func pyTitleRune(r rune) string {
 // pyFoldRune is casefold, which is not lowercase: it folds for caseless
 // comparison, so the final sigma folds onto the ordinary one and the micro sign
 // onto Greek mu.
-func pyFoldRune(r rune) string {
+func pyFoldRune(r rune, u *value.UnicodeOverrides) string {
+	if u != nil {
+		if m, ok := u.Fold()[r]; ok {
+			return m
+		}
+	}
 	if m, ok := foldSpecial[r]; ok {
 		return m
 	}
-	return string(unicode.ToLower(r))
+	return pyLowerRune(r, u)
 }
 
 // pyIsLower, pyIsUpper and pyIsCased are Python's notions, which rest on the
 // Cased derived property rather than on the general category alone.
-func pyIsLower(r rune) bool { return unicode.Is(lowerCased, r) }
-func pyIsUpper(r rune) bool { return unicode.Is(upperCased, r) }
+func pyIsLower(r rune, u *value.UnicodeOverrides) bool {
+	return u.IsLower(r, unicode.Is(lowerCased, r))
+}
+func pyIsUpper(r rune, u *value.UnicodeOverrides) bool {
+	return u.IsUpper(r, unicode.Is(upperCased, r))
+}
 func pyIsCased(r rune) bool { return unicode.Is(anyCased, r) }
 
 // mapRunes applies a per-character full mapping across a string.
@@ -73,9 +99,23 @@ func mapRunes(s string, f func(rune) string) string {
 	return b.String()
 }
 
-func pyUpperString(s string) string { return mapRunes(s, pyUpperRune) }
-func pyLowerString(s string) string { return mapRunes(s, pyLowerRune) }
-func pyCasefold(s string) string    { return mapRunes(s, pyFoldRune) }
+func pyUpperString(s string, py value.PythonVersion) string {
+	return mapRunesWith(s, py, pyUpperRune)
+}
+func pyLowerString(s string, py value.PythonVersion) string {
+	return mapRunesWith(s, py, pyLowerRune)
+}
+func pyCasefold(s string, py value.PythonVersion) string {
+	return mapRunesWith(s, py, pyFoldRune)
+}
+
+// mapRunesWith resolves the interpreter's overrides once and then walks, so
+// the version stays out of the inner loop: |upper over a ten-kilobyte string
+// does one lookup, not ten thousand.
+func mapRunesWith(s string, py value.PythonVersion, f func(rune, *value.UnicodeOverrides) string) string {
+	u := value.UnicodeFor(py)
+	return mapRunes(s, func(r rune) string { return f(r, u) })
+}
 
 // pyTitle is str.title: the first cased character of each word takes the
 // titlecase mapping and the rest take lowercase.
@@ -86,15 +126,16 @@ func pyCasefold(s string) string    { return mapRunes(s, pyFoldRune) }
 func pyTitleString(st *State, s string) (string, error) {
 	var b strings.Builder
 	b.Grow(len(s))
+	u := value.UnicodeFor(st.PythonVersion())
 	prevCased := false
 	for _, r := range s {
 		if err := st.Poll(); err != nil {
 			return "", err
 		}
 		if prevCased {
-			b.WriteString(pyLowerRune(r))
+			b.WriteString(pyLowerRune(r, u))
 		} else {
-			b.WriteString(pyTitleRune(r))
+			b.WriteString(pyTitleRune(r, u))
 		}
 		prevCased = pyIsCased(r)
 	}
@@ -107,26 +148,26 @@ func pyTitleString(st *State, s string) (string, error) {
 // uppercase or titlecase, and at least one is lowercase". The difference shows
 // on a string mixing a lowercase letter with a titlecase one -- "aǅ".islower()
 // is False in Python, and a rule that only rejected *uppercase* would say True.
-func isLowerString(s string) bool {
+func isLowerString(s string, u *value.UnicodeOverrides) bool {
 	cased := false
 	for _, r := range s {
-		if pyIsUpper(r) || unicode.IsTitle(r) {
+		if pyIsUpper(r, u) || unicode.IsTitle(r) {
 			return false
 		}
-		if !cased && pyIsLower(r) {
+		if !cased && pyIsLower(r, u) {
 			cased = true
 		}
 	}
 	return cased
 }
 
-func isUpperString(s string) bool {
+func isUpperString(s string, u *value.UnicodeOverrides) bool {
 	cased := false
 	for _, r := range s {
-		if pyIsLower(r) || unicode.IsTitle(r) {
+		if pyIsLower(r, u) || unicode.IsTitle(r) {
 			return false
 		}
-		if !cased && pyIsUpper(r) {
+		if !cased && pyIsUpper(r, u) {
 			cased = true
 		}
 	}
@@ -135,16 +176,16 @@ func isUpperString(s string) bool {
 
 // isTitleString is str.istitle: at least one cased character, and every cased
 // character in the position the title mapping would have put it.
-func isTitleString(s string) bool {
+func isTitleString(s string, u *value.UnicodeOverrides) bool {
 	cased, prevCased := false, false
 	for _, r := range s {
 		switch {
-		case pyIsUpper(r) || unicode.IsTitle(r):
+		case pyIsUpper(r, u) || unicode.IsTitle(r):
 			if prevCased {
 				return false
 			}
 			cased, prevCased = true, true
-		case pyIsLower(r):
+		case pyIsLower(r, u):
 			if !prevCased {
 				return false
 			}

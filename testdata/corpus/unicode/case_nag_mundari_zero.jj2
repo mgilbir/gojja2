@@ -1,0 +1,3 @@
+{}
+---
+{{ '𞓰'|upper }}|{{ '𞓰'|lower }}|{{ '𞓰'.title() }}|{{ '𞓰'.casefold() }}|{{ '𞓰'.swapcase() }}|{{ '𞓰'.isupper() }}|{{ '𞓰'.islower() }}

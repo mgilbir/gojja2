@@ -2509,6 +2509,50 @@ for _i, _subj in enumerate(["1f", "0x1f", "101", "0b101", "17", "0o17",
         case(f"methods/int_default_base_{_i}_{_base}",
              "{{ " + repr(_subj) + "|int(-999, " + str(_base) + ") }}")
 
+# --- the code points the interpreters disagree about --------------------------
+# CPython carries its own Unicode, so which characters are printable, which are
+# digits and how each one cases are the interpreter's answers rather than
+# jinja2's. Across 3.11 to 3.14 that is 10,311 code points, and until the
+# version became a value gojja2 answered the pinned one's way whatever was
+# asked for.
+#
+# Nothing in the corpus reached any of them -- they are all characters assigned
+# after Unicode 14, so no ordinary template contains one -- which is exactly why
+# the gap survived. These cases exist to reach them. Under the default they
+# grade the default; under WithPythonVersion they grade the option, and
+# testdata/golden-3.11 and its neighbours record what the older ones said.
+_UNI = {
+    # Kawi and Nag Mundari digits: Unicode 15, so 3.11 has neither.
+    "kawi_zero": "\U00011f50",
+    "kawi_two": "\U00011f52",
+    "nag_mundari_zero": "\U0001e4f0",
+    # Kaktovik numerals: Unicode 15, No rather than Nd, so isnumeric only.
+    "kaktovik": "\U0001d2c0",
+    # Garay, which gained a case pair in Unicode 16.
+    "garay_upper": "\U00010d50",
+    "garay_lower": "\U00010d70",
+    # Assigned in Unicode 16, so only 3.14 prints it unescaped.
+    "todhri": "\U0001e030",
+    # An ordinary character, as the control: every interpreter agrees.
+    "latin_a": "a",
+    "arabic_indic_four": "٤",
+}
+for _name, _ch in _UNI.items():
+    case(f"unicode/predicates_{_name}",
+         "{{ " + repr(_ch) + ".isdigit() }}|{{ " + repr(_ch) + ".isdecimal() }}|"
+         "{{ " + repr(_ch) + ".isnumeric() }}|{{ " + repr(_ch) + ".isalnum() }}|"
+         "{{ " + repr(_ch) + ".isalpha() }}")
+    case(f"unicode/case_{_name}",
+         "{{ " + repr(_ch) + "|upper }}|{{ " + repr(_ch) + "|lower }}|"
+         "{{ " + repr(_ch) + ".title() }}|{{ " + repr(_ch) + ".casefold() }}|"
+         "{{ " + repr(_ch) + ".swapcase() }}|{{ " + repr(_ch) + ".isupper() }}|"
+         "{{ " + repr(_ch) + ".islower() }}")
+    # repr escapes by isprintable, which is where almost all of the difference
+    # between the interpreters lives.
+    case(f"unicode/repr_{_name}", "{{ [" + repr(_ch) + "]|pprint }}")
+    case(f"unicode/numeric_{_name}",
+         "{{ " + repr(_ch) + "|int(-1) }}|{{ " + repr(_ch) + "|float(-1) }}")
+
 # --- int() and float() do not read ASCII digits -------------------------------
 # Python transforms every character carrying a *decimal* value into the ASCII
 # digit of that value before parsing, so int("\u0664\u0662") is 42 and the

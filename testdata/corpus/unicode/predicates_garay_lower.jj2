@@ -1,0 +1,3 @@
+{}
+---
+{{ '𐵰'.isdigit() }}|{{ '𐵰'.isdecimal() }}|{{ '𐵰'.isnumeric() }}|{{ '𐵰'.isalnum() }}|{{ '𐵰'.isalpha() }}

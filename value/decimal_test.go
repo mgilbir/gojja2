@@ -126,7 +126,7 @@ func TestDecimalASCII(t *testing.T) {
 		"empty":                        {"", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := DecimalASCII(tc.in); got != tc.want {
+			if got := DecimalASCII(tc.in, DefaultPythonVersion); got != tc.want {
 				t.Errorf("DecimalASCII(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
@@ -134,7 +134,7 @@ func TestDecimalASCII(t *testing.T) {
 	// Idempotent, which is what lets both int() and float() apply it
 	// without either having to know whether the other already did.
 	for _, s := range []string{"42", "٤٢", "٤_٢", " ٤"} {
-		if once, twice := DecimalASCII(s), DecimalASCII(DecimalASCII(s)); once != twice {
+		if once, twice := DecimalASCII(s, DefaultPythonVersion), DecimalASCII(DecimalASCII(s, DefaultPythonVersion), DefaultPythonVersion); once != twice {
 			t.Errorf("DecimalASCII is not idempotent for %q: %q then %q", s, once, twice)
 		}
 	}

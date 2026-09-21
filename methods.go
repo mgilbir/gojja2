@@ -300,9 +300,10 @@ var stringMethods map[string]func(*State, value.Value, *value.CallArgs) (value.V
 // It is the method-table twin of runeFilter, over the same walker, so the two
 // spellings of one operation cannot drift apart or be made interruptible
 // separately -- which is exactly what happened when only the filters were.
-func runeMethod(f func(i int, r rune) string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+func runeMethod(f func(i int, r rune, u *value.UnicodeOverrides) string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-		out, err := mapRunesIn(s, r.AsString(), f)
+		u := value.UnicodeFor(s.PythonVersion())
+		out, err := mapRunesIn(s, r.AsString(), func(i int, c rune) string { return f(i, c, u) })
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -311,23 +312,23 @@ func runeMethod(f func(i int, r rune) string) func(*State, value.Value, *value.C
 }
 
 // swapcaseRune is str.swapcase for one code point.
-func swapcaseRune(_ int, r rune) string {
+func swapcaseRune(_ int, r rune, u *value.UnicodeOverrides) string {
 	switch {
-	case pyIsUpper(r):
-		return pyLowerRune(r)
-	case pyIsLower(r):
-		return pyUpperRune(r)
+	case pyIsUpper(r, u):
+		return pyLowerRune(r, u)
+	case pyIsLower(r, u):
+		return pyUpperRune(r, u)
 	}
 	return string(r)
 }
 
 // capitalizeRune is str.capitalize: the first code point takes the titlecase
 // mapping and the rest take lowercase.
-func capitalizeRune(i int, r rune) string {
+func capitalizeRune(i int, r rune, u *value.UnicodeOverrides) string {
 	if i == 0 {
-		return pyTitleRune(r)
+		return pyTitleRune(r, u)
 	}
-	return pyLowerRune(r)
+	return pyLowerRune(r, u)
 }
 
 func init() {
@@ -337,9 +338,9 @@ func init() {
 		// the exception: whether a character starts a word depends on
 		// the one before it, so it carries state across the walk and
 		// keeps a loop of its own.
-		"upper":      runeMethod(func(_ int, r rune) string { return pyUpperRune(r) }),
-		"lower":      runeMethod(func(_ int, r rune) string { return pyLowerRune(r) }),
-		"casefold":   runeMethod(func(_ int, r rune) string { return pyFoldRune(r) }),
+		"upper":      runeMethod(func(_ int, r rune, u *value.UnicodeOverrides) string { return pyUpperRune(r, u) }),
+		"lower":      runeMethod(func(_ int, r rune, u *value.UnicodeOverrides) string { return pyLowerRune(r, u) }),
+		"casefold":   runeMethod(func(_ int, r rune, u *value.UnicodeOverrides) string { return pyFoldRune(r, u) }),
 		"swapcase":   runeMethod(swapcaseRune),
 		"capitalize": runeMethod(capitalizeRune),
 		"title": func(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -382,12 +383,14 @@ func init() {
 		"isdecimal": classifyMethod(pyIsDecimal),
 		"isdigit":   classifyMethod(pyIsDigit),
 		"isnumeric": classifyMethod(pyIsNumeric),
-		"isalpha":   classifyMethod(unicode.IsLetter),
-		// str.isalnum is the union of the four, not letters and Nd.
-		"isalnum": classifyMethod(func(r rune) bool {
-			return unicode.IsLetter(r) || pyIsNumeric(r)
+		"isalpha": classifyMethod(func(r rune, u *value.UnicodeOverrides) bool {
+			return u.IsAlpha(r, value.AlphaDefault(r, unicode.IsLetter(r)))
 		}),
-		"isspace": classifyMethod(unicode.IsSpace),
+		// str.isalnum is the union of the four, not letters and Nd.
+		"isalnum": classifyMethod(func(r rune, u *value.UnicodeOverrides) bool {
+			return u.IsAlpha(r, value.AlphaDefault(r, unicode.IsLetter(r))) || pyIsNumeric(r, u)
+		}),
+		"isspace": classifyMethod(func(r rune, _ *value.UnicodeOverrides) bool { return unicode.IsSpace(r) }),
 		"isupper": stringPredicate(isUpperString),
 		"islower": stringPredicate(isLowerString),
 		// isascii and isprintable are the two that answer True for the
@@ -585,19 +588,26 @@ func methodTranslate(s *State, r value.Value, args *value.CallArgs) (value.Value
 // already read -- and because Go's unicode.IsDigit is a different Unicode
 // version from the CPython this is graded against, so it answered True for
 // twenty code points the specification does not have.
-func pyIsDecimal(r rune) bool { return value.DecimalValue(r) >= 0 }
+func pyIsDecimal(r rune, u *value.UnicodeOverrides) bool {
+	return u.DecimalValueFor(r) >= 0
+}
 
 // pyIsDigit is str.isdigit: decimal plus Numeric_Type=Digit.
-func pyIsDigit(r rune) bool {
-	return pyIsDecimal(r) || unicode.Is(digitExtra, r)
+func pyIsDigit(r rune, u *value.UnicodeOverrides) bool {
+	// The override records where this interpreter differs from the
+	// *default's* answer, so the default's answer is what it is applied to.
+	// Feeding it an already-overridden decimal would correct twice and land
+	// back where it started.
+	return u.IsDigit(r, value.DecimalValue(r) >= 0 || unicode.Is(digitExtra, r))
 }
 
 // pyIsNumeric is str.isnumeric: anything carrying a numeric value, which
 // reaches past the number categories into CJK ideographs like U+4E00.
 //
 // nlNo is CPython's own Nl and No rather than Go's, for the same reason.
-func pyIsNumeric(r rune) bool {
-	return pyIsDecimal(r) || unicode.Is(nlNo, r) || unicode.Is(numericExtra, r)
+func pyIsNumeric(r rune, u *value.UnicodeOverrides) bool {
+	return u.IsNumeric(r, value.DecimalValue(r) >= 0 ||
+		unicode.Is(nlNo, r) || unicode.Is(numericExtra, r))
 }
 
 // methodIsASCII is str.isascii, which is True for the empty string: it asks
@@ -631,8 +641,8 @@ func methodIsPrintable(_ *State, r value.Value, _ *value.CallArgs) (value.Value,
 // character and every lowercase one follows a cased character, with at least
 // one cased character present. Titlecase counts as upper here, which is what
 // makes a digraph like U+01C8 titlecase rather than a failure.
-func methodIsTitle(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-	return value.Bool(isTitleString(r.AsString())), nil
+func methodIsTitle(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+	return value.Bool(isTitleString(r.AsString(), value.UnicodeFor(s.PythonVersion()))), nil
 }
 
 // methodIsIdentifier is str.isidentifier, which asks the same question the
@@ -1397,7 +1407,7 @@ func convertAndFormat(st *State, v value.Value, conv, spec string) (string, erro
 	case "s":
 		v = value.String(value.Str(v))
 	case "r":
-		v = value.String(value.Repr(v))
+		v = value.String(value.ReprFor(v, st.PythonVersion()))
 	case "a":
 		v = value.String(value.Ascii(v))
 	default:
@@ -1502,7 +1512,7 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 		if item, ok := lookupItem(v, key, py); ok {
 			return item, nil
 		}
-		return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
+		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, py))
 
 	case value.KindString, value.KindBytes:
 		idx, ok := key.Int64()
@@ -1536,7 +1546,7 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 		return item, nil
 	}
 	if v.Kind() == value.KindObject {
-		return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
+		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, py))
 	}
 	return value.Undefined, errs.New(errs.TypeError,
 		"'%s' object is not subscriptable", v.TypeName())
@@ -1782,14 +1792,15 @@ func pad(st *State, s string, width int, fill string, align padAlign) (value.Val
 	}
 }
 
-func classifyMethod(pred func(rune) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
-	return func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+func classifyMethod(pred func(rune, *value.UnicodeOverrides) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(st *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+		u := value.UnicodeFor(st.PythonVersion())
 		s := r.AsString()
 		if s == "" {
 			return value.False, nil
 		}
 		for _, c := range s {
-			if !pred(c) {
+			if !pred(c, u) {
 				return value.False, nil
 			}
 		}
@@ -1800,9 +1811,9 @@ func classifyMethod(pred func(rune) bool) func(*State, value.Value, *value.CallA
 // caseMethod implements isupper and islower: at least one cased character, and
 // no character of the opposite case.
 // stringPredicate wraps one of the whole-string case predicates as a method.
-func stringPredicate(f func(string) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
-	return func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.Bool(f(r.AsString())), nil
+func stringPredicate(f func(string, *value.UnicodeOverrides) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.Bool(f(r.AsString(), value.UnicodeFor(s.PythonVersion()))), nil
 	}
 }
 
@@ -1882,7 +1893,7 @@ func methodDictPop(s *State, r value.Value, args *value.CallArgs) (value.Value, 
 	if def, ok := arg(args, 1, "default"); ok {
 		return def, nil
 	}
-	return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
+	return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, s.PythonVersion()))
 }
 
 func methodDictSetdefault(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
@@ -2163,7 +2174,7 @@ func methodSeqIndex(st *State, r value.Value, args *value.CallArgs) (value.Value
 	if st.PythonVersion().IndexMessageIsGeneric() {
 		return value.Undefined, errs.New(errs.ValueError, "list.index(x): x not in list")
 	}
-	return value.Undefined, errs.New(errs.ValueError, "%s is not in list", value.Repr(v))
+	return value.Undefined, errs.New(errs.ValueError, "%s is not in list", value.ReprFor(v, st.PythonVersion()))
 }
 
 // seqSearchBounds reads list.index's start and stop as slice indices: negative

@@ -1,0 +1,3 @@
+{}
+---
+{{ '٤'.isdigit() }}|{{ '٤'.isdecimal() }}|{{ '٤'.isnumeric() }}|{{ '٤'.isalnum() }}|{{ '٤'.isalpha() }}
