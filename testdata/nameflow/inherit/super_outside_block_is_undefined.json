@@ -1,0 +1,6 @@
+{
+  "case": "inherit/super_outside_block_is_undefined.jj2",
+  "variables": {
+    "super": "o?"
+  }
+}

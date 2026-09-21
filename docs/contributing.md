@@ -138,6 +138,24 @@ If one fails after a toolchain upgrade or a `PYTHON_VERSION` bump, regenerate
 and read the diff: it is telling you either that Unicode moved or that the
 pinned CPython did.
 
+## The analysis is written twice on purpose
+
+`Template.Variables` answers which of the caller's variables a template can
+print and which only steer it. `tools/oracle/nameflow.py` answers the same
+question over jinja2's own AST, `make nameflow` records its answers in
+`testdata/nameflow`, and `TestVariablesMatchTheReference` requires the engine to
+agree on every committed case.
+
+That is not belt and braces. The answer has to be a property of the template
+rather than of either tree's shape — gojja2 collapses jinja2's nine binary
+operator classes into one node and carries call arguments in a struct jinja2
+does not have — so deriving it twice and requiring the results to match is what
+makes it mean anything. A single implementation would be right by definition.
+
+It also catches the failure cross-checking alone cannot: both sides wrong the
+same way. `loop` was reported as one of the caller's variables by both, until a
+case that uses it was asked.
+
 ## What watches the oracle
 
 CI never runs Python: the whole point of committing the goldens is that the

@@ -1,0 +1,6 @@
+{
+  "case": "errshape/indent_types.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

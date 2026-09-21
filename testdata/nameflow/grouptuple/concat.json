@@ -1,0 +1,6 @@
+{
+  "case": "grouptuple/concat.jj2",
+  "variables": {
+    "users": "o"
+  }
+}

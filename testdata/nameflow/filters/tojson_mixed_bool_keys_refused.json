@@ -1,0 +1,4 @@
+{
+  "case": "filters/tojson_mixed_bool_keys_refused.jj2",
+  "variables": {}
+}

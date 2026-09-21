@@ -1,0 +1,6 @@
+{
+  "case": "control/loop_cycle.jj2",
+  "variables": {
+    "seq": "of?"
+  }
+}

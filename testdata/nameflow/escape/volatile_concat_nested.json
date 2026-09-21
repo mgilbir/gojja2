@@ -1,0 +1,8 @@
+{
+  "case": "escape/volatile_concat_nested.jj2",
+  "variables": {
+    "mk": "o",
+    "s": "o",
+    "yes": "f"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "case": "errors/utf8_decode_start_byte_above_max.jj2",
+  "variables": {}
+}

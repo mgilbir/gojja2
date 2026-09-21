@@ -1,0 +1,6 @@
+{
+  "case": "markup/sort_keeps_markup.jj2",
+  "variables": {
+    "mk": "o"
+  }
+}

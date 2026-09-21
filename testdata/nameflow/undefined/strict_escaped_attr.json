@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_escaped_attr.jj2",
+  "variables": {
+    "d": "o"
+  }
+}

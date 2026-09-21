@@ -1,0 +1,7 @@
+{
+  "case": "control/if.jj2",
+  "variables": {
+    "a": "f",
+    "b": "f"
+  }
+}

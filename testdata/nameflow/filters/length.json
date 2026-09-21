@@ -1,0 +1,7 @@
+{
+  "case": "filters/length.jj2",
+  "variables": {
+    "map": "o",
+    "seq": "o"
+  }
+}

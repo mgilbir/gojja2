@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_attr.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

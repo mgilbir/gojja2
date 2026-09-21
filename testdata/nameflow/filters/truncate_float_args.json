@@ -1,0 +1,6 @@
+{
+  "case": "filters/truncate_float_args.jj2",
+  "variables": {
+    "t": "o"
+  }
+}

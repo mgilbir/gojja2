@@ -1,0 +1,8 @@
+{
+  "case": "escape/macro_trusted_where_called.jj2",
+  "variables": {
+    "mk": "o",
+    "s": "o",
+    "sep": "o"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "inherit/template_reference_repr.jj2",
+  "variables": {
+    "self": "o"
+  }
+}

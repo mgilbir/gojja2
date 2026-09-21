@@ -1,0 +1,6 @@
+{
+  "case": "undefined/debug_attr_filter.jj2",
+  "variables": {
+    "nope": "o?"
+  }
+}

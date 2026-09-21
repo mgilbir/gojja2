@@ -1,0 +1,6 @@
+{
+  "case": "control/loop_vars.jj2",
+  "variables": {
+    "seq": "of"
+  }
+}

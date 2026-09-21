@@ -1,0 +1,6 @@
+{
+  "case": "filters/sort.jj2",
+  "variables": {
+    "words": "o"
+  }
+}

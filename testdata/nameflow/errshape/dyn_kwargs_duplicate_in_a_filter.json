@@ -1,0 +1,6 @@
+{
+  "case": "errshape/dyn_kwargs_duplicate_in_a_filter.jj2",
+  "variables": {
+    "lst": "o"
+  }
+}

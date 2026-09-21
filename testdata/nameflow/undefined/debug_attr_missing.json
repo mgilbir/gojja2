@@ -1,0 +1,6 @@
+{
+  "case": "undefined/debug_attr_missing.jj2",
+  "variables": {
+    "d": "o"
+  }
+}

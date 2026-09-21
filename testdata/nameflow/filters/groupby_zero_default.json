@@ -1,0 +1,6 @@
+{
+  "case": "filters/groupby_zero_default.jj2",
+  "variables": {
+    "rows": "o"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "case": "errors/loop_call_not_recursive.jj2",
+  "variables": {}
+}

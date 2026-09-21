@@ -1,0 +1,7 @@
+{
+  "case": "escape/concat_markup.jj2",
+  "variables": {
+    "mk": "o",
+    "sv": "o"
+  }
+}

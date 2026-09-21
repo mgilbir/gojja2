@@ -1,0 +1,4 @@
+{
+  "case": "errors/round_value_before_precision.jj2",
+  "variables": {}
+}

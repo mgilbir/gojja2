@@ -1,0 +1,6 @@
+{
+  "case": "escape/markup_pprint.jj2",
+  "variables": {
+    "long": "o"
+  }
+}

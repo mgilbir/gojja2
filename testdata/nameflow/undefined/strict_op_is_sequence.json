@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_op_is_sequence.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

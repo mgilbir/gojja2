@@ -1,0 +1,6 @@
+{
+  "case": "filters/groupby.jj2",
+  "variables": {
+    "users": "o"
+  }
+}

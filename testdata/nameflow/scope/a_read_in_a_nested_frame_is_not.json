@@ -1,0 +1,6 @@
+{
+  "case": "scope/a_read_in_a_nested_frame_is_not.jj2",
+  "variables": {
+    "m": "o"
+  }
+}

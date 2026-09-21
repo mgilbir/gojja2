@@ -1,0 +1,7 @@
+{
+  "case": "filters/urlize_unicode_mail.jj2",
+  "variables": {
+    "a": "o",
+    "b": "o"
+  }
+}

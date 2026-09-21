@@ -1,0 +1,6 @@
+{
+  "case": "filters/items.jj2",
+  "variables": {
+    "map": "o"
+  }
+}

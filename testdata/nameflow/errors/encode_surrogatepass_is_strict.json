@@ -1,0 +1,4 @@
+{
+  "case": "errors/encode_surrogatepass_is_strict.jj2",
+  "variables": {}
+}

@@ -1,0 +1,6 @@
+{
+  "case": "control/for_nested_unpack.jj2",
+  "variables": {
+    "pairs": "of"
+  }
+}

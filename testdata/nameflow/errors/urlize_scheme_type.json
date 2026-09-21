@@ -1,0 +1,6 @@
+{
+  "case": "errors/urlize_scheme_type.jj2",
+  "variables": {
+    "u": "o"
+  }
+}

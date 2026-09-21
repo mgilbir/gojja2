@@ -1,0 +1,6 @@
+{
+  "case": "subscript/sliceruntime_dict.jj2",
+  "variables": {
+    "x": "o?"
+  }
+}

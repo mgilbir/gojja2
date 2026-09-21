@@ -1,0 +1,4 @@
+{
+  "case": "filters/map_empty_input_is_never_bound.jj2",
+  "variables": {}
+}

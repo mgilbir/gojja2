@@ -1,0 +1,4 @@
+{
+  "case": "errors/loop_call_missing.jj2",
+  "variables": {}
+}

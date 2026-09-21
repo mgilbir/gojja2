@@ -1,0 +1,6 @@
+{
+  "case": "errshape/dyn_kwargs_names_a_builtin.jj2",
+  "variables": {
+    "lst": "o"
+  }
+}

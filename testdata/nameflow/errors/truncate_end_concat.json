@@ -1,0 +1,6 @@
+{
+  "case": "errors/truncate_end_concat.jj2",
+  "variables": {
+    "t": "o"
+  }
+}

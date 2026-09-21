@@ -195,6 +195,7 @@ oracle: venv arity methodarity arity-matrix entities decimal strclass casemap ut
 	$(PY) tools/oracle/gen_corpus.py
 	$(PY) tools/oracle/oracle.py --corpus testdata/corpus --golden testdata/golden
 	$(PY) tools/oracle/gen_golden_matrix.py
+	$(PY) tools/oracle/gen_nameflow.py
 
 .PHONY: arity
 arity: venv ## Regenerate arity.go from jinja2's own filter and test signatures
@@ -229,6 +230,10 @@ arity-matrix: venv ## Regenerate method_arity_other.go from every CPython gojja2
 .PHONY: golden-matrix
 golden-matrix: venv ## Regenerate testdata/golden-<version> from every CPython gojja2 reproduces
 	$(PY) tools/oracle/gen_golden_matrix.py
+
+.PHONY: nameflow
+nameflow: venv ## Regenerate testdata/nameflow: what each case does with the caller's variables
+	$(PY) tools/oracle/gen_nameflow.py
 
 .PHONY: unicode-matrix
 unicode-matrix: venv ## Regenerate value/unicode_other.go from every CPython gojja2 reproduces

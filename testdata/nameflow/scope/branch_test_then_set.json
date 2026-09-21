@@ -1,0 +1,6 @@
+{
+  "case": "scope/branch_test_then_set.jj2",
+  "variables": {
+    "m": "of?"
+  }
+}

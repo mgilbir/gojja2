@@ -1,0 +1,6 @@
+{
+  "case": "errors/dictsort_undefined.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

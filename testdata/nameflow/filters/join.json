@@ -1,0 +1,7 @@
+{
+  "case": "filters/join.jj2",
+  "variables": {
+    "seq": "o",
+    "users": "o"
+  }
+}

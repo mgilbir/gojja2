@@ -1,0 +1,6 @@
+{
+  "case": "errshape/dyn_kwargs_key_not_a_string.jj2",
+  "variables": {
+    "lst": "o"
+  }
+}

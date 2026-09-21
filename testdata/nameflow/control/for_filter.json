@@ -1,0 +1,6 @@
+{
+  "case": "control/for_filter.jj2",
+  "variables": {
+    "seq": "of"
+  }
+}

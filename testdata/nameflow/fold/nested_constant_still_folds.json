@@ -1,0 +1,4 @@
+{
+  "case": "fold/nested_constant_still_folds.jj2",
+  "variables": {}
+}

@@ -352,6 +352,48 @@ The check reads the handler wherever a template writes one -- positionally, as
 `s.encode("ascii", h)`, cannot be judged before the render and is not guessed
 at; that one still surfaces as the `LookupError` it always did.
 
+## What a template does with your variables
+
+`Template.Variables` reports, for each variable the template resolves from the
+context, whether its **value can reach the output**, whether it only **steers**
+what is rendered, or neither:
+
+```go
+tmpl, _ := env.FromString(`{% if admin %}{{ name }}{% endif %}`)
+for _, v := range tmpl.Variables() {
+    fmt.Println(v.Name, v.Output, v.Flow)
+}
+// admin false true    -- decides whether anything is printed
+// name  true  false   -- printed, but only when admin is truthy
+```
+
+The two are independent, and a variable can be neither: `{% set unused = x %}`
+with nothing reading `unused` means `x` cannot change the output at all. That
+negative is the useful part, and it is why this is a dataflow analysis rather
+than a scan for names — `{% set y = x %}{{ y }}` prints `x` without ever naming
+it in an output tag, and `{{ "yes" if flag else "no" }}` prints neither branch's
+operand while `flag` decides which.
+
+Only the caller's variables are reported. A loop's target, a macro's parameter,
+`loop`, anything a `{% set %}` binds and the environment's own globals are the
+template's, not yours. Which of those a name is can be less obvious than it
+looks: `{{ x }}{% set x = 1 %}` reads your `x`, and
+`{% for i in [1] %}{{ x }}{% endfor %}{% set x = 1 %}` does not, because jinja2
+decides ownership per frame on a name's first mention.
+
+**`Unknown` means the answer has no reliable negative.** A computed lookup like
+`{{ data[key] }}`, a `namespace()`, or a template pulled in by `{% include %}`
+are routes the analysis does not follow, so the variable may reach the output
+anyway. A variable reported without `Unknown` is a real answer in both
+directions; nothing is ever reported as unable to reach the output when it
+might.
+
+The analysis is written twice — once here and once over jinja2's own AST in
+`tools/oracle/nameflow.py` — and every committed conformance case is required to
+get the same answer from both. See
+[docs/conformance.md](conformance.md) for why that is the only way the answer
+means anything.
+
 ## Filter policies
 
 `WithPolicies` overrides the defaults jinja2 keeps in `Environment.policies`:

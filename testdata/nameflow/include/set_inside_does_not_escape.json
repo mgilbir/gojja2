@@ -1,0 +1,4 @@
+{
+  "case": "include/set_inside_does_not_escape.jj2",
+  "variables": {}
+}
