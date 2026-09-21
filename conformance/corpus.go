@@ -446,9 +446,9 @@ func LoadGolden(goldenRoot, rel string) (*Golden, error) {
 // LoadGoldenOver reads the oracle's answer for a case, preferring an override
 // recorded for one interpreter version.
 //
-// Only 66 of 2,241 cases answer differently across CPython 3.11 to 3.14, so an
-// older version is stored as those few files rather than a second copy of
-// everything: the base set is the default version's, and an override sits on
+// Only 66 of 2,241 cases answer differently across CPython 3.11 to 3.14, so a
+// non-pinned version is stored as those few files rather than a second copy of
+// everything: the base set is the pinned version's, and an override sits on
 // top of it. An override that stops differing is a file to delete, which is a
 // signal worth having.
 func LoadGoldenOver(goldenRoot, overrideRoot, rel string) (*Golden, error) {

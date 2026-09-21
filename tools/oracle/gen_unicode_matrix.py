@@ -142,8 +142,9 @@ package value
 
 import "unicode"
 
-// The Unicode answers an older CPython gives where they differ from the
-// default's, which the committed tables are built for.
+// The Unicode answers a non-pinned CPython gives where they differ from the
+// pinned one's, which the committed tables are built for. The set includes
+// versions newer than the pin as well as older ones.
 //
 // CPython carries its own Unicode, so the interpreter decides case mappings,
 // which characters are digits, and how repr escapes them. Almost all of the
@@ -155,10 +156,10 @@ import "unicode"
 
     go = go_answers()
     GO_ALPHA, GO_PRINTABLE, GO_DIGIT = range(3)
-    # Where the *default* CPython disagrees with Go's tables. gojja2 reads
-    # isalpha and isprintable straight off Go, so without these the default
-    # itself is wrong -- and an older version's overrides, which record a
-    # difference from the default, would then correct a wrong baseline.
+    # Where the *pinned* CPython disagrees with Go's tables. gojja2 reads
+    # isalpha and isprintable straight off Go, so without these the pin
+    # itself is wrong -- and another version's overrides, which record a
+    # difference from the pin, would then correct a wrong baseline.
     alphaFix = {cp for cp in base
                 if (base[cp][FLAGS][ISALPHA] == "1") != go[cp][GO_ALPHA]}
     printableFix = {cp for cp in base
