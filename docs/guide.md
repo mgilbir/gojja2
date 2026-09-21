@@ -238,6 +238,8 @@ There is no environment to use when it does -- it returns `nil` and the error.
 | `WithNewlineSequence` outside `"\n"`, `"\r\n"`, `"\r"` | jinja2 asserts the same three; anything else rendered here and raised there |
 | two of the block, variable and comment *opening* strings being equal | a template cannot be read two ways, and guessing which is worse than saying so. `WithDelimiterLeniency` turns this down; see below |
 | a negative `TruncateLeeway` | `truncate` refuses it when it runs, so the environment built and then failed on every render that reached the filter |
+| a `PythonVersion` that is not one of the four | gojja2 reproduces CPython 3.11 to 3.14; anything else has no answers to give, and taking the default silently would render something nobody asked for |
+| an `UnsupportedLeniency` that is neither value | likewise |
 
 Two things that look like they should be refused and are not. An **empty**
 delimiter means "leave this one alone", which is how one can be overridden
@@ -265,6 +267,88 @@ Under `MatchJinja2Delimiters` such a template renders exactly as CPython
 renders it -- which of the two tags a `{%` opens is then settled by the lexer's
 ordering rather than by anything the template says. The two pairs jinja2 *does*
 compare are refused at either setting.
+
+## Which CPython
+
+jinja2 3.1.6 is one library, but it runs on an interpreter, and the interpreter
+decides some of what a template does. `{{ d[0:1] }}` raises `TypeError` on
+CPython 3.11 and `KeyError` on 3.12. `{{ xs|sort(reverse=none) }}` is an error
+on 3.11 and a forward sort on 3.12. A division by zero is worded six ways before
+3.14 and one way after. And CPython carries its own Unicode, so which characters
+are digits, how they case, and how `repr` escapes them all move too.
+
+Across 3.11 to 3.14 that is **38 of gojja2's 2,233 committed conformance cases**
+-- 1.7%, and every one of them answers exactly two ways rather than four.
+
+A render reproduces the newest by default. Choose another to match a service
+already running on it:
+
+```go
+env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
+```
+
+`Environment.PythonVersion` reports what an environment settled on. The
+constants are `Python311` through `Python314`, and `DefaultPythonVersion` is the
+newest.
+
+What it changes is a closed list -- fourteen behaviour and wording rules, plus
+the Unicode tables -- and every rule is named in `value/pyversion.go` with the
+release that moved it and the conformance case that grades it. Everything
+outside that list is identical on every interpreter, which is 98.3% of the
+corpus. [conformance.md](conformance.md#which-cpython) has the measurements and
+how each version is graded.
+
+This is *not* a compatibility shim for older jinja2: the library is pinned at
+3.1.6 throughout. It is only about which Python that library is running on.
+
+## Constructs gojja2 cannot honour
+
+Three of CPython's codec error handlers have no answer here -- `namereplace`
+needs the Unicode name database, and `surrogateescape` and `surrogatepass`
+answer with a lone surrogate, which a Go string cannot hold. They are listed
+with their reasons in [divergences.md](divergences.md#which-codecs-and-error-handlers-encode-and-decode-know).
+
+The awkward part is *when* a template finds out. An error handler is looked up
+only when a character actually needs it -- CPython works that way too, and
+gojja2 matches -- so a template naming one compiles, renders, passes its tests,
+and raises on the first input that reaches the handler.
+`.encode("ascii", "namereplace")` is fine for every ASCII string and fails on
+the first accented letter.
+
+So compiling a template looks for them, and what it finds is on
+`Template.Unsupported()` whether or not anyone asked:
+
+```go
+tmpl, err := env.GetTemplate("page.html")
+for _, u := range tmpl.Unsupported() {
+    log.Printf("%s:%d: %s", u.Template, u.Line, u.Error())
+}
+```
+
+`WithUnsupportedReport` routes each finding somewhere as it is found -- gojja2
+has no logger of its own and writes to no stream -- and
+`WithUnsupportedLeniency(RefuseUnsupported)` makes it a compile error instead,
+so the template cannot reach production carrying a failure only some inputs
+show:
+
+```go
+env, err := gojja2.New(
+    gojja2.WithUnsupportedReport(func(u gojja2.Unsupported) {
+        log.Printf("%s:%d: %s", u.Template, u.Line, u.Error())
+    }),
+    gojja2.WithUnsupportedLeniency(gojja2.RefuseUnsupported),
+)
+```
+
+Reporting is the default, and unlike the other leniency knobs the lenient value
+is the zero one: those describe a configuration nobody has written yet, this
+describes templates that already exist, and refusing by default would reject one
+that works today because its data has never reached the handler.
+
+The check reads the handler wherever a template writes one -- positionally, as
+`errors=`, or assembled from constants. A handler that is genuinely dynamic,
+`s.encode("ascii", h)`, cannot be judged before the render and is not guessed
+at; that one still surfaces as the `LookupError` it always did.
 
 ## Filter policies
 

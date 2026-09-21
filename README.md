@@ -54,15 +54,16 @@ Five things worth knowing before the sixth line:
 
 [docs/guide.md](docs/guide.md) has the rest under headings you can link to:
 loaders, rendering and what buffers, the Go bridge, errors, the four undefined
-behaviours, autoescaping, the syntax options, and concurrency.
+behaviours, autoescaping, the syntax options, which CPython to reproduce, and
+concurrency.
 [docs/extending.md](docs/extending.md) covers adding a filter, a test or a
 global, and exposing a type on its own terms.
 
 ## Ground truth
 
-CPython's `jinja2` **is** the specification. Every behavioural question is
-settled by rendering the template with the real thing and recording what it
-produced:
+CPython's `jinja2` **is** the specification -- pinned at 3.1.6, on a pinned
+interpreter. Every behavioural question is settled by rendering the template
+with the real thing and recording what it produced:
 
 ```
 $ .venv/bin/python tools/oracle/oracle.py --template '{% set d = {1:"a",} %}{{ d[1] }}'
@@ -93,6 +94,26 @@ That last one is not academic. A template like
 
 renders `a`, and an implementation that stringifies dict keys renders nothing
 at all -- silently.
+
+### Which CPython
+
+The interpreter is part of the specification, not a detail of the harness. It
+decides what `{{ d[0:1] }}` raises, whether `{{ xs|sort(reverse=none) }}` is an
+error, how a division by zero is worded, and -- because CPython carries its own
+Unicode -- which characters are digits, how they case, and how `repr` escapes
+them.
+
+gojja2 reproduces **CPython 3.11 through 3.14**, newest by default:
+
+```go
+env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
+```
+
+Across those four, 38 of the 2,233 committed cases answer differently, and every
+one of them answers exactly two ways rather than four. Each version is graded
+against its own recorded output, so the option is measured rather than asserted.
+[docs/guide.md](docs/guide.md#which-cpython) has the shape of it and
+[docs/conformance.md](docs/conformance.md#which-cpython) the numbers.
 
 ## Conformance
 
