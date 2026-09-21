@@ -1,0 +1,142 @@
+name: Oracle
+
+# The oracle is the specification: CPython with the pinned jinja2, which every
+# committed table and golden here was generated from. CI never runs it -- the
+# whole point of committing the goldens is that the suite grades them with no
+# network and no Python -- and that leaves two things nothing watches.
+#
+# The first is the generators themselves. `make casemap` was broken for three
+# commits by a change to the tool it reads, and nothing could tell: the
+# committed table still agreed with the interpreter, so every test passed. A
+# generated file agreeing with its source says nothing about whether the
+# generator still runs.
+#
+# The second is CPython moving. gojja2 names the interpreters it reproduces, so
+# a new stable release is an outstanding task -- and an invisible one, because
+# the tests only ever ask the versions already written down.
+#
+# Neither belongs on the per-commit path. Both belong somewhere.
+on:
+  schedule:
+    # Mondays: do the generators still work, and do they still produce what is
+    # committed?
+    - cron: "23 4 * * 1"
+    # The first of the month: the above, and is there a CPython we do not know?
+    # Separate because it downloads every interpreter and renders the corpus
+    # under each unknown one, which is minutes rather than seconds.
+    - cron: "41 5 1 * *"
+  workflow_dispatch:
+    inputs:
+      releases:
+        description: "Also scan for CPython releases gojja2 does not know"
+        type: boolean
+        default: true
+
+# Nothing here writes. The reports go to the job summary, and a run that finds
+# something fails -- which is what sends the mail.
+permissions:
+  contents: read
+
+concurrency:
+  group: oracle-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Everything `make oracle` produces, regenerated from scratch and compared
+  # against what is committed. A diff means one of three things, and the diff
+  # itself says which: a generator broke, CPython changed its mind, or somebody
+  # edited a generated file by hand.
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # Pinned to an exact release rather than a major tag: setup-uv stopped
+      # moving its major tag at v7 and has released up to v10, so `@v7` would
+      # quietly be two years of the action behind. uv itself is left floating --
+      # what has to be pinned is the interpreter it fetches, and the Makefile
+      # does that.
+      - uses: astral-sh/setup-uv@v10.1.0
+
+      # The pinned interpreter, asserted by the rule itself.
+      - name: Build the oracle virtualenv
+        run: make venv
+
+      # `make oracle` reaches all four interpreters through `uv run --python`,
+      # so this is also the check that every one of them is still available.
+      - name: Regenerate everything the oracle produces
+        run: make oracle
+
+      # The corpora the value and lexer tests replay, which `make oracle` does
+      # not cover.
+      - name: Regenerate the recorded corpora
+        run: make ops-corpus repr-corpus lex-corpus parse-corpus
+
+      # Staged rather than compared with `git diff`, which cannot see a file
+      # that did not exist before -- and a new golden, or a case the generator
+      # stopped emitting, is exactly the kind of drift worth catching.
+      - name: Compare against what is committed
+        run: |
+          git add -A
+          if ! git diff --cached --quiet; then
+            {
+              echo "## Regenerating changed what is committed"
+              echo
+              echo "One of three things: a generator broke, CPython changed its"
+              echo "mind, or a generated file was edited by hand. The diff says"
+              echo "which."
+              echo
+              echo '```'
+              git diff --cached --stat
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            git --no-pager diff --cached --stat
+            exit 1
+          fi
+          echo "Every generated file, corpus and golden still matches the oracle." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  # Is there a CPython gojja2 should know about, and what would it take?
+  #
+  # This does the reading a maintainer would otherwise do by hand: it renders
+  # the whole corpus under the new interpreter, asks it about every code point,
+  # and reports what differs. A new release then arrives as a diff rather than
+  # as a note to look into it some time.
+  releases:
+    if: github.event_name != 'workflow_dispatch' || inputs.releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: astral-sh/setup-uv@v10.1.0
+      - run: make venv
+
+      # --grade only on the monthly run and on a manual one: the weekly job
+      # should stay cheap, and the answer does not change week to week.
+      - name: Scan for releases gojja2 does not account for
+        id: scan
+        run: |
+          grade=""
+          if [ "${{ github.event.schedule }}" != "23 4 * * 1" ]; then
+            grade="--grade"
+          fi
+          set +e
+          .venv/bin/python tools/oracle/scan_pythons.py $grade --out report.md
+          echo "found=$?" >> "$GITHUB_OUTPUT"
+          set -e
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Failing is the notification. A release gojja2 does not reproduce is an
+      # outstanding task, so this keeps failing until somebody decides -- either
+      # by adding the version or by writing down why it is not reproduced.
+      - name: Fail if there is something to do
+        if: steps.scan.outputs.found != '0'
+        run: |
+          echo "::error::CPython has moved; see the job summary."
+          exit 1
