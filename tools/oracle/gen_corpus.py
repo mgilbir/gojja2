@@ -1190,6 +1190,29 @@ case("errors/unknown_test", "{{ 1 is nosuch }}")
 case("errors/bad_assign", "{% set 1 = 2 %}")
 case("errors/nested_mismatch", "{% for x in [1] %}{% endif %}")
 case("errors/zero_division", "{{ 1/0 }}|{{ 1//0 }}|{{ 1%0 }}|{{ 1.0/0 }}")
+
+# --- variables that steer without being printed --------------------------------
+# The dataflow analysis makes two kinds of negative claim: that a variable's
+# value cannot appear in the output, and that it cannot change the output at all.
+# Both are checkable by rendering, which is the only check that does not depend
+# on the analysis being written twice -- two implementations can be wrong the
+# same way, and a render cannot.
+#
+# The corpus reached almost none of them: nearly every variable in it is printed,
+# so there was nothing to check. These are the shapes where a variable decides
+# something and is never shown, one per mechanism.
+def steer(name, body):
+    case(f"dataflow/{name}", body, a=True, c=False, k="one", n="x",
+         xs=[1, 2], d={"one": "ONE"}, o={"x": "X"}, s="SECRET")
+
+steer("if_decides", "{% if a %}yes{% else %}no{% endif %}")
+steer("cond_expr_decides", '{{ "yes" if c else "no" }}')
+steer("loop_length_decides", "{% for i in xs %}.{% endfor %}")
+steer("subscript_key_decides", "{{ d[k] }}")
+steer("attr_name_decides", "{{ o|attr(n) }}")
+steer("test_decides", "{% if a is defined %}here{% endif %}")
+# ... and one that cannot reach the output at all.
+steer("bound_but_never_read", "{% set unused = s %}done")
 # Every shape a division by zero can take, one case per sentence. CPython had
 # six distinct wordings before 3.14 collapsed them, and the case above reaches
 # only three -- which is why "float modulo" kept the 3.11 wording on 3.13 with

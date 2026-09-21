@@ -343,22 +343,29 @@ class Analysis:
             return self.expr(n.expr1) | self.expr(n.expr2)
 
         if isinstance(n, nodes.Getitem):
+            # `data[key]` reads out of data whatever key turns out to be, so
+            # the result derives from data and "can data reach the output" is a
+            # plain yes. Which *part* is read is a different question, and
+            # answering it with unknown used to weaken one that was never in
+            # doubt. The key chooses among the values rather than being one of
+            # them, which is steering.
             base = self.expr(n.node)
-            if not isinstance(n.arg, nodes.Const):
-                # obj[k] with a computed key: which part of obj is read is not
-                # a static fact, so the whole of obj is in play.
-                self.taint(base)
-                base |= self.expr(n.arg)
+            self.apply(self.expr(n.arg), FLOW)
             return base
 
         if isinstance(n, nodes.Filter):
+            if n.name == "attr":
+                # `obj|attr(name)` is a computed lookup like `obj[name]`: the
+                # result comes out of obj, and name picks which part.
+                out = self.expr(n.node)
+                for a in n.args or ():
+                    self.apply(self.expr(a), FLOW)
+                return out
             out = self.expr(n.node) | self.args_of(n)
             if n.node is None:
                 # The leading filter of a {% filter %} block or a block set;
                 # its input is the captured body, handled by the caller.
                 out = self.args_of(n)
-            if n.name in ("attr",):
-                self.taint(out)
             return out
 
         if isinstance(n, nodes.Call):

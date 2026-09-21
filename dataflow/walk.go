@@ -67,21 +67,31 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		return out
 
 	case syntax.KindGetitem:
+		// `data[key]` reads out of data, whatever key turns out to be, so
+		// the result derives from data and the answer to "can data reach
+		// the output" is a plain yes. Which *part* of data is read is not
+		// a static fact, but that is a different question, and answering
+		// it with Opaque used to weaken an answer that was never in doubt.
 		out.add(a.expr(n.Child(syntax.RoleSubject)))
-		if idx := n.Child(syntax.RoleIndex); idx != nil && idx.Kind != syntax.KindConst {
-			// A computed key: which part of the container is read is
-			// not a static fact, so the whole of it is in play.
-			a.taint(out)
-			out.add(a.expr(idx))
+		if idx := n.Child(syntax.RoleIndex); idx != nil {
+			// The key chooses among the container's values; it is not
+			// one of them. That is steering, the same thing a
+			// condition does, so it does not join the result.
+			a.apply(a.expr(idx), Steers)
 		}
 		return out
 
 	case syntax.KindFilter:
 		out.add(a.expr(n.Child(syntax.RoleSubject)))
-		out.add(a.callArgs(n))
 		if n.Attr("name") == "attr" {
-			a.taint(out)
+			// `obj|attr(name)` is a computed lookup like `obj[name]`:
+			// the result comes out of obj, and name picks which part.
+			for _, arg := range n.Children(syntax.RoleArg) {
+				a.apply(a.expr(arg), Steers)
+			}
+			return out
 		}
+		out.add(a.callArgs(n))
 		return out
 
 	case syntax.KindCall:

@@ -1,6 +1,6 @@
 {
   "case": "undefined/default_attr_filter_then_use.jj2",
   "variables": {
-    "nope": "o?"
+    "nope": "o"
   }
 }

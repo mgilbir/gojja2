@@ -1,6 +1,6 @@
 {
   "case": "undefined/chainable_dotted_matches_filter.jj2",
   "variables": {
-    "nope": "o?"
+    "nope": "o"
   }
 }

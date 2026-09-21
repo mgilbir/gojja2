@@ -60,15 +60,20 @@ func TestAnalyze(t *testing.T) {
 		{`{{ range(3)|list }}`, ""},
 		{`{% macro m() %}{{ caller() }}{% endmacro %}`, ""},
 
+		// A computed lookup reads out of the container whatever the key
+		// turns out to be, so the container is printed and the key steers
+		// -- it chooses among the values rather than being one of them.
+		{`{{ data[key] }}`, "data:o key:f"},
+		{`{{ o|attr(n) }}`, "n:f o:o"},
+
 		// Where it cannot see, it says so.
-		{`{{ data[key] }}`, "data:o? key:o"},
 		{`{% set ns = namespace(v=0) %}{% for i in xs %}{% set ns.v = i %}{% endfor %}{{ ns.v }}`, "xs:of"},
 		{`{% include "other.html" %}{{ a }}`, "a:o?"},
 
 		// Not fooled by the constant folder, because the tree is the
 		// template as written.
 		{`{% if false %}{{ secret }}{% endif %}`, "secret:o"},
-		{`{{ xs[[]] }}`, "xs:o?"},
+		{`{{ xs[[]] }}`, "xs:o"},
 	} {
 		env, err := gojja2.New()
 		if err != nil {

@@ -1,6 +1,6 @@
 {
   "case": "subscript/attr_fallback.jj2",
   "variables": {
-    "d": "o?"
+    "d": "o"
   }
 }

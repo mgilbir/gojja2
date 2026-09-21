@@ -1,6 +1,6 @@
 {
   "case": "grouptuple/slice.jj2",
   "variables": {
-    "users": "o?"
+    "users": "o"
   }
 }

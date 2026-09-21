@@ -1,6 +1,6 @@
 {
   "case": "folding/nonconstant_dict_slice.jj2",
   "variables": {
-    "d": "o?"
+    "d": "o"
   }
 }
