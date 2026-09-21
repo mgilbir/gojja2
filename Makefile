@@ -304,6 +304,11 @@ divergence-report: venv ## Report where MiniJinja disagrees with CPython jinja2
 test: ## Run the Go test suite
 	go test ./...
 
+.PHONY: soak-syntax
+soak-syntax: venv ## Differential-test the structure and analyses: make soak-syntax N=200000 SEED=7
+	GOJJA2_FUZZ_N=$(if $(N),$(N),50000) GOJJA2_FUZZ_SEED=$(if $(SEED),$(SEED),0) \
+		go test ./conformance/ -run TestSyntaxDifferential -timeout 60m -v
+
 .PHONY: soak
 soak: venv ## Differential-test generated templates: make soak N=200000 SEED=7
 	GOJJA2_FUZZ_N=$(if $(N),$(N),50000) GOJJA2_FUZZ_SEED=$(if $(SEED),$(SEED),0) \

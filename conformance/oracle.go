@@ -274,6 +274,52 @@ func (o *Oracle) Render(req OracleRequest) (*OracleResult, error) {
 	return &result, nil
 }
 
+// OracleAnalysis is what jinja2 makes of a template's structure: its tree and
+// scope facts in gojja2's own vocabulary, and what it does with each of the
+// caller's variables.
+//
+// Every field is a string of the same canonical form the engine produces, so a
+// comparison is a byte comparison and there is nothing for two encoders to
+// disagree about except the templates.
+type OracleAnalysis struct {
+	OK        bool              `json:"ok"`
+	Tree      string            `json:"tree"`
+	Info      string            `json:"info"`
+	Variables map[string]string `json:"variables"`
+	Error     *GoldenError      `json:"error"`
+	// Resource is set when the analysis hit the server's time or memory
+	// limit rather than failing on its own terms.
+	Resource bool `json:"resource"`
+}
+
+// AnalyzeRequest asks what jinja2 makes of a template without rendering it.
+type AnalyzeRequest struct {
+	Analyze   bool              `json:"analyze"`
+	Name      string            `json:"name,omitempty"`
+	Source    string            `json:"src"`
+	Settings  map[string]any    `json:"settings,omitempty"`
+	Templates map[string]string `json:"templates,omitempty"`
+	Profile   string            `json:"profile,omitempty"`
+}
+
+// Analyze asks the oracle for a template's structure and analyses.
+//
+// It is the render path's counterpart, and it exists for the same reason: a
+// soak asks hundreds of thousands of questions, and starting an interpreter for
+// each one is not a thing that can be done.
+func (o *Oracle) Analyze(req AnalyzeRequest) (*OracleAnalysis, error) {
+	req.Analyze = true
+	reply, err := o.exchange(req)
+	if err != nil {
+		return nil, err
+	}
+	var out OracleAnalysis
+	if err := json.Unmarshal(reply, &out); err != nil {
+		return nil, fmt.Errorf("oracle analysis %q: %w", reply, err)
+	}
+	return &out, nil
+}
+
 // Hello asks the oracle which interpreter and libraries are answering.
 func (o *Oracle) Hello() (*OracleIdentity, error) {
 	reply, err := o.exchange(map[string]bool{"hello": true})

@@ -124,6 +124,13 @@ class Emitter:
         self.context = {}         # name -> symbol
         self.defs = {}            # id(name node) -> symbol
         self.uses = {}            # id(name node) -> symbol
+        # The same facts keyed by jinja2's own nodes, so an analysis walking
+        # jinja2's tree can read the symbols rather than working them out
+        # again. nameflow.py does exactly that: the scope model is verified
+        # against the engine's for every committed and imported template, and a
+        # second reading of it only adds somewhere new to be wrong.
+        self.sym_of = {}          # id(jinja2 Name/NSRef) -> symbol
+        self.owned_of = {}        # id(jinja2 frame node) -> {name: symbol}
         self.globals = set(globals_)
         self._keep = []           # nodes must outlive their ids
 
@@ -133,7 +140,10 @@ class Emitter:
     def push(self, scope_node, jinja_node):
         parent = self.symbols[-1] if self.symbols else None
         self.symbols.append(symbols_for_node(jinja_node, parent))
-        self.frames.append((scope_node, {}))
+        owned = {}
+        self.frames.append((scope_node, owned))
+        self.owned_of[id(jinja_node)] = owned
+        self._keep.append(jinja_node)
         self.scopes[id(scope_node)] = []
         self.scope_nodes[id(scope_node)] = scope_node
         self._keep.append(scope_node)
@@ -197,10 +207,13 @@ class Emitter:
         self._keep.append(s)
         return s
 
-    def record(self, emitted, name, store):
+    def record(self, emitted, name, store, node=None):
         self._keep.append(emitted)
         s = self.resolve(name)
         (self.defs if store else self.uses)[id(emitted)] = s
+        if node is not None:
+            self.sym_of[id(node)] = s
+            self._keep.append(node)
         return emitted
 
     def args_edges(self, n, edges):
@@ -228,12 +241,12 @@ class Emitter:
             # a `{% with %}` target are spelled "param" there and are bindings here.
             store = n.ctx != "load"
             return self.record(N("name", {"name": n.name, "store": store}),
-                               n.name, store)
+                               n.name, store, n)
         if t == "NSRef":
             # `{% set ns.x = 1 %}` mutates the namespace rather than rebinding it,
             # so it reads ns and writes through it.
             return self.record(N("nsref", {"name": n.name, "attr": n.attr}),
-                               n.name, False)
+                               n.name, False, n)
         if t == "Tuple":
             return N("tuple", {"store": n.ctx != "load"},
                      [["item", self.expr(i)] for i in n.items])
