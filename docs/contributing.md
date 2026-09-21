@@ -138,6 +138,34 @@ If one fails after a toolchain upgrade or a `PYTHON_VERSION` bump, regenerate
 and read the diff: it is telling you either that Unicode moved or that the
 pinned CPython did.
 
+## What watches the oracle
+
+CI never runs Python: the whole point of committing the goldens is that the
+suite grades them with no network and no interpreter. That leaves two things
+nothing watches, so a separate scheduled workflow does — `.github/workflows/oracle.yml`,
+which never runs on a push.
+
+**Weekly, it regenerates everything and compares.** `make oracle` plus the
+recorded corpora, then `git add -A && git diff --cached` — so a new or deleted
+file counts as drift too. A difference means one of three things and the diff
+says which: a generator broke, CPython changed its mind, or somebody edited a
+generated file by hand. This exists because `make casemap` was broken for three
+commits by a change to the tool it reads, and nothing could tell: the committed
+table still agreed with the interpreter, so every test passed.
+
+**Monthly, it also asks whether CPython has moved.**
+`tools/oracle/scan_pythons.py` compares the releases uv can provide against
+`pyversions.ALL`, and for anything new does the reading a maintainer would
+otherwise do by hand — renders the whole corpus under it, asks it about every
+code point, counts the method wordings that differ — so a new release arrives as
+a diff rather than as a note to look into some time. It reports a release that
+*disappears* too, since every matrix target reaches its interpreters through
+`uv run --python`.
+
+Both write their report to the job summary and fail if there is something to do,
+which is the notification. Run either on demand from the Actions tab, or
+`.venv/bin/python tools/oracle/scan_pythons.py --grade` locally.
+
 The differential harness talks to a live interpreter rather than to the
 goldens, and `GOJJA2_ORACLE_PYTHON` points it at one: useful for a checkout
 whose virtualenv lives elsewhere, and -- aimed at a path that does not exist --
