@@ -436,8 +436,31 @@ it at an output position, and `{{ "yes" if flag else "no" }}` prints neither
 operand while `flag` decides which.
 
 `Opaque` means the answer has no reliable negative: a computed lookup like
-`{{ data[key] }}` or a `namespace()` are routes the analysis does not follow.
-Nothing is ever reported as unable to reach the output when it might.
+`{{ data[key] }}` is a route the analysis does not follow. Nothing is ever
+reported as unable to reach the output when it might.
+
+### Namespaces
+
+`{% set %}` inside a loop does not escape it, which is why `namespace()` exists
+and why it is the shape worth following — accumulate then print is the case most
+worth tracing:
+
+```jinja
+{% set ns = namespace(total=0) %}
+{% for row in rows %}{% set ns.total = ns.total + row %}{% endfor %}
+{{ ns.total }}
+```
+
+Each field is followed separately, so `rows` comes back as printed rather than
+"might be", and `{% set ns = namespace(a=p, b=q) %}{{ ns.a }}` says `p` is
+printed and `q` cannot affect the output at all.
+
+That holds only while the namespace itself is never handed anywhere.
+`{% set other = ns %}`, or passing it to a macro or a filter, makes two names for
+one object, and following that is alias analysis — getting it subtly wrong would
+mean reporting a real negative that is not true. So a namespace read anywhere but
+as the subject of a field access collapses back to `Opaque`. The test is crude
+and deliberately in the safe direction.
 
 ### Following `{% include %}` and friends
 

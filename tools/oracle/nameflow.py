@@ -87,6 +87,10 @@ class Analysis:
         self.resolver = None
         self.visiting = set()
         self.cache = {}
+        # Namespaces being followed field by field, and the ones that got away.
+        # Keyed by symbol id, because Sym is a dataclass and so unhashable.
+        self.namespaces = {}
+        self.aliased = set()
         # A stack of block-set captures: while one is open, output is collected
         # rather than emitted, because it becomes a value instead of a document.
         self.capture: list[set[int]] = []
@@ -154,6 +158,76 @@ class Analysis:
     def mark_unknown(self, name):
         self.resolve(name).unknown = True
 
+    # --- namespaces ------------------------------------------------------
+    #
+    # `{% set ns = namespace(total=0) %}` then writing ns.total in a loop is the
+    # idiom for carrying a value out of one, because a plain `{% set %}` does not
+    # escape. Treating the namespace as one opaque blob makes the answer for
+    # whatever fed it "might reach the output" when it plainly does, so each
+    # field gets a symbol and the ordinary dataflow applies.
+    #
+    # Only while the namespace itself is never handed anywhere. Two names for
+    # one object means a write through either reaches the other, and following
+    # that is alias analysis; getting it subtly wrong would mean reporting a
+    # real negative that is not true. So a namespace read anywhere but as the
+    # subject of a field access collapses back to opaque.
+
+    def declare_namespace(self, sym, call):
+        if sym is None:
+            return
+        if sym.id in self.namespaces:
+            # Assigned a namespace twice, or a namespace and something else.
+            self.aliased.add(sym.id)
+            return
+        self.namespaces[sym.id] = {}
+        for kw in call.kwargs or ():
+            self.namespace_field(sym, kw.key).deps |= self.expr(kw.value)
+        # `namespace(d)` and `namespace(**d)` fill it from something this
+        # cannot name the fields of, so it holds whatever that held and the
+        # fields cannot be told apart.
+        rest = set()
+        for extra in list(call.args or ()) + [getattr(call, "dyn_args", None),
+                                              getattr(call, "dyn_kwargs", None)]:
+            if extra is not None:
+                rest |= self.expr(extra)
+        if rest:
+            sym.deps |= rest
+            self.aliased.add(sym.id)
+
+    def namespace_field(self, sym, field):
+        if sym is None or sym.id not in self.namespaces:
+            return None
+        fields = self.namespaces[sym.id]
+        if field not in fields:
+            fields[field] = self.new_sym(f"{sym.name}.{field}")
+        return fields[field]
+
+    def namespace_of(self, node):
+        if not isinstance(node, nodes.Name) or node.ctx != "load":
+            return None
+        s = self.resolve(node.name)
+        return s if s.id in self.namespaces else None
+
+    def seal_namespaces(self):
+        """Give up on every namespace that got away.
+
+        After the walk, because the assignment that aliases one can come after
+        the reads that looked safe.
+        """
+        for sid, fields in self.namespaces.items():
+            if sid not in self.aliased:
+                continue
+            ns = self.syms[sid]
+            ns.unknown = True
+            for f in fields.values():
+                f.unknown = True
+                # A write through the other name could have put anything in
+                # any field...
+                f.deps.add(sid)
+                # ...and whoever holds it can read every field, so doing
+                # anything with the namespace does that to all of them.
+                ns.deps.add(f.id)
+
     # --- other templates -------------------------------------------------
 
     def context_effects_of(self, name):
@@ -175,6 +249,7 @@ class Analysis:
         sub.push(tree)
         sub.stmts(tree.body)
         sub.pop()
+        sub.seal_namespaces()
         sub.propagate()
         self.visiting.discard(name)
         if sub.opaque_sink:
@@ -240,7 +315,18 @@ class Analysis:
         if isinstance(n, nodes.Name):
             if n.ctx == "store":
                 return set()
-            return {self.resolve(n.name).id}
+            s = self.resolve(n.name)
+            if s.id in self.namespaces:
+                # Reached by name rather than through a field, so another name
+                # now refers to the same object and every field is in play.
+                self.aliased.add(s.id)
+            return {s.id}
+
+        if isinstance(n, nodes.Getattr):
+            ns = self.namespace_of(n.node)
+            if ns is not None:
+                return {self.namespace_field(ns, n.attr).id}
+            return self.expr(n.node)
 
         if isinstance(n, nodes.NSRef):
             # A namespace read. Layer 2 will follow the field; until then the
@@ -310,9 +396,13 @@ class Analysis:
         if isinstance(target, nodes.Name):
             self.resolve(target.name).deps |= srcs
         elif isinstance(target, nodes.NSRef):
-            # Layer 2: a namespace field. Until it is followed, a write into a
-            # namespace makes the namespace opaque rather than silently lost.
             s = self.resolve(target.name)
+            f = self.namespace_field(s, target.attr)
+            if f is not None:
+                f.deps |= srcs
+                return
+            # Not a namespace this is following -- one that was passed in, or
+            # one that got away. The write still happened.
             s.deps |= srcs
             s.unknown = True
         elif isinstance(target, (nodes.Tuple, nodes.List)):
@@ -382,7 +472,13 @@ class Analysis:
             self.pop()
 
         elif isinstance(n, nodes.Assign):
-            self.bind(n.target, self.expr(n.node))
+            if (isinstance(n.node, nodes.Call)
+                    and isinstance(n.node.node, nodes.Name)
+                    and n.node.node.name == "namespace"
+                    and isinstance(n.target, nodes.Name)):
+                self.declare_namespace(self.resolve(n.target.name), n.node)
+            else:
+                self.bind(n.target, self.expr(n.node))
 
         elif isinstance(n, nodes.AssignBlock):
             srcs = self.capture_body(n.body)
@@ -510,6 +606,7 @@ class Analysis:
                         changed = True
 
     def result(self) -> dict[str, dict]:
+        self.seal_namespaces()
         self.propagate()
         out = {}
         for name, s in sorted(self.context.items()):
