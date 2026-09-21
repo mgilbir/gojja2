@@ -4,7 +4,7 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.13.14"
+    "python": "3.13"
   },
   "ok": true,
   "output": "[\n[\n1\n]\n]|[\n  [\n    1\n  ]\n]|{\n\"a\": 2,\n\"b\": 1\n}|[]|1"

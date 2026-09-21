@@ -22,7 +22,7 @@ flowchart LR
     U1 -->|"make suites"| TP["third_party/<br/><i>gitignored, never vendored</i>"]
     TP -->|"make import<br/>import_*.py, harvest_jinja.py"| GEN["testdata/generated/*<br/>+ SOURCES.md"]
 
-    ORA["CPython jinja2 3.1.6<br/>markupsafe 3.0.3 · Python 3.13.14<br/><i>.venv — the specification</i>"]
+    ORA["CPython jinja2 3.1.6<br/>markupsafe 3.0.3 · Python 3.13<br/><i>.venv — the specification</i>"]
     GEN -->|"oracle.py"| G2["*-golden/*.json"]
     ORA --> G2
 

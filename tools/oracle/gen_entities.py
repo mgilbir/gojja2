@@ -21,6 +21,8 @@ import html.entities
 import sys
 from pathlib import Path
 
+import pyversions
+
 ROOT = Path(__file__).resolve().parents[2]
 DST = ROOT / "entities.go"
 
@@ -79,7 +81,7 @@ def main() -> int:
     codepoints = "".join("\t%d: true,\n" % num for num in sorted(html._invalid_codepoints))
     DST.write_text(
         HEADER.format(
-            version=".".join(str(n) for n in sys.version_info[:3]),
+            version=pyversions.running(),
             named=named,
             charrefs=charrefs,
             codepoints=codepoints,

@@ -73,7 +73,7 @@ $ .venv/bin/python tools/oracle/oracle.py --template '{% set d = {1:"a",} %}{{ d
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.13.14"
+    "python": "3.13"
   },
   "ok": true,
   "output": "a"

@@ -4,7 +4,7 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.13.14"
+    "python": "3.13"
   },
   "ok": true,
   "output": "[[1, 2, 3, 4], [5, 'X', 'X', 'X']]|[[9, 'X', 'X']]|[]|[[1, 2, 3, 4, 5, 'X', 'X', 'X', 'X']]"

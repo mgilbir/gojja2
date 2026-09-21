@@ -65,6 +65,28 @@ def markupsafe() -> str:
     return _make_var("MARKUPSAFE_VERSION")
 
 
+def running() -> str:
+    """The minor version of the interpreter executing this, e.g. "3.13".
+
+    Every generated file records which CPython produced it, and it records the
+    *minor* version rather than the full one on purpose. What is pinned is the
+    minor -- PYTHON_VERSION, value.DefaultPythonVersion and every rule in
+    value/pyversion.go are keyed on it -- and the patch releases within it do
+    not change an answer; CPython does not reword an error or move a code point
+    in a bugfix release.
+
+    Recording the patch made the repository non-reproducible. Two machines a
+    patch apart regenerated 2,281 identical-in-substance files, every one of
+    them differing in nothing but that line, which is both noise and a place a
+    real change could hide. The scheduled oracle workflow found it the first
+    time it ran, on a runner one patch ahead.
+
+    The exact build is still worth knowing; `make venv` prints it and every
+    generator logs it. It is just not something to write down 2,241 times.
+    """
+    return ".".join(map(str, sys.version_info[:2]))
+
+
 def run(version: str, args: list[str], **kw) -> subprocess.CompletedProcess:
     """Run a script under one interpreter, with the pinned jinja2 available.
 
