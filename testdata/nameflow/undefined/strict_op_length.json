@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_op_length.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

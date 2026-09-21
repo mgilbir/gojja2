@@ -1,0 +1,6 @@
+{
+  "case": "escape/literal_data.jj2",
+  "variables": {
+    "v": "o"
+  }
+}

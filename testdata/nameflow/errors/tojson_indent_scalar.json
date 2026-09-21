@@ -1,0 +1,4 @@
+{
+  "case": "errors/tojson_indent_scalar.jj2",
+  "variables": {}
+}

@@ -1,0 +1,6 @@
+{
+  "case": "include/mutation_through_alias.jj2",
+  "variables": {
+    "l": "o?"
+  }
+}

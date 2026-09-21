@@ -1,0 +1,6 @@
+{
+  "case": "undefined/plain_attr_missing.jj2",
+  "variables": {
+    "d": "o"
+  }
+}

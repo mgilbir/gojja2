@@ -1,0 +1,6 @@
+{
+  "case": "methods/dict.jj2",
+  "variables": {
+    "map": "o?"
+  }
+}

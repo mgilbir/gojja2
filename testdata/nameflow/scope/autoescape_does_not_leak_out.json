@@ -1,0 +1,6 @@
+{
+  "case": "scope/autoescape_does_not_leak_out.jj2",
+  "variables": {
+    "m": "o"
+  }
+}

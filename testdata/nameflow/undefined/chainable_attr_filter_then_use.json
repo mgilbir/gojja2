@@ -1,0 +1,6 @@
+{
+  "case": "undefined/chainable_attr_filter_then_use.jj2",
+  "variables": {
+    "nope": "o?"
+  }
+}

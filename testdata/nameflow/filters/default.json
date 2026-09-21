@@ -1,0 +1,6 @@
+{
+  "case": "filters/default.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

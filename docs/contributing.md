@@ -172,6 +172,13 @@ Nodes are named by their position in a pre-order walk, which costs nothing to
 agree on because the trees are already identical — a fact worth noticing: the
 second comparison is only possible because the first one passes.
 
+The `dataflow` package is graded the same way and for a different reason. It is
+written entirely against the public `syntax.Tree`, so `make nameflow` and
+`TestDataflowMatchesTheReference` are checking two things at once: that the
+reasoning is right, and that the exposed tree is enough to do the reasoning with.
+An analysis the engine could only write from the inside would mean the exposure
+had failed.
+
 If `make syntax` reports "no spelling for …", the vocabulary is missing a node.
 Add it to `gojja2/syntax` and to both emitters rather than skipping the case: a
 tree quietly missing a node compares equal for the wrong reason.

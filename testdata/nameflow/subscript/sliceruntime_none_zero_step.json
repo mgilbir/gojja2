@@ -1,0 +1,6 @@
+{
+  "case": "subscript/sliceruntime_none_zero_step.jj2",
+  "variables": {
+    "x": "o?"
+  }
+}

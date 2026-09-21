@@ -1,0 +1,4 @@
+{
+  "case": "errors/zero_to_negative_power_float.jj2",
+  "variables": {}
+}

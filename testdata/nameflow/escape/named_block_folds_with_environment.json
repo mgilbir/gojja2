@@ -1,0 +1,8 @@
+{
+  "case": "escape/named_block_folds_with_environment.jj2",
+  "variables": {
+    "mk": "o",
+    "s": "o",
+    "sep": "o"
+  }
+}

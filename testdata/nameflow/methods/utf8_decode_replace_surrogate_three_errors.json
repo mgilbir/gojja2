@@ -1,0 +1,4 @@
+{
+  "case": "methods/utf8_decode_replace_surrogate_three_errors.jj2",
+  "variables": {}
+}

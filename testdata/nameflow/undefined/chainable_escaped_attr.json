@@ -1,0 +1,6 @@
+{
+  "case": "undefined/chainable_escaped_attr.jj2",
+  "variables": {
+    "d": "o"
+  }
+}

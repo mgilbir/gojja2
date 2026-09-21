@@ -1,0 +1,6 @@
+{
+  "case": "filters/random_empty.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "scope/an_unreached_read_is_still_a_reference.jj2",
+  "variables": {
+    "m": "o"
+  }
+}

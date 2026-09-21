@@ -1,0 +1,6 @@
+{
+  "case": "filters/striptags_entities.jj2",
+  "variables": {
+    "html": "o"
+  }
+}

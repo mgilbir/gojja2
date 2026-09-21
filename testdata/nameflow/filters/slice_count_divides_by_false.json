@@ -1,0 +1,6 @@
+{
+  "case": "filters/slice_count_divides_by_false.jj2",
+  "variables": {
+    "seq": "o"
+  }
+}

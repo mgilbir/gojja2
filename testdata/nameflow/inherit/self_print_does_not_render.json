@@ -1,0 +1,6 @@
+{
+  "case": "inherit/self_print_does_not_render.jj2",
+  "variables": {
+    "self": "o"
+  }
+}

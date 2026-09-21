@@ -1,0 +1,6 @@
+{
+  "case": "include/mutation_in_nested_include.jj2",
+  "variables": {
+    "l": "o?"
+  }
+}

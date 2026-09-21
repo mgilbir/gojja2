@@ -1,0 +1,8 @@
+{
+  "case": "escape/replace_no_autoescape.jj2",
+  "variables": {
+    "n": "o",
+    "o": "o",
+    "s": "o"
+  }
+}

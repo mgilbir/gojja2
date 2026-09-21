@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_op_dict_key.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

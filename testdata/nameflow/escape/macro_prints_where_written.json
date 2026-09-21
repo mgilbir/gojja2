@@ -1,0 +1,8 @@
+{
+  "case": "escape/macro_prints_where_written.jj2",
+  "variables": {
+    "mk": "o",
+    "s": "o",
+    "sep": "o"
+  }
+}

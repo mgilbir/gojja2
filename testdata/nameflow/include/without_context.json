@@ -1,0 +1,4 @@
+{
+  "case": "include/without_context.jj2",
+  "variables": {}
+}

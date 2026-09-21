@@ -1,0 +1,6 @@
+{
+  "case": "scope/loop_no_set.jj2",
+  "variables": {
+    "x": "o"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "errors/truncate_leeway_negative.jj2",
+  "variables": {
+    "t": "o"
+  }
+}

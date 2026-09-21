@@ -1,0 +1,6 @@
+{
+  "case": "include/dict_mutation_survives.jj2",
+  "variables": {
+    "d": "-?"
+  }
+}

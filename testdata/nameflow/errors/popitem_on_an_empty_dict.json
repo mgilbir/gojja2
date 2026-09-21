@@ -1,0 +1,4 @@
+{
+  "case": "errors/popitem_on_an_empty_dict.jj2",
+  "variables": {}
+}

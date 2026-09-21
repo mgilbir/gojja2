@@ -1,0 +1,4 @@
+{
+  "case": "errors/tojson_indent_before_bytes_refusal.jj2",
+  "variables": {}
+}

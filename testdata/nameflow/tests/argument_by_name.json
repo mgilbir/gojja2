@@ -1,0 +1,6 @@
+{
+  "case": "tests/argument_by_name.jj2",
+  "variables": {
+    "lst": "o"
+  }
+}

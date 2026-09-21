@@ -1,0 +1,6 @@
+{
+  "case": "errors/self_super_past_end.jj2",
+  "variables": {
+    "self": "o?"
+  }
+}

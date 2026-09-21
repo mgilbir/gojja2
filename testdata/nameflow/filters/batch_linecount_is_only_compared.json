@@ -1,0 +1,6 @@
+{
+  "case": "filters/batch_linecount_is_only_compared.jj2",
+  "variables": {
+    "seq": "o"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "errors/groupby_none_default.jj2",
+  "variables": {
+    "rows": "o"
+  }
+}

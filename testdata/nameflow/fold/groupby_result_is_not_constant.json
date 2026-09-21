@@ -1,0 +1,6 @@
+{
+  "case": "fold/groupby_result_is_not_constant.jj2",
+  "variables": {
+    "blank": "-"
+  }
+}

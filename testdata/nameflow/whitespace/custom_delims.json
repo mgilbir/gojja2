@@ -1,0 +1,6 @@
+{
+  "case": "whitespace/custom_delims.jj2",
+  "variables": {
+    "x": "o"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "scope/block_reads_a_name_it_never_sets.jj2",
+  "variables": {
+    "m": "o"
+  }
+}

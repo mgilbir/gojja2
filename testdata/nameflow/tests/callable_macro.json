@@ -1,0 +1,4 @@
+{
+  "case": "tests/callable_macro.jj2",
+  "variables": {}
+}

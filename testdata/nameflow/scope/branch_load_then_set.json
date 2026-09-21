@@ -1,0 +1,6 @@
+{
+  "case": "scope/branch_load_then_set.jj2",
+  "variables": {
+    "m": "o?"
+  }
+}
