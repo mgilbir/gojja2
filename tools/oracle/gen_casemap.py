@@ -91,12 +91,22 @@ def simple_lower(cp: int, go: dict[int, tuple[int, int, int]]) -> str:
 
 
 def go_simple_mappings() -> dict[int, tuple[int, int, int]]:
-    """Go's ToUpper, ToLower and ToTitle for every code point."""
+    """Go's ToUpper, ToLower and ToTitle for every code point.
+
+    tools/gocase prints the case predicates alongside the mappings, for the
+    generators that need them; only the first four columns are read here. They
+    are taken by position rather than unpacked, so a column added there does
+    not break this the way it did once already.
+    """
     out = subprocess.run(["go", "run", "./tools/gocase"], cwd=ROOT,
                          capture_output=True, text=True, check=True).stdout
     m = {}
     for line in out.splitlines():
-        cp, u, l, t = line.split("\t")
+        parts = line.split("\t")
+        if len(parts) < 4:
+            raise SystemExit(f"tools/gocase printed {len(parts)} columns, need at "
+                             "least code point, upper, lower and title")
+        cp, u, l, t = parts[:4]
         m[int(cp)] = (int(u), int(l), int(t))
     return m
 
