@@ -1,6 +1,6 @@
 {
   "case": "subscript/sliceruntime_float.jj2",
   "variables": {
-    "x": "o?"
+    "x": "o"
   }
 }

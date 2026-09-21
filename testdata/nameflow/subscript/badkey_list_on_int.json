@@ -1,6 +1,6 @@
 {
   "case": "subscript/badkey_list_on_int.jj2",
   "variables": {
-    "x": "o?"
+    "x": "o"
   }
 }

@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/bound_but_never_read.jj2",
+  "variables": {
+    "s": "-"
+  }
+}

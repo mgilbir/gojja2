@@ -1,6 +1,6 @@
 {
   "case": "subscript/index.jj2",
   "variables": {
-    "seq": "o?"
+    "seq": "o"
   }
 }

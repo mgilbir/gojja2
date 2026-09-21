@@ -172,6 +172,17 @@ Nodes are named by their position in a pre-order walk, which costs nothing to
 agree on because the trees are already identical — a fact worth noticing: the
 second comparison is only possible because the first one passes.
 
+`TestNegativesSurviveRendering` is the check the other two cannot be. They
+compare two implementations, and two implementations can be wrong the same way;
+this one asks the engine. Where the analysis says a variable's value cannot be
+printed, a marker no template contains is passed in and the output must not hold
+it; where it says a variable cannot change the output at all, two values with
+nothing in common must render the same bytes. A negative is the strongest claim
+the analysis makes and the only one that can be checked directly.
+
+Break the analysis — make `emit` do nothing — and the claims it makes jump from
+31 to 1,113, most of them false, which is the shape of the failure this catches.
+
 The `dataflow` package is graded the same way and for a different reason. It is
 written entirely against the public `syntax.Tree`, so `make nameflow` and
 `TestDataflowMatchesTheReference` are checking two things at once: that the

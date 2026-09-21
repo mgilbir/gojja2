@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/cond_expr_decides.jj2",
+  "variables": {
+    "c": "f"
+  }
+}

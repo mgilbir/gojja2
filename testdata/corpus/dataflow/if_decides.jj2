@@ -1,0 +1,19 @@
+{
+  "a": true,
+  "c": false,
+  "k": "one",
+  "n": "x",
+  "xs": [
+    1,
+    2
+  ],
+  "d": {
+    "one": "ONE"
+  },
+  "o": {
+    "x": "X"
+  },
+  "s": "SECRET"
+}
+---
+{% if a %}yes{% else %}no{% endif %}
