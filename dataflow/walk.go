@@ -29,6 +29,12 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 	case syntax.KindName:
 		if s := a.tree.Info.Uses[n]; s != nil {
 			out[s] = true
+			if _, ns := a.namespaces[s]; ns {
+				// Reached here rather than through a field access,
+				// so another name now refers to the same object
+				// and every field is in play. See namespace.go.
+				a.aliased[s] = true
+			}
 		}
 		return out
 
@@ -48,6 +54,16 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		a.apply(a.expr(n.Child(syntax.RoleTest)), Steers)
 		out.add(a.expr(n.Child(syntax.RoleThen)))
 		out.add(a.expr(n.Child(syntax.RoleOther)))
+		return out
+
+	case syntax.KindGetattr:
+		if ns := a.namespaceOf(n.Child(syntax.RoleSubject)); ns != nil {
+			if f := a.namespaceField(ns, n.Attr("attr")); f != nil {
+				out[f] = true
+				return out
+			}
+		}
+		out.add(a.expr(n.Child(syntax.RoleSubject)))
 		return out
 
 	case syntax.KindGetitem:
@@ -224,7 +240,12 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		}
 
 	case syntax.KindAssign:
-		a.bind(n.Child(syntax.RoleTarget), a.expr(n.Child(syntax.RoleValue)))
+		target, value := n.Child(syntax.RoleTarget), n.Child(syntax.RoleValue)
+		if isNamespaceCall(value) && target != nil && target.Kind == syntax.KindName {
+			a.declareNamespace(a.tree.Info.Symbol(target), value)
+			break
+		}
+		a.bind(target, a.expr(value))
 
 	case syntax.KindAssignBlk:
 		srcs := a.captureBody(n)

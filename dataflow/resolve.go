@@ -88,6 +88,7 @@ func (a *analyzer) contextEffectsOf(name string) map[string]Effect {
 	a.visiting[name] = true
 	sub := newAnalyzer(tree, a.resolve, a.visiting, a.cache)
 	sub.stmt(tree.Root)
+	sub.sealNamespaces()
 	sub.propagate()
 	delete(a.visiting, name)
 

@@ -46,6 +46,11 @@ type analyzer struct {
 	// templates this one pulls in ever mention. They are not in Info,
 	// because Info describes this tree.
 	external map[string]*syntax.Symbol
+
+	// namespaces holds a symbol per field of each namespace being followed,
+	// and aliased marks the ones that got away. See namespace.go.
+	namespaces map[*syntax.Symbol]map[string]*syntax.Symbol
+	aliased    map[*syntax.Symbol]bool
 }
 
 func newAnalyzer(t *syntax.Tree, resolve Resolver, visiting map[string]bool,
@@ -61,6 +66,8 @@ func newAnalyzer(t *syntax.Tree, resolve Resolver, visiting map[string]bool,
 		visiting:    visiting,
 		cache:       cache,
 		external:    map[string]*syntax.Symbol{},
+		namespaces:  map[*syntax.Symbol]map[string]*syntax.Symbol{},
+		aliased:     map[*syntax.Symbol]bool{},
 	}
 }
 
@@ -75,6 +82,7 @@ func Analyze(t *syntax.Tree, opts ...Option) *Flow {
 	}
 	a := newAnalyzer(t, o.resolve, map[string]bool{}, map[string]map[string]Effect{})
 	a.stmt(t.Root)
+	a.sealNamespaces()
 	a.propagate()
 
 	out := &Flow{
@@ -162,9 +170,14 @@ func (a *analyzer) bind(target *syntax.Node, srcs symset) {
 	case syntax.KindName:
 		a.depend(a.tree.Info.Symbol(target), srcs)
 	case syntax.KindNSRef:
-		// A namespace field. Until the field is followed, a write into a
-		// namespace makes the namespace opaque rather than silently lost.
 		s := a.tree.Info.Symbol(target)
+		if f := a.namespaceField(s, target.Attr("attr")); f != nil {
+			a.depend(f, srcs)
+			return
+		}
+		// Not a namespace this is following -- one that was passed in, or
+		// one that got away. The write still happened, so the whole thing
+		// becomes opaque rather than silently lost.
 		a.depend(s, srcs)
 		if s != nil {
 			a.effects[s] |= Opaque

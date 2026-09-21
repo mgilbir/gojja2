@@ -62,7 +62,7 @@ func TestAnalyze(t *testing.T) {
 
 		// Where it cannot see, it says so.
 		{`{{ data[key] }}`, "data:o? key:o"},
-		{`{% set ns = namespace(v=0) %}{% for i in xs %}{% set ns.v = i %}{% endfor %}{{ ns.v }}`, "xs:of?"},
+		{`{% set ns = namespace(v=0) %}{% for i in xs %}{% set ns.v = i %}{% endfor %}{{ ns.v }}`, "xs:of"},
 		{`{% include "other.html" %}{{ a }}`, "a:o?"},
 
 		// Not fooled by the constant folder, because the tree is the
