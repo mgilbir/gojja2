@@ -1,7 +1,7 @@
 {
   "case": "escape/concat_no_autoescape.jj2",
   "variables": {
-    "mk": "o",
-    "sv": "o"
+    "mk": "or",
+    "sv": "or"
   }
 }

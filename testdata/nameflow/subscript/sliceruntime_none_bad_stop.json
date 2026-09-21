@@ -1,6 +1,6 @@
 {
   "case": "subscript/sliceruntime_none_bad_stop.jj2",
   "variables": {
-    "x": "o"
+    "x": "or"
   }
 }

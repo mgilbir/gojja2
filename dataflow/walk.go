@@ -67,6 +67,9 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		return out
 
 	case syntax.KindGetitem:
+		// Subscripting something that cannot be subscripted raises, and so
+		// does a key of the wrong type.
+		defer func() { a.apply(out, Required) }()
 		// `data[key]` reads out of data, whatever key turns out to be, so
 		// the result derives from data and the answer to "can data reach
 		// the output" is a plain yes. Which *part* of data is read is not
@@ -76,25 +79,40 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		if idx := n.Child(syntax.RoleIndex); idx != nil {
 			// The key chooses among the container's values; it is not
 			// one of them. That is steering, the same thing a
-			// condition does, so it does not join the result.
-			a.apply(a.expr(idx), Steers)
+			// condition does, so it does not join the result. It can
+			// also stop the render -- an unhashable key, or one of a
+			// type the container cannot take.
+			a.apply(a.expr(idx), Steers|Required)
 		}
 		return out
 
 	case syntax.KindFilter:
+		defer func() { a.apply(out, Required) }()
 		out.add(a.expr(n.Child(syntax.RoleSubject)))
 		if n.Attr("name") == "attr" {
 			// `obj|attr(name)` is a computed lookup like `obj[name]`:
 			// the result comes out of obj, and name picks which part.
 			for _, arg := range n.Children(syntax.RoleArg) {
-				a.apply(a.expr(arg), Steers)
+				// A name that is not a string stops the render.
+				a.apply(a.expr(arg), Steers|Required)
 			}
 			return out
 		}
 		out.add(a.callArgs(n))
 		return out
 
+	case syntax.KindPair:
+		// A mapping key that cannot be hashed stops the render -- and it
+		// is still part of the mapping, so printing the mapping prints it.
+		key := a.expr(n.Child(syntax.RoleKey))
+		a.apply(key, Required)
+		out.add(key)
+		out.add(a.expr(n.Child(syntax.RoleValue)))
+		return out
+
 	case syntax.KindCall:
+		// Arity, type, a callee that is not callable.
+		defer func() { a.apply(out, Required) }()
 		out.add(a.callArgs(n))
 		callee := n.Child(syntax.RoleCallee)
 		if callee != nil && callee.Kind == syntax.KindName {
@@ -145,6 +163,9 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 	// is the sound default.
 	for _, e := range n.Edges {
 		out.add(a.expr(e.Node))
+	}
+	if canRaise(n.Kind) {
+		a.apply(out, Required)
 	}
 	return out
 }
@@ -260,7 +281,8 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		// it can change the output without appearing in it; its elements
 		// reach the output through the target.
 		srcs := a.expr(n.Child(syntax.RoleIter))
-		a.apply(srcs, Steers)
+		// Iterating something that is not iterable raises.
+		a.apply(srcs, Steers|Required)
 		a.bind(n.Child(syntax.RoleTarget), srcs)
 		// `loop` reports on the sequence, so it derives from it too.
 		if loop := a.scopeSymbol("loop"); loop != nil {
@@ -332,7 +354,8 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		// does with them is what this one does with them. Which template
 		// that is steers the output -- two names render two documents --
 		// even though the name itself is never printed.
-		a.apply(a.expr(n.Child(syntax.RoleTemplate)), Steers)
+		// A name that is not a string, or names nothing, stops the render.
+		a.apply(a.expr(n.Child(syntax.RoleTemplate)), Steers|Required)
 		name, named := constTemplateName(n)
 		if !named {
 			// The name is computed, so which template runs is not a
@@ -351,7 +374,7 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		// -- unlike include -- it does not pass the context by default.
 		// One that does not cannot see the caller's variables at all, so
 		// it cannot print them: a real answer rather than a shrug.
-		a.apply(a.expr(n.Child(syntax.RoleTemplate)), Steers)
+		a.apply(a.expr(n.Child(syntax.RoleTemplate)), Steers|Required)
 		name, named := constTemplateName(n)
 		if !named {
 			if withContext(n) {
@@ -382,4 +405,18 @@ func (a *analyzer) stmt(n *syntax.Node) {
 			a.taint(a.expr(e.Node))
 		}
 	}
+}
+
+// canRaise are the expression kinds whose operands can stop a render: the
+// arithmetic and comparison operators, and `is`. A bare print, an assignment, a
+// container literal and an attribute access are deliberately absent -- jinja2
+// answers Undefined for a missing attribute rather than raising, and printing
+// an Undefined is what the undefined policy is for.
+func canRaise(k syntax.Kind) bool {
+	switch k {
+	case syntax.KindBinOp, syntax.KindUnaryOp, syntax.KindCompare,
+		syntax.KindOperand, syntax.KindTest:
+		return true
+	}
+	return false
 }

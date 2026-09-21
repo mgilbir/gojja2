@@ -1,6 +1,6 @@
 {
   "case": "filters/slice_of_a_group_tuple.jj2",
   "variables": {
-    "users": "o"
+    "users": "or"
   }
 }

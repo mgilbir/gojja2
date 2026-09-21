@@ -1,6 +1,6 @@
 {
   "case": "errors/percent_x_undefined.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

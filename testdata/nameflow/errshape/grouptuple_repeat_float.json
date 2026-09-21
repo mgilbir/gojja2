@@ -1,6 +1,6 @@
 {
   "case": "errshape/grouptuple_repeat_float.jj2",
   "variables": {
-    "users": "o"
+    "users": "or"
   }
 }

@@ -1,6 +1,6 @@
 {
   "case": "undefined/strict_op_contains.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

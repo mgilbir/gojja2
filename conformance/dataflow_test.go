@@ -98,6 +98,9 @@ func encodeEffect(e dataflow.Effect) string {
 	if e&dataflow.Steers != 0 {
 		s += "f"
 	}
+	if e&dataflow.Required != 0 {
+		s += "r"
+	}
 	if s == "" {
 		s = "-"
 	}

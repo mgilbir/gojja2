@@ -1,6 +1,6 @@
 {
   "case": "filters/batch_fill_pads_only_the_last_row.jj2",
   "variables": {
-    "seq": "o"
+    "seq": "or"
   }
 }

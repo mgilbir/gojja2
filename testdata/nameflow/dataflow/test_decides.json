@@ -1,6 +1,6 @@
 {
   "case": "dataflow/test_decides.jj2",
   "variables": {
-    "a": "f"
+    "a": "fr"
   }
 }

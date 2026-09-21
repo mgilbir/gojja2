@@ -1,6 +1,6 @@
 {
   "case": "grouptuple/equality.jj2",
   "variables": {
-    "users": "o"
+    "users": "or"
   }
 }

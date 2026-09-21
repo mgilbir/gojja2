@@ -1,6 +1,6 @@
 {
   "case": "include/mutation_then_loop.jj2",
   "variables": {
-    "l": "of"
+    "l": "ofr"
   }
 }

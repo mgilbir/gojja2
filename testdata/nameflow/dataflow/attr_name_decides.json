@@ -1,7 +1,7 @@
 {
   "case": "dataflow/attr_name_decides.jj2",
   "variables": {
-    "n": "f",
-    "o": "o"
+    "n": "fr",
+    "o": "or"
   }
 }

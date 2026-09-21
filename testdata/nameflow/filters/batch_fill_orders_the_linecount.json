@@ -1,6 +1,6 @@
 {
   "case": "filters/batch_fill_orders_the_linecount.jj2",
   "variables": {
-    "seq": "o"
+    "seq": "or"
   }
 }

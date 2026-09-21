@@ -1,6 +1,6 @@
 {
   "case": "divergence/self_list.jj2",
   "variables": {
-    "self": "o"
+    "self": "or"
   }
 }

@@ -1,8 +1,8 @@
 {
   "case": "escape/replace_markup_both.jj2",
   "variables": {
-    "n": "o",
-    "o": "o",
-    "s": "o"
+    "n": "or",
+    "o": "or",
+    "s": "or"
   }
 }

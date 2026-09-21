@@ -1,6 +1,6 @@
 {
   "case": "filters/slice_count_negative_yields_nothing.jj2",
   "variables": {
-    "seq": "o"
+    "seq": "or"
   }
 }

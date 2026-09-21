@@ -47,6 +47,10 @@ from jinja2.idtracking import symbols_for_node
 
 OUTPUT = 1
 FLOW = 2
+# The render can fail because of this variable: its value feeds something
+# that can raise. An over-approximation -- the operation *can* raise, not that
+# it will -- so the useful signal is its absence.
+REQUIRED = 4
 
 # A frame owns a name when jinja2 says the name is the frame's parameter or
 # starts out undefined there. "resolve" means look outward at runtime, which at
@@ -191,6 +195,8 @@ class Analysis:
             if extra is not None:
                 rest |= self.expr(extra)
         if rest:
+            # `namespace(d)` raises unless d is a mapping.
+            self.apply(rest, REQUIRED)
             sym.deps |= rest
             self.aliased.add(sym.id)
 
@@ -338,11 +344,20 @@ class Analysis:
         if isinstance(n, (nodes.Const, nodes.TemplateData)):
             return set()
 
+        if isinstance(n, nodes.Pair):
+            # A mapping key that cannot be hashed stops the render -- and it is
+            # still part of the mapping, so printing the mapping prints it.
+            key = self.expr(n.key)
+            self.apply(key, REQUIRED)
+            return key | self.expr(n.value)
+
         if isinstance(n, nodes.CondExpr):
             self.apply(self.expr(n.test), FLOW)
             return self.expr(n.expr1) | self.expr(n.expr2)
 
         if isinstance(n, nodes.Getitem):
+            # Subscripting something that cannot be, or with a key of the wrong
+            # type, raises.
             # `data[key]` reads out of data whatever key turns out to be, so
             # the result derives from data and "can data reach the output" is a
             # plain yes. Which *part* is read is a different question, and
@@ -350,7 +365,10 @@ class Analysis:
             # doubt. The key chooses among the values rather than being one of
             # them, which is steering.
             base = self.expr(n.node)
-            self.apply(self.expr(n.arg), FLOW)
+            # The key can stop the render too: unhashable, or a type the
+            # container cannot take.
+            self.apply(self.expr(n.arg), FLOW | REQUIRED)
+            self.apply(base, REQUIRED)
             return base
 
         if isinstance(n, nodes.Filter):
@@ -359,22 +377,28 @@ class Analysis:
                 # result comes out of obj, and name picks which part.
                 out = self.expr(n.node)
                 for a in n.args or ():
-                    self.apply(self.expr(a), FLOW)
+                    # A name that is not a string stops the render.
+                    self.apply(self.expr(a), FLOW | REQUIRED)
+                self.apply(out, REQUIRED)
                 return out
             out = self.expr(n.node) | self.args_of(n)
             if n.node is None:
                 # The leading filter of a {% filter %} block or a block set;
                 # its input is the captured body, handled by the caller.
                 out = self.args_of(n)
+            self.apply(out, REQUIRED)
             return out
 
         if isinstance(n, nodes.Call):
             fn = n.node
             out = self.args_of(n)
             if isinstance(fn, nodes.Name) and fn.name in self.macros:
-                return out | self.call_macro(fn.name, n)
+                out |= self.call_macro(fn.name, n)
+                self.apply(out, REQUIRED)
+                return out
             if isinstance(fn, nodes.Name) and fn.name == "namespace":
                 self.taint(out)
+                self.apply(out, REQUIRED)
                 return out
             # A call whose body this cannot see: a method on a value, a
             # global, a macro held in a variable.
@@ -391,7 +415,9 @@ class Analysis:
             recv = self.expr(fn.node if isinstance(fn, nodes.Getattr) else fn)
             for sid in recv:
                 self.syms[sid].deps |= out
-            return out | recv
+            out |= recv
+            self.apply(out, REQUIRED)
+            return out
 
         # Everything else -- operators, comparisons, tests, attribute access,
         # containers, slices, concatenation -- is ordinary data flow: the
@@ -400,6 +426,8 @@ class Analysis:
         for child in n.iter_child_nodes():
             out |= self.expr(child)
         out |= self.args_of(n)
+        if can_raise(n):
+            self.apply(out, REQUIRED)
         return out
 
     # --- statements ------------------------------------------------------
@@ -419,9 +447,11 @@ class Analysis:
                 f.deps |= srcs
                 return
             # Not a namespace this is following -- one that was passed in, or
-            # one that got away. The write still happened.
+            # one that got away. The write still happened, and writing a field
+            # of something that is not a namespace stops the render.
             s.deps |= srcs
             s.unknown = True
+            s.roles |= REQUIRED
         elif isinstance(target, (nodes.Tuple, nodes.List)):
             # Unpacking: which element lands where is not tracked, so every
             # target derives from the whole right-hand side.
@@ -474,8 +504,9 @@ class Analysis:
             # The iterable is evaluated outside the loop's own frame.
             srcs = self.expr(n.iter)
             # Its length decides how many times the body runs, so it can change
-            # the output without appearing in it.
-            self.apply(srcs, FLOW)
+            # the output without appearing in it -- and iterating something
+            # that is not iterable raises.
+            self.apply(srcs, FLOW | REQUIRED)
             self.push(n)
             self.bind(n.target, srcs)
             # `loop` is supplied by the loop, not by the caller, and what it
@@ -544,7 +575,7 @@ class Analysis:
             # with them is what this one does with them. Which template that is
             # steers the output -- two names render two documents -- even though
             # the name itself is never printed.
-            self.apply(self.expr(n.template), FLOW)
+            self.apply(self.expr(n.template), FLOW | REQUIRED)
             name = const_name(n.template)
             if name is None:
                 self.opaque_sink = True
@@ -557,7 +588,7 @@ class Analysis:
             # An import binds names rather than rendering, and does not pass the
             # context unless asked. One that does not cannot see the caller's
             # variables at all, so it cannot print them.
-            self.apply(self.expr(n.template), FLOW)
+            self.apply(self.expr(n.template), FLOW | REQUIRED)
             name = const_name(n.template)
             if name is None:
                 if n.with_context:
@@ -630,12 +661,27 @@ class Analysis:
             out[name] = {
                 "output": bool(s.roles & OUTPUT),
                 "flow": bool(s.roles & FLOW),
+                "required": bool(s.roles & REQUIRED),
                 # An unknown answer has no reliable negative: the name may
                 # reach the output by a route this could not follow. A name
                 # without it is a real answer in both directions.
                 "unknown": bool(s.unknown or self.opaque_sink),
             }
         return out
+
+
+# The expression kinds whose operands can stop a render. A bare print, an
+# assignment, a container literal and an attribute access are deliberately
+# absent: jinja2 answers Undefined for a missing attribute rather than raising,
+# and printing an Undefined is what the undefined policy is for.
+_RAISING = tuple(getattr(nodes, n) for n in
+                 ("Add", "Sub", "Mul", "Div", "FloorDiv", "Mod", "Pow", "And",
+                  "Or", "Not", "Neg", "Pos", "Compare", "Operand", "Test")
+                 if hasattr(nodes, n))
+
+
+def can_raise(n) -> bool:
+    return isinstance(n, _RAISING)
 
 
 def const_name(ref):

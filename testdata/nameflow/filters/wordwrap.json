@@ -1,6 +1,6 @@
 {
   "case": "filters/wordwrap.jj2",
   "variables": {
-    "text": "o"
+    "text": "or"
   }
 }

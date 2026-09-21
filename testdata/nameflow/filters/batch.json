@@ -1,6 +1,6 @@
 {
   "case": "filters/batch.jj2",
   "variables": {
-    "seq": "o"
+    "seq": "or"
   }
 }

@@ -1,6 +1,6 @@
 {
   "case": "filters/reverse.jj2",
   "variables": {
-    "seq": "o"
+    "seq": "or"
   }
 }

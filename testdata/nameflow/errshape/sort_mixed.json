@@ -1,6 +1,6 @@
 {
   "case": "errshape/sort_mixed.jj2",
   "variables": {
-    "mix": "o"
+    "mix": "or"
   }
 }

@@ -21,36 +21,38 @@ func TestCalls(t *testing.T) {
 		{
 			"a method's result comes from its receiver",
 			`{{ msg.strip() }}`,
-			"msg:o",
+			"msg:or",
 		},
 		{
 			"and from its arguments",
 			`{{ s.replace(a, b) }}`,
-			"a:o b:o s:o",
+			"a:or b:or s:or",
 		},
 		{
 			// The reason calls used to be given up on. This renders
 			// nothing, and leaves x inside l.
 			"mutation reaches the receiver",
 			`{% do l.append(x) %}{{ l }}`,
-			"l:o x:o",
+			"l:or x:or",
 		},
 		{
-			// ... and the negative still has to hold when nothing
-			// prints the receiver afterwards.
+			// Nothing is printed and nothing steers -- but the call
+			// can still raise, which is what Required is for. Before
+			// it existed this answered "-" for both, and a caller
+			// could have read that as "need not be passed".
 			"mutation nobody reads afterwards",
 			`{% do l.append(x) %}done`,
-			"l:- x:-",
+			"l:r x:r",
 		},
 		{
 			"through a longer path",
 			`{% do a.b.append(x) %}{{ a }}`,
-			"a:o x:o",
+			"a:or x:or",
 		},
 		{
 			"a call on something the caller supplies",
 			`{{ f(x) }}`,
-			"f:o x:o",
+			"f:or x:or",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

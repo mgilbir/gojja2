@@ -1,6 +1,6 @@
 {
   "case": "dataflow/loop_length_decides.jj2",
   "variables": {
-    "xs": "f"
+    "xs": "fr"
   }
 }

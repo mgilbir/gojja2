@@ -1,6 +1,6 @@
 {
   "case": "escape/markup_format.jj2",
   "variables": {
-    "v": "o"
+    "v": "or"
   }
 }

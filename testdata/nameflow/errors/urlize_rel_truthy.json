@@ -1,6 +1,6 @@
 {
   "case": "errors/urlize_rel_truthy.jj2",
   "variables": {
-    "u": "o"
+    "u": "or"
   }
 }

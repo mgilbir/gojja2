@@ -1,6 +1,6 @@
 {
   "case": "inherit/dynamic.jj2",
   "variables": {
-    "parent": "f?"
+    "parent": "fr?"
   }
 }

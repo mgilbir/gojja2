@@ -1,6 +1,6 @@
 {
   "case": "filters/int_of_a_nan.jj2",
   "variables": {
-    "z": "o"
+    "z": "or"
   }
 }

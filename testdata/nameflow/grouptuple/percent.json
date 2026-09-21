@@ -1,6 +1,6 @@
 {
   "case": "grouptuple/percent.jj2",
   "variables": {
-    "users": "o"
+    "users": "or"
   }
 }

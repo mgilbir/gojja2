@@ -1,6 +1,6 @@
 {
   "case": "filters/attr.jj2",
   "variables": {
-    "d": "o"
+    "d": "or"
   }
 }

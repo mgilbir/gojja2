@@ -1,6 +1,6 @@
 {
   "case": "operators/negative_power_test_exponent.jj2",
   "variables": {
-    "n": "o"
+    "n": "or"
   }
 }

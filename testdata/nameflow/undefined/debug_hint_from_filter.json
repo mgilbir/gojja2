@@ -1,6 +1,6 @@
 {
   "case": "undefined/debug_hint_from_filter.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

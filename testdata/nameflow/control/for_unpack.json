@@ -1,6 +1,6 @@
 {
   "case": "control/for_unpack.jj2",
   "variables": {
-    "pairs": "of"
+    "pairs": "ofr"
   }
 }

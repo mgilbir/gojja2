@@ -1,6 +1,6 @@
 {
   "case": "errors/dictsort_by_before_input.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

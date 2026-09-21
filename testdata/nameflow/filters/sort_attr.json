@@ -1,6 +1,6 @@
 {
   "case": "filters/sort_attr.jj2",
   "variables": {
-    "users": "o"
+    "users": "or"
   }
 }

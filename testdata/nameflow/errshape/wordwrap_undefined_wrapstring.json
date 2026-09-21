@@ -1,6 +1,6 @@
 {
   "case": "errshape/wordwrap_undefined_wrapstring.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

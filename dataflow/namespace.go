@@ -81,6 +81,8 @@ func (a *analyzer) declareNamespace(sym *syntax.Symbol, call *syntax.Node) {
 		}
 	}
 	if len(rest) > 0 {
+		// `namespace(d)` raises unless d is a mapping.
+		a.apply(rest, Required)
 		a.depend(sym, rest)
 		a.aliased[sym] = true
 	}
