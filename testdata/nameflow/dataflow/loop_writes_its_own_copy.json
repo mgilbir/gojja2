@@ -1,0 +1,7 @@
+{
+  "case": "dataflow/loop_writes_its_own_copy.jj2",
+  "variables": {
+    "outer": "o",
+    "xs": "fr"
+  }
+}

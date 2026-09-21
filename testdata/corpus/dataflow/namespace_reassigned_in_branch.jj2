@@ -1,0 +1,10 @@
+{
+  "x": "X",
+  "y": "Y",
+  "c": true,
+  "xs": [
+    1
+  ]
+}
+---
+{% if c %}{% set ns = namespace(a=x) %}{% else %}{% set ns = namespace(b=y) %}{% endif %}{{ ns.b }}

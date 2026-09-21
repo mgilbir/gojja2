@@ -1,0 +1,9 @@
+{
+  "case": "dataflow/namespace_reassigned_in_branch.jj2",
+  "variables": {
+    "c": "f",
+    "ns": "-",
+    "x": "-",
+    "y": "o"
+  }
+}

@@ -172,6 +172,17 @@ Nodes are named by their position in a pre-order walk, which costs nothing to
 agree on because the trees are already identical — a fact worth noticing: the
 second comparison is only possible because the first one passes.
 
+`make import` also writes reference trees and analyses for the imported corpora,
+and `TestGeneratedCorporaAgree` grades them the same three ways. It skips when
+they are absent, so it is a check a contributor gets rather than one CI enforces
+-- the same bargain the imported corpora are on already.
+
+It is worth running. The committed corpus is written in this repository and
+therefore knows what it is testing; the 2,176 imported templates are chat
+templates real models ship, Jinja's own suite, cookiecutter projects, minja and
+llama.cpp. Every fault the scope and dataflow work has had since it was first
+graded green was found there and nowhere else.
+
 `TestNegativesSurviveRendering` is the check the other two cannot be, and it
 earns its place: adding the `Required` effect, it found five variables the rule
 had missed and then caught a regression the fix introduced, all before the change

@@ -1,0 +1,10 @@
+{
+  "x": "X",
+  "y": "Y",
+  "c": true,
+  "xs": [
+    1
+  ]
+}
+---
+{% set ns = namespace(a=x) %}{% for i in xs %}{{ ns.a }}{% endfor %}

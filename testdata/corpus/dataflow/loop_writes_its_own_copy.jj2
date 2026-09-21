@@ -1,0 +1,9 @@
+{
+  "xs": [
+    1,
+    2
+  ],
+  "outer": "O"
+}
+---
+{% set x = 1 %}{% for i in xs %}[{{ x }}]{% set x = outer %}{% endfor %}[{{ x }}]

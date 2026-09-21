@@ -78,7 +78,32 @@ func (b *synBuilder) declareBody(body []ast.Stmt) {
 	names := frameLocals(body)
 	f := b.frames[len(b.frames)-1]
 	f.refs = names.refs
+	// Every name this frame writes that an enclosing one already has is a
+	// copy, not the same storage: `{% set x = 1 %}{% for i in xs %}{{ x }}
+	// {% set x = x + 1 %}{% endfor %}{{ x }}` prints 1 at the end, because
+	// the loop wrote its own. The set of *stores* is what decides that, not
+	// the set of names the frame claims -- a name read before it is written
+	// is not claimed here and is still written.
+	owns := make(map[string]bool, len(names.owns))
 	for _, name := range names.owns {
+		owns[name] = true
+	}
+	// In first-mention order, which is the order jinja2's own symbol table
+	// records them in. Declaration order is part of the canonical form, so
+	// the two have to agree about it as well as about the symbols.
+	for _, name := range names.order {
+		if names.stores[name] {
+			if outer := b.enclosingSymbol(name); outer != nil {
+				alias := b.declare(name, syntax.SymAlias)
+				alias.Aliases = outer
+				continue
+			}
+		}
+		if owns[name] {
+			b.declare(name, syntax.SymLocal)
+		}
+	}
+	for _, name := range []string(nil) {
 		// jinja2's Symbols.store asks the enclosing symbol table for a
 		// reference before settling on a new binding, so a name an
 		// enclosing frame binds *or merely mentions* is the same storage
@@ -87,10 +112,6 @@ func (b *synBuilder) declareBody(body []ast.Stmt) {
 		// never runs, is enough -- while a read inside a nested frame is
 		// not, because that is a different symbol table. This is the same
 		// rule declareFrameLocals applies at render time.
-		if s := b.enclosingSymbol(name); s != nil {
-			f.owned[name] = s
-			continue
-		}
 		b.declare(name, syntax.SymLocal)
 	}
 }

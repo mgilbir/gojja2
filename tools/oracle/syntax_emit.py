@@ -128,7 +128,7 @@ class Emitter:
         self._keep = []           # nodes must outlive their ids
 
     def sym(self, name, kind, scope):
-        return {"name": name, "kind": kind, "scope": scope}
+        return {"name": name, "kind": kind, "scope": scope, "aliases": None}
 
     def push(self, scope_node, jinja_node):
         parent = self.symbols[-1] if self.symbols else None
@@ -153,11 +153,29 @@ class Emitter:
         return s
 
     def declare_body(self):
-        """Claim the names jinja2 says this frame owns."""
+        """Claim the names jinja2 says this frame owns.
+
+        An "alias" is a name an enclosing frame binds or mentions: jinja2 gives
+        this frame its own copy at entry, so it is a separate binding holding
+        the same value, and a write in here does not reach out there. Recording
+        it as the enclosing symbol would say it did.
+        """
         sym = self.symbols[-1]
         for name, ref in sym.refs.items():
-            if sym.loads.get(ref, (None, None))[0] in ("param", "undefined"):
+            kind = sym.loads.get(ref, (None, None))[0]
+            if kind in ("param", "undefined"):
                 self.declare(name, "local")
+            elif kind == "alias":
+                outer = self.resolve_outer(name)
+                alias = self.declare(name, "alias")
+                alias["aliases"] = outer
+
+    def resolve_outer(self, name):
+        """The binding an alias was copied from, seen from the enclosing frame."""
+        for _node, owned in reversed(self.frames[:-1]):
+            if name in owned:
+                return owned[name]
+        return self.resolve(name)
 
     def declare_targets(self, target, kind):
         t = type(target).__name__
@@ -471,9 +489,11 @@ def canonical_info(tree, globals_=()) -> str:
         return sorted([index[nid], ids[id(sym)]] for nid, sym in m.items())
 
     out = {
-        "symbols": [{"kind": s["kind"], "name": s["name"],
-                     "scope": index[id(s["scope"])] if s["scope"] is not None else -1}
-                    for s in symbols],
+        "symbols": [
+            dict({"kind": s["kind"], "name": s["name"],
+                  "scope": index[id(s["scope"])] if s["scope"] is not None else -1},
+                 **({"aliases": ids[id(s["aliases"])]} if s["aliases"] is not None else {}))
+            for s in symbols],
         "scopes": [[node, [ids[id(s)] for s in syms]] for node, syms in rows],
         "defs": pairs(e.defs),
         "uses": pairs(e.uses),

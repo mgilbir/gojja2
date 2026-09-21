@@ -61,11 +61,22 @@ func (a *analyzer) declareNamespace(sym *syntax.Symbol, call *syntax.Node) {
 	if sym == nil {
 		return
 	}
-	if _, seen := a.namespaces[sym]; seen {
-		a.aliased[sym] = true
-		return
+	if _, seen := a.namespaces[sym]; !seen {
+		a.namespaces[sym] = map[string]*syntax.Symbol{}
 	}
-	a.namespaces[sym] = map[string]*syntax.Symbol{}
+	// A name assigned a namespace more than once keeps one field map holding
+	// both, rather than giving up on it.
+	//
+	// Giving up was both imprecise and wrong. jinja2's symbol table makes an
+	// inner frame's store an *alias* of the enclosing binding -- one symbol --
+	// while at render time the frame gets its own copy, so
+	// `{% set ns = namespace(a=x) %}{% for i in xs %}{% set ns = namespace(b=y) %}{{ ns.b }}{% endfor %}`
+	// prints y and this reported y as never printed. A false negative is the
+	// one answer this must never give.
+	//
+	// Merging is sound where replacing is not: a later assignment does not
+	// have to be the one that ran, because the two can sit in different
+	// branches of an `{% if %}`, so both sets of sources stay in play.
 	for _, kw := range call.Children(syntax.RoleKwarg) {
 		if f := a.namespaceField(sym, kw.Attr("name")); f != nil {
 			a.depend(f, a.expr(kw.Child(syntax.RoleValue)))

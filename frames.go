@@ -4,6 +4,8 @@
 package gojja2
 
 import (
+	"sort"
+
 	"github.com/mgilbir/gojja2/internal/ast"
 	"github.com/mgilbir/gojja2/value"
 )
@@ -55,9 +57,9 @@ func (t *Template) frameLocalsOf(key any, body []ast.Stmt) frameNames {
 }
 
 func frameLocals(body []ast.Stmt) frameNames {
-	v := &frameVisitor{seen: map[string]bool{}}
+	v := &frameVisitor{seen: map[string]bool{}, stores: map[string]bool{}}
 	v.stmts(body)
-	return frameNames{owns: v.locals, refs: v.seen}
+	return frameNames{owns: v.locals, refs: v.seen, stores: v.stores, order: v.order}
 }
 
 // frameNames is what one frame does with names at its own level: owns are the
@@ -70,6 +72,18 @@ func frameLocals(body []ast.Stmt) frameNames {
 type frameNames struct {
 	owns []string
 	refs map[string]bool
+	// stores is every name this frame writes at its own level, which is a
+	// wider set than owns: a name read before it is written is not claimed
+	// here, and is still written. Nothing at render time needs the
+	// difference -- the write lands wherever the name already resolved --
+	// but an analysis does, because jinja2 gives the frame its own copy and
+	// the write does not escape it. See syntax_build.go.
+	stores map[string]bool
+	// order is every name in the order it is first mentioned, which is the
+	// order jinja2's own symbol table records them in. Nothing at render
+	// time depends on it; an analysis that has to agree with jinja2 about
+	// its symbol table does.
+	order []string
 }
 
 type frameVisitor struct {
@@ -77,24 +91,36 @@ type frameVisitor struct {
 	seen map[string]bool
 	// locals are the names whose first mention was a write.
 	locals []string
+	// stores is every name written at this level, first mention or not.
+	stores map[string]bool
+	// order is every name in first-mention order.
+	order []string
 }
 
 func (v *frameVisitor) load(name string) {
 	if !v.seen[name] {
 		v.seen[name] = true
+		v.order = append(v.order, name)
 	}
 }
 
 func (v *frameVisitor) store(name string) {
+	v.stores[name] = true
 	if !v.seen[name] {
 		v.seen[name] = true
+		v.order = append(v.order, name)
 		v.locals = append(v.locals, name)
 	}
 }
 
 // settle marks a name as decided without claiming it, which is what a
 // conditional assignment does.
-func (v *frameVisitor) settle(name string) { v.seen[name] = true }
+func (v *frameVisitor) settle(name string) {
+	if !v.seen[name] {
+		v.seen[name] = true
+		v.order = append(v.order, name)
+	}
+}
 
 func (v *frameVisitor) stmts(body []ast.Stmt) {
 	for _, stmt := range body {
@@ -165,11 +191,17 @@ func (v *frameVisitor) ifStmt(n *ast.If) {
 	v.expr(n.Test)
 
 	branch := func(body []ast.Stmt) (mentioned, stored map[string]bool) {
-		sub := &frameVisitor{seen: map[string]bool{}}
+		sub := &frameVisitor{seen: map[string]bool{}, stores: map[string]bool{}}
 		sub.stmts(body)
 		stored = make(map[string]bool, len(sub.locals))
 		for _, name := range sub.locals {
 			stored[name] = true
+		}
+		// A write inside a branch is still a write at this level, whether
+		// or not every branch makes it, which is what decides whether a
+		// nested frame gets its own copy.
+		for name := range sub.stores {
+			v.stores[name] = true
 		}
 		return sub.seen, stored
 	}
@@ -191,7 +223,15 @@ func (v *frameVisitor) ifStmt(n *ast.If) {
 			counts[name]++
 		}
 	}
+	// Sorted, because a map's order is not one: the names a branch mentions
+	// decide this frame's first-mention order, and that has to be the same
+	// on every run.
+	names := make([]string, 0, len(mentioned))
 	for name := range mentioned {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		if counts[name] == len(bodies) {
 			v.store(name)
 			continue

@@ -1,0 +1,7 @@
+{
+  "case": "dataflow/namespace_reassigned.jj2",
+  "variables": {
+    "x": "-",
+    "y": "o"
+  }
+}

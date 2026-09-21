@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/macro_default_reaches_body.jj2",
+  "variables": {
+    "src": "or"
+  }
+}

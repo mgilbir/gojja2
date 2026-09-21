@@ -1,0 +1,7 @@
+{
+  "case": "dataflow/namespace_field_from_outer.jj2",
+  "variables": {
+    "x": "o",
+    "xs": "fr"
+  }
+}
