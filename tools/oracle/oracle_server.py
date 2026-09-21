@@ -9,9 +9,18 @@ so a differential run can ask tens of thousands of questions.
 
 Request (one line of JSON):
     {"src": "...", "ctx": {...}, "settings": {...}, "templates": {...}}
+    {"hello": true}
 Response (one line of JSON):
     {"ok": true, "output": "..."}
     {"ok": false, "error": {"type": ..., "message": ..., "lineno": ...}}
+    {"ok": true, "hello": {"python": ..., "jinja2": ..., "markupsafe": ...}}
+
+The hello says which interpreter and which libraries are answering. That is not
+a courtesy: CPython carries its own Unicode and words several errors its own
+way, so an oracle on a different release is a different specification, and a
+differential run against one reports every version difference as a gojja2 bug.
+GOJJA2_ORACLE_PYTHON can point this at any interpreter, so the caller has to be
+able to find out which one it got.
 
 A request that kills the render -- a runaway allocation, an endless loop -- must
 not kill the server, so each one runs under a wall-clock alarm and the whole
@@ -22,13 +31,30 @@ and the batch tool cannot disagree about it.
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
+import platform
 import sys
 
 from jinjaoracle import apply_limits, guarded, is_resource_error, render
 
 
+def hello() -> dict:
+    """Who is answering: the interpreter, and the two libraries that decide."""
+    return {
+        "ok": True,
+        "hello": {
+            "python": ".".join(map(str, sys.version_info[:2])),
+            "python_full": platform.python_version(),
+            "jinja2": importlib.metadata.version("jinja2"),
+            "markupsafe": importlib.metadata.version("markupsafe"),
+        },
+    }
+
+
 def handle(request: dict) -> dict:
+    if request.get("hello"):
+        return hello()
     name = request.get("name") or "<fuzz>"
     result = guarded(
         lambda: render(

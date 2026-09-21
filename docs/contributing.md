@@ -138,6 +138,15 @@ If one fails after a toolchain upgrade or a `PYTHON_VERSION` bump, regenerate
 and read the diff: it is telling you either that Unicode moved or that the
 pinned CPython did.
 
+The differential harness talks to a live interpreter rather than to the
+goldens, and `GOJJA2_ORACLE_PYTHON` points it at one: useful for a checkout
+whose virtualenv lives elsewhere, and -- aimed at a path that does not exist --
+for proving the suite really does grade the committed corpus with no Python.
+Whatever it names is checked on startup against the interpreter and libraries
+the goldens record, because an oracle on another CPython is a different
+specification and a differential run against one reports every version
+difference as a gojja2 bug.
+
 Three matrix targets regenerate everything that is stored per version, each by
 asking every interpreter through `uv run --python`, so none of them needs a
 hand-built environment: `make unicode-matrix` for the Unicode tables,
