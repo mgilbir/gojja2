@@ -257,7 +257,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 			text := value.Str(item)
 			if !uriSchemeRe.MatchString(text) {
 				return value.Undefined, errs.New(errs.FilterArgumentError,
-					"%s is not a valid URI scheme prefix.", value.Repr(item))
+					"%s is not a valid URI scheme prefix.", value.ReprFor(item, s.PythonVersion()))
 			}
 			extra = append(extra, text)
 		}
@@ -441,7 +441,7 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		if strings.ContainsAny(key, " \t\n\r\f\v/>=") {
 			return value.Undefined, errs.New(errs.ValueError,
 				"Invalid character %s in attribute name.",
-				value.Repr(value.String(key)))
+				value.ReprFor(value.String(key), s.PythonVersion()))
 		}
 		parts = append(parts, fmt.Sprintf(`%s="%s"`, escapeHTML(key), escapeHTML(value.Str(e.Value))))
 	}
@@ -637,7 +637,7 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 			b.WriteString("false")
 		}
 	case value.KindInt:
-		b.WriteString(value.Repr(v))
+		b.WriteString(value.ReprFor(v, st.PythonVersion()))
 	case value.KindFloat:
 		f := v.AsFloat()
 		// Python's json emits NaN and Infinity bare, which is not valid

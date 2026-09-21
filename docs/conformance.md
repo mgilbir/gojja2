@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**4504 of 4517 gradable cases (99.7%)** match CPython jinja2, across eight
+**4540 of 4553 gradable cases (99.7%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The five that do not are listed with reasons
 in `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["4504 / 4517 gradable  (99.7%)"]
+    TC --> RATE["4540 / 4553 gradable  (99.7%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 2197 | 2188 |
+| gojja2's own (committed, with goldens) | 2233 | 2224 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **4517** | **4504 (99.7%)** |
+| **total** | **4553** | **4540 (99.7%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -184,12 +184,24 @@ answer differently -- 82 files in all -- laid over it.
 `TestVersionOverridesAreAllUsed` fails an override that records nothing or names
 a case the corpus no longer has, so the directories cannot rot as CPython moves.
 
-**What the option does not reach.** The tables generated from the interpreter's
-Unicode -- case mappings, decimal digits, the string classes, the HTML entities
--- are built for the pinned version only, and `method_arity.go` is the one that
-carries per-version overrides. A template whose answer depends on one of those
-answers the pinned version's way whatever `WithPythonVersion` says. The fourteen
-rules above are the ones that are version-correct.
+**The Unicode tables move with it too.** CPython carries its own Unicode, so the
+interpreter decides case mappings, which characters are digits, and how `repr`
+escapes them -- 10,311 code points between 3.11 and 3.14. Those are recorded per
+version as well, and the storage is small because the difference is simply which
+characters had been assigned yet: they arrive in blocks, so ten thousand code
+points collapse to seventy-five ranges and the whole table is about 22 KB.
+
+Doing it turned up a bug in the pinned version rather than only in the option.
+`isalpha` and `isprintable` were read straight off Go's tables, which are a
+different Unicode release from the specification -- so gojja2 answered
+**4,924** and **5,812** code points differently from the CPython it is graded
+against, whatever version was selected. Those corrections are generated now,
+against the interpreter rather than against an assumption that the two agree.
+
+Nothing in the corpus reached any of them before, because they are all
+characters assigned after Unicode 14 and no ordinary template contains one --
+which is exactly why the gap survived. `testdata/corpus/unicode/` reaches them
+on purpose.
 
 ## Differential fuzzing
 

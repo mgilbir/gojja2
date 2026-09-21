@@ -55,11 +55,23 @@ func HTML(v Value) (string, bool) {
 }
 
 // Repr is Python's repr(): the form a value takes inside a container.
-func Repr(v Value) string {
+//
+// It reproduces the default interpreter. Use [ReprFor] wherever a render's own
+// version is in reach -- which is everywhere the result can be seen by a
+// template, rather than only by a Go caller.
+func Repr(v Value) string { return ReprFor(v, DefaultPythonVersion) }
+
+// ReprFor is [Repr] reproducing one interpreter.
+//
+// repr escapes by str.isprintable, and CPython carries its own Unicode: 3.11
+// and 3.14 disagree about 10,294 code points, every one of them a character
+// assigned in between. The overrides are looked up once here rather than once
+// per rune.
+func ReprFor(v Value, py PythonVersion) string {
 	var b strings.Builder
 	// No budget: nothing is charged and nothing can refuse, so the error is
 	// always nil. See ReprBudget.
-	_ = writeRepr(&b, v, nil, false, nil)
+	_ = writeRepr(&b, v, nil, false, nil, UnicodeFor(py))
 	return b.String()
 }
 
@@ -73,9 +85,9 @@ func Repr(v Value) string {
 // deadline did not arrive until it was over.
 //
 // The returned string is only meaningful when the error is nil.
-func ReprBudget(v Value, bud Budget) (string, error) {
+func ReprBudget(v Value, bud Budget, py PythonVersion) (string, error) {
 	var b strings.Builder
-	if err := writeRepr(&b, v, nil, false, bud); err != nil {
+	if err := writeRepr(&b, v, nil, false, bud, UnicodeFor(py)); err != nil {
 		return "", err
 	}
 	return b.String(), nil
@@ -128,8 +140,8 @@ func (a active) leave(key any) { delete(a, key) }
 // point is escaped, wherever it sits. It travels with the walk because ascii()
 // applies to the whole structure and not only to a bare string -- ascii(['é'])
 // is "['\\xe9']".
-func writeRepr(b *strings.Builder, v Value, seen active, ascii bool, bud Budget) error {
-	frame, open, err := openRepr(b, v, &seen, ascii, bud)
+func writeRepr(b *strings.Builder, v Value, seen active, ascii bool, bud Budget, u *UnicodeOverrides) error {
+	frame, open, err := openRepr(b, v, &seen, ascii, bud, u)
 	if err != nil {
 		return err
 	}
@@ -154,7 +166,7 @@ func writeRepr(b *strings.Builder, v Value, seen active, ascii bool, bud Budget)
 		if err := chargeItems(bud, 1); err != nil {
 			return err
 		}
-		frame, open, err := openRepr(b, child, &seen, ascii, bud)
+		frame, open, err := openRepr(b, child, &seen, ascii, bud, u)
 		if err != nil {
 			return err
 		}
@@ -225,7 +237,7 @@ func (f *reprFrame) advance(b *strings.Builder) (Value, bool) {
 // container is marked on the way down and unmarked when its frame closes, so
 // two references to one non-cyclic value are both expanded in full while a
 // value that contains itself collapses.
-func openRepr(b *strings.Builder, v Value, seen *active, ascii bool, bud Budget) (reprFrame, bool, error) {
+func openRepr(b *strings.Builder, v Value, seen *active, ascii bool, bud Budget, u *UnicodeOverrides) (reprFrame, bool, error) {
 	switch v.kind {
 	case KindList, KindTuple, KindDict:
 		next, ok := seen.enter(v.obj)
@@ -256,14 +268,14 @@ func openRepr(b *strings.Builder, v Value, seen *active, ascii bool, bud Budget)
 			return reprFrame{ents: d.entries, dict: true, close: '}', key: v.obj}, true, nil
 		}
 	}
-	if err := writeScalarRepr(b, v, ascii, bud); err != nil {
+	if err := writeScalarRepr(b, v, ascii, bud, u); err != nil {
 		return reprFrame{}, false, err
 	}
 	return reprFrame{}, false, nil
 }
 
 // writeScalarRepr renders everything that holds no children.
-func writeScalarRepr(b *strings.Builder, v Value, ascii bool, bud Budget) error {
+func writeScalarRepr(b *strings.Builder, v Value, ascii bool, bud Budget, u *UnicodeOverrides) error {
 	switch v.kind {
 	case KindUndefined:
 		b.WriteString("Undefined")
@@ -288,13 +300,13 @@ func writeScalarRepr(b *strings.Builder, v Value, ascii bool, bud Budget) error 
 			// markupsafe's Markup has a repr of its own, which is
 			// what |pprint and a container's repr show.
 			b.WriteString("Markup(")
-			if err := writeStringRepr(b, v.str, ascii, bud); err != nil {
+			if err := writeStringRepr(b, v.str, ascii, bud, u); err != nil {
 				return err
 			}
 			b.WriteByte(')')
 			return nil
 		}
-		if err := writeStringRepr(b, v.str, ascii, bud); err != nil {
+		if err := writeStringRepr(b, v.str, ascii, bud, u); err != nil {
 			return err
 		}
 	case KindBytes:
@@ -390,7 +402,7 @@ func FormatFloat(f float64) string {
 // writeStringRepr renders a str the way Python's repr does: single quotes
 // unless that would need escaping and double quotes would not, non-ASCII left
 // intact when printable, and the rest escaped shortest-first.
-func writeStringRepr(b *strings.Builder, s string, asciiOnly bool, bud Budget) error {
+func writeStringRepr(b *strings.Builder, s string, asciiOnly bool, bud Budget, u *UnicodeOverrides) error {
 	quote := byte('\'')
 	if strings.ContainsRune(s, '\'') && !strings.ContainsRune(s, '"') {
 		quote = '"'
@@ -421,7 +433,7 @@ func writeStringRepr(b *strings.Builder, s string, asciiOnly bool, bud Budget) e
 			// nothing to match: it is written as the replacement
 			// character, which is what it decoded to.
 			b.WriteString(`�`)
-		case printable(r) && (!asciiOnly || r < utf8.RuneSelf):
+		case u.PrintableWith(r) && (!asciiOnly || r < utf8.RuneSelf):
 			b.WriteRune(r)
 		case r < 0x100:
 			b.WriteString(`\x`)
@@ -520,9 +532,14 @@ func writeHex(b *strings.Builder, v uint32, width int) {
 //
 // The escaping reaches inside a container, because ascii() is about the whole
 // rendered form: ascii(['é']) is "['\\xe9']", not "['é']".
-func Ascii(v Value) string {
+func Ascii(v Value) string { return AsciiFor(v, DefaultPythonVersion) }
+
+// AsciiFor is [Ascii] reproducing one interpreter. It escapes everything
+// outside ASCII, so the version reaches it only through which characters are
+// printable at all.
+func AsciiFor(v Value, py PythonVersion) string {
 	var b strings.Builder
-	_ = writeRepr(&b, v, nil, true, nil)
+	_ = writeRepr(&b, v, nil, true, nil, UnicodeFor(py))
 	return b.String()
 }
 

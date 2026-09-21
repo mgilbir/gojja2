@@ -150,13 +150,13 @@ func isCallableValue(v value.Value) bool {
 // stringCased builds `is lower` and `is upper`, which jinja2 writes as
 // str(value).islower(). The coercion is the operation, so a StrictUndefined
 // refuses it rather than being tested as "".
-func stringCased(f func(string) bool) Test {
-	return func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {
+func stringCased(f func(string, *value.UnicodeOverrides) bool) Test {
+	return func(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
 		text, err := strictStr(v)
 		if err != nil {
 			return false, err
 		}
-		return f(text), nil
+		return f(text, value.UnicodeFor(s.PythonVersion())), nil
 	}
 }
 

@@ -370,11 +370,13 @@ func filterDictsort(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	for _, e := range d.Entries() {
 		items = append(items, value.NewTuple(e.Key, e.Value))
 	}
+	// Captured before the closure shadows s with the item's sequence.
+	py := s.PythonVersion()
 	key := func(item value.Value) (value.Value, error) {
-		s, _ := item.Seq()
-		k := s.At(pos)
+		seq, _ := item.Seq()
+		k := seq.At(pos)
 		if !caseSensitive && k.IsString() {
-			return value.String(pyLowerString(k.AsString())), nil
+			return value.String(pyLowerString(k.AsString(), py)), nil
 		}
 		return k, nil
 	}
@@ -690,7 +692,7 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 			return value.Undefined, err
 		}
 		if !caseSensitive && k.IsString() {
-			return value.String(pyLowerString(k.AsString())), nil
+			return value.String(pyLowerString(k.AsString(), s.PythonVersion())), nil
 		}
 		return k, nil
 	}
@@ -704,6 +706,7 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	flush := func() {
 		if len(current) > 0 {
 			out = append(out, value.FromObject(&groupObject{
+				py:    s.PythonVersion(),
 				key:   currentKey,
 				items: value.NewList(current...),
 			}))
@@ -790,7 +793,7 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		// Looked up through Environment.call_filter, whose message has
 		// no trailing "found." unlike the deferred compile-time one.
 		return value.Undefined, errs.New(errs.TemplateRuntimeError,
-			"No filter named %s.", value.Repr(value.String(value.Str(name))))
+			"No filter named %s.", value.ReprFor(value.String(value.Str(name)), s.PythonVersion()))
 	}
 	rest := &value.CallArgs{Pos: args.Pos[1:], Kwargs: args.Kwargs}
 	// The filter |map applies is called the same way a written one is, so
@@ -907,6 +910,10 @@ func isFalsey(v value.Value) (bool, error) {
 type groupObject struct {
 	key   value.Value
 	items value.Value
+	// py is the interpreter being reproduced. Repr satisfies value.Object,
+	// whose signature takes nothing, so the version is injected here where
+	// the group is built.
+	py value.PythonVersion
 }
 
 func (g *groupObject) GetAttr(name string) (value.Value, bool) {
@@ -936,7 +943,7 @@ func (g *groupObject) GetIndex(i int) (value.Value, bool) {
 }
 
 func (g *groupObject) Repr() string {
-	return "(" + value.Repr(g.key) + ", " + value.Repr(g.items) + ")"
+	return "(" + value.ReprFor(g.key, g.py) + ", " + value.ReprFor(g.items, g.py) + ")"
 }
 
 func (g *groupObject) TypeName() string { return "_GroupTuple" }

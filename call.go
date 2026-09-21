@@ -133,7 +133,7 @@ func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 				if kw.Name == name {
 					return nil, errs.New(errs.TypeError,
 						"%s got multiple values for keyword argument %s",
-						callee, value.Repr(e.Key))
+						callee, value.ReprFor(e.Key, ex.pyVersion()))
 				}
 			}
 			out.Kwargs = append(out.Kwargs, value.Kwarg{Name: name, Value: e.Value})
@@ -253,7 +253,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 		return value.Undefined, errs.New(errs.TypeError,
 			"macro %s takes no keyword argument %s",
 			macroNameRepr(m.name),
-			value.Repr(value.String(remaining[0].Name)))
+			value.ReprFor(value.String(remaining[0].Name), ex.pyVersion()))
 	}
 
 	if m.catchVarargs {
@@ -378,7 +378,7 @@ func (ex *exec) execCallBlock(n *ast.CallBlock) error {
 func (ex *exec) evalFilter(n *ast.Filter) (value.Value, error) {
 	if n.Node == nil {
 		return value.Undefined, errs.New(errs.TemplateRuntimeError,
-			"filter %s has no input", value.Repr(value.String(n.Name)))
+			"filter %s has no input", value.ReprFor(value.String(n.Name), ex.pyVersion()))
 	}
 	input, err := ex.eval(n.Node)
 	if err != nil {
@@ -394,7 +394,7 @@ func (ex *exec) applyFilter(n *ast.Filter, input value.Value) (value.Value, erro
 		// can still reach here; jinja2 words the late failure with a
 		// trailing "found." to distinguish the two.
 		return value.Undefined, errs.New(errs.TemplateRuntimeError,
-			"No filter named %s found.", value.Repr(value.String(n.Name)))
+			"No filter named %s found.", value.ReprFor(value.String(n.Name), ex.pyVersion()))
 	}
 	args, err := ex.evalArgs(n.Args, ex.filterCallee(n.Name))
 	if err != nil {
@@ -433,7 +433,7 @@ func (ex *exec) evalTest(n *ast.Test) (value.Value, error) {
 	fn, ok := ex.st.env.tests[n.Name]
 	if !ok {
 		return value.Undefined, errs.New(errs.TemplateRuntimeError,
-			"No test named %s found.", value.Repr(value.String(n.Name)))
+			"No test named %s found.", value.ReprFor(value.String(n.Name), ex.pyVersion()))
 	}
 	input, err := ex.eval(n.Node)
 	if err != nil {

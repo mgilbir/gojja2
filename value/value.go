@@ -145,8 +145,8 @@ const maxInt64AsFloat = 9223372036854775808.0
 // The lexer has a ParseFloat of its own for numeric *literals*, which must not
 // transform: Python source takes ASCII digits only, whatever a string passed to
 // float() may contain.
-func ParseFloat(text string) (float64, bool) {
-	f, err := strconv.ParseFloat(DecimalASCII(text), 64)
+func ParseFloat(text string, py PythonVersion) (float64, bool) {
+	f, err := strconv.ParseFloat(DecimalASCII(text, py), 64)
 	if err != nil && !errors.Is(err, strconv.ErrRange) {
 		return 0, false
 	}

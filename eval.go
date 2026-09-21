@@ -151,7 +151,7 @@ func (ex *exec) evalCond(n *ast.CondExpr) (value.Value, error) {
 		// failure that way if the result is then used.
 		where := ""
 		if name := ex.st.tmpl.name; name != "" {
-			where = " in " + value.Repr(value.String(name))
+			where = " in " + value.ReprFor(value.String(name), ex.pyVersion())
 		}
 		return ex.st.Undefined(value.UndefinedHint(
 			"the inline if-expression on line %d%s evaluated to false and no else"+

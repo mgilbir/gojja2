@@ -136,7 +136,7 @@ func TestReprIsChargedAndCanStop(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			b := &countRepr{}
-			if _, err := value.ReprBudget(v, b); err != nil {
+			if _, err := value.ReprBudget(v, b, value.DefaultPythonVersion); err != nil {
 				t.Fatalf("repr: %v", err)
 			}
 			// Bytes for the text of a repr, items for the elements
@@ -149,7 +149,7 @@ func TestReprIsChargedAndCanStop(t *testing.T) {
 			// A budget that refuses stops the walk rather than
 			// reporting the refusal once it has finished.
 			r := &countRepr{stopAfter: 1}
-			if _, err := value.ReprBudget(v, r); !errors.Is(err, errStopRepr) {
+			if _, err := value.ReprBudget(v, r, value.DefaultPythonVersion); !errors.Is(err, errStopRepr) {
 				t.Fatalf("repr = %v, want the budget's refusal", err)
 			}
 			if r.calls > 8 {
@@ -164,7 +164,7 @@ func TestReprIsChargedAndCanStop(t *testing.T) {
 	if got := value.Repr(value.String("hi")); got != "'hi'" {
 		t.Errorf("Repr = %s, want 'hi'", got)
 	}
-	if got, err := value.ReprBudget(value.String("hi"), nil); err != nil || got != "'hi'" {
+	if got, err := value.ReprBudget(value.String("hi"), nil, value.DefaultPythonVersion); err != nil || got != "'hi'" {
 		t.Errorf("ReprBudget with no budget = %s, %v; want 'hi'", got, err)
 	}
 }

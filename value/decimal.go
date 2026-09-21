@@ -54,7 +54,8 @@ func DecimalValue(r rune) int {
 // Go's unicode.IsSpace is exactly CPython's set here -- the same twenty-five
 // code points, checked in decimal_test.go -- so the whitespace half needs no
 // table of its own.
-func DecimalASCII(s string) string {
+func DecimalASCII(s string, py PythonVersion) string {
+	u := UnicodeFor(py)
 	// Almost every subject is ASCII already, and rewriting one that needs
 	// no rewriting would cost an allocation per int() in a loop.
 	if isASCIIText(s) {
@@ -66,8 +67,8 @@ func DecimalASCII(s string) string {
 		switch {
 		case r < 0x80:
 			b.WriteByte(byte(r))
-		case DecimalValue(r) >= 0:
-			b.WriteByte(byte('0' + DecimalValue(r)))
+		case u.DecimalValueFor(r) >= 0:
+			b.WriteByte(byte('0' + u.DecimalValueFor(r)))
 		case unicode.IsSpace(r):
 			b.WriteByte(' ')
 		default:

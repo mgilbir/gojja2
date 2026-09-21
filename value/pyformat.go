@@ -632,7 +632,7 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 		return formatted{body: c.truncate(EscapeHTML(text))}, true, nil
 
 	case 'd', 'i', 'u':
-		n, err := markupInt(v, c.verb)
+		n, err := markupInt(v, c.verb, c.py)
 		if err != nil {
 			return formatted{}, true, err
 		}
@@ -640,7 +640,7 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 		return formatted{prefix: c.sign(negative), body: digits, numeric: true}, true, nil
 
 	case 'e', 'E', 'f', 'F', 'g', 'G':
-		f, err := markupFloat(v)
+		f, err := markupFloat(v, c.py)
 		if err != nil {
 			return formatted{}, true, err
 		}
@@ -662,7 +662,7 @@ func (c *conversion) padDigits(b *big.Int) (string, bool) {
 
 // markupInt is Python's int() over the helper: a number truncates, a string is
 // parsed, and anything else is the conversion's own type error.
-func markupInt(v Value, verb byte) (*big.Int, error) {
+func markupInt(v Value, verb byte, py PythonVersion) (*big.Int, error) {
 	switch {
 	case v.IsInteger():
 		b, _ := v.BigInt()
@@ -678,7 +678,7 @@ func markupInt(v Value, verb byte) (*big.Int, error) {
 		b, _ := big.NewFloat(math.Trunc(f)).Int(nil)
 		return b, nil
 	case v.kind == KindString:
-		text, ok := pyNumericText(v.str, false)
+		text, ok := pyNumericText(v.str, false, py)
 		if ok {
 			if b, good := new(big.Int).SetString(text, 10); good {
 				return b, nil
@@ -692,13 +692,13 @@ func markupInt(v Value, verb byte) (*big.Int, error) {
 }
 
 // markupFloat is Python's float() over the helper.
-func markupFloat(v Value) (float64, error) {
+func markupFloat(v Value, py PythonVersion) (float64, error) {
 	if f, ok := v.Float64(); ok {
 		return f, nil
 	}
 	if v.kind == KindString {
-		if text, ok := pyNumericText(v.str, true); ok {
-			if f, ok := ParseFloat(text); ok {
+		if text, ok := pyNumericText(v.str, true, py); ok {
+			if f, ok := ParseFloat(text, py); ok {
 				return f, nil
 			}
 		}
@@ -712,11 +712,11 @@ func markupFloat(v Value) (float64, error) {
 // pyNumericText prepares a string for int() or float(): Python trims
 // surrounding whitespace and allows single underscores between digits, neither
 // of which Go's parsers accept.
-func pyNumericText(s string, isFloat bool) (string, bool) {
+func pyNumericText(s string, isFloat bool, py PythonVersion) (string, bool) {
 	// Decimal digits from any script become ASCII first, exactly as
 	// CPython transforms them, so the rules below are about the shape of
 	// the number and not about which alphabet wrote it.
-	s = strings.TrimFunc(DecimalASCII(s), unicode.IsSpace)
+	s = strings.TrimFunc(DecimalASCII(s, py), unicode.IsSpace)
 	if s == "" {
 		return "", false
 	}
