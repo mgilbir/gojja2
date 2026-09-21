@@ -372,11 +372,10 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 			if !c.step() {
 				return d
 			}
-			if err := dict.Set(c.fromAny(k.Interface()), c.fromAny(rv.MapIndex(k).Interface())); err != nil {
-				// An unhashable key cannot occur: Go map keys are
-				// always comparable, so this is unreachable.
-				continue
-			}
+			// A Go map key is always comparable, so it always
+			// hashes: SetKnown says that rather than guarding a
+			// branch nothing can take.
+			dict.SetKnown(c.fromAny(k.Interface()), c.fromAny(rv.MapIndex(k).Interface()))
 		}
 		return d
 
@@ -1012,9 +1011,7 @@ func Copy(v Value) Value {
 		out := NewDict()
 		target, _ := out.Dict()
 		for _, e := range d.Entries() {
-			if err := target.Set(e.Key, Copy(e.Value)); err != nil {
-				return v
-			}
+			target.SetKnown(e.Key, Copy(e.Value))
 		}
 		return out
 	}

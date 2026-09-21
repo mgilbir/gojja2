@@ -65,6 +65,9 @@ var (
 )
 
 // child returns a frame sharing output but with its own scope.
+// pyVersion is the interpreter this render reproduces; see State.PythonVersion.
+func (ex *exec) pyVersion() PythonVersion { return ex.st.PythonVersion() }
+
 func (ex *exec) child(sc *scope) *exec {
 	next := *ex
 	next.sc = sc
@@ -831,7 +834,10 @@ func (ex *exec) loadTemplateName(e ast.Expr) (*Template, error) {
 	}
 	switch v.Kind() {
 	case value.KindList, value.KindDict:
-		return nil, errs.New(errs.TypeError, "unhashable type: '%s'", v.TypeName())
+		// jinja2 puts the name into its template cache key, which is a
+		// tuple, so 3.14 reports the tuple as the key and the name as
+		// the unhashable part.
+		return nil, value.ErrUnhashable("tuple", v, ex.pyVersion(), value.AsDictKey)
 	case value.KindUndefined:
 		return nil, v.UndefinedError()
 	}

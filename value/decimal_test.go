@@ -68,11 +68,13 @@ func TestDecimalIsNarrowerThanDigit(t *testing.T) {
 		'一':          -1, // CJK ideograph one -- isnumeric only
 		'a':          -1,
 		' ':          -1,
-		// Unicode 15 additions that CPython 3.11 does not have. Go's own
-		// unicode.Nd carries them, which is exactly why this table does
-		// not come from there.
-		'\U00011f50': -1, // KAWI DIGIT ZERO
-		'\U0001e4f0': -1, // NAG MUNDARI DIGIT ZERO
+		// Kawi and Nag Mundari arrived in Unicode 15, which the pinned
+		// CPython now has -- so they are digits here. They were -1 when
+		// the pin was 3.11, and that is the point: the table follows
+		// the interpreter rather than Go's own tables, in whichever
+		// direction the two happen to differ.
+		'\U00011f50': 0, // KAWI DIGIT ZERO
+		'\U0001e4f0': 0, // NAG MUNDARI DIGIT ZERO
 	} {
 		if got := DecimalValue(r); got != want {
 			t.Errorf("DecimalValue(%U) = %d, want %d", r, got, want)

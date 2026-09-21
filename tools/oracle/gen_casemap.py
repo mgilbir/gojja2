@@ -27,6 +27,7 @@ fails loudly rather than quietly.
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import sys
 import unicodedata
 from pathlib import Path
@@ -78,20 +79,49 @@ def gostr(s: str) -> str:
                          else "\\U%08x" % ord(c) for c in s) + '"'
 
 
-def simple_lower(cp: int) -> str:
-    """The single-rune lowercase, which is what Go's unicode.ToLower gives."""
-    lo = chr(cp).lower()
-    return lo if len(lo) == 1 else chr(cp)
+def simple_lower(cp: int, go: dict[int, tuple[int, int, int]]) -> str:
+    """The single-rune lowercase gojja2 falls back to when folding.
+
+    pyFoldRune answers unicode.ToLower for anything not in foldSpecial, so this
+    has to be *Go's* lowercase and not Python's: where the two disagree -- and
+    they do for every code point Unicode gained after Go's tables were cut --
+    the fold has to be recorded rather than left to the fallback.
+    """
+    return chr(go[cp][1])
+
+
+def go_simple_mappings() -> dict[int, tuple[int, int, int]]:
+    """Go's ToUpper, ToLower and ToTitle for every code point."""
+    out = subprocess.run(["go", "run", "./tools/gocase"], cwd=ROOT,
+                         capture_output=True, text=True, check=True).stdout
+    m = {}
+    for line in out.splitlines():
+        cp, u, l, t = line.split("\t")
+        m[int(cp)] = (int(u), int(l), int(t))
+    return m
 
 
 def main() -> int:
     points = [cp for cp in range(MAX) if cp not in SURROGATES]
 
-    upper = {cp: chr(cp).upper() for cp in points if len(chr(cp).upper()) > 1}
-    lower = {cp: chr(cp).lower() for cp in points if len(chr(cp).lower()) > 1}
-    title = {cp: chr(cp).title() for cp in points if len(chr(cp).title()) > 1}
+    # Go's own answers, so "where CPython differs" can be computed rather than
+    # assumed. Assuming it -- taking every multi-character mapping and nothing
+    # else -- held only while Go and CPython tracked the same Unicode, and the
+    # pinned interpreter is free to move ahead: Unicode 16 gave 54 code points
+    # a simple mapping Go 1.26 does not have, and every one of them was wrong
+    # here until this read Go's tables instead of guessing at them.
+    go = go_simple_mappings()
+
+    def differs(cp: int, py: str, which: int) -> bool:
+        if len(py) > 1:
+            return True
+        return ord(py) != go[cp][which]
+
+    upper = {cp: chr(cp).upper() for cp in points if differs(cp, chr(cp).upper(), 0)}
+    lower = {cp: chr(cp).lower() for cp in points if differs(cp, chr(cp).lower(), 1)}
+    title = {cp: chr(cp).title() for cp in points if differs(cp, chr(cp).title(), 2)}
     fold = {cp: chr(cp).casefold() for cp in points
-            if chr(cp).casefold() != simple_lower(cp)}
+            if chr(cp).casefold() != simple_lower(cp, go)}
 
     is_lower = [cp for cp in points if chr(cp).islower()]
     is_upper = [cp for cp in points if chr(cp).isupper()]

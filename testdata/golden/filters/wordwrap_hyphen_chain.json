@@ -4,7 +4,7 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.11.15"
+    "python": "3.14.7"
   },
   "ok": true,
   "output": " - -t-h-e-\n-q-u-i-c-k-\n-b-r-o-w-n-\n-f-o-x-\n-j-u-m-p-s-\n-o-v-e-r-\n-t-h-e-\n-l-a-z-y-\n-d-o-g- -| - -t-h-e-\n-q-u-i-c-k-\n-b-r-o-w-n-\n-f-o-x-\n-j-u-m-p-s-\n-o-v-e-r-\n-t-h-e-\n-l-a-z-y-\n-d-o-g- -"

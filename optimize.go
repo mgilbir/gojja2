@@ -161,8 +161,8 @@ func foldableDepth(v value.Value, depth int) bool {
 			return false
 		}
 		for _, k := range d.Keys() {
-			item, found, err := d.Get(k)
-			if err != nil || !found {
+			item, found := d.GetKnown(k)
+			if !found {
 				return false
 			}
 			if !foldableDepth(k, depth+1) || !foldableDepth(item, depth+1) {
@@ -231,7 +231,7 @@ func liftNegativePowerBase(e ast.Expr) ast.Expr {
 	if !ok || !c.Value.IsNumber() {
 		return e
 	}
-	negative, err := value.Ordered("<", c.Value, value.Int(0))
+	negative, err := value.Ordered("<", c.Value, value.Int(0), value.DefaultPythonVersion)
 	if err != nil || !negative {
 		return e
 	}
@@ -456,7 +456,7 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 			if !ok {
 				return value.Undefined, false
 			}
-			if err := d.Set(k, v); err != nil {
+			if err := d.Set(k, v, c.pyVersion()); err != nil {
 				return value.Undefined, false
 			}
 		}
@@ -470,7 +470,7 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		if !ok || base.IsUndefined() {
 			return value.Undefined, false
 		}
-		return constGetAttr(base, n.Attr), true
+		return constGetAttr(base, n.Attr, c.pyVersion()), true
 
 	case *ast.Getitem:
 		base, ok := c.constEval(n.Node)
@@ -590,13 +590,13 @@ func (c *constEvaluator) constBinOp(n *ast.BinOp) (value.Value, bool) {
 		// -- which is what `%` never was.
 		out, err = value.Mul(left, right, c.st)
 	case ast.OpDiv:
-		out, err = value.Div(left, right)
+		out, err = value.Div(left, right, c.pyVersion())
 	case ast.OpFloorDiv:
-		out, err = value.FloorDiv(left, right)
+		out, err = value.FloorDiv(left, right, c.pyVersion())
 	case ast.OpMod:
-		out, err = value.Mod(left, right, c.st)
+		out, err = value.Mod(left, right, c.st, c.pyVersion())
 	case ast.OpPow:
-		out, err = value.Pow(left, right, c.st)
+		out, err = value.Pow(left, right, c.st, c.pyVersion())
 	default:
 		return value.Undefined, false
 	}
@@ -668,7 +668,7 @@ func (c *constEvaluator) constCompare(n *ast.Compare) (value.Value, bool) {
 		if !ok {
 			return value.Undefined, false
 		}
-		holds, err := compareStep(op.Op, left, right, c.st)
+		holds, err := compareStep(op.Op, left, right, c.st, c.pyVersion())
 		if err != nil {
 			return value.Undefined, false
 		}
@@ -694,6 +694,13 @@ func (c *constEvaluator) constEvalAll(items []ast.Expr) ([]value.Value, bool) {
 
 // constEvaluator folds expressions at compile time, with the environment it
 // needs to resolve filters and tests.
+// pyVersion is the interpreter this fold reproduces. Constant folding runs
+// answers that a render would otherwise produce, so it has to agree with the
+// render about every rule that differs by interpreter -- a fold that used the
+// default while the environment chose otherwise would make `{{ 1/0 }}` and
+// `{{ x/0 }}` word the same failure two ways.
+func (c *constEvaluator) pyVersion() value.PythonVersion { return c.env.pyVersion }
+
 type constEvaluator struct {
 	env *Environment
 	st  *State
@@ -968,11 +975,11 @@ func (c *constEvaluator) updateKwargs(out *value.CallArgs, v value.Value) bool {
 //
 // Constant folding runs at compile time, so there is no render to charge and
 // lookupAttr gets a nil State.
-func constGetAttr(base value.Value, name string) value.Value {
+func constGetAttr(base value.Value, name string, py value.PythonVersion) value.Value {
 	if v, ok := lookupAttr(nil, base, name); ok {
 		return v
 	}
-	if v, ok := lookupItem(base, value.String(name)); ok {
+	if v, ok := lookupItem(base, value.String(name), py); ok {
 		return v
 	}
 	return value.UndefinedAttr(base, name)
@@ -1039,7 +1046,7 @@ func (c *constEvaluator) constGetSlice(base value.Value, slice *ast.Slice) (valu
 		// DebugUndefined, where jinja2 names the slice.
 		return value.UndefinedSlice(base, start, stop, step), true
 	}
-	out, err := sliceOf(base, start, stop, step)
+	out, err := sliceOf(base, start, stop, step, c.pyVersion())
 	switch {
 	case err == nil:
 		return out, true

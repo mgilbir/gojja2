@@ -264,8 +264,17 @@ func DecodeContext(raw json.RawMessage) (map[string]value.Value, error) {
 	return out, nil
 }
 
-// Environment builds the environment a case runs under.
+// Environment builds the environment a case runs under, reproducing the
+// default interpreter.
 func (c *Case) Environment() (*gojja2.Environment, error) {
+	return c.EnvironmentFor(gojja2.DefaultPythonVersion)
+}
+
+// EnvironmentFor is Environment for one interpreter version, which is what
+// grading the whole matrix needs: a case whose answer moved between CPython
+// releases has a golden per version, and the engine has to be told which one
+// it is being asked to reproduce.
+func (c *Case) EnvironmentFor(py gojja2.PythonVersion) (*gojja2.Environment, error) {
 	sources := make(map[string]string, len(c.Templates)+1)
 	for name, src := range c.Templates {
 		sources[name] = src
@@ -302,6 +311,7 @@ func (c *Case) Environment() (*gojja2.Environment, error) {
 	if len(s.Extensions) > 0 {
 		opts = append(opts, gojja2.WithExtensions(s.Extensions...))
 	}
+	opts = append(opts, gojja2.WithPythonVersion(py))
 	env, err := gojja2.New(opts...)
 	if err != nil {
 		return nil, err
@@ -325,7 +335,12 @@ func undefinedBehavior(name string) value.UndefinedBehavior {
 
 // Render runs the case and reports what gojja2 produced.
 func (c *Case) Render() (string, error) {
-	env, err := c.Environment()
+	return c.RenderFor(gojja2.DefaultPythonVersion)
+}
+
+// RenderFor is Render reproducing one interpreter version.
+func (c *Case) RenderFor(py gojja2.PythonVersion) (string, error) {
+	env, err := c.EnvironmentFor(py)
 	if err != nil {
 		return "", err
 	}
@@ -380,7 +395,7 @@ func holdsOrderedDict(v value.Value, depth int) bool {
 			return true
 		}
 		for _, k := range d.Keys() {
-			val, _, _ := d.Get(k)
+			val, _ := d.GetKnown(k)
 			if holdsOrderedDict(val, depth+1) {
 				return true
 			}
@@ -425,7 +440,30 @@ func (c *Case) RenderViaGo() (string, error) {
 
 // LoadGolden reads the oracle's answer for a case.
 func LoadGolden(goldenRoot, rel string) (*Golden, error) {
-	path := filepath.Join(goldenRoot, strings.TrimSuffix(rel, ".jj2")+".json")
+	return LoadGoldenOver(goldenRoot, "", rel)
+}
+
+// LoadGoldenOver reads the oracle's answer for a case, preferring an override
+// recorded for one interpreter version.
+//
+// Only 38 of 2,197 cases answer differently across CPython 3.11 to 3.14, so an
+// older version is stored as those few files rather than a second copy of
+// everything: the base set is the default version's, and an override sits on
+// top of it. An override that stops differing is a file to delete, which is a
+// signal worth having.
+func LoadGoldenOver(goldenRoot, overrideRoot, rel string) (*Golden, error) {
+	name := strings.TrimSuffix(rel, ".jj2") + ".json"
+	if overrideRoot != "" {
+		if g, err := readGolden(filepath.Join(overrideRoot, name)); err == nil {
+			return g, nil
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return readGolden(filepath.Join(goldenRoot, name))
+}
+
+func readGolden(path string) (*Golden, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

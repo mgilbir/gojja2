@@ -4,11 +4,11 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.11.15"
+    "python": "3.14.7"
   },
   "ok": false,
   "error": {
     "type": "TypeError",
-    "message": "must be str, not int"
+    "message": "count() argument 1 must be str, not int"
   }
 }

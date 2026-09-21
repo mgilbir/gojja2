@@ -314,7 +314,7 @@ func globalDict(s *State, args *value.CallArgs) (value.Value, error) {
 	if len(args.Pos) == 1 {
 		// dict() and dict.update() accept exactly the same shapes and
 		// refuse them the same way, so they share one implementation.
-		if err := updateDictFrom(d, args.Pos[0]); err != nil {
+		if err := updateDictFrom(d, args.Pos[0], s.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
 	}

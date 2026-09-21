@@ -16,7 +16,7 @@ import (
 // hashes the value before anything looks at whether it could be a name.
 //
 // So an unhashable value raises rather than answering: `{{ [1] is filter }}` is
-// "unhashable type: 'list'". gojja2 answered False for everything that was not
+// "cannot use 'list' as a dict key (unhashable type: 'list')". gojja2 answered False for everything that was not
 // a string, which made a question nothing could answer look answered.
 func TestIsFilterAndIsTestHashTheirValue(t *testing.T) {
 	env := mustNew()
@@ -44,12 +44,12 @@ func TestIsFilterAndIsTestHashTheirValue(t *testing.T) {
 	}
 
 	for _, tc := range []struct{ src, want string }{
-		{`{{ [1] is filter }}`, "unhashable type: 'list'"},
-		{`{{ [] is test }}`, "unhashable type: 'list'"},
-		{`{{ {} is filter }}`, "unhashable type: 'dict'"},
+		{`{{ [1] is filter }}`, "cannot use 'list' as a dict key (unhashable type: 'list')"},
+		{`{{ [] is test }}`, "cannot use 'list' as a dict key (unhashable type: 'list')"},
+		{`{{ {} is filter }}`, "cannot use 'dict' as a dict key (unhashable type: 'dict')"},
 		// A tuple is hashable only when everything in it is, which is
 		// the same rule |attr's name goes through.
-		{`{{ (1,[2]) is test }}`, "unhashable type: 'list'"},
+		{`{{ (1,[2]) is test }}`, "cannot use 'tuple' as a dict key (unhashable type: 'list')"},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {

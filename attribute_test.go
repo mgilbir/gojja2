@@ -82,11 +82,11 @@ func TestAttrNameMustBeAString(t *testing.T) {
 		{`{{ "ab"|attr(name=none) }}`, "attribute name must be string, not 'NoneType'"},
 		{`{{ "ab"|attr(name=2.5) }}`, "attribute name must be string, not 'float'"},
 		{`{{ "ab"|attr(name=3) }}`, "attribute name must be string, not 'int'"},
-		{`{{ "ab"|attr(name=[1]) }}`, "unhashable type: 'list'"},
-		{`{{ "ab"|attr(name={}) }}`, "unhashable type: 'dict'"},
+		{`{{ "ab"|attr(name=[1]) }}`, "cannot use 'list' as a dict key (unhashable type: 'list')"},
+		{`{{ "ab"|attr(name={}) }}`, "cannot use 'dict' as a dict key (unhashable type: 'dict')"},
 		// A tuple hashes only if what it holds does, and the refusal
 		// names what actually stopped it.
-		{`{{ "ab"|attr(name=(1,[2])) }}`, "unhashable type: 'list'"},
+		{`{{ "ab"|attr(name=(1,[2])) }}`, "cannot use 'tuple' as a dict key (unhashable type: 'list')"},
 	} {
 		_, err := renderVars(t, mustNew(), tc.src, nil)
 		if err == nil {

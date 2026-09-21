@@ -81,6 +81,10 @@ type Environment struct {
 	unsupportedLeniency UnsupportedLeniency
 	unsupportedReport   func(Unsupported)
 
+	// pyVersion is the CPython whose behaviour renders reproduce, for the
+	// places the interpreters disagree. See compat.go.
+	pyVersion PythonVersion
+
 	// maxIntBits bounds the width of an integer an expression computes.
 	// Unlike the others it is a conformance question as much as a safety
 	// one -- CPython computes what this refuses -- which is why it is
@@ -126,6 +130,7 @@ func New(opts ...Option) (*Environment, error) {
 		maxRecursion:   100,
 		maxIterations:  defaultMaxIterations,
 		maxOutputBytes: defaultMaxOutputBytes,
+		pyVersion:      DefaultPythonVersion,
 		maxIntBits:     value.MaxIntBits,
 		filters:        make(map[string]Filter),
 		tests:          make(map[string]Test),

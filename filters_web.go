@@ -277,7 +277,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		if !hasLimit {
 			return x, nil
 		}
-		over, err := value.Ordered(">", value.Int(int64(value.StrLen(x))), limit)
+		over, err := value.Ordered(">", value.Int(int64(value.StrLen(x))), limit, s.PythonVersion())
 		if err != nil || !over {
 			return x, err
 		}
@@ -751,7 +751,7 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 			target, _ := out.Dict()
 			for _, k := range m.Keys() {
 				val, _ := m.GetItem(k)
-				_ = target.Set(k, val)
+				_ = target.Set(k, val, st.PythonVersion())
 			}
 			return writeJSON(st, b, out, indent, depth, path)
 		}

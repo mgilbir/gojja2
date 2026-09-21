@@ -22,7 +22,7 @@ flowchart LR
     U1 -->|"make suites"| TP["third_party/<br/><i>gitignored, never vendored</i>"]
     TP -->|"make import<br/>import_*.py, harvest_jinja.py"| GEN["testdata/generated/*<br/>+ SOURCES.md"]
 
-    ORA["CPython jinja2 3.1.6<br/>markupsafe 3.0.3 · Python 3.11.15<br/><i>.venv — the specification</i>"]
+    ORA["CPython jinja2 3.1.6<br/>markupsafe 3.0.3 · Python 3.14.7<br/><i>.venv — the specification</i>"]
     GEN -->|"oracle.py"| G2["*-golden/*.json"]
     ORA --> G2
 
@@ -140,6 +140,56 @@ not sort keys or escape HTML, and the `raise_exception` and `strftime_now`
 globals. A case records that as `"__profile__": "transformers"`, implemented
 once for the oracle and once for gojja2, with `TestProfileMatchesOracle` pinning
 the two together so they cannot drift apart unnoticed.
+
+## Which CPython?
+
+"Behaviourally identical to CPython jinja2" leaves a question open, and the
+answer depends on it: identical on *which* CPython. jinja2 3.1.6 is one library,
+but it runs on an interpreter, and the interpreter decides what `{{ d[0:1] }}`
+raises, whether `{{ xs|sort(reverse=none) }}` is an error, how a division by
+zero is worded, and which code points are digits.
+
+Across CPython 3.11 to 3.14 that is **38 of the 2,197 committed cases** — 1.7%,
+and every one of them answers exactly two ways rather than four:
+
+| | |
+|---|---|
+| identical on all four interpreters | 2,159 (98.3%) |
+| answer differently somewhere | 38 |
+| of those, error wording only | 27 |
+| of those, behaviour: raises where it now renders, or a different class | 11 |
+
+`PYTHON_VERSION` in the Makefile pins which one is the specification, and it is
+part of that specification rather than a convenience: CPython carries its own
+Unicode, so the interpreter also decides the case mappings, the decimal digits
+and how `repr` escapes them. It used to be whatever `uv venv` found on the
+machine, which meant the specification was chosen by accident.
+
+A render reproduces the newest by default and any of the four on request:
+
+```go
+env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
+```
+
+The rules are a closed list -- fourteen, each named in `value/pyversion.go` with
+the release that moved it and the corpus case that grades it. The version is
+passed as an argument to every function whose answer can depend on it rather
+than read from a package variable, so a signature carrying it declares "this
+differs by interpreter", and one that does not cannot quietly start differing.
+
+Only the differences are stored. `testdata/golden` is the default version's full
+set; `testdata/golden-3.11` and its two neighbours hold the few dozen cases that
+answer differently -- 82 files in all -- laid over it.
+`TestEveryPythonVersion` grades every case against every interpreter, and
+`TestVersionOverridesAreAllUsed` fails an override that records nothing or names
+a case the corpus no longer has, so the directories cannot rot as CPython moves.
+
+**What the option does not reach.** The tables generated from the interpreter's
+Unicode -- case mappings, decimal digits, the string classes, the HTML entities
+-- are built for the pinned version only, and `method_arity.go` is the one that
+carries per-version overrides. A template whose answer depends on one of those
+answers the pinned version's way whatever `WithPythonVersion` says. The fourteen
+rules above are the ones that are version-correct.
 
 ## Differential fuzzing
 

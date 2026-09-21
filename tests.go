@@ -168,7 +168,7 @@ func stringCased(f func(string) bool) Test {
 // inherits that for free.
 func intParity(want int64) Test {
 	return func(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
-		rem, err := value.Mod(v, value.Int(2), s)
+		rem, err := value.Mod(v, value.Int(2), s, s.PythonVersion())
 		if err != nil {
 			return false, err
 		}
@@ -185,7 +185,7 @@ func testDivisibleBy(s *State, v value.Value, args *value.CallArgs) (bool, error
 	if !ok {
 		return false, errs.New(errs.TypeError, "divisibleby requires an argument")
 	}
-	rem, err := value.Mod(v, divisor, s)
+	rem, err := value.Mod(v, divisor, s, s.PythonVersion())
 	if err != nil {
 		return false, err
 	}
@@ -234,7 +234,7 @@ func testIn(s *State, v value.Value, args *value.CallArgs) (bool, error) {
 	if !ok {
 		return false, errs.New(errs.TypeError, "in requires an argument")
 	}
-	return value.Contains(v, container, s)
+	return value.Contains(v, container, s, s.PythonVersion())
 }
 
 // testHasFilter and testHasTest are jinja2's `value in env.filters` and
@@ -248,18 +248,18 @@ func testHasFilter(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
 	return hasRegistered(v, func(name string) bool {
 		_, ok := s.env.filters[name]
 		return ok
-	})
+	}, s.PythonVersion())
 }
 
 func testHasTest(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
 	return hasRegistered(v, func(name string) bool {
 		_, ok := s.env.tests[name]
 		return ok
-	})
+	}, s.PythonVersion())
 }
 
-func hasRegistered(v value.Value, lookup func(string) bool) (bool, error) {
-	if err := value.Hashable(v); err != nil {
+func hasRegistered(v value.Value, lookup func(string) bool, py value.PythonVersion) (bool, error) {
+	if err := value.Hashable(v, py, value.AsDictKey); err != nil {
 		return false, err
 	}
 	if !v.IsString() {
@@ -275,7 +275,7 @@ func comparisonTest(op string) Test {
 		if !ok {
 			return false, errs.New(errs.TypeError, "%s requires an argument", op)
 		}
-		return compareStep(op, v, other, s)
+		return compareStep(op, v, other, s, s.PythonVersion())
 	}
 }
 

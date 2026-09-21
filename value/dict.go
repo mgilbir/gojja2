@@ -72,7 +72,7 @@ func (d *Dict) indexStrings(capacity int) {
 }
 
 // lookupIdx finds the entry position for key.
-func (d *Dict) lookupIdx(key Value) (int, bool, error) {
+func (d *Dict) lookupIdx(key Value, py PythonVersion, use HashUse) (int, bool, error) {
 	if key.kind == KindString {
 		if d.strIdx == nil {
 			i, ok := d.scanString(key.str)
@@ -81,7 +81,7 @@ func (d *Dict) lookupIdx(key Value) (int, bool, error) {
 		i, ok := d.strIdx[key.str]
 		return i, ok, nil
 	}
-	h, err := hash(key)
+	h, err := hash(key, py, use)
 	if err != nil {
 		return 0, false, err
 	}
@@ -89,8 +89,26 @@ func (d *Dict) lookupIdx(key Value) (int, bool, error) {
 	return i, ok, nil
 }
 
+// lookupKnown and storeKnown are lookupIdx and storeIdx for a key that cannot
+// fail to hash -- a Go string, or one already in the dict. Splitting them out
+// keeps the interpreter version out of the signatures it cannot affect, so a
+// signature that does carry it means something.
+func (d *Dict) lookupKnown(key Value) (int, bool) {
+	i, ok, err := d.lookupIdx(key, DefaultPythonVersion, AsDictKey)
+	if err != nil {
+		panic("value: lookupKnown on an unhashable key: " + err.Error())
+	}
+	return i, ok
+}
+
+func (d *Dict) storeKnown(key Value, i int) {
+	if err := d.storeIdx(key, i, DefaultPythonVersion, AsDictKey); err != nil {
+		panic("value: storeKnown on an unhashable key: " + err.Error())
+	}
+}
+
 // storeIdx records that key lives at position i.
-func (d *Dict) storeIdx(key Value, i int) error {
+func (d *Dict) storeIdx(key Value, i int, py PythonVersion, use HashUse) error {
 	if key.kind == KindString {
 		if d.strIdx == nil {
 			// i is the position this key is about to occupy, so the
@@ -103,7 +121,7 @@ func (d *Dict) storeIdx(key Value, i int) error {
 		d.strIdx[key.str] = i
 		return nil
 	}
-	h, err := hash(key)
+	h, err := hash(key, py, use)
 	if err != nil {
 		return err
 	}
@@ -128,7 +146,7 @@ func NewDict() Value { return Value{kind: KindDict, obj: &Dict{}} }
 // It reports an odd number of arguments, and a key Python would refuse to
 // hash, rather than panicking on either: a caller building a dict from data it
 // did not write cannot know in advance that every key is hashable.
-func DictOf(kv ...Value) (Value, error) {
+func DictOf(py PythonVersion, kv ...Value) (Value, error) {
 	if len(kv)%2 != 0 {
 		return Undefined, errs.New(errs.TypeError,
 			"DictOf needs an even number of arguments, got %d", len(kv))
@@ -137,7 +155,7 @@ func DictOf(kv ...Value) (Value, error) {
 	d, _ := v.Dict()
 	d.Reserve(len(kv) / 2)
 	for i := 0; i < len(kv); i += 2 {
-		if err := d.Set(kv[i], kv[i+1]); err != nil {
+		if err := d.Set(kv[i], kv[i+1], py); err != nil {
 			return Undefined, err
 		}
 	}
@@ -149,7 +167,7 @@ func StringDict(keys []string, vals []Value) Value {
 	v := NewDict()
 	d, _ := v.Dict()
 	for i, k := range keys {
-		_ = d.Set(String(k), vals[i])
+		d.SetKnown(String(k), vals[i])
 	}
 	return v
 }
@@ -181,8 +199,8 @@ func (d *Dict) Values() []Value {
 
 // Get looks up key. An unhashable key is reported as an error rather than a
 // miss, because Python raises TypeError for it.
-func (d *Dict) Get(key Value) (Value, bool, error) {
-	i, ok, err := d.lookupIdx(key)
+func (d *Dict) Get(key Value, py PythonVersion) (Value, bool, error) {
+	i, ok, err := d.lookupIdx(key, py, AsDictKey)
 	if err != nil || !ok {
 		return Undefined, false, err
 	}
@@ -206,13 +224,25 @@ func (d *Dict) GetString(key string) (Value, bool) {
 	return d.entries[i].Value, true
 }
 
+// GetKnown is Get for a key that cannot fail to hash. See hashKnown.
+func (d *Dict) GetKnown(key Value) (Value, bool) {
+	i, ok := d.lookupKnown(key)
+	if !ok {
+		return Undefined, false
+	}
+	return d.entries[i].Value, true
+}
+
+// SetKnown is Set for a key that cannot fail to hash. See hashKnown.
+func (d *Dict) SetKnown(key, val Value) { d.setKnown(key, val) }
+
 // Set inserts or replaces key.
 //
 // Replacing an existing entry keeps the original key object and position, so
 // {1: "a", True: "c"} is {1: 'c'} -- key 1, value from the later assignment --
 // exactly as CPython reports it.
-func (d *Dict) Set(key, val Value) error {
-	i, ok, err := d.lookupIdx(key)
+func (d *Dict) Set(key, val Value, py PythonVersion) error {
+	i, ok, err := d.lookupIdx(key, py, AsDictKey)
 	if err != nil {
 		return err
 	}
@@ -220,11 +250,20 @@ func (d *Dict) Set(key, val Value) error {
 		d.entries[i].Value = val
 		return nil
 	}
-	if err := d.storeIdx(key, len(d.entries)); err != nil {
-		return err
-	}
+	d.storeKnown(key, len(d.entries))
 	d.entries = append(d.entries, DictEntry{Key: key, Value: val})
 	return nil
+}
+
+// setKnown and storeKnown are Set and storeIdx for a key that cannot fail to
+// hash. See hashKnown.
+func (d *Dict) setKnown(key, val Value) {
+	if i, ok := d.lookupKnown(key); ok {
+		d.entries[i].Value = val
+		return
+	}
+	d.storeKnown(key, len(d.entries))
+	d.entries = append(d.entries, DictEntry{Key: key, Value: val})
 }
 
 // Reserve makes room for n entries.
@@ -252,7 +291,7 @@ func (d *Dict) Reserve(n int) {
 }
 
 // SetString inserts or replaces a str key.
-func (d *Dict) SetString(key string, val Value) { _ = d.Set(String(key), val) }
+func (d *Dict) SetString(key string, val Value) { d.setKnown(String(key), val) }
 
 // setFresh inserts a key the caller knows is not present yet.
 //
@@ -261,20 +300,28 @@ func (d *Dict) SetString(key string, val Value) { _ = d.Set(String(key), val) }
 // dict being filled from a Go map cannot have a duplicate -- the keys came
 // from a map -- so that question has a known answer, and filling a page's
 // worth of records asked it once per field for nothing.
-func (d *Dict) setFresh(key, val Value) error {
+func (d *Dict) setFresh(key, val Value) error { //nolint:unparam // error kept for the caller's shape
 	// storeIdx builds whichever index it needs, so this does not rest on
 	// the caller having reserved -- writing to a nil map panics, and a
 	// second caller added later would find that out the hard way.
-	if err := d.storeIdx(key, len(d.entries)); err != nil {
-		return err
-	}
+	d.storeKnown(key, len(d.entries))
 	d.entries = append(d.entries, DictEntry{Key: key, Value: val})
 	return nil
 }
 
+// DeleteKnown is Delete for a key that cannot fail to hash -- one that is
+// already in the dict. See hashKnown.
+func (d *Dict) DeleteKnown(key Value) bool {
+	ok, err := d.Delete(key, DefaultPythonVersion)
+	if err != nil {
+		panic("value: DeleteKnown on an unhashable key: " + err.Error())
+	}
+	return ok
+}
+
 // Delete removes key, reporting whether it was present.
-func (d *Dict) Delete(key Value) (bool, error) {
-	i, ok, err := d.lookupIdx(key)
+func (d *Dict) Delete(key Value, py PythonVersion) (bool, error) {
+	i, ok, err := d.lookupIdx(key, py, AsDictKey)
 	if err != nil || !ok {
 		return false, err
 	}
@@ -284,11 +331,9 @@ func (d *Dict) Delete(key Value) (bool, error) {
 			delete(d.strIdx, key.str)
 		}
 	} else {
-		h, err := hash(key)
-		if err != nil {
-			return false, err
-		}
-		delete(d.index, h)
+		// The key is already in the dict, so it hashed once and cannot
+		// fail now.
+		delete(d.index, hashKnown(key))
 	}
 	// Entries after the hole shifted down by one, in both indexes -- they
 	// number positions in one shared entry list.
@@ -346,7 +391,55 @@ type hashKey struct {
 // `fatal error: stack overflow`, which is not a panic and so is not something
 // the render can report. CPython has no wall of its own here: its tuple hash
 // is iterative, and it hashes a 65,000-deep tuple without complaint.
-func hash(v Value) (hashKey, error) {
+// HashUse is what a value was about to be used as, which from 3.14 on is part
+// of the message when it turns out not to be hashable: "cannot use 'list' as a
+// dict key". The hashing code cannot know this, so it is passed in.
+type HashUse string
+
+const (
+	// AsDictKey covers a mapping key and anything that becomes one, which
+	// includes `x in d`.
+	AsDictKey HashUse = "a dict key"
+	// AsSetElement covers set membership, which is what |unique and the
+	// `in` of a set reach.
+	AsSetElement HashUse = "a set element"
+)
+
+// errUnhashable words the refusal for the chosen interpreter. Before 3.14 it
+// named only the type that could not be hashed; 3.14 also names the value the
+// key was -- which for a tuple containing a list is the tuple, while the
+// unhashable type is still the list.
+// ErrUnhashable words an unhashable-key refusal where the outer container is
+// known by name rather than as a value -- a template name goes into jinja2's
+// cache key, which is a tuple that never exists here as a Value.
+func ErrUnhashable(outerType string, inner Value, py PythonVersion, use HashUse) error {
+	if py.UnhashableNamesTheUse() {
+		return errs.New(errs.TypeError, "cannot use '%s' as %s (unhashable type: '%s')",
+			outerType, string(use), inner.TypeName())
+	}
+	return errs.New(errs.TypeError, "unhashable type: '%s'", inner.TypeName())
+}
+
+func errUnhashable(outer, inner Value, py PythonVersion, use HashUse) error {
+	return ErrUnhashable(outer.TypeName(), inner, py, use)
+}
+
+// hashKnown is hash for a key that cannot fail: a Go string, or one that
+// already hashed successfully when it was first stored. Those paths take no
+// version because none of them can reach a message that depends on one --
+// which is the whole point of passing it explicitly everywhere else.
+func hashKnown(v Value) hashKey {
+	h, err := hash(v, DefaultPythonVersion, AsDictKey)
+	if err != nil {
+		// Unreachable: callers pass a string or a key already in the
+		// dict. Panicking beats returning a zero key, which would
+		// silently collide every unhashable value into one slot.
+		panic("value: hashKnown on an unhashable key: " + err.Error())
+	}
+	return h
+}
+
+func hash(v Value, py PythonVersion, use HashUse) (hashKey, error) {
 	// StrictUndefined defines __hash__ as a failure, so anything that
 	// hashes one -- a dict key, a set member, `value in env.filters`
 	// behind the `filter` test -- raises rather than answering.
@@ -354,15 +447,15 @@ func hash(v Value) (hashKey, error) {
 		return hashKey{}, err
 	}
 	if items, ok := tupleItems(v); ok {
-		return hashTuple(items)
+		return hashTuple(items, v, py, use)
 	}
-	return hashScalar(v)
+	return hashScalar(v, v, py, use)
 }
 
 // Hashable reports what Python's hash() would refuse about v, and nil when it
 // would not. A tuple is hashable exactly when its elements are.
-func Hashable(v Value) error {
-	_, err := hash(v)
+func Hashable(v Value, py PythonVersion, use HashUse) error {
+	_, err := hash(v, py, use)
 	return err
 }
 
@@ -407,7 +500,7 @@ const (
 // iteration budget. Writing the tree out once instead is exactly as
 // discriminating -- the encoding is unambiguous, so distinct tuples still get
 // distinct keys and no two unequal tuples can collide -- and costs O(nodes).
-func hashTuple(items []Value) (hashKey, error) {
+func hashTuple(items []Value, outer Value, py PythonVersion, use HashUse) (hashKey, error) {
 	buf := []byte{tupleOpen}
 	stack := []hashFrame{{items: items}}
 	for len(stack) > 0 {
@@ -425,7 +518,7 @@ func hashTuple(items []Value) (hashKey, error) {
 			stack = append(stack, hashFrame{items: sub})
 			continue
 		}
-		h, err := hashScalar(child)
+		h, err := hashScalar(child, outer, py, use)
 		if err != nil {
 			return hashKey{}, err
 		}
@@ -435,7 +528,7 @@ func hashTuple(items []Value) (hashKey, error) {
 }
 
 // hashScalar answers for every value that does not hash over children.
-func hashScalar(v Value) (hashKey, error) {
+func hashScalar(v, outer Value, py PythonVersion, use HashUse) (hashKey, error) {
 	switch v.kind {
 	case KindNone:
 		return hashKey{kind: KindNone}, nil
@@ -470,7 +563,7 @@ func hashScalar(v Value) (hashKey, error) {
 	case KindFunc:
 		return hashKey{kind: KindFunc, str: fmt.Sprintf("%p", v.obj)}, nil
 	}
-	return hashKey{}, errs.New(errs.TypeError, "unhashable type: '%s'", v.TypeName())
+	return hashKey{}, errUnhashable(outer, v, py, use)
 }
 
 // hashFloat folds an integral float onto the integer key space, because Python
@@ -509,7 +602,7 @@ func appendKey(dst []byte, h hashKey) []byte {
 //
 // The distinction matters: a tuple holding a list is unhashable, and Python
 // blames the list rather than the tuple that contains it.
-func CheckHashable(v Value) error {
-	_, err := hash(v)
+func CheckHashable(v Value, py PythonVersion, use HashUse) error {
+	_, err := hash(v, py, use)
 	return err
 }

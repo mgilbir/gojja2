@@ -603,7 +603,18 @@ func floatDivmod(x, y float64) (floordiv, mod float64) {
 // Integer division is computed as an exact rational and rounded once, not by
 // converting both sides to float first: 1 / (2**53 + 1) differs between the
 // two, and CPython gives the exactly-rounded answer.
-func Div(a, b Value) (Value, error) {
+// ErrZeroDivision words a division by zero the way the chosen interpreter
+// does. Before 3.14 the sentence named the operand kinds -- "float division by
+// zero" for `/`, "integer division or modulo by zero" for `//` and `%` -- and
+// 3.14 collapsed both to "division by zero".
+func ErrZeroDivision(py PythonVersion, older string) error {
+	if py.UnifiedDivisionByZero() {
+		return errs.New(errs.ZeroDivisionError, "division by zero")
+	}
+	return errs.New(errs.ZeroDivisionError, "%s", older)
+}
+
+func Div(a, b Value, py PythonVersion) (Value, error) {
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}
@@ -632,14 +643,14 @@ func Div(a, b Value) (Value, error) {
 		return Undefined, err
 	}
 	if y == 0 {
-		return Undefined, errs.New(errs.ZeroDivisionError, "float division by zero")
+		return Undefined, ErrZeroDivision(py, "float division by zero")
 	}
 	return Float(x / y), nil
 }
 
 // FloorDiv implements `//`, which rounds toward negative infinity rather than
 // toward zero as Go's integer division does.
-func FloorDiv(a, b Value) (Value, error) {
+func FloorDiv(a, b Value, py PythonVersion) (Value, error) {
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}
@@ -656,7 +667,7 @@ func FloorDiv(a, b Value) (Value, error) {
 			return Undefined, err
 		}
 		if y == 0 {
-			return Undefined, errs.New(errs.ZeroDivisionError, "float floor division by zero")
+			return Undefined, ErrZeroDivision(py, "float floor division by zero")
 		}
 		q, _ := floatDivmod(x, y)
 		return Float(q), nil
@@ -664,7 +675,7 @@ func FloorDiv(a, b Value) (Value, error) {
 	bx, _ := a.BigInt()
 	by, _ := b.BigInt()
 	if by.Sign() == 0 {
-		return Undefined, errs.New(errs.ZeroDivisionError, "integer division or modulo by zero")
+		return Undefined, ErrZeroDivision(py, "integer division or modulo by zero")
 	}
 	// big.Int.Div is Euclidean; Python floors. They differ when exactly one
 	// operand is negative, so compute the truncated quotient and correct.
@@ -681,11 +692,11 @@ func FloorDiv(a, b Value) (Value, error) {
 // budget bounds the string path, where a width the template chose sizes the
 // result: it may be nil, which means nobody is counting but the hard ceiling
 // still applies.
-func Mod(a, b Value, budget Budget) (Value, error) {
+func Mod(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 	if a.kind == KindString {
 		// `"%s" % nope` formats the undefined as "", so the operand
 		// check must not run before the string path.
-		return FormatPercent(a, b, budget)
+		return FormatPercent(a, b, budget, py)
 	}
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
@@ -703,7 +714,7 @@ func Mod(a, b Value, budget Budget) (Value, error) {
 			return Undefined, err
 		}
 		if y == 0 {
-			return Undefined, errs.New(errs.ZeroDivisionError, "float modulo")
+			return Undefined, ErrZeroDivision(py, "float modulo")
 		}
 		_, m := floatDivmod(x, y)
 		return Float(m), nil
@@ -711,7 +722,7 @@ func Mod(a, b Value, budget Budget) (Value, error) {
 	bx, _ := a.BigInt()
 	by, _ := b.BigInt()
 	if by.Sign() == 0 {
-		return Undefined, errs.New(errs.ZeroDivisionError, "integer modulo by zero")
+		return Undefined, ErrZeroDivision(py, "integer modulo by zero")
 	}
 	r := new(big.Int).Rem(bx, by)
 	if r.Sign() != 0 && (r.Sign() < 0) != (by.Sign() < 0) {
@@ -726,7 +737,7 @@ func Mod(a, b Value, budget Budget) (Value, error) {
 // exponent falls to float, as it does in Python. A negative base with a
 // fractional exponent yields a complex number in Python -- a type with no
 // place in a template -- so that case is rejected rather than approximated.
-func Pow(a, b Value, budget Budget) (Value, error) {
+func Pow(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}
@@ -759,8 +770,13 @@ func Pow(a, b Value, budget Budget) (Value, error) {
 		return Undefined, err
 	}
 	if x == 0 && y < 0 {
-		// Python reports this against the float it promoted to, so the
-		// message says 0.0 even when the base was the integer 0.
+		// Before 3.14 Python reported this against the float it
+		// promoted to, so the message said 0.0 even when the base was
+		// the integer 0. 3.14 says "zero to a negative power" for both.
+		if py.UnifiedDivisionByZero() {
+			return Undefined, errs.New(errs.ZeroDivisionError,
+				"zero to a negative power")
+		}
 		return Undefined, errs.New(errs.ZeroDivisionError,
 			"0.0 cannot be raised to a negative power")
 	}

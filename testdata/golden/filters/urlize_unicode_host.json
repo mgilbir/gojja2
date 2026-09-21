@@ -4,7 +4,7 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.11.15"
+    "python": "3.14.7"
   },
   "ok": true,
   "output": "<a href=\"https://exämple.com/path\" rel=\"noopener\">https://exämple.com/path</a>|<a href=\"https://www.föo.org\" rel=\"noopener\">www.föo.org</a>|<a href=\"https://中文.cn/路径\" rel=\"noopener\">https://中文.cn/路径</a>"

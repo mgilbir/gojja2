@@ -520,7 +520,7 @@ func dictValue(d *value.Dict) value.Value {
 	out := value.NewDict()
 	target, _ := out.Dict()
 	for _, e := range d.Entries() {
-		_ = target.Set(e.Key, e.Value)
+		target.SetKnown(e.Key, e.Value)
 	}
 	return out
 }

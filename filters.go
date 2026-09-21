@@ -539,7 +539,7 @@ func pythonSort(s *State, items, keys []value.Value) error {
 			failure = err
 			return false
 		}
-		ok, err := value.Ordered("<", keys[i], keys[j])
+		ok, err := value.Ordered("<", keys[i], keys[j], s.PythonVersion())
 		if err != nil {
 			failure = err
 		}
@@ -583,7 +583,7 @@ func pythonSort(s *State, items, keys []value.Value) error {
 			if err := s.Poll(); err != nil {
 				return err
 			}
-			ok, err := value.Ordered("<", pivotKey, keys[mid])
+			ok, err := value.Ordered("<", pivotKey, keys[mid], s.PythonVersion())
 			if err != nil {
 				return err
 			}
@@ -616,7 +616,7 @@ func stableSortFallback(s *State, items, keys []value.Value) error {
 			failure = err
 			return false
 		}
-		ok, err := value.Ordered("<", keys[idx[a]], keys[idx[b]])
+		ok, err := value.Ordered("<", keys[idx[a]], keys[idx[b]], s.PythonVersion())
 		if err != nil {
 			failure = err
 		}
@@ -959,13 +959,13 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	// AssertionError rather than the ValueError the wording suggests, and
 	// the value is reported as Python prints it -- `truncate(true)` says
 	// "got True", not "got 1".
-	if ok, err := value.Ordered(">=", length, value.Int(int64(endLen))); err != nil {
+	if ok, err := value.Ordered(">=", length, value.Int(int64(endLen)), s.PythonVersion()); err != nil {
 		return value.Undefined, err
 	} else if !ok {
 		return value.Undefined, errs.New(errs.AssertionError,
 			"expected length >= %d, got %s", endLen, value.Str(length))
 	}
-	if ok, err := value.Ordered(">=", leeway, value.Int(0)); err != nil {
+	if ok, err := value.Ordered(">=", leeway, value.Int(0), s.PythonVersion()); err != nil {
 		return value.Undefined, err
 	} else if !ok {
 		return value.Undefined, errs.New(errs.AssertionError,
@@ -985,7 +985,7 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	if fits, err := value.Ordered("<=", value.Int(int64(size)), room); err != nil {
+	if fits, err := value.Ordered("<=", value.Int(int64(size)), room, s.PythonVersion()); err != nil {
 		return value.Undefined, err
 	} else if fits {
 		return v, nil
@@ -1008,7 +1008,7 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 		if killwords {
 			// `s[:cut]`, through the evaluator's own slice, so
 			// every kind answers here exactly as it answers there.
-			sliced, err := sliceOf(v, value.None, value.Int(int64(cut)), value.None)
+			sliced, err := sliceOf(v, value.None, value.Int(int64(cut)), value.None, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -1142,7 +1142,7 @@ func wrapLine(s *State, text string, widthVal value.Value, breakLong, breakOnHyp
 	// None here, naming the operator, rather than an argument check at the
 	// filter's door. It happens once per line, so a value with no lines
 	// never reaches it.
-	tooNarrow, err := value.Ordered("<=", widthVal, value.Int(0))
+	tooNarrow, err := value.Ordered("<=", widthVal, value.Int(0), s.PythonVersion())
 	if err != nil {
 		return nil, err
 	}
@@ -1217,7 +1217,14 @@ func wrapLine(s *State, text string, widthVal value.Value, breakLong, breakOnHyp
 				}
 				head, _ := value.StrSlice(chunks[0], nil, &space, nil)
 				tail, _ := value.StrSlice(chunks[0], &space, nil, nil)
-				cur = append(cur, head)
+				// A zero-width head is nothing, and appending it
+				// costs the line its trailing-whitespace drop:
+				// the step below removes the empty string rather
+				// than the space in front of it. 3.13 does not
+				// make that mistake.
+				if head != "" || !s.PythonVersion().WordwrapDropsTheSpaceBeforeABreak() {
+					cur = append(cur, head)
+				}
 				chunks[0] = tail
 			} else if len(cur) == 0 {
 				cur = append(cur, chunks[0])
@@ -1618,13 +1625,13 @@ func filterFormat(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		for _, kw := range args.Kwargs {
 			dict.SetString(kw.Name, escapeArg(safe, kw.Value))
 		}
-		out, err = value.Mod(format, d, s)
+		out, err = value.Mod(format, d, s, s.PythonVersion())
 	} else {
 		pos := make([]value.Value, len(args.Pos))
 		for i, arg := range args.Pos {
 			pos[i] = escapeArg(safe, arg)
 		}
-		out, err = value.Mod(format, value.NewTuple(pos...), s)
+		out, err = value.Mod(format, value.NewTuple(pos...), s, s.PythonVersion())
 	}
 	if err != nil {
 		return value.Undefined, err
@@ -1657,7 +1664,7 @@ func escapeArg(safe bool, v value.Value) value.Value {
 func filterPprint(st *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	// pformat returns a str even for Markup input -- what it renders is the
 	// repr, which for Markup is `Markup('...')`.
-	sorted, err := sortDictKeys(v, 0)
+	sorted, err := sortDictKeys(v, 0, st.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1781,7 +1788,7 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 			}
 			b.WriteString(keyRep)
 			b.WriteString(": ")
-			val, _, _ := d.Get(key)
+			val, _, _ := d.Get(key, st.PythonVersion())
 			return pformatSeen(st, b, val, at+len(keyRep)+2, room, level+1, seen)
 		})
 		if err != nil {
@@ -1999,11 +2006,11 @@ func pformatItems[T any](st *State, b *strings.Builder, items []T, indent, allow
 // cycle, and rebuilding one without noticing runs until memory is gone; a
 // container already being rebuilt is left as it is, which is enough for
 // pformat to reach it and print its recursion marker.
-func sortDictKeys(v value.Value, level int) (value.Value, error) {
-	return sortDictKeysSeen(v, nil, level)
+func sortDictKeys(v value.Value, level int, py value.PythonVersion) (value.Value, error) {
+	return sortDictKeysSeen(v, nil, level, py)
 }
 
-func sortDictKeysSeen(v value.Value, seen map[any]bool, level int) (value.Value, error) {
+func sortDictKeysSeen(v value.Value, seen map[any]bool, level int, py value.PythonVersion) (value.Value, error) {
 	if level > maxPPrintDepth {
 		return value.Undefined, tooDeepToPrint()
 	}
@@ -2022,11 +2029,11 @@ func sortDictKeysSeen(v value.Value, seen map[any]bool, level int) (value.Value,
 		out := value.NewDict()
 		target, _ := out.Dict()
 		for _, e := range entries {
-			sorted, err := sortDictKeysSeen(e.Value, seen, level+1)
+			sorted, err := sortDictKeysSeen(e.Value, seen, level+1, py)
 			if err != nil {
 				return value.Undefined, err
 			}
-			_ = target.Set(e.Key, sorted)
+			_ = target.Set(e.Key, sorted, py)
 		}
 		return out, nil
 	case value.KindList, value.KindTuple:
@@ -2038,7 +2045,7 @@ func sortDictKeysSeen(v value.Value, seen map[any]bool, level int) (value.Value,
 		seq, _ := v.Seq()
 		items := make([]value.Value, seq.Len())
 		for i, item := range seq.Items() {
-			sorted, err := sortDictKeysSeen(item, seen, level+1)
+			sorted, err := sortDictKeysSeen(item, seen, level+1, py)
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -2407,7 +2414,7 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		// jinja2 writes `method not in {...}`, and membership of a set
 		// asks whether the value can be hashed -- so a list here is
 		// about the list, not about the method.
-		if err := value.Hashable(m); err != nil {
+		if err := value.Hashable(m, s.PythonVersion(), value.AsSetElement); err != nil {
 			return value.Undefined, err
 		}
 		method = value.Str(m)
@@ -2431,7 +2438,7 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		// matters: `[a, b] * 1` is a list, which math.ceil then rejects
 		// as "must be real number, not list" rather than the
 		// multiplication failing first.
-		scale, err := value.Pow(value.Int(10), precision, s)
+		scale, err := value.Pow(value.Int(10), precision, s, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -2449,7 +2456,7 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 			// 10**-400 underflows to 0.0, and Python then divides by
 			// it. gojja2 answered NaN, which is not a number any
 			// template asked for.
-			return value.Undefined, errs.New(errs.ZeroDivisionError, "float division by zero")
+			return value.Undefined, value.ErrZeroDivision(s.PythonVersion(), "float division by zero")
 		}
 		// math.ceil and math.floor answer a Python int, so they refuse a
 		// value that is not one -- which is where an infinity raises,
@@ -2782,7 +2789,7 @@ func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	// the lookup before anything checks that it is a string at all, and a
 	// hashable one that is not a string is refused by that check. Neither
 	// reaches the object, so both answer the same whatever it is.
-	if err := value.Hashable(name); err != nil {
+	if err := value.Hashable(name, s.PythonVersion(), value.AsDictKey); err != nil {
 		return value.Undefined, err
 	}
 	if name.Kind() != value.KindString {

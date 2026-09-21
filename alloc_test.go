@@ -364,8 +364,8 @@ func TestSliceDividesAndRangesItsCount(t *testing.T) {
 			"unsupported operand type(s) for //: 'int' and 'dict'"},
 		// Dividing comes first, so zero is reported as a division by
 		// zero rather than as anything about range().
-		{`{{ [1,2,3]|slice(0)|list }}`, "integer division or modulo by zero"},
-		{`{{ [1,2,3]|slice(false)|list }}`, "integer division or modulo by zero"},
+		{`{{ [1,2,3]|slice(0)|list }}`, "division by zero"},
+		{`{{ [1,2,3]|slice(false)|list }}`, "division by zero"},
 		// A float divides happily -- 3 // 2.5 is 1.0 -- and reaches
 		// range(), which is what refuses it.
 		{`{{ [1,2,3]|slice(2.5)|list }}`,
@@ -376,7 +376,7 @@ func TestSliceDividesAndRangesItsCount(t *testing.T) {
 		// same -- there is no short-circuit for having nothing to slice.
 		{`{{ []|slice("x")|list }}`,
 			"unsupported operand type(s) for //: 'int' and 'str'"},
-		{`{{ []|slice(0)|list }}`, "integer division or modulo by zero"},
+		{`{{ []|slice(0)|list }}`, "division by zero"},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {

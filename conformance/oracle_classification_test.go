@@ -45,8 +45,11 @@ func TestOracleGradesWhatCPythonDecided(t *testing.T) {
 		// Deterministic: CPython's answer about the argument.
 		{"an integer past Py_ssize_t", `{{ "ab"|center(9223372036854775808) }}`,
 			false, "OverflowError"},
-		{"an integer past C int", `{{ [3,1]|sort(reverse=2147483648) }}`,
-			false, "OverflowError"},
+		// sorted's reverse stopped being an integer in 3.12 -- Argument
+		// Clinic now tests it for truth -- so a value past a C int is
+		// simply true there. The case that probed it is gone rather
+		// than reworded: nothing else reaches that conversion, and a
+		// probe for a refusal CPython no longer makes proves nothing.
 		{"a repetition count past an index", `{{ "a" * 1180591620717411303424 }}`,
 			false, "OverflowError"},
 		// This machine's answer: the allocation is what failed, and how much
