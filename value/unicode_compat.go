@@ -29,7 +29,8 @@ type UnicodeOverrides struct {
 	// isLower, isUpper and isTitle are where the case predicates differ.
 	isLower, isUpper, isTitle *unicode.RangeTable
 	// isAlpha is where str.isalpha differs, which follows the same rule:
-	// Go knows characters an older CPython has not been told about.
+	// Go and the interpreter are on different Unicode releases, and either
+	// can be the one that knows a character.
 	isAlpha *unicode.RangeTable
 }
 

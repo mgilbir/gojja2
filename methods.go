@@ -92,11 +92,11 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 func checkMethodArity(typeName, name string, args *value.CallArgs, py value.PythonVersion) error {
 	key := typeName + "." + name
 	sig, known := methodSignatures[key]
-	// CPython reworded many of these in 3.13. The default table is the
-	// current wording; an older interpreter overrides only the entries it
-	// says differently. See method_arity_other.go.
-	if older, ok := methodArityOther[py]; ok {
-		if s, ok := older[key]; ok {
+	// CPython rewords these between releases -- many of them in 3.13. The
+	// committed table is the pinned interpreter's; another one overrides
+	// only the entries it says differently. See method_arity_other.go.
+	if other, ok := methodArityOther[py]; ok {
+		if s, ok := other[key]; ok {
 			sig, known = s, true
 		}
 	}

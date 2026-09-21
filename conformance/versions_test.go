@@ -104,8 +104,8 @@ func TestEveryPythonVersion(t *testing.T) {
 // file nothing reads. Either way it rots quietly, so both fail here.
 //
 // This is what keeps the override directories honest as CPython moves: when a
-// future default makes an older version's answer identical again, the file to
-// delete says so rather than sitting there agreeing with its neighbour.
+// future pin makes another version's answer identical again, the file to delete
+// says so rather than sitting there agreeing with its neighbour.
 func TestVersionOverridesAreAllUsed(t *testing.T) {
 	root := repoRoot(t)
 	goldenRoot := filepath.Join(root, "testdata/golden")

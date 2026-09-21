@@ -7,8 +7,9 @@ package value
 
 import "unicode"
 
-// The Unicode answers an older CPython gives where they differ from the
-// default's, which the committed tables are built for.
+// The Unicode answers a non-pinned CPython gives where they differ from the
+// pinned one's, which the committed tables are built for. The set includes
+// versions newer than the pin as well as older ones.
 //
 // CPython carries its own Unicode, so the interpreter decides case mappings,
 // which characters are digits, and how repr escapes them. Almost all of the
