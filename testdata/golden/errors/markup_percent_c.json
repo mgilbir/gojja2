@@ -4,11 +4,11 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.14.7"
+    "python": "3.13.14"
   },
   "ok": false,
   "error": {
     "type": "TypeError",
-    "message": "%c requires an int or a unicode character, not markupsafe._MarkupEscapeHelper"
+    "message": "%c requires int or char"
   }
 }

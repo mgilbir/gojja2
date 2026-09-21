@@ -30,14 +30,22 @@ const (
 	Python314 PythonVersion = 314
 )
 
-// DefaultPythonVersion is the newest gojja2 reproduces, and what an
-// environment that does not choose gets.
+// DefaultPythonVersion is the interpreter gojja2 is generated against, and what
+// an environment that does not choose gets.
 //
-// Newest rather than oldest because a template author reaching for jinja2
-// today is running it on a current interpreter, and because the alternative --
-// freezing on whatever was current when the engine was written -- is how 3.11
-// became the specification here by accident rather than by choice.
-const DefaultPythonVersion = Python314
+// This is the pin: every committed table and every committed golden is what
+// this CPython answered, and the other versions are stored as differences from
+// it. PYTHON_VERSION in the Makefile is the same fact on the generator side,
+// and TestDefaultVersionMatchesThePin fails if a bump moves one and not the
+// other -- because gojja2 rendering as one interpreter against tables built
+// from another is a wrong answer that nothing else would catch.
+//
+// It is a deliberate choice rather than "whatever is newest". Freezing on
+// whatever happened to be current when the engine was written is how 3.11
+// became the specification here by accident; picking the newest release the
+// day it lands is the same mistake with the sign flipped, since it makes the
+// default an interpreter most deployments are not running yet.
+const DefaultPythonVersion = Python313
 
 // String is the interpreter as it spells itself, for an error or a report.
 func (v PythonVersion) String() string {
@@ -116,6 +124,7 @@ func (v PythonVersion) UnifiedRecursionMessage() bool { return v.AtLeast(Python3
 // an object". 3.12 collapsed them all to one, which is why this takes the
 // older wording rather than returning it: the caller knows which of the three
 // it is, and from 3.12 on that no longer matters.
+// Corpus: errors/recursion_include, errors/recursion_extends.
 func (v PythonVersion) RecursionMessageFor(older string) string {
 	if v.UnifiedRecursionMessage() {
 		return "maximum recursion depth exceeded"
@@ -204,3 +213,16 @@ func (v PythonVersion) PercentCNamesTheType() bool { return v.AtLeast(Python314)
 // rather than one of its own.
 // Corpus: filters/slice_count_divides_by_zero, errors/round_ceil_underflow.
 func (v PythonVersion) UnifiedDivisionByZero() bool { return v.AtLeast(Python314) }
+
+// FloatModuloNamesZero reports whether `1.0 % 0` says what went wrong.
+//
+// 3.11 and 3.12 answer the bare "float modulo", which names the operation and
+// not the fault; 3.13 made it "float modulo by zero", matching its five
+// neighbours, and 3.14 then collapsed the lot to "division by zero".
+//
+// This one was invisible for a while. gojja2 passed "float modulo" as the
+// pre-3.14 wording for every version, which is right for two of the four, and
+// the corpus reached `1 % 0` but never `1 % 0.0` -- so the only case that could
+// have shown it was never asked. Corpus: errors/zero_division_float_mod,
+// errors/zero_division_float_mod_lhs, errors/zero_division_float_mod_both.
+func (v PythonVersion) FloatModuloNamesZero() bool { return v.AtLeast(Python313) }

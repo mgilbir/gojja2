@@ -1190,6 +1190,19 @@ case("errors/unknown_test", "{{ 1 is nosuch }}")
 case("errors/bad_assign", "{% set 1 = 2 %}")
 case("errors/nested_mismatch", "{% for x in [1] %}{% endif %}")
 case("errors/zero_division", "{{ 1/0 }}|{{ 1//0 }}|{{ 1%0 }}|{{ 1.0/0 }}")
+# Every shape a division by zero can take, one case per sentence. CPython had
+# six distinct wordings before 3.14 collapsed them, and the case above reaches
+# only three -- which is why "float modulo" kept the 3.11 wording on 3.13 with
+# nothing to notice. Each is its own case so a regression names the operator.
+case("errors/zero_division_float_mod", "{{ 1 % 0.0 }}")
+case("errors/zero_division_float_mod_lhs", "{{ 1.0 % 0 }}")
+case("errors/zero_division_float_mod_both", "{{ 1.0 % 0.0 }}")
+case("errors/zero_division_float_floor", "{{ 1 // 0.0 }}")
+case("errors/zero_division_float_floor_both", "{{ 1.0 // 0.0 }}")
+case("errors/zero_division_float_div_rhs", "{{ 1 / 0.0 }}")
+# The neighbouring message 3.14 moved in the same release.
+case("errors/zero_to_negative_power", "{{ 0 ** -1 }}")
+case("errors/zero_to_negative_power_float", "{{ 0.0 ** -1 }}")
 case("errors/type_mismatch", "{{ 1 + 'a' }}")
 case("errors/block_twice", "{% block b %}{% endblock %}{% block b %}{% endblock %}")
 case("errors/loop_assign", "{% for loop in [1] %}{% endfor %}")

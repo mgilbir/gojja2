@@ -22,11 +22,23 @@ SHELL := /bin/bash
 # PYTHON_VERSION is part of the specification and not a convenience. CPython
 # carries its own Unicode, so the interpreter decides which code points are
 # digits, how repr escapes them, and what every case-mapping table here says --
-# 3.11 is Unicode 14.0.0 and 3.13 is 15.1.0. This used to be whatever `uv venv`
-# found on the machine, which meant the specification was chosen by accident and
-# a contributor on a different interpreter would regenerate different goldens.
-PYTHON_VERSION   := 3.14
+# 3.11 is Unicode 14.0.0, 3.13 is 15.1.0 and 3.14 is 16.0.0. This used to be
+# whatever `uv venv` found on the machine, which meant the specification was
+# chosen by accident and a contributor on a different interpreter would
+# regenerate different goldens.
+#
+# It must stay in step with value.DefaultPythonVersion, which is the same fact
+# for a caller who does not choose; TestDefaultVersionMatchesThePin fails if a
+# bump moves one and not the other. Every other version gojja2 reproduces is
+# recorded as a set of differences from this one -- see `make golden-matrix`,
+# `make arity-matrix` and `make unicode-matrix` -- so moving it rotates which
+# version needs no overrides and which ones do.
+PYTHON_VERSION   := 3.13
 JINJA_VERSION    := 3.1.6
+# markupsafe travels in every golden and decides what escaping does, so it is
+# pinned for the same reason the interpreter is: it was resolved freely before,
+# which meant a fresh venv could quietly regenerate against a different one.
+MARKUPSAFE_VERSION := 3.0.3
 JINJA_REPO       := https://github.com/pallets/jinja.git
 JINJA_REV        := 2d4ce43010630478ee88b463f731389fa18953f4   # refs/tags/3.1.6
 
@@ -75,10 +87,13 @@ help: ## Show this help
 
 $(VENV)/.stamp:
 	uv venv --python $(PYTHON_VERSION) $(VENV)
-	uv pip install --python $(PY) "jinja2==$(JINJA_VERSION)"
+	uv pip install --python $(PY) "jinja2==$(JINJA_VERSION)" "markupsafe==$(MARKUPSAFE_VERSION)"
 	@$(PY) -c 'import sys, unicodedata; \
 	  v = ".".join(map(str, sys.version_info[:2])); \
 	  assert v == "$(PYTHON_VERSION)", f"venv is {v}, not $(PYTHON_VERSION)"; \
+	  import importlib.metadata as md; \
+	  ms = md.version("markupsafe"); \
+	  assert ms == "$(MARKUPSAFE_VERSION)", f"markupsafe is {ms}, not $(MARKUPSAFE_VERSION)"; \
 	  print(f"oracle: CPython {sys.version.split()[0]}, Unicode {unicodedata.unidata_version}")'
 	@touch $@
 
@@ -176,9 +191,10 @@ clean-suites: ## Remove downloaded suites
 # --- oracle ------------------------------------------------------------------
 
 .PHONY: oracle
-oracle: venv arity methodarity entities decimal strclass casemap utf8 unicode-matrix ## Regenerate golden files for testdata/corpus from CPython jinja2
+oracle: venv arity methodarity arity-matrix entities decimal strclass casemap utf8 unicode-matrix ## Regenerate golden files for testdata/corpus from CPython jinja2
 	$(PY) tools/oracle/gen_corpus.py
 	$(PY) tools/oracle/oracle.py --corpus testdata/corpus --golden testdata/golden
+	$(PY) tools/oracle/gen_golden_matrix.py
 
 .PHONY: arity
 arity: venv ## Regenerate arity.go from jinja2's own filter and test signatures
@@ -205,10 +221,19 @@ casemap: venv ## Regenerate casemap.go from CPython's full case mappings
 	$(PY) tools/oracle/gen_casemap.py
 	gofmt -w casemap.go
 
+.PHONY: arity-matrix
+arity-matrix: venv ## Regenerate method_arity_other.go from every CPython gojja2 reproduces
+	$(PY) tools/oracle/gen_arity_matrix.py
+	gofmt -w method_arity_other.go
+
+.PHONY: golden-matrix
+golden-matrix: venv ## Regenerate testdata/golden-<version> from every CPython gojja2 reproduces
+	$(PY) tools/oracle/gen_golden_matrix.py
+
 .PHONY: unicode-matrix
-unicode-matrix: venv ## Regenerate value/unicode_older.go from every CPython gojja2 reproduces
-	$(PY) tools/oracle/gen_unicode_older.py
-	gofmt -w value/unicode_older.go
+unicode-matrix: venv ## Regenerate value/unicode_other.go from every CPython gojja2 reproduces
+	$(PY) tools/oracle/gen_unicode_matrix.py
+	gofmt -w value/unicode_other.go
 
 .PHONY: decimal
 decimal: venv ## Regenerate value/decimaltable.go from CPython's decimal digits

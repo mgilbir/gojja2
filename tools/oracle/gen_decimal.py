@@ -18,10 +18,13 @@ is the point: SUPERSCRIPT TWO is isdigit, VULGAR FRACTION ONE HALF and ROMAN
 NUMERAL FIVE are isnumeric, and int() refuses all three. Only Nd is taken, so
 this is its own table rather than a reuse of strclass.go's.
 
-Go's unicode.Nd is a superset -- 680 code points against CPython 3.11's 660,
-because Go is on Unicode 15.0.0 and CPython 3.11 on 14.0.0. Using it directly
-would accept twenty code points (Kawi and Nag Mundari digits) that the
-specification rejects, so the table comes from the pinned CPython instead.
+The table comes from the pinned CPython rather than from Go's unicode.Nd,
+because the two need not agree: they track different Unicode releases, and which
+way they differ depends on the pin. Against CPython 3.11 (Unicode 14.0.0) Go is
+a superset by twenty code points -- the Kawi and Nag Mundari digits -- and using
+it directly would accept digits the specification rejects. Against a CPython
+ahead of Go it would reject digits the specification accepts. Either way the
+answer has to come from the interpreter.
 
 Every decimal code point falls in a run of ten consecutive ones valued 0 to 9,
 so the table is just the sixty-six run starts and a value is r - start.
@@ -91,9 +94,10 @@ package value
 // int() and float() read as the digits 0 through 9, in order. A code point's
 // value is its distance from the start of the run holding it.
 //
-// This comes from the pinned CPython rather than from unicode.Nd, which is a
-// superset: Go is on a later Unicode than CPython 3.11, and the extra code
-// points would be accepted where the specification rejects them.
+// This comes from the pinned CPython rather than from unicode.Nd, because the
+// two track different Unicode releases and whichever is ahead has digits the
+// other does not. Reading Go's table directly would answer for Go's Unicode,
+// not for the specification's.
 var decimalRuns = [...]rune{{
 {rows}
 }}

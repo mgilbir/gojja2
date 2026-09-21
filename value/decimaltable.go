@@ -9,9 +9,10 @@ package value
 // int() and float() read as the digits 0 through 9, in order. A code point's
 // value is its distance from the start of the run holding it.
 //
-// This comes from the pinned CPython rather than from unicode.Nd, which is a
-// superset: Go is on a later Unicode than CPython 3.11, and the extra code
-// points would be accepted where the specification rejects them.
+// This comes from the pinned CPython rather than from unicode.Nd, because the
+// two track different Unicode releases and whichever is ahead has digits the
+// other does not. Reading Go's table directly would answer for Go's Unicode,
+// not for the specification's.
 var decimalRuns = [...]rune{
 	0x0030,
 	0x0660,
@@ -52,7 +53,6 @@ var decimalRuns = [...]rune{
 	0xFF10,
 	0x104A0,
 	0x10D30,
-	0x10D40,
 	0x11066,
 	0x110F0,
 	0x11136,
@@ -62,22 +62,16 @@ var decimalRuns = [...]rune{
 	0x114D0,
 	0x11650,
 	0x116C0,
-	0x116D0,
-	0x116DA,
 	0x11730,
 	0x118E0,
 	0x11950,
-	0x11BF0,
 	0x11C50,
 	0x11D50,
 	0x11DA0,
 	0x11F50,
-	0x16130,
 	0x16A60,
 	0x16AC0,
 	0x16B50,
-	0x16D70,
-	0x1CCF0,
 	0x1D7CE,
 	0x1D7D8,
 	0x1D7E2,
@@ -86,14 +80,13 @@ var decimalRuns = [...]rune{
 	0x1E140,
 	0x1E2F0,
 	0x1E4F0,
-	0x1E5F1,
 	0x1E950,
 	0x1FBF0,
 }
 
 // decimalDigitCount is how many code points that is, for the test to check it
 // walked the whole table.
-const decimalDigitCount = 760
+const decimalDigitCount = 680
 
 // decimalDigitDigest is a sha256 over every code point in Unicode and the
 // decimal value CPython gives it, or -1 where it gives none. decimal_test.go
@@ -102,4 +95,4 @@ const decimalDigitCount = 760
 //
 // Regenerate with `make decimal` and read the diff: it is telling you either
 // that Unicode moved or that the pinned CPython did.
-const decimalDigitDigest = "bb1a034526b2f0994abc73f0a473a140c9dd63d6df348fa3b46c1dc050fcf3a9"
+const decimalDigitDigest = "8d0a2eb0b6a96acc093eee4670545461b0f75f78eda5872bdebbc1373ebecbbd"

@@ -5,20 +5,20 @@ package value
 
 import "unicode"
 
-// unicodeOverrides is one older interpreter's Unicode answers, where they
-// differ from the default's.
+// UnicodeOverrides is one non-pinned interpreter's Unicode answers, where they
+// differ from the pinned one's.
 //
 // CPython carries its own Unicode, so which characters are printable, which
 // are digits and how each one cases are all decided by the interpreter rather
-// than by jinja2. Between 3.11 and 3.14 that is 10,311 code points, and
-// WithPythonVersion would mean less than it says if a render reproduced one
-// interpreter's rules and another's tables.
+// than by jinja2. Across 3.11 to 3.14 there are 10,311 code points the four do
+// not all agree about, and WithPythonVersion would mean less than it says if a
+// render reproduced one interpreter's rules and another's tables.
 //
-// The committed tables are the default's, and this records only the
+// The committed tables are the pinned interpreter's, and this records only the
 // difference. Almost all of it is isprintable, and almost all of that is
 // simply which characters had been assigned yet: they arrive in blocks, so ten
-// thousand code points store as seventy-five ranges. See
-// tools/oracle/gen_unicode_older.py.
+// thousand code points store as a few dozen ranges. See
+// tools/oracle/gen_unicode_matrix.py.
 type UnicodeOverrides struct {
 	// printable is where isprintable differs, which is what repr escapes by.
 	printable *unicode.RangeTable
@@ -43,7 +43,7 @@ func UnicodeFor(py PythonVersion) *UnicodeOverrides {
 	if py == DefaultPythonVersion {
 		return nil
 	}
-	return unicodeOlder[py]
+	return unicodeOther[py]
 }
 
 // The accessors below all take the resolved overrides rather than the version,

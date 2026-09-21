@@ -94,8 +94,8 @@ func checkMethodArity(typeName, name string, args *value.CallArgs, py value.Pyth
 	sig, known := methodSignatures[key]
 	// CPython reworded many of these in 3.13. The default table is the
 	// current wording; an older interpreter overrides only the entries it
-	// says differently. See method_arity_older.go.
-	if older, ok := methodArityOlder[py]; ok {
+	// says differently. See method_arity_other.go.
+	if older, ok := methodArityOther[py]; ok {
 		if s, ok := older[key]; ok {
 			sig, known = s, true
 		}

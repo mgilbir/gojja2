@@ -607,6 +607,16 @@ func floatDivmod(x, y float64) (floordiv, mod float64) {
 // does. Before 3.14 the sentence named the operand kinds -- "float division by
 // zero" for `/`, "integer division or modulo by zero" for `//` and `%` -- and
 // 3.14 collapsed both to "division by zero".
+// floatModuloMessage is `%`'s pre-3.14 wording, which is not one sentence: it
+// gained "by zero" in 3.13. Kept beside ErrZeroDivision so the two halves of
+// the same message cannot drift apart.
+func floatModuloMessage(py PythonVersion) string {
+	if py.FloatModuloNamesZero() {
+		return "float modulo by zero"
+	}
+	return "float modulo"
+}
+
 func ErrZeroDivision(py PythonVersion, older string) error {
 	if py.UnifiedDivisionByZero() {
 		return errs.New(errs.ZeroDivisionError, "division by zero")
@@ -714,7 +724,7 @@ func Mod(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 			return Undefined, err
 		}
 		if y == 0 {
-			return Undefined, ErrZeroDivision(py, "float modulo")
+			return Undefined, ErrZeroDivision(py, floatModuloMessage(py))
 		}
 		_, m := floatDivmod(x, y)
 		return Float(m), nil

@@ -102,12 +102,13 @@ the diff: a golden that changed for a case you did not touch means something
 else moved, and that is the interesting part.
 
 `make oracle` also regenerates nine files from CPython itself — `arity.go`,
-`method_arity.go`, `method_arity_older.go`, `entities.go`, `strclass.go`,
+`method_arity.go`, `method_arity_other.go`, `entities.go`, `strclass.go`,
 `casemap.go`, `utf8digest.go`, `value/decimaltable.go` and
-`value/unicode_older.go`. Do not hand-edit those; change the generator.
+`value/unicode_other.go`. Do not hand-edit those; change the generator.
 
-**Which CPython generates them is pinned**, by `PYTHON_VERSION` in the Makefile,
-and `make venv` asserts it. That is part of the specification rather than a
+**Which CPython generates them is pinned**, by `PYTHON_VERSION` in the Makefile
+— 3.13 — and `make venv` asserts it, as does `TestDefaultVersionMatchesThePin`
+against `value.DefaultPythonVersion` and the header of every generated file. That is part of the specification rather than a
 convenience: CPython carries its own Unicode, so the interpreter decides the
 case mappings, the decimal digits and how `repr` escapes them. It used to be
 whatever `uv venv` found on the machine, which meant the specification was
@@ -116,10 +117,12 @@ chosen by accident and two contributors could regenerate different goldens.
 The Unicode tables are the ones with a history worth knowing. Several of them
 recorded *only where CPython differs from Go's own tables*, which is sound only
 while the two agree about everything else — and nobody checked that. They do not
-agree: Go 1.26 is Unicode 15.0.0 and the pinned CPython is 16.0.0. That
+agree, and how far apart they are depends on the pin: Go 1.26 is Unicode
+15.0.0, CPython 3.13 is 15.1.0 and 3.14 is 16.0.0. On the 3.14 pin that
 assumption silently produced the wrong answer for 54 case mappings, 4,924
 `isalpha` code points and 5,812 `isprintable` ones before the checks below
-existed. Every generator that compares against Go now reads Go's tables through
+existed; on 3.13 the same gap is 622 and 627, which is smaller and just as
+wrong. Every generator that compares against Go now reads Go's tables through
 `tools/gocase` rather than assuming them.
 
 Three tripwires guard the result, and each recomputes over every code point so a
@@ -135,9 +138,13 @@ If one fails after a toolchain upgrade or a `PYTHON_VERSION` bump, regenerate
 and read the diff: it is telling you either that Unicode moved or that the
 pinned CPython did.
 
-`make unicode-matrix` regenerates the per-version overrides by asking every
-interpreter gojja2 reproduces, through `uv run --python`, so it needs no
-hand-built environments. `TestEveryPythonVersion` grades the whole corpus
+Three matrix targets regenerate everything that is stored per version, each by
+asking every interpreter through `uv run --python`, so none of them needs a
+hand-built environment: `make unicode-matrix` for the Unicode tables,
+`make arity-matrix` for the built-in method wordings, and `make golden-matrix`
+for `testdata/golden-<version>`. All three are part of `make oracle`, which
+means a `PYTHON_VERSION` bump rotates which version needs no overrides without
+anyone editing a list. `TestEveryPythonVersion` grades the whole corpus
 against each one.
 
 If your case changes the corpus count, `TestConformance` will tell you the exact

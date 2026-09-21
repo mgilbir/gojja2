@@ -117,11 +117,11 @@ func TestFormatPercentRefusesLikeCPython(t *testing.T) {
 		kind   errs.Kind
 		msg    string
 	}{
-		{"%c", value.Float(1), errs.TypeError, "%c requires an int or a unicode character, not float"},
-		{"%c", value.None, errs.TypeError, "%c requires an int or a unicode character, not NoneType"},
+		{"%c", value.Float(1), errs.TypeError, wantPercentC("float")},
+		{"%c", value.None, errs.TypeError, wantPercentC("NoneType")},
 		{"%c", value.Int(1114112), errs.OverflowError, "%c arg not in range(0x110000)"},
 		{"%c", value.Int(-1), errs.OverflowError, "%c arg not in range(0x110000)"},
-		{"%c", value.String("ab"), errs.TypeError, "%c requires an int or a unicode character, not a string of length 2"},
+		{"%c", value.String("ab"), errs.TypeError, wantPercentC("a string of length 2")},
 		{"%d", value.Float(math.Inf(1)), errs.OverflowError, "cannot convert float infinity to integer"},
 		{"%d", value.Float(math.NaN()), errs.ValueError, "cannot convert float NaN to integer"},
 		// o, x and X take an integer only; d, i and u truncate a float.
@@ -281,4 +281,15 @@ func TestFormatSpecRules(t *testing.T) {
 			t.Errorf("format(%s, %q)\n got %q\nwant %q", value.Repr(tc.v), tc.spec, err.Error(), tc.want)
 		}
 	}
+}
+
+// wantPercentC is %c's refusal as the pinned interpreter words it. Before 3.14
+// every wrong argument got one sentence; 3.14 names what it got instead. The
+// corpus grades this against CPython on all four versions -- this only keeps
+// the unit test pointed at whichever one is the default.
+func wantPercentC(what string) string {
+	if value.DefaultPythonVersion.PercentCNamesTheType() {
+		return "%c requires an int or a unicode character, not " + what
+	}
+	return "%c requires int or char"
 }

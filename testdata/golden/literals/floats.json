@@ -4,7 +4,7 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.14.7"
+    "python": "3.13.14"
   },
   "ok": true,
   "output": "0.30000000000000004|1e+16|1e-05|0.3333333333333333|5.0"

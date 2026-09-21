@@ -4,11 +4,11 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.14.7"
+    "python": "3.13.14"
   },
   "ok": false,
   "error": {
     "type": "ZeroDivisionError",
-    "message": "division by zero"
+    "message": "integer division or modulo by zero"
   }
 }
