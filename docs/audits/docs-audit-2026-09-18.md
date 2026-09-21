@@ -1,5 +1,21 @@
 # gojja2 — documentation audit
 
+> **This is a point-in-time snapshot of commit `9da6620`, not a description of
+> the documentation as it stands.** Read the last column before acting on any
+> finding.
+>
+> All twenty-three were re-run against `HEAD` on 2026-09-21, and **all
+> twenty-three are fixed.** Twenty-two were already closed by the reorganisation
+> this audit prompted -- `docs/README.md`, `docs/architecture.md`,
+> `docs/extending.md`, `docs/limits.md` and `docs/contributing.md` did not exist
+> when it was written. The twenty-third, D16, was closed by the re-run: `SEED=`
+> was the last of its three knobs with no prose.
+>
+> Nothing below has been edited to match today's documentation, for the reason
+> [the index](README.md) gives: an audit is a record of what was true when it was
+> taken, and rewriting it destroys the only thing it is good for. The re-run is
+> the column, not the text.
+
 **Date:** 2026-09-18
 **Commit:** `9da6620` "Say what `__doc__` answers, and why gojja2 does not" (working tree clean at start)
 **Scope:** every reader-facing surface, read in full — `README.md` (242 lines), `docs/scope.md` (55),
@@ -30,36 +46,35 @@ and the entire extension API — the part with the trap in it — has no prose a
 
 ## 1. Summary
 
-23 findings: **5 high, 8 medium, 10 low.** 22 CONFIRMED, 1 PLAUSIBLE.
+23 findings: **5 high, 8 medium, 10 low.** 22 CONFIRMED, 1 PLAUSIBLE. All 23 fixed as of 2026-09-21.
 
 D23 was found while fixing D12, not during the read. It is recorded here rather than left in a commit message because a finding that only exists in a commit message is a finding nobody will find.
 
-| ID | Sev | Document | Issue | Status |
-|---|---|---|---|---|
-| D1 | High | `docs/audits/codebase-audit-2026-09-16.md` | Committed, orphaned, obsolete: 30 findings all marked CONFIRMED; all 30 re-run — 28 fixed, 1 partial, 1 never a defect, none marked so | CONFIRMED |
-| D2 | High | `README.md:21` | "streamed to `w`… with one exception: `{% include %}`" — there are six buffering constructs, and `divergences.md` already says so | CONFIRMED |
-| D3 | High | all docs | Zero diagrams in the repository; six processes carried in prose or tables that a picture would carry | CONFIRMED |
-| D4 | High | `docs/scope.md` | Orphaned — zero inbound links; `README.md:212` restates a lossy summary of it without linking | CONFIRMED |
-| D5 | High | (missing) | The extension API (`AddFilter`/`Func`/`State.Poll`/`ChargeBytes`) appears in no `.md`, yet `divergences.md` instructs readers to honour a contract no doc defines | CONFIRMED |
-| D6 | Med | `README.md:200` | "about 5,000 templates a second" — `make soak` measures ~640/s end to end on this machine | CONFIRMED |
-| D7 | Med | `NOTICE`, `README.md:223` | Two upstreams named; ten are consulted. The complete record lives only in gitignored files | CONFIRMED |
-| D8 | Med | `docs/divergences.md:475` | The `{% do %}` example does not run — `do` is opt-in, and `WithExtensions` is in no `.md` | CONFIRMED |
-| D9 | Med | `docs/divergences.md:163,164,178` | `[ErrOutputTooLarge]` / `[ErrTooManyIterations]` / `[ErrInternal]` are godoc link syntax in Markdown; they render as literal brackets | CONFIRMED |
-| D10 | Med | `README.md:235` | "`make check` — what CI runs" omits CI's sixth step, the `GOMEMLIMIT=1GiB` pass | CONFIRMED |
-| D11 | Med | `docs/divergences.md` | 637 lines, 23 equal-weight sections, no summary, no TOC; the one divergence that breaks working templates is at line ~100 | CONFIRMED |
-| D12 | Med | `docs/divergences.md` | Three genres in one flat doc: divergences (reference), safety limits (how-to, 194 lines / 30%), error-wording trivia | CONFIRMED |
-| D13 | Low | `README.md:75` | Stale tool output: the pasted oracle JSON lacks the `case` and `oracle` blocks the tool now emits | CONFIRMED |
-| D14 | Low | `README.md:119` | A 14-line paragraph whose "Two are…" antecedent is four clauses back; closes "for all three" after enumerating five | CONFIRMED |
-| D15 | Low | `README.md:45` | "A structure that refers to itself" renders `{'k': 'v', 'self': {...}}` — true for a map, false for a Go struct, in a paragraph about structs | CONFIRMED |
-| D16 | Low | `Makefile`, `conformance/oracle.go:90` | `SEED=`, `C=` and `GOJJA2_ORACLE_PYTHON` all work and are documented nowhere | CONFIRMED |
-| D17 | Low | `docs/` | No index; `docs/audits/` referenced from nothing | CONFIRMED |
-| D18 | Low | 4–5 docs | The sandbox story told 4 times, "inputs only / goldens from CPython" told 5 times, each in its own words | CONFIRMED |
-| D19 | Low | (missing) | No CONTRIBUTING: no answer to "I found a divergence, now what?" | CONFIRMED |
-| D20 | Low | `Makefile:253,272` | `make fmt` would rewrite pinned `third_party/` checkouts; CI excludes them, `make` does not | PLAUSIBLE |
-| D21 | Low | `README.md:6` | §"Using it" is a 12-line snippet plus eight unheaded caveat paragraphs; no anchors to route to one fact | CONFIRMED |
-| D22 | Low | `README.md` | 59% of the README is conformance methodology; the newcomer's questions get zero lines | CONFIRMED |
-| D23 | Med | `docs/divergences.md:318` | Says the iteration and output bounds turn off with a "non-positive" value; zero restores the *default*, and only a negative value removes a bound | CONFIRMED |
-
+| ID | Sev | Document | Issue | Status | Re-run 2026-09-21 |
+|---|---|---|---|---|---|
+| D1 | High | `docs/audits/codebase-audit-2026-09-16.md` | Committed, orphaned, obsolete: 30 findings all marked CONFIRMED; all 30 re-run — 28 fixed, 1 partial, 1 never a defect, none marked so | CONFIRMED | **Fixed** — `docs/audits/README.md` indexes both reports, and the codebase audit carries a superseded banner and a per-finding Status |
+| D2 | High | `README.md:21` | "streamed to `w`… with one exception: `{% include %}`" — there are six buffering constructs, and `divergences.md` already says so | CONFIRMED | **Fixed** — the claim is gone; what buffers is now `docs/architecture.md`'s subject |
+| D3 | High | all docs | Zero diagrams in the repository; six processes carried in prose or tables that a picture would carry | CONFIRMED | **Fixed** — mermaid diagrams in `docs/architecture.md`, `docs/contributing.md` and `docs/conformance.md` |
+| D4 | High | `docs/scope.md` | Orphaned — zero inbound links; `README.md:212` restates a lossy summary of it without linking | CONFIRMED | **Fixed** — linked from `README.md`, `docs/README.md`, `docs/guide.md` and `docs/divergences.md` |
+| D5 | High | (missing) | The extension API (`AddFilter`/`Func`/`State.Poll`/`ChargeBytes`) appears in no `.md`, yet `divergences.md` instructs readers to honour a contract no doc defines | CONFIRMED | **Fixed** — `docs/extending.md` |
+| D6 | Med | `README.md:200` | "about 5,000 templates a second" — `make soak` measures ~640/s end to end on this machine | CONFIRMED | **Fixed** — the number is gone; no unqualified throughput claim remains |
+| D7 | Med | `NOTICE`, `README.md:223` | Two upstreams named; ten are consulted. The complete record lives only in gitignored files | CONFIRMED | **Fixed** — `NOTICE` names all ten upstreams |
+| D8 | Med | `docs/divergences.md:475` | The `{% do %}` example does not run — `do` is opt-in, and `WithExtensions` is in no `.md` | CONFIRMED | **Fixed** — `WithExtensions` is in `docs/divergences.md` and `docs/guide.md` |
+| D9 | Med | `docs/divergences.md:163,164,178` | `[ErrOutputTooLarge]` / `[ErrTooManyIterations]` / `[ErrInternal]` are godoc link syntax in Markdown; they render as literal brackets | CONFIRMED | **Fixed** — no godoc link syntax left in any `.md` |
+| D10 | Med | `README.md:235` | "`make check` — what CI runs" omits CI's sixth step, the `GOMEMLIMIT=1GiB` pass | CONFIRMED | **Fixed** — `make check` is `fmt-check vet test memlimit race lint`, CI step for step |
+| D11 | Med | `docs/divergences.md` | 637 lines, 23 equal-weight sections, no summary, no TOC; the one divergence that breaks working templates is at line ~100 | CONFIRMED | **Fixed** — the one that bites is now the first section, above a summary table of all twenty-three |
+| D12 | Med | `docs/divergences.md` | Three genres in one flat doc: divergences (reference), safety limits (how-to, 194 lines / 30%), error-wording trivia | CONFIRMED | **Fixed** — the limits moved to `docs/limits.md`; `divergences.md` names none of the limit options |
+| D13 | Low | `README.md:75` | Stale tool output: the pasted oracle JSON lacks the `case` and `oracle` blocks the tool now emits | CONFIRMED | **Fixed** — the pasted JSON carries the `case` and `oracle` blocks |
+| D14 | Low | `README.md:119` | A 14-line paragraph whose "Two are…" antecedent is four clauses back; closes "for all three" after enumerating five | CONFIRMED | **Fixed** — the paragraph is gone; the section now ends in two sentences and two links |
+| D15 | Low | `README.md:45` | "A structure that refers to itself" renders `{'k': 'v', 'self': {...}}` — true for a map, false for a Go struct, in a paragraph about structs | CONFIRMED | **Fixed** — the claim is gone; `docs/guide.md` states the sharing rule instead |
+| D16 | Low | `Makefile`, `conformance/oracle.go:90` | `SEED=`, `C=` and `GOJJA2_ORACLE_PYTHON` all work and are documented nowhere | CONFIRMED | **Fixed** — `C=` and `SEED=` in `docs/contributing.md`, `GOJJA2_ORACLE_PYTHON` under *What watches the oracle* |
+| D17 | Low | `docs/` | No index; `docs/audits/` referenced from nothing | CONFIRMED | **Fixed** — `docs/README.md` indexes `docs/`, `docs/audits/README.md` indexes the reports |
+| D18 | Low | 4–5 docs | The sandbox story told 4 times, "inputs only / goldens from CPython" told 5 times, each in its own words | CONFIRMED | **Fixed** — "inputs only" is down from five docs to two, and `docs/scope.md` is the one place the sandbox story is told; the rest link to it |
+| D19 | Low | (missing) | No CONTRIBUTING: no answer to "I found a divergence, now what?" | CONFIRMED | **Fixed** — `docs/contributing.md`, which opens with "I think I found a bug" |
+| D20 | Low | `Makefile:253,272` | `make fmt` would rewrite pinned `third_party/` checkouts; CI excludes them, `make` does not | PLAUSIBLE | **Fixed** — `make fmt` filters `third_party/`, as CI already did |
+| D21 | Low | `README.md:6` | §"Using it" is a 12-line snippet plus eight unheaded caveat paragraphs; no anchors to route to one fact | CONFIRMED | **Fixed** — §"Using it" has headed subsections and anchors |
+| D22 | Low | `README.md` | 59% of the README is conformance methodology; the newcomer's questions get zero lines | CONFIRMED | **Fixed** — the README is 195 lines and conformance is 28 of them |
+| D23 | Med | `docs/divergences.md:318` | Says the iteration and output bounds turn off with a "non-positive" value; zero restores the *default*, and only a negative value removes a bound | CONFIRMED | **Fixed** — `docs/limits.md` opens the section with it in bold: zero is the default, a negative value removes the bound |
 ---
 
 ## 2. Doc map

@@ -207,9 +207,13 @@ short version: charge a template-chosen size *before* you allocate it, and call
 
 ## Hunting for divergences
 
-`make soak N=200000` generates templates from the grammar and requires both
+`make soak N=200000 SEED=7` generates templates from the grammar and requires both
 implementations to agree on output, exception class, message and line.
 `make fuzz TIME=5m` does the same, coverage-guided. Both need `make venv`.
+
+`SEED=` fixes the generator's seed, so a soak that found something can be
+replayed exactly; it defaults to 0, which means every run without it explores
+the same templates. Change it when you want new ground rather than a repeat.
 
 `make fuzz-props TIME=5m` needs nothing but Go, and is what CI runs. It cannot
 say what a template *means* -- only CPython can say that -- so it checks what
