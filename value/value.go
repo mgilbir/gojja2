@@ -135,8 +135,18 @@ const maxInt64AsFloat = 9223372036854775808.0
 // literal too large for a float64 is inf and one too small is zero, and both
 // are answers rather than failures. strconv returns exactly those values
 // alongside ErrRange, so the value is kept and the error is not.
+//
+// The decimal transform belongs here rather than at each caller, because every
+// caller wants it and one of them forgetting is invisible: `{{ x|float }}`
+// answers the filter's default, so a wrong number arrives with no error. It is
+// the same transform int() runs, and it is idempotent, so a caller that has
+// already applied it loses nothing.
+//
+// The lexer has a ParseFloat of its own for numeric *literals*, which must not
+// transform: Python source takes ASCII digits only, whatever a string passed to
+// float() may contain.
 func ParseFloat(text string) (float64, bool) {
-	f, err := strconv.ParseFloat(text, 64)
+	f, err := strconv.ParseFloat(DecimalASCII(text), 64)
 	if err != nil && !errors.Is(err, strconv.ErrRange) {
 		return 0, false
 	}

@@ -342,7 +342,7 @@ func init() {
 		// Nd made `{{ "\u00b2".isdigit() }}` False where CPython says
 		// True, and isalnum inherited it. strclass.go carries what the
 		// wider two accept beyond Nd; see tools/oracle/gen_strclass.py.
-		"isdecimal": classifyMethod(unicode.IsDigit),
+		"isdecimal": classifyMethod(pyIsDecimal),
 		"isdigit":   classifyMethod(pyIsDigit),
 		"isnumeric": classifyMethod(pyIsNumeric),
 		"isalpha":   classifyMethod(unicode.IsLetter),
@@ -542,16 +542,25 @@ func methodTranslate(s *State, r value.Value, args *value.CallArgs) (value.Value
 	return value.String(b.String()), nil
 }
 
-// pyIsDigit is str.isdigit: Nd plus Numeric_Type=Digit.
+// pyIsDecimal is str.isdecimal, and the base the other two build on.
+//
+// It asks value, not category, because that is the one table int() and float()
+// already read -- and because Go's unicode.IsDigit is a different Unicode
+// version from the CPython this is graded against, so it answered True for
+// twenty code points the specification does not have.
+func pyIsDecimal(r rune) bool { return value.DecimalValue(r) >= 0 }
+
+// pyIsDigit is str.isdigit: decimal plus Numeric_Type=Digit.
 func pyIsDigit(r rune) bool {
-	return unicode.IsDigit(r) || unicode.Is(digitExtra, r)
+	return pyIsDecimal(r) || unicode.Is(digitExtra, r)
 }
 
 // pyIsNumeric is str.isnumeric: anything carrying a numeric value, which
 // reaches past the number categories into CJK ideographs like U+4E00.
+//
+// nlNo is CPython's own Nl and No rather than Go's, for the same reason.
 func pyIsNumeric(r rune) bool {
-	return unicode.IsDigit(r) || unicode.Is(unicode.Nl, r) ||
-		unicode.Is(unicode.No, r) || unicode.Is(numericExtra, r)
+	return pyIsDecimal(r) || unicode.Is(nlNo, r) || unicode.Is(numericExtra, r)
 }
 
 // methodIsASCII is str.isascii, which is True for the empty string: it asks
