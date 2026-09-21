@@ -149,15 +149,20 @@ but it runs on an interpreter, and the interpreter decides what `{{ d[0:1] }}`
 raises, whether `{{ xs|sort(reverse=none) }}` is an error, how a division by
 zero is worded, and which code points are digits.
 
-Across CPython 3.11 to 3.14 that is **38 of the 2,197 committed cases** — 1.7%,
+Across CPython 3.11 to 3.14 that is **58 of the 2,233 committed cases** — 2.6%,
 and every one of them answers exactly two ways rather than four:
 
 | | |
 |---|---|
-| identical on all four interpreters | 2,159 (98.3%) |
-| answer differently somewhere | 38 |
+| identical on all four interpreters | 2,175 (97.4%) |
+| answer differently somewhere | 58 |
+| of those, the Unicode tables — printability, digits, casing | 20 |
 | of those, error wording only | 27 |
 | of those, behaviour: raises where it now renders, or a different class | 11 |
+
+The Unicode row is twenty cases because twenty were written; the corpus reached
+none of those code points until `testdata/corpus/unicode/` went in, which is why
+the tables were wrong for so long without anything saying so.
 
 `PYTHON_VERSION` in the Makefile pins which one is the specification, and it is
 part of that specification rather than a convenience: CPython carries its own
@@ -179,7 +184,7 @@ differs by interpreter", and one that does not cannot quietly start differing.
 
 Only the differences are stored. `testdata/golden` is the default version's full
 set; `testdata/golden-3.11` and its two neighbours hold the few dozen cases that
-answer differently -- 82 files in all -- laid over it.
+answer differently -- 58, 31 and 25 files, 114 in all -- laid over it.
 `TestEveryPythonVersion` grades every case against every interpreter, and
 `TestVersionOverridesAreAllUsed` fails an override that records nothing or names
 a case the corpus no longer has, so the directories cannot rot as CPython moves.

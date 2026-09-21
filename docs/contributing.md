@@ -101,16 +101,44 @@ which regenerates the corpus *and* re-records every golden from CPython. Check
 the diff: a golden that changed for a case you did not touch means something
 else moved, and that is the interesting part.
 
-`make oracle` also regenerates five files from CPython itself — `arity.go`,
-`method_arity.go`, `entities.go`, `strclass.go`, `casemap.go`. Do not hand-edit
-those; change the generator.
+`make oracle` also regenerates nine files from CPython itself — `arity.go`,
+`method_arity.go`, `method_arity_older.go`, `entities.go`, `strclass.go`,
+`casemap.go`, `utf8digest.go`, `value/decimaltable.go` and
+`value/unicode_older.go`. Do not hand-edit those; change the generator.
 
-`casemap.go` is the one with a tripwire. It records only where Python's case
-mapping differs from Go's, which is safe while the two agree everywhere else —
-they do today, on Unicode 14.0.0 against 15.0.0, but a Go release may move a
-mapping. `TestCaseMappingMatchesCPython` recomputes a digest over every code
-point, so that shows up as a test failure rather than as one wrong character.
-If it fails after a toolchain upgrade, run `make casemap` and read the diff.
+**Which CPython generates them is pinned**, by `PYTHON_VERSION` in the Makefile,
+and `make venv` asserts it. That is part of the specification rather than a
+convenience: CPython carries its own Unicode, so the interpreter decides the
+case mappings, the decimal digits and how `repr` escapes them. It used to be
+whatever `uv venv` found on the machine, which meant the specification was
+chosen by accident and two contributors could regenerate different goldens.
+
+The Unicode tables are the ones with a history worth knowing. Several of them
+recorded *only where CPython differs from Go's own tables*, which is sound only
+while the two agree about everything else — and nobody checked that. They do not
+agree: Go 1.26 is Unicode 15.0.0 and the pinned CPython is 16.0.0. That
+assumption silently produced the wrong answer for 54 case mappings, 4,924
+`isalpha` code points and 5,812 `isprintable` ones before the checks below
+existed. Every generator that compares against Go now reads Go's tables through
+`tools/gocase` rather than assuming them.
+
+Three tripwires guard the result, and each recomputes over every code point so a
+drift shows up as a test failure rather than as one wrong character:
+
+| test | covers | regenerate with |
+|---|---|---|
+| `TestCaseMappingMatchesCPython` | upper, lower, title, casefold and the three case predicates | `make casemap` |
+| `TestDecimalValuesMatchCPython` | which characters `int()` and `float()` read as digits | `make decimal` |
+| `TestUTF8DecodeMatchesCPython` | every way the UTF-8 decoder can refuse a byte | `make utf8` |
+
+If one fails after a toolchain upgrade or a `PYTHON_VERSION` bump, regenerate
+and read the diff: it is telling you either that Unicode moved or that the
+pinned CPython did.
+
+`make unicode-matrix` regenerates the per-version overrides by asking every
+interpreter gojja2 reproduces, through `uv run --python`, so it needs no
+hand-built environments. `TestEveryPythonVersion` grades the whole corpus
+against each one.
 
 If your case changes the corpus count, `TestConformance` will tell you the exact
 table row it wants. Paste it into `docs/conformance.md`; the README's headline
