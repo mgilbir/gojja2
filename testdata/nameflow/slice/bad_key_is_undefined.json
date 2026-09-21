@@ -1,7 +1,7 @@
 {
   "case": "slice/bad_key_is_undefined.jj2",
   "variables": {
-    "d": "o",
-    "xs": "o"
+    "d": "or",
+    "xs": "or"
   }
 }

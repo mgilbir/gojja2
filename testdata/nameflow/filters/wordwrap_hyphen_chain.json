@@ -1,6 +1,6 @@
 {
   "case": "filters/wordwrap_hyphen_chain.jj2",
   "variables": {
-    "joined": "o"
+    "joined": "or"
   }
 }

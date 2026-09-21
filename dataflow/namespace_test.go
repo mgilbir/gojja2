@@ -21,7 +21,7 @@ func TestNamespaceFieldsAreFollowed(t *testing.T) {
 			`{% set ns = namespace(total=0) %}
 			 {% for row in rows %}{% set ns.total = ns.total + row %}{% endfor %}
 			 {{ ns.total }}`,
-			"rows:of",
+			"rows:ofr",
 		},
 		{
 			// Field by field, so a variable that only ever reaches an
@@ -47,19 +47,19 @@ func TestNamespaceFieldsAreFollowed(t *testing.T) {
 			"handing it to a macro gives up",
 			`{% macro m(o) %}{{ o.v }}{% endmacro %}
 			 {% set ns = namespace(v=x) %}{{ m(ns) }}`,
-			"x:o?",
+			"x:or?",
 		},
 		{
 			"fields nobody can name give up",
 			`{% set ns = namespace(**d) %}{% set ns.v = x %}{{ ns.v }}`,
-			"d:o? x:o?",
+			"d:or? x:o?",
 		},
 		{
 			// Not created here, so there is no telling what it is or
 			// what else touches it.
 			"one that was passed in is opaque",
 			`{% set given.v = x %}{{ given.v }}`,
-			"given:o? x:o?",
+			"given:or? x:or?",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,6 @@
 {
   "case": "errors/truncate_length_unwhole.jj2",
   "variables": {
-    "t": "o"
+    "t": "or"
   }
 }

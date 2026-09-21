@@ -1,6 +1,6 @@
 {
   "case": "grouptuple/order.jj2",
   "variables": {
-    "users": "o"
+    "users": "or"
   }
 }

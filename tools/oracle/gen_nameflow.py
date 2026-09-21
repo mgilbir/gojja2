@@ -15,9 +15,10 @@ twice and require the results to match. A single implementation would be right
 by definition.
 
 The encoding is terse because there are thousands of these: "o" the value can be
-printed, "f" it can change the output without being printed, "of" both, "-"
-neither, and a trailing "?" for an answer with no reliable negative -- a route
-the analysis could not follow, so the variable may reach the output anyway.
+printed, "f" it can change the output without being printed, "r" the render can
+fail because of it, "-" none of those, and a trailing "?" for an answer with no
+reliable negative -- a route the analysis could not follow, so the variable may
+reach the output anyway.
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ DST = ROOT / "testdata/nameflow"
 
 
 def encode(v: dict) -> str:
-    s = ("o" if v["output"] else "") + ("f" if v["flow"] else "")
+    s = (("o" if v["output"] else "") + ("f" if v["flow"] else "")
+         + ("r" if v["required"] else ""))
     return (s or "-") + ("?" if v["unknown"] else "")
 
 

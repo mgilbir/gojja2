@@ -1,6 +1,6 @@
 {
   "case": "errors/urlize_limit_str.jj2",
   "variables": {
-    "u": "o"
+    "u": "or"
   }
 }

@@ -177,10 +177,11 @@ func (a *analyzer) bind(target *syntax.Node, srcs symset) {
 		}
 		// Not a namespace this is following -- one that was passed in, or
 		// one that got away. The write still happened, so the whole thing
-		// becomes opaque rather than silently lost.
+		// becomes opaque rather than silently lost, and writing a field of
+		// something that is not a namespace stops the render.
 		a.depend(s, srcs)
 		if s != nil {
-			a.effects[s] |= Opaque
+			a.effects[s] |= Opaque | Required
 		}
 	case syntax.KindTuple, syntax.KindList:
 		// Unpacking: which element lands where is not tracked, so every

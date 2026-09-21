@@ -1,6 +1,6 @@
 {
   "case": "filters/string_ops.jj2",
   "variables": {
-    "text": "o"
+    "text": "or"
   }
 }

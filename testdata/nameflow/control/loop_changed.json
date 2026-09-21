@@ -1,6 +1,6 @@
 {
   "case": "control/loop_changed.jj2",
   "variables": {
-    "xs": "of"
+    "xs": "ofr"
   }
 }

@@ -1,6 +1,6 @@
 {
   "case": "limits/integer_width_multiply.jj2",
   "variables": {
-    "e": "o"
+    "e": "or"
   }
 }

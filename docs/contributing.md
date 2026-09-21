@@ -172,7 +172,10 @@ Nodes are named by their position in a pre-order walk, which costs nothing to
 agree on because the trees are already identical — a fact worth noticing: the
 second comparison is only possible because the first one passes.
 
-`TestNegativesSurviveRendering` is the check the other two cannot be. They
+`TestNegativesSurviveRendering` is the check the other two cannot be, and it
+earns its place: adding the `Required` effect, it found five variables the rule
+had missed and then caught a regression the fix introduced, all before the change
+left the branch. They
 compare two implementations, and two implementations can be wrong the same way;
 this one asks the engine. Where the analysis says a variable's value cannot be
 printed, a marker no template contains is passed in and the output must not hold

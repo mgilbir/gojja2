@@ -1,8 +1,8 @@
 {
   "case": "escape/volatile_concat_macro.jj2",
   "variables": {
-    "mk": "o",
-    "s": "o",
+    "mk": "or",
+    "s": "or",
     "yes": "f"
   }
 }

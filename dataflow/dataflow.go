@@ -48,6 +48,20 @@ const (
 	// Steers means it can change the output without appearing in it: a
 	// condition, a loop's length, an autoescape setting.
 	Steers
+	// Required means the render can fail because of this variable: its value
+	// feeds something that can raise. `{% set unused = x + 1 %}` prints
+	// nothing and steers nothing, and passing a string for x still stops the
+	// render dead.
+	//
+	// Printed and Steers describe the document. This describes whether there
+	// is one, which is a different question and one a caller reading "cannot
+	// affect the output" would otherwise get wrong.
+	//
+	// It is an over-approximation: the operation *can* raise, not that it
+	// will. Most variables have it, and the useful signal is its absence --
+	// a variable without it cannot turn a successful render into a failed
+	// one, whatever is passed.
+	Required
 	// Opaque means some route was not followed, so the answer has no
 	// reliable negative.
 	Opaque

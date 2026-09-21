@@ -1,6 +1,6 @@
 {
   "case": "filters/batch_linecount_zero_yields_an_empty_row.jj2",
   "variables": {
-    "seq": "o"
+    "seq": "or"
   }
 }

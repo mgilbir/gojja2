@@ -33,7 +33,12 @@ func TestNegativesSurviveRendering(t *testing.T) {
 	// Two values with nothing in common: a different type, a different
 	// length, a different truthiness. If the variable matters at all, one of
 	// those differences should show.
-	probes := []value.Value{value.String("gojja2-probe-alpha"), value.Int(0)}
+	probes := []value.Value{
+		value.String("gojja2-probe-alpha"),
+		value.Int(0),
+		value.None,
+		value.NewList(value.Int(1)),
+	}
 	// A string no template in the corpus contains, so finding it in the
 	// output means it came from the variable and nowhere else.
 	const markerText = "zqxjmarkerzqxj"
@@ -92,6 +97,28 @@ func TestNegativesSurviveRendering(t *testing.T) {
 							"but its value is in the output:\n  %q",
 							c.Rel, name, out)
 					}
+				}
+			}
+
+			// "The render cannot fail because of it." Whatever is
+			// passed, a render that succeeded must still succeed and
+			// one that failed must still fail.
+			if e&dataflow.Required == 0 {
+				claimed++
+				first, firstOK := render(name, probes[0])
+				same := true
+				for _, probe := range probes[1:] {
+					_, ok := render(name, probe)
+					if ok != firstOK {
+						same = false
+					}
+				}
+				checked++
+				if !same {
+					t.Errorf("%s: the analysis says the render cannot fail "+
+						"because of %q, but changing it changes whether it "+
+						"does\n  with %v: ok=%v %q", c.Rel, name, probes[0],
+						firstOK, first)
 				}
 			}
 

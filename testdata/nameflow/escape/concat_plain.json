@@ -1,7 +1,7 @@
 {
   "case": "escape/concat_plain.jj2",
   "variables": {
-    "n": "o",
-    "sv": "o"
+    "n": "or",
+    "sv": "or"
   }
 }

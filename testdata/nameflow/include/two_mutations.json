@@ -1,6 +1,6 @@
 {
   "case": "include/two_mutations.jj2",
   "variables": {
-    "l": "o"
+    "l": "or"
   }
 }

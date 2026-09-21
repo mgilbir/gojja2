@@ -1,6 +1,6 @@
 {
   "case": "tests/is_filter_and_is_test.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

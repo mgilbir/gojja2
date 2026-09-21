@@ -97,7 +97,7 @@ func TestFollowingOtherTemplates(t *testing.T) {
 			// `{% if %}` does with its condition.
 			name:    "a computed name steers, and is opaque",
 			sources: map[string]string{"a": `{% include page %}{{ v }}`, "b": ``},
-			want:    "page:f? v:o?",
+			want:    "page:fr? v:o?",
 		},
 		{
 			// Named but not there. It may exist at render time under a

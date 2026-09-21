@@ -1,6 +1,6 @@
 {
   "case": "filters/pprint.jj2",
   "variables": {
-    "map": "o"
+    "map": "or"
   }
 }

@@ -1,6 +1,6 @@
 {
   "case": "filters/slice_count_reaches_range_as_a_float.jj2",
   "variables": {
-    "seq": "o"
+    "seq": "or"
   }
 }

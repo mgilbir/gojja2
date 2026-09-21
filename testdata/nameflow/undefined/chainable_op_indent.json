@@ -1,6 +1,6 @@
 {
   "case": "undefined/chainable_op_indent.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

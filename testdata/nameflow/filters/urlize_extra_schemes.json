@@ -1,6 +1,6 @@
 {
   "case": "filters/urlize_extra_schemes.jj2",
   "variables": {
-    "f": "o"
+    "f": "or"
   }
 }

@@ -1,6 +1,6 @@
 {
   "case": "control/for_dict.jj2",
   "variables": {
-    "map": "of"
+    "map": "ofr"
   }
 }

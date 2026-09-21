@@ -1,6 +1,6 @@
 {
   "case": "filters/list_string.jj2",
   "variables": {
-    "map": "o"
+    "map": "or"
   }
 }

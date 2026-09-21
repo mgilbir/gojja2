@@ -1,8 +1,8 @@
 {
   "case": "escape/join_no_autoescape.jj2",
   "variables": {
-    "a": "o",
-    "b": "o",
-    "sep": "o"
+    "a": "or",
+    "b": "or",
+    "sep": "or"
   }
 }

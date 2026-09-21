@@ -1,6 +1,6 @@
 {
   "case": "filters/urlize_unicode_digits.jj2",
   "variables": {
-    "a": "o"
+    "a": "or"
   }
 }

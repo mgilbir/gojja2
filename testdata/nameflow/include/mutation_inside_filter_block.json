@@ -1,6 +1,6 @@
 {
   "case": "include/mutation_inside_filter_block.jj2",
   "variables": {
-    "l": "o"
+    "l": "or"
   }
 }

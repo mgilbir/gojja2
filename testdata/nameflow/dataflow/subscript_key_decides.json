@@ -1,7 +1,7 @@
 {
   "case": "dataflow/subscript_key_decides.jj2",
   "variables": {
-    "d": "o",
-    "k": "f"
+    "d": "or",
+    "k": "fr"
   }
 }

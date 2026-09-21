@@ -428,10 +428,18 @@ for name, e := range dataflow.Analyze(tree).Context(tree) {
 }
 ```
 
-The two are independent and a variable can be neither: `{% set unused = x %}`
-with nothing reading `unused` means `x` cannot change the output at all. That
-negative is the useful part, and it is why this is a dataflow analysis rather
-than a scan for names — `{% set y = x %}{{ y }}` prints `x` without ever naming
+There is a third, `Required`: the render can **fail** because of this variable.
+`Printed` and `Steers` describe the document; `Required` describes whether there
+is one. `{% set unused = x + 1 %}` prints nothing and steers nothing, and passing
+a string for `x` still stops the render dead — so reading "cannot affect the
+output" as "need not be passed" would be a mistake. It is an over-approximation:
+the operation *can* raise, not that it will, so most variables have it and the
+useful signal is its absence.
+
+The effects are independent and a variable can have none: `{% set unused = x %}`
+with nothing reading `unused` means `x` cannot change the output *or* break the
+render. That negative is the useful part, and it is why this is a dataflow
+analysis rather than a scan for names — `{% set y = x %}{{ y }}` prints `x` without ever naming
 it at an output position, and `{{ "yes" if flag else "no" }}` prints neither
 operand while `flag` decides which.
 

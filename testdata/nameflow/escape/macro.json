@@ -1,6 +1,6 @@
 {
   "case": "escape/macro.jj2",
   "variables": {
-    "v": "o"
+    "v": "or"
   }
 }

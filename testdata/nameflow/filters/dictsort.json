@@ -1,6 +1,6 @@
 {
   "case": "filters/dictsort.jj2",
   "variables": {
-    "map": "o"
+    "map": "or"
   }
 }

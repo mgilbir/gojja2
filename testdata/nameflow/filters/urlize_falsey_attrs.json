@@ -1,6 +1,6 @@
 {
   "case": "filters/urlize_falsey_attrs.jj2",
   "variables": {
-    "u": "o"
+    "u": "or"
   }
 }

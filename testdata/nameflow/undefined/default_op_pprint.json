@@ -1,6 +1,6 @@
 {
   "case": "undefined/default_op_pprint.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

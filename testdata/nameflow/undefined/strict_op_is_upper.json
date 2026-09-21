@@ -1,6 +1,6 @@
 {
   "case": "undefined/strict_op_is_upper.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

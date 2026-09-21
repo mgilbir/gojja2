@@ -34,7 +34,7 @@ func TestAnalyze(t *testing.T) {
 		{`{% set a = b %}{% set c = a %}{{ c }}`, "b:o"},
 		{`{% set t %}{{ a }}{% endset %}{{ t }}`, "a:o"},
 		{`{% with q = p %}{{ q }}{% endwith %}`, "p:o"},
-		{`{% macro m(v) %}{{ v }}{% endmacro %}{{ m(q) }}`, "q:o"},
+		{`{% macro m(v) %}{{ v }}{% endmacro %}{{ m(q) }}`, "q:or"},
 		{`{% filter upper %}{{ a }}{% endfilter %}`, "a:o"},
 
 		// A conditional's test steers; its branches print.
@@ -43,9 +43,9 @@ func TestAnalyze(t *testing.T) {
 		{`{% set label = "yes" if flag else "no" %}{{ label }}`, "flag:f"},
 
 		// A loop's sequence does both.
-		{`{% for x in items %}{{ x }}{% endfor %}`, "items:of"},
-		{`{% for x in items %}fixed{% endfor %}`, "items:f"},
-		{`{% for x in xs %}{{ loop.index }}{% endfor %}`, "xs:of"},
+		{`{% for x in items %}{{ x }}{% endfor %}`, "items:ofr"},
+		{`{% for x in items %}fixed{% endfor %}`, "items:fr"},
+		{`{% for x in xs %}{{ loop.index }}{% endfor %}`, "xs:ofr"},
 
 		// The useful negative.
 		{`{% set unused = secret %}done`, "secret:-"},
@@ -63,17 +63,17 @@ func TestAnalyze(t *testing.T) {
 		// A computed lookup reads out of the container whatever the key
 		// turns out to be, so the container is printed and the key steers
 		// -- it chooses among the values rather than being one of them.
-		{`{{ data[key] }}`, "data:o key:f"},
-		{`{{ o|attr(n) }}`, "n:f o:o"},
+		{`{{ data[key] }}`, "data:or key:fr"},
+		{`{{ o|attr(n) }}`, "n:fr o:or"},
 
 		// Where it cannot see, it says so.
-		{`{% set ns = namespace(v=0) %}{% for i in xs %}{% set ns.v = i %}{% endfor %}{{ ns.v }}`, "xs:of"},
+		{`{% set ns = namespace(v=0) %}{% for i in xs %}{% set ns.v = i %}{% endfor %}{{ ns.v }}`, "xs:ofr"},
 		{`{% include "other.html" %}{{ a }}`, "a:o?"},
 
 		// Not fooled by the constant folder, because the tree is the
 		// template as written.
 		{`{% if false %}{{ secret }}{% endif %}`, "secret:o"},
-		{`{{ xs[[]] }}`, "xs:o"},
+		{`{{ xs[[]] }}`, "xs:or"},
 	} {
 		env, err := gojja2.New()
 		if err != nil {
@@ -133,6 +133,9 @@ func format(m map[string]dataflow.Effect) string {
 		if e&dataflow.Steers != 0 {
 			s += "f"
 		}
+		if e&dataflow.Required != 0 {
+			s += "r"
+		}
 		if s == "" {
 			s = "-"
 		}
@@ -143,4 +146,45 @@ func format(m map[string]dataflow.Effect) string {
 	}
 	sort.Strings(out)
 	return strings.Join(out, " ")
+}
+
+// Required is about whether there is a document, not what is in it.
+//
+// Printed and Steers both describe the output. A variable can do neither and
+// still stop the render dead, and before this existed such a variable answered
+// "-" -- which a caller could reasonably read as "need not be passed".
+func TestRequired(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		// Read, and nothing can go wrong: reading a name that is not
+		// there gives Undefined rather than an error.
+		{`{% set unused = x %}done`, "x:-"},
+		// The same read, one operator later.
+		{`{% set unused = x + 1 %}done`, "x:r"},
+		// Printing does not raise under the default undefined policy, and
+		// neither does testing something for truth.
+		{`{{ a }}`, "a:o"},
+		{`{% if c %}yes{% endif %}`, "c:f"},
+		// A filter, a call, a loop and a subscript all can.
+		{`{% set unused = x|upper %}done`, "x:r"},
+		{`{% set unused = x.strip() %}done`, "x:r"},
+		{`{% for i in xs %}{% endfor %}done`, "xs:fr"},
+		{`{% set unused = xs[0] %}done`, "xs:r"},
+		// A key that cannot be hashed stops the render, and is printed
+		// besides.
+		{`{{ {k: 1} }}`, "k:or"},
+	} {
+		env, err := gojja2.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: compile: %v", tc.src, err)
+			continue
+		}
+		tree := tmpl.Syntax()
+		if got := format(dataflow.Analyze(tree).Context(tree)); got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
 }

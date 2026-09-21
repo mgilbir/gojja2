@@ -1,6 +1,6 @@
 {
   "case": "classes/attr_plain.jj2",
   "variables": {
-    "nope": "o"
+    "nope": "or"
   }
 }

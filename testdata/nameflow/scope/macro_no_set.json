@@ -1,6 +1,6 @@
 {
   "case": "scope/macro_no_set.jj2",
   "variables": {
-    "x": "o"
+    "x": "or"
   }
 }

@@ -1,6 +1,6 @@
 {
   "case": "grouptuple/sum_start.jj2",
   "variables": {
-    "users": "o"
+    "users": "or"
   }
 }

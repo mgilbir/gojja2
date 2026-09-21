@@ -1,7 +1,7 @@
 {
   "case": "escape/join_attribute.jj2",
   "variables": {
-    "sep": "o",
-    "users": "o"
+    "sep": "or",
+    "users": "or"
   }
 }

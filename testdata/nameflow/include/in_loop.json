@@ -1,6 +1,6 @@
 {
   "case": "include/in_loop.jj2",
   "variables": {
-    "v": "o"
+    "v": "or"
   }
 }

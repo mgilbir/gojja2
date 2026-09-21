@@ -1,6 +1,6 @@
 {
   "case": "filters/trim.jj2",
   "variables": {
-    "text": "o"
+    "text": "or"
   }
 }

@@ -1,6 +1,6 @@
 {
   "case": "errshape/groupby_tuple.jj2",
   "variables": {
-    "users": "of"
+    "users": "ofr"
   }
 }
