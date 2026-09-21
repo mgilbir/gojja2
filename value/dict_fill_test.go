@@ -32,7 +32,7 @@ func TestFromGoMapKeepsEveryKeyOnce(t *testing.T) {
 			t.Fatalf("keys out of order: %q then %q", prev, name)
 		}
 		prev = name
-		v, found, err := d.Get(k)
+		v, found, err := d.Get(k, DefaultPythonVersion)
 		if err != nil || !found {
 			t.Fatalf("Get(%q): found=%v err=%v", name, found, err)
 		}
@@ -67,7 +67,7 @@ func TestSetFreshWithoutReserve(t *testing.T) {
 	if err := d.setFresh(String("a"), Int(1)); err != nil {
 		t.Fatalf("setFresh: %v", err)
 	}
-	v, found, err := d.Get(String("a"))
+	v, found, err := d.Get(String("a"), DefaultPythonVersion)
 	if err != nil || !found {
 		t.Fatalf("Get: found=%v err=%v", found, err)
 	}
@@ -83,21 +83,21 @@ func TestSetFreshWithoutReserve(t *testing.T) {
 // not collide: CPython keeps {b'a': 1, 'a': 2} as two entries.
 func TestBytesKeyIsNotAStringKey(t *testing.T) {
 	d, _ := NewDict().Dict()
-	if err := d.Set(Bytes([]byte("a")), Int(1)); err != nil {
+	if err := d.Set(Bytes([]byte("a")), Int(1), DefaultPythonVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Set(String("a"), Int(2)); err != nil {
+	if err := d.Set(String("a"), Int(2), DefaultPythonVersion); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(d.Keys()); got != 2 {
 		t.Fatalf("got %d entries, want 2", got)
 	}
-	if v, ok, _ := d.Get(Bytes([]byte("a"))); !ok {
+	if v, ok, _ := d.Get(Bytes([]byte("a")), DefaultPythonVersion); !ok {
 		t.Error("bytes key missing")
 	} else if n, _ := v.Int64(); n != 1 {
 		t.Errorf("bytes key = %d, want 1", n)
 	}
-	if v, ok, _ := d.Get(String("a")); !ok {
+	if v, ok, _ := d.Get(String("a"), DefaultPythonVersion); !ok {
 		t.Error("string key missing")
 	} else if n, _ := v.Int64(); n != 2 {
 		t.Errorf("string key = %d, want 2", n)
@@ -116,20 +116,20 @@ func TestDeleteRenumbersBothIndexes(t *testing.T) {
 		{String("a"), 1}, {Int(2), 2}, {String("b"), 3},
 		{Int(4), 4}, {String("c"), 5}, {Bytes([]byte("d")), 6},
 	} {
-		if err := d.Set(kv.k, Int(kv.v)); err != nil {
+		if err := d.Set(kv.k, Int(kv.v), DefaultPythonVersion); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Remove one from each index, from the middle.
-	if ok, err := d.Delete(String("a")); err != nil || !ok {
+	if ok, err := d.Delete(String("a"), DefaultPythonVersion); err != nil || !ok {
 		t.Fatalf("delete a: ok=%v err=%v", ok, err)
 	}
-	if ok, err := d.Delete(Int(2)); err != nil || !ok {
+	if ok, err := d.Delete(Int(2), DefaultPythonVersion); err != nil || !ok {
 		t.Fatalf("delete 2: ok=%v err=%v", ok, err)
 	}
 	want := map[string]int64{"b": 3, "c": 5}
 	for k, v := range want {
-		got, ok, err := d.Get(String(k))
+		got, ok, err := d.Get(String(k), DefaultPythonVersion)
 		if err != nil || !ok {
 			t.Fatalf("Get(%q): ok=%v err=%v", k, ok, err)
 		}
@@ -137,12 +137,12 @@ func TestDeleteRenumbersBothIndexes(t *testing.T) {
 			t.Errorf("%q = %d, want %d", k, n, v)
 		}
 	}
-	if got, ok, _ := d.Get(Int(4)); !ok {
+	if got, ok, _ := d.Get(Int(4), DefaultPythonVersion); !ok {
 		t.Error("int key 4 missing")
 	} else if n, _ := got.Int64(); n != 4 {
 		t.Errorf("4 = %d, want 4", n)
 	}
-	if got, ok, _ := d.Get(Bytes([]byte("d"))); !ok {
+	if got, ok, _ := d.Get(Bytes([]byte("d")), DefaultPythonVersion); !ok {
 		t.Error("bytes key missing")
 	} else if n, _ := got.Int64(); n != 6 {
 		t.Errorf("bytes = %d, want 6", n)
@@ -155,11 +155,11 @@ func TestDeleteRenumbersBothIndexes(t *testing.T) {
 // Clone has to copy both indexes, and the copy must be independent.
 func TestCloneCopiesBothIndexes(t *testing.T) {
 	d, _ := NewDict().Dict()
-	_ = d.Set(String("s"), Int(1))
-	_ = d.Set(Int(9), Int(2))
+	_ = d.Set(String("s"), Int(1), DefaultPythonVersion)
+	_ = d.Set(Int(9), Int(2), DefaultPythonVersion)
 	c, _ := d.Clone().Dict()
-	_ = c.Set(String("s"), Int(10))
-	_ = c.Set(Int(9), Int(20))
+	_ = c.Set(String("s"), Int(10), DefaultPythonVersion)
+	_ = c.Set(Int(9), Int(20), DefaultPythonVersion)
 	// Both writes must *replace*. An index the clone did not copy makes
 	// the key look absent, and the entry is appended instead -- which the
 	// value assertions below would not notice.
@@ -169,16 +169,16 @@ func TestCloneCopiesBothIndexes(t *testing.T) {
 	if got := len(d.Keys()); got != 2 {
 		t.Fatalf("original has %d entries, want 2", got)
 	}
-	if v, _, _ := d.Get(String("s")); func() int64 { n, _ := v.Int64(); return n }() != 1 {
+	if v, _, _ := d.Get(String("s"), DefaultPythonVersion); func() int64 { n, _ := v.Int64(); return n }() != 1 {
 		t.Error("clone wrote through to the original's string key")
 	}
-	if v, _, _ := d.Get(Int(9)); func() int64 { n, _ := v.Int64(); return n }() != 2 {
+	if v, _, _ := d.Get(Int(9), DefaultPythonVersion); func() int64 { n, _ := v.Int64(); return n }() != 2 {
 		t.Error("clone wrote through to the original's int key")
 	}
-	if v, _, _ := c.Get(String("s")); func() int64 { n, _ := v.Int64(); return n }() != 10 {
+	if v, _, _ := c.Get(String("s"), DefaultPythonVersion); func() int64 { n, _ := v.Int64(); return n }() != 10 {
 		t.Error("clone lost its own string key")
 	}
-	if v, _, _ := c.Get(Int(9)); func() int64 { n, _ := v.Int64(); return n }() != 20 {
+	if v, _, _ := c.Get(Int(9), DefaultPythonVersion); func() int64 { n, _ := v.Int64(); return n }() != 20 {
 		t.Error("clone lost its own int key")
 	}
 }
@@ -186,13 +186,13 @@ func TestCloneCopiesBothIndexes(t *testing.T) {
 // Keys that are equal in Python stay one entry, across the split.
 func TestNumericKeyIdentityAcrossTheSplit(t *testing.T) {
 	d, _ := NewDict().Dict()
-	_ = d.Set(Int(1), String("x"))
-	_ = d.Set(Bool(true), String("y"))
-	_ = d.Set(Float(1.0), String("z"))
+	_ = d.Set(Int(1), String("x"), DefaultPythonVersion)
+	_ = d.Set(Bool(true), String("y"), DefaultPythonVersion)
+	_ = d.Set(Float(1.0), String("z"), DefaultPythonVersion)
 	if got := len(d.Keys()); got != 1 {
 		t.Fatalf("got %d entries, want 1 -- 1, True and 1.0 are one key", got)
 	}
-	v, _, _ := d.Get(Int(1))
+	v, _, _ := d.Get(Int(1), DefaultPythonVersion)
 	if v.AsString() != "z" {
 		t.Errorf("got %q, want the last assignment", v.AsString())
 	}
@@ -206,7 +206,7 @@ func TestDictAcrossTheIndexThreshold(t *testing.T) {
 	d, _ := NewDict().Dict()
 	for n := 1; n <= smallDict*2; n++ {
 		key := fmt.Sprintf("k%02d", n)
-		if err := d.Set(String(key), Int(int64(n))); err != nil {
+		if err := d.Set(String(key), Int(int64(n)), DefaultPythonVersion); err != nil {
 			t.Fatalf("Set(%q): %v", key, err)
 		}
 		if got := len(d.Keys()); got != n {
@@ -216,7 +216,7 @@ func TestDictAcrossTheIndexThreshold(t *testing.T) {
 		// Value and the string accessor.
 		for m := 1; m <= n; m++ {
 			k := fmt.Sprintf("k%02d", m)
-			v, ok, err := d.Get(String(k))
+			v, ok, err := d.Get(String(k), DefaultPythonVersion)
 			if err != nil || !ok {
 				t.Fatalf("at size %d, Get(%q): ok=%v err=%v", n, k, ok, err)
 			}
@@ -238,13 +238,13 @@ func TestDictReplaceAcrossTheThreshold(t *testing.T) {
 	for _, size := range []int{1, smallDict - 1, smallDict, smallDict + 1, smallDict * 3} {
 		d, _ := NewDict().Dict()
 		for n := range size {
-			_ = d.Set(String(fmt.Sprintf("k%02d", n)), Int(int64(n)))
+			_ = d.Set(String(fmt.Sprintf("k%02d", n)), Int(int64(n)), DefaultPythonVersion)
 		}
-		_ = d.Set(String("k00"), Int(999))
+		_ = d.Set(String("k00"), Int(999), DefaultPythonVersion)
 		if got := len(d.Keys()); got != size {
 			t.Errorf("size %d: replacing grew the dict to %d", size, got)
 		}
-		v, ok, _ := d.Get(String("k00"))
+		v, ok, _ := d.Get(String("k00"), DefaultPythonVersion)
 		if !ok {
 			t.Fatalf("size %d: k00 missing after replace", size)
 		}
@@ -259,11 +259,11 @@ func TestDictDeleteAcrossTheThreshold(t *testing.T) {
 	for _, size := range []int{2, smallDict - 1, smallDict, smallDict * 2} {
 		d, _ := NewDict().Dict()
 		for n := range size {
-			_ = d.Set(String(fmt.Sprintf("k%02d", n)), Int(int64(n)))
+			_ = d.Set(String(fmt.Sprintf("k%02d", n)), Int(int64(n)), DefaultPythonVersion)
 		}
 		// Remove from the middle, where renumbering matters.
 		gone := fmt.Sprintf("k%02d", size/2)
-		if ok, err := d.Delete(String(gone)); err != nil || !ok {
+		if ok, err := d.Delete(String(gone), DefaultPythonVersion); err != nil || !ok {
 			t.Fatalf("size %d: Delete(%q): ok=%v err=%v", size, gone, ok, err)
 		}
 		if got := len(d.Keys()); got != size-1 {
@@ -271,7 +271,7 @@ func TestDictDeleteAcrossTheThreshold(t *testing.T) {
 		}
 		for n := range size {
 			k := fmt.Sprintf("k%02d", n)
-			v, ok, _ := d.Get(String(k))
+			v, ok, _ := d.Get(String(k), DefaultPythonVersion)
 			if k == gone {
 				if ok {
 					t.Errorf("size %d: %q still present", size, k)
@@ -292,15 +292,15 @@ func TestDictDeleteAcrossTheThreshold(t *testing.T) {
 // the index with an empty one.
 func TestReserveOnAPopulatedDictKeepsItsEntries(t *testing.T) {
 	d, _ := NewDict().Dict()
-	_ = d.Set(String("a"), Int(1))
-	_ = d.Set(String("b"), Int(2))
+	_ = d.Set(String("a"), Int(1), DefaultPythonVersion)
+	_ = d.Set(String("b"), Int(2), DefaultPythonVersion)
 	d.Reserve(smallDict * 4) // crosses the threshold, so an index is built
 	for _, k := range []string{"a", "b"} {
 		if _, ok := d.GetString(k); !ok {
 			t.Errorf("%q lost when the index was built", k)
 		}
 	}
-	_ = d.Set(String("a"), Int(9))
+	_ = d.Set(String("a"), Int(9), DefaultPythonVersion)
 	if got := len(d.Keys()); got != 2 {
 		t.Errorf("got %d entries, want 2", got)
 	}

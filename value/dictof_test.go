@@ -24,10 +24,10 @@ func TestDictOfReportsWhatItCannotBuild(t *testing.T) {
 		{"odd count, three", []value.Value{
 			value.String("a"), value.Int(1), value.String("b")}, "DictOf needs an even number of arguments, got 3"},
 		{"list key", []value.Value{
-			value.NewList(value.Int(1)), value.Int(1)}, "unhashable type: 'list'"},
-		{"dict key", []value.Value{value.NewDict(), value.Int(1)}, "unhashable type: 'dict'"},
+			value.NewList(value.Int(1)), value.Int(1)}, "cannot use 'list' as a dict key (unhashable type: 'list')"},
+		{"dict key", []value.Value{value.NewDict(), value.Int(1)}, "cannot use 'dict' as a dict key (unhashable type: 'dict')"},
 	} {
-		got, err := value.DictOf(tc.kv...)
+		got, err := value.DictOf(value.DefaultPythonVersion, tc.kv...)
 		if err == nil {
 			t.Errorf("%s: DictOf succeeded, want an error", tc.name)
 			continue
@@ -45,7 +45,7 @@ func TestDictOfReportsWhatItCannotBuild(t *testing.T) {
 }
 
 func TestDictOfBuildsWhatItCan(t *testing.T) {
-	d, err := value.DictOf(value.String("b"), value.Int(2), value.String("a"), value.Int(1))
+	d, err := value.DictOf(value.DefaultPythonVersion, value.String("b"), value.Int(2), value.String("a"), value.Int(1))
 	if err != nil {
 		t.Fatalf("DictOf: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestDictOfBuildsWhatItCan(t *testing.T) {
 	if got := value.Repr(d); got != "{'b': 2, 'a': 1}" {
 		t.Errorf("got %s, want {'b': 2, 'a': 1}", got)
 	}
-	empty, err := value.DictOf()
+	empty, err := value.DictOf(value.DefaultPythonVersion)
 	if err != nil {
 		t.Fatalf("DictOf(): %v", err)
 	}

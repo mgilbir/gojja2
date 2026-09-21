@@ -408,6 +408,47 @@ func TestShallowValueGraphsStillRender(t *testing.T) {
 // being a RecursionError, because pinning a wording for them would encode the
 // stack depth of whichever harness recorded it -- which is exactly what the two
 // imported MiniJinja fixtures do. docs/divergences.md records why.
+// TestRecursionWordingIsOneSentenceNow is the other side of
+// TestRecursionWordingIsOnlyPinnedForTwo: 3.12 stopped naming where inside
+// CPython the stack ran out, so all three of its wordings became one.
+//
+// That is the rare version change that makes gojja2's job easier -- the two
+// cases held to a wording above are held to the same wording as everything
+// else here -- and it is asserted rather than assumed, because "they all agree
+// now" is exactly the kind of claim that stops being true.
+func TestRecursionWordingIsOneSentenceNow(t *testing.T) {
+	loader := gojja2.DictLoader{
+		"self.txt":    `{% include "self.txt" %}`,
+		"selfimp.txt": `{% import "selfimp.txt" as m %}{% set x = 1 %}`,
+		"selfext.txt": `{% extends "selfext.txt" %}`,
+	}
+	for name, src := range map[string]string{
+		"include":         `{% include "self.txt" %}`,
+		"extends":         `{% extends "selfext.txt" %}`,
+		"macro":           `{% macro m() %}{{ m() }}{% endmacro %}{{ m() }}`,
+		"import":          `{% import "selfimp.txt" as m %}{{ m.x }}`,
+		"block reference": `{% block a %}{{ self.a() }}{% endblock %}`,
+		"recursive loop":  `{% for i in [1] recursive %}{{ loop([1]) }}{% endfor %}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmpl, err := mustEnv(gojja2.WithLoader(loader)).FromString(src)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			_, err = tmpl.RenderString(context.Background(), nil)
+			if err == nil {
+				t.Fatal("rendered; want a RecursionError")
+			}
+			if kind := errs.KindOf(err); kind != errs.RecursionError {
+				t.Fatalf("got %v (%v), want RecursionError", kind, err)
+			}
+			if err.Error() != "maximum recursion depth exceeded" {
+				t.Errorf("got %q, want the one sentence 3.12 left", err)
+			}
+		})
+	}
+}
+
 func TestRecursionWordingIsOnlyPinnedForTwo(t *testing.T) {
 	const (
 		plain   = "maximum recursion depth exceeded"
@@ -431,7 +472,12 @@ func TestRecursionWordingIsOnlyPinnedForTwo(t *testing.T) {
 		{"recursive loop", `{% for i in [1] recursive %}{{ loop([1]) }}{% endfor %}`, plain},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tmpl, err := mustEnv(gojja2.WithLoader(loader)).FromString(tc.src)
+			// 3.12 collapsed all three wordings into one, so the
+			// distinction this test is about only exists on an
+			// older interpreter. The default's answer is checked
+			// underneath, where every one of them is `plain`.
+			tmpl, err := mustEnv(gojja2.WithLoader(loader),
+				gojja2.WithPythonVersion(gojja2.Python311)).FromString(tc.src)
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}

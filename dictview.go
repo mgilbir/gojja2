@@ -31,6 +31,11 @@ type dictView struct {
 	// insertions and removals that happen after it was taken.
 	d    value.Value
 	kind dictViewKind
+	// py is the interpreter being reproduced. A view implements
+	// value.Object, whose Contains takes no arguments beyond the item, so
+	// the version is injected here where the view is built rather than at
+	// the call.
+	py value.PythonVersion
 }
 
 type dictViewKind int
@@ -101,10 +106,10 @@ func (v *dictView) Contains(item value.Value) (found, known bool) {
 		if !ok {
 			return false, true
 		}
-		if err := value.CheckHashable(item); err != nil {
+		if err := value.CheckHashable(item, v.py, value.AsDictKey); err != nil {
 			return false, false
 		}
-		_, got, err := d.Get(item)
+		_, got, err := d.Get(item, v.py)
 		if err != nil {
 			return false, false
 		}

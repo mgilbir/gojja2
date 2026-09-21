@@ -44,7 +44,7 @@ func TestTupleKeysAreExact(t *testing.T) {
 	d := value.NewDict()
 	dict, _ := d.Dict()
 	for i, k := range keys {
-		if err := dict.Set(k, value.Int(int64(i))); err != nil {
+		if err := dict.Set(k, value.Int(int64(i)), value.DefaultPythonVersion); err != nil {
 			t.Fatalf("set %s: %v", value.Repr(k), err)
 		}
 	}
@@ -53,7 +53,7 @@ func TestTupleKeysAreExact(t *testing.T) {
 			dict.Len(), len(keys))
 	}
 	for i, k := range keys {
-		got, ok, err := dict.Get(k)
+		got, ok, err := dict.Get(k, value.DefaultPythonVersion)
 		if err != nil || !ok {
 			t.Fatalf("get %s: ok=%v err=%v", value.Repr(k), ok, err)
 		}
@@ -73,16 +73,16 @@ func TestEqualTuplesShareAKey(t *testing.T) {
 	}
 	d := value.NewDict()
 	dict, _ := d.Dict()
-	if err := dict.Set(build(), value.String("first")); err != nil {
+	if err := dict.Set(build(), value.String("first"), value.DefaultPythonVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := dict.Set(build(), value.String("second")); err != nil {
+	if err := dict.Set(build(), value.String("second"), value.DefaultPythonVersion); err != nil {
 		t.Fatal(err)
 	}
 	if dict.Len() != 1 {
 		t.Fatalf("two equal tuples made %d entries, want 1", dict.Len())
 	}
-	got, _, _ := dict.Get(build())
+	got, _, _ := dict.Get(build(), value.DefaultPythonVersion)
 	if value.Str(got) != "second" {
 		t.Errorf("got %q, want the later value", value.Str(got))
 	}

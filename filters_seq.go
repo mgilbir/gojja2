@@ -147,7 +147,7 @@ func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 	switch v.Kind() {
 	case value.KindDict:
 		d, _ := v.Dict()
-		item, ok, err := d.Get(value.Int(int64(i)))
+		item, ok, err := d.Get(value.Int(int64(i)), s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -309,13 +309,9 @@ func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	// It is read here, after the value has been walked, because sorted()
 	// builds its list before it looks at the keyword: `{{ 1|sort(none) }}`
 	// is about the 1, not about the None.
-	reverse := false
-	if r, ok := arg(args, 0, "reverse"); ok {
-		n, err := indexOf(r, cInt)
-		if err != nil {
-			return value.Undefined, err
-		}
-		reverse = n != 0
+	reverse, err := clinicBoolArg(args, 0, "reverse", s.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
 	}
 	if err := stableSortBy(s, items, sortKeyFunc(s, attribute, caseSensitive), reverse); err != nil {
 		return value.Undefined, err
@@ -362,7 +358,7 @@ func filterDictsort(s *State, v value.Value, args *value.CallArgs) (value.Value,
 			target, _ := out.Dict()
 			for _, k := range m.Keys() {
 				val, _ := m.GetItem(k)
-				_ = target.Set(k, val)
+				_ = target.Set(k, val, s.PythonVersion())
 			}
 			d, _ = out.Dict()
 		} else {
@@ -416,14 +412,19 @@ func filterUnique(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		if err != nil {
 			return value.Undefined, err
 		}
-		_, duplicate, err := index.Get(k)
+		// jinja2 keeps a `set()` here, not a mapping, and from 3.14 the
+		// refusal says which of the two it was.
+		if err := value.Hashable(k, s.PythonVersion(), value.AsSetElement); err != nil {
+			return value.Undefined, err
+		}
+		_, duplicate, err := index.Get(k, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
 		if duplicate {
 			continue
 		}
-		if err := index.Set(k, value.None); err != nil {
+		if err := index.Set(k, value.None, s.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
 		out = append(out, item)
@@ -468,7 +469,7 @@ func filterMinMax(wantMax bool) Filter {
 			if wantMax {
 				op = ">"
 			}
-			better, err := value.Ordered(op, k, bestKey)
+			better, err := value.Ordered(op, k, bestKey, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -527,7 +528,7 @@ func filterBatch(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 			// `len(tmp) < linecount` is where a linecount that only
 			// had to be comparable has to be ordered, and a str,
 			// list, dict or None raises instead.
-			short, err := value.Ordered("<", have, size)
+			short, err := value.Ordered("<", have, size, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -583,11 +584,11 @@ func filterSlice(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 	// loop -- and before range(), so a zero divisor is reported ahead of
 	// anything range() would have said about the same value.
 	length := value.Int(int64(len(items)))
-	perSliceV, err := value.FloorDiv(length, slices)
+	perSliceV, err := value.FloorDiv(length, slices, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
-	remainderV, err := value.Mod(length, slices, s)
+	remainderV, err := value.Mod(length, slices, s, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}

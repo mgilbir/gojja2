@@ -131,7 +131,7 @@ func (ex *exec) evalDict(n *ast.Dict) (value.Value, error) {
 		if err != nil {
 			return value.Undefined, err
 		}
-		if err := d.Set(k, v); err != nil {
+		if err := d.Set(k, v, ex.pyVersion()); err != nil {
 			return value.Undefined, err
 		}
 	}
@@ -204,13 +204,13 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 	case ast.OpMul:
 		return value.Mul(left, right, ex.st)
 	case ast.OpDiv:
-		return value.Div(left, right)
+		return value.Div(left, right, ex.pyVersion())
 	case ast.OpFloorDiv:
-		return value.FloorDiv(left, right)
+		return value.FloorDiv(left, right, ex.pyVersion())
 	case ast.OpMod:
-		return value.Mod(left, right, ex.st)
+		return value.Mod(left, right, ex.st, ex.pyVersion())
 	case ast.OpPow:
-		return value.Pow(left, right, ex.st)
+		return value.Pow(left, right, ex.st, ex.pyVersion())
 	}
 	return value.Undefined, errs.New(errs.TemplateRuntimeError, "unknown operator %s", n.Op)
 }
@@ -318,7 +318,7 @@ func (ex *exec) evalCompare(n *ast.Compare) (value.Value, error) {
 		if err != nil {
 			return value.Undefined, err
 		}
-		ok, err := compareStep(op.Op, left, right, ex.st)
+		ok, err := compareStep(op.Op, left, right, ex.st, ex.pyVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -330,25 +330,25 @@ func (ex *exec) evalCompare(n *ast.Compare) (value.Value, error) {
 	return value.True, nil
 }
 
-func compareStep(op string, left, right value.Value, budget value.Budget) (bool, error) {
+func compareStep(op string, left, right value.Value, budget value.Budget, py value.PythonVersion) (bool, error) {
 	switch op {
 	case "eq":
-		return value.EqualErr(left, right)
+		return value.EqualErr(left, right, py)
 	case "ne":
-		equal, err := value.EqualErr(left, right)
+		equal, err := value.EqualErr(left, right, py)
 		return !equal, err
 	case "lt":
-		return value.Ordered("<", left, right)
+		return value.Ordered("<", left, right, py)
 	case "lteq":
-		return value.Ordered("<=", left, right)
+		return value.Ordered("<=", left, right, py)
 	case "gt":
-		return value.Ordered(">", left, right)
+		return value.Ordered(">", left, right, py)
 	case "gteq":
-		return value.Ordered(">=", left, right)
+		return value.Ordered(">=", left, right, py)
 	case "in":
-		return value.Contains(left, right, budget)
+		return value.Contains(left, right, budget, py)
 	case "notin":
-		ok, err := value.Contains(left, right, budget)
+		ok, err := value.Contains(left, right, budget, py)
 		return !ok, err
 	}
 	return false, errs.New(errs.TemplateRuntimeError, "unknown comparison %q", op)
@@ -385,7 +385,7 @@ func (ex *exec) getAttr(base value.Value, name string) (value.Value, error) {
 	if v, ok := lookupAttr(ex.st, base, name); ok {
 		return v, nil
 	}
-	if v, ok := lookupItem(base, value.String(name)); ok {
+	if v, ok := lookupItem(base, value.String(name), ex.pyVersion()); ok {
 		return v, nil
 	}
 	return ex.st.Undefined(value.UndefinedAttr(base, name)), nil
@@ -419,11 +419,11 @@ func lookupAttr(s *State, base value.Value, name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
-func lookupItem(base value.Value, key value.Value) (value.Value, bool) {
+func lookupItem(base value.Value, key value.Value, py value.PythonVersion) (value.Value, bool) {
 	switch base.Kind() {
 	case value.KindDict:
 		d, _ := base.Dict()
-		v, ok, err := d.Get(key)
+		v, ok, err := d.Get(key, py)
 		if err != nil {
 			return value.Undefined, false
 		}
@@ -469,7 +469,7 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 		return ex.indexSequence(base, key)
 	case value.KindDict:
 		d, _ := base.Dict()
-		v, ok, err := d.Get(key)
+		v, ok, err := d.Get(key, ex.pyVersion())
 		if err != nil {
 			// An unhashable key is a TypeError, which getitem
 			// catches like any other: `{{ d[[]] }}` is empty.
@@ -521,7 +521,7 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 // callers matter: a fold has no undefined class to apply and no budget to bind
 // a method against.
 func envGetItem(s *State, base, key value.Value) value.Value {
-	if v, ok := lookupItem(base, key); ok {
+	if v, ok := lookupItem(base, key, s.PythonVersion()); ok {
 		return v
 	}
 	if v, ok := constIndex(base, key); ok {
@@ -649,7 +649,7 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
-	return sliceOf(base, start, stop, step)
+	return sliceOf(base, start, stop, step, ex.pyVersion())
 }
 
 // sliceIndexOf converts a value used as a slice bound, saturating rather than
@@ -716,7 +716,14 @@ func sliceBounds(start, stop, step value.Value) (a, b, c *int, err error) {
 // tuple subclass slices as a tuple, so `{{ (x|groupby(k)|first)[::2] }}` was a
 // tuple at run time and nothing at all when the whole expression was constant
 // and therefore folded.
-func sliceOf(base value.Value, startV, stopV, stepV value.Value) (value.Value, error) {
+// sliceRepr is repr(slice(a, b, c)), which is the whole of the KeyError a
+// mapping raises for a slice from 3.12 on. An omitted bound is None there, not
+// absent, so all three always appear.
+func sliceRepr(start, stop, step value.Value) string {
+	return "slice(" + value.Repr(start) + ", " + value.Repr(stop) + ", " + value.Repr(step) + ")"
+}
+
+func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.PythonVersion) (value.Value, error) {
 	// Converted per branch rather than up front, so that a base with no
 	// subscript at all answers before the operands are judged.
 	indices := func() (*int, *int, *int, error) { return sliceBounds(startV, stopV, stepV) }
@@ -809,8 +816,14 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value) (value.Value, e
 			return value.NewList(items...), nil
 		}
 	case value.KindDict:
-		// A slice is not hashable, so a mapping rejects it as a key
-		// rather than as an unsupported operation.
+		// A mapping rejects a slice as a key rather than as an
+		// unsupported operation. Before 3.12 a slice was unhashable, so
+		// that was a TypeError; 3.12 made slices hashable, so it became
+		// an ordinary KeyError naming the slice that missed.
+		if py.SliceKeysAreHashable() {
+			return value.Undefined, errs.New(errs.KeyError, "%s",
+				sliceRepr(startV, stopV, stepV))
+		}
 		return value.Undefined, errs.New(errs.TypeError, "unhashable type: 'slice'")
 	}
 	return value.Undefined, errs.New(errs.TypeError,

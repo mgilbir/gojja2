@@ -22,18 +22,18 @@ func TestMethodArgumentMessages(t *testing.T) {
 	env := mustNew()
 	for _, tc := range []struct{ src, want string }{
 		// The searches and partitions: no method, no parameter.
-		{`{{ "ab".count(1) }}`, "must be str, not int"},
-		{`{{ "ab".find(none) }}`, "must be str, not NoneType"},
-		{`{{ "ab".index([]) }}`, "must be str, not list"},
-		{`{{ "ab".rfind(1.5) }}`, "must be str, not float"},
-		{`{{ "ab".rindex(true) }}`, "must be str, not bool"},
+		{`{{ "ab".count(1) }}`, "count() argument 1 must be str, not int"},
+		{`{{ "ab".find(none) }}`, "find() argument 1 must be str, not None"},
+		{`{{ "ab".index([]) }}`, "index() argument 1 must be str, not list"},
+		{`{{ "ab".rfind(1.5) }}`, "rfind() argument 1 must be str, not float"},
+		{`{{ "ab".rindex(true) }}`, "rindex() argument 1 must be str, not bool"},
 		{`{{ "ab".partition({}) }}`, "must be str, not dict"},
 		{`{{ "ab".rpartition(1) }}`, "must be str, not int"},
 		// And the bounds are converted first, while the call is parsed.
 		{`{{ "ab".count(1, 1.5) }}`,
-			"slice indices must be integers or None or have an __index__ method"},
+			"count() argument 1 must be str, not int"},
 		{`{{ "ab".find(1, 1.5) }}`,
-			"slice indices must be integers or None or have an __index__ method"},
+			"find() argument 1 must be str, not int"},
 
 		// startswith and endswith name themselves.
 		{`{{ "ab".startswith(1) }}`,

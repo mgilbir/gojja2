@@ -316,8 +316,8 @@ func TestRoundIsPythonsRound(t *testing.T) {
 		{`{{ 1.5|round(1.5, 1) }}`, "method must be common, ceil or floor"},
 		// The method is tested for membership of a *set*, so a value
 		// that cannot be hashed is about the value.
-		{`{{ 1|round(method=[]) }}`, "unhashable type: 'list'"},
-		{`{{ 1.5|round(0, {}) }}`, "unhashable type: 'dict'"},
+		{`{{ 1|round(method=[]) }}`, "cannot use 'list' as a set element (unhashable type: 'list')"},
+		{`{{ 1.5|round(0, {}) }}`, "cannot use 'dict' as a set element (unhashable type: 'dict')"},
 		// Then the value's own __round__, before the precision.
 		{`{{ "abc"|round(1.5) }}`, "type str doesn't define __round__ method"},
 		{`{{ []|round("x") }}`, "type list doesn't define __round__ method"},
@@ -336,7 +336,7 @@ func TestRoundIsPythonsRound(t *testing.T) {
 		{`{{ "abc"|round(0, "ceil") }}`, "must be real number, not str"},
 		{`{{ []|round(0, "ceil") }}`, "must be real number, not list"},
 		// A power of ten that underflows is a division by zero.
-		{`{{ 1.5|round(-400, "ceil") }}`, "float division by zero"},
+		{`{{ 1.5|round(-400, "ceil") }}`, "division by zero"},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {

@@ -9,7 +9,7 @@ import "github.com/mgilbir/gojja2/value"
 // a bug in the test. The tests that are *about* a refused key call DictOf
 // directly.
 func dictOf(kv ...value.Value) value.Value {
-	d, err := value.DictOf(kv...)
+	d, err := value.DictOf(value.DefaultPythonVersion, kv...)
 	if err != nil {
 		panic("value.DictOf: " + err.Error())
 	}

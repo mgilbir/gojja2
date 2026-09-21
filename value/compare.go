@@ -34,19 +34,22 @@ const RecursionMessageComparison = "maximum recursion depth exceeded in comparis
 // because there is no error to return. Use [EqualErr] where the caller can
 // raise, which is what the `==` operator in a template does.
 func Equal(a, b Value) bool {
-	equal, _ := equalDepth(a, b, 0)
+	// The only error equalDepth can report is the recursion one, and this
+	// form has nowhere to put it, so the interpreter version cannot show
+	// through here. EqualErr is the form that can raise, and it takes one.
+	equal, _ := equalDepth(a, b, 0, DefaultPythonVersion)
 	return equal
 }
 
 // EqualErr is [Equal], reporting the RecursionError CPython raises rather than
 // answering a question it cannot decide.
-func EqualErr(a, b Value) (bool, error) {
-	return equalDepth(a, b, 0)
+func EqualErr(a, b Value, py PythonVersion) (bool, error) {
+	return equalDepth(a, b, 0, py)
 }
 
-func equalDepth(a, b Value, depth int) (bool, error) {
+func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 	if depth > maxCompareDepth {
-		return false, errs.New(errs.RecursionError, "%s", RecursionMessageComparison)
+		return false, errs.New(errs.RecursionError, "%s", py.RecursionMessageFor(RecursionMessageComparison))
 	}
 	// StrictUndefined defines __eq__ and __ne__ as failures, so a
 	// comparison involving one is an error rather than an answer -- on
@@ -105,7 +108,7 @@ func equalDepth(a, b Value, depth int) (bool, error) {
 			return false, nil
 		}
 		for i := range as.items {
-			equal, err := equalDepth(as.items[i], bs.items[i], depth+1)
+			equal, err := equalDepth(as.items[i], bs.items[i], depth+1, py)
 			if err != nil {
 				return false, err
 			}
@@ -122,11 +125,11 @@ func equalDepth(a, b Value, depth int) (bool, error) {
 		}
 		// Order is irrelevant to dict equality, only content.
 		for _, e := range ad.entries {
-			other, ok, err := bd.Get(e.Key)
-			if err != nil || !ok {
+			other, ok := bd.GetKnown(e.Key)
+			if !ok {
 				return false, nil
 			}
-			equal, rerr := equalDepth(e.Value, other, depth+1)
+			equal, rerr := equalDepth(e.Value, other, depth+1, py)
 			if rerr != nil {
 				return false, rerr
 			}
@@ -151,8 +154,8 @@ func equalDepth(a, b Value, depth int) (bool, error) {
 // Returning a bool rather than a three-way ordering is what lets NaN behave:
 // every comparison involving it is false, including NaN <= NaN, which no
 // -1/0/1 result can express.
-func Ordered(op string, a, b Value) (bool, error) {
-	ord, ok, err := compare(op, a, b, 0)
+func Ordered(op string, a, b Value, py PythonVersion) (bool, error) {
+	ord, ok, err := compare(op, a, b, 0, py)
 	if err != nil {
 		return false, err
 	}
@@ -182,9 +185,9 @@ func Ordered(op string, a, b Value) (bool, error) {
 // RecursionError while `{{ a < b }}` -- and every sort, min and max, which all
 // come through here -- took the process down with a Go stack overflow that
 // recover cannot catch.
-func compare(op string, a, b Value, depth int) (int, bool, error) {
+func compare(op string, a, b Value, depth int, py PythonVersion) (int, bool, error) {
 	if depth > maxCompareDepth {
-		return 0, false, errs.New(errs.RecursionError, "%s", RecursionMessageComparison)
+		return 0, false, errs.New(errs.RecursionError, "%s", py.RecursionMessageFor(RecursionMessageComparison))
 	}
 	// Undefined has no ordering: jinja2's Undefined raises on <, <=, > and
 	// >= even though == is answerable. Report the undefined's own error
@@ -215,7 +218,7 @@ func compare(op string, a, b Value, depth int) (int, bool, error) {
 	// The recursive call cannot swap again -- both operands are plain
 	// tuples by then -- so this terminates without spending depth.
 	if tupleSubclass(origB) && !tupleSubclass(origA) && a.kind == KindTuple && b.kind == KindTuple {
-		ord, ok, err := compare(swappedOp(op), b, a, depth)
+		ord, ok, err := compare(swappedOp(op), b, a, depth, py)
 		return -ord, ok, err
 	}
 
@@ -230,7 +233,7 @@ func compare(op string, a, b Value, depth int) (int, bool, error) {
 		case KindList, KindTuple:
 			as, _ := a.Seq()
 			bs, _ := b.Seq()
-			return compareSeq(op, as.items, bs.items, depth)
+			return compareSeq(op, as.items, bs.items, depth, py)
 		}
 	}
 	return 0, false, errs.New(errs.TypeError,
@@ -305,13 +308,13 @@ func swappedOp(op string) string {
 
 // compareSeq is Python's lexicographic sequence ordering: the first differing
 // element decides, and if one runs out first the shorter sequence is smaller.
-func compareSeq(op string, a, b []Value, depth int) (int, bool, error) {
+func compareSeq(op string, a, b []Value, depth int, py PythonVersion) (int, bool, error) {
 	n := min(len(a), len(b))
 	for i := range n {
 		if Equal(a[i], b[i]) {
 			continue
 		}
-		ord, ok, err := compare(op, a[i], b[i], depth+1)
+		ord, ok, err := compare(op, a[i], b[i], depth+1, py)
 		if err != nil {
 			return 0, false, err
 		}
@@ -401,7 +404,7 @@ func cmpFloat(a, b float64) int {
 // three-second deadline was still running ninety seconds later. An Object that
 // knows a better answer than a scan says so through Container, which is how a
 // range answers arithmetically rather than by searching.
-func Contains(item, container Value, budget Budget) (bool, error) {
+func Contains(item, container Value, budget Budget, py PythonVersion) (bool, error) {
 	// __contains__ on a StrictUndefined container fails; an item that is
 	// one fails through the comparison each candidate makes, which
 	// equalDepth reports, but a container that is empty or short-circuits
@@ -456,11 +459,11 @@ func Contains(item, container Value, budget Budget) (bool, error) {
 		return false, nil
 	case KindDict:
 		d, _ := container.Dict()
-		if err := CheckHashable(item); err != nil {
+		if err := CheckHashable(item, py, AsDictKey); err != nil {
 			return false, err
 		}
-		_, ok, err := d.Get(item)
-		return ok, err
+		_, ok := d.GetKnown(item)
+		return ok, nil
 	case KindUndefined:
 		if container.undef().behavior == UndefinedStrict {
 			return false, container.UndefinedError()
@@ -493,6 +496,10 @@ func Contains(item, container Value, budget Budget) (bool, error) {
 			}
 			return false, nil
 		}
+	}
+	if py.ContainerMessageIsLonger() {
+		return false, errs.New(errs.TypeError,
+			"argument of type '%s' is not a container or iterable", container.TypeName())
 	}
 	return false, errs.New(errs.TypeError, "argument of type '%s' is not iterable", container.TypeName())
 }

@@ -24,7 +24,7 @@ func TestSliceAsksTheBaseFirst(t *testing.T) {
 	for _, tc := range []struct{ src, want string }{
 		{`{% set q = 'abcdef' %}{{ q[1.5:] }}`,
 			"slice indices must be integers or None or have an __index__ method"},
-		{`{% set q = {'a': 1} %}{{ q['x':] }}`, "unhashable type: 'slice'"},
+		{`{% set q = {'a': 1} %}{{ q['x':] }}`, "slice('x', None, None)"},
 		{`{% set q = 3 %}{{ q[1.5:] }}`, "'int' object is not subscriptable"},
 		{`{% set q = 3.5 %}{{ q['a':] }}`, "'float' object is not subscriptable"},
 		// A step of zero is a ValueError, which getitem does not

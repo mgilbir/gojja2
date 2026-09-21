@@ -319,6 +319,16 @@ func (s *State) Poll() error {
 // Env returns the environment the render is running under.
 func (s *State) Env() *Environment { return s.env }
 
+// PythonVersion is the interpreter this render reproduces, for the places the
+// CPython versions disagree. Every function whose answer depends on it takes
+// it as an argument, so this is where those arguments come from.
+func (s *State) PythonVersion() PythonVersion {
+	if s == nil || s.env == nil {
+		return DefaultPythonVersion
+	}
+	return s.env.pyVersion
+}
+
 // Name returns the name of the template currently executing.
 func (s *State) Name() string { return s.tmpl.name }
 
@@ -409,7 +419,7 @@ const RecursionMessageComparison = value.RecursionMessageComparison
 func (s *State) enter() error {
 	s.depth++
 	if s.depth > s.env.maxRecursion {
-		e := errs.New(errs.RecursionError, "%s", RecursionMessage)
+		e := errs.New(errs.RecursionError, "%s", s.PythonVersion().RecursionMessageFor(RecursionMessage))
 		e.Limit = s.env.maxRecursion
 		return e
 	}
@@ -422,7 +432,7 @@ func (s *State) enterExtends() error {
 	err := s.enter()
 	var e *errs.Error
 	if errors.As(err, &e) && e.Kind == errs.RecursionError {
-		e.Msg = RecursionMessageComparison
+		e.Msg = s.PythonVersion().RecursionMessageFor(RecursionMessageComparison)
 	}
 	return err
 }

@@ -513,6 +513,11 @@ func (ex *exec) unpack(t *ast.Tuple, v value.Value) error {
 		return errs.New(errs.ValueError,
 			"not enough values to unpack (expected %d, got %d)", len(t.Items), len(items))
 	case len(items) > len(t.Items):
+		if ex.pyVersion().UnpackErrorNamesTheCount() {
+			return errs.New(errs.ValueError,
+				"too many values to unpack (expected %d, got %d)",
+				len(t.Items), len(items))
+		}
 		return errs.New(errs.ValueError,
 			"too many values to unpack (expected %d)", len(t.Items))
 	}

@@ -21,8 +21,14 @@ import (
 // |center's width has no None to fall back on: 80 is the default for an
 // argument that was not written, and an explicit None reaches str.center and is
 // refused. gojja2 took None for "use the default" and centred in 80 columns.
+//
+// Argument Clinic stopped converting sorted()'s reverse in 3.12 and started
+// testing it for truth, which is what gojja2 used to do by accident and now
+// does on purpose for a new enough interpreter. So the refusals below are
+// pinned to the interpreter that still makes them, and the acceptance the
+// default now gives is asserted underneath. center's width did not move.
 func TestIntegerArgumentsAreNotOptionalNones(t *testing.T) {
-	env := mustNew()
+	env := mustNew(WithPythonVersion(Python311))
 	for _, tc := range []struct{ src, want string }{
 		{`{{ [3,1,2]|sort(none) }}`, "'NoneType' object cannot be interpreted as an integer"},
 		// And it is read after the value has been walked, because
@@ -73,6 +79,47 @@ func TestIntegerArgumentsAreNotOptionalNones(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// TestBoolArgsAreTruthyOnANewInterpreter is the other half of
+// TestIntegerArgumentsAreNotOptionalNones: what 3.12 made of the arguments it
+// stopped converting.
+//
+// `bool(accept={int})` became an ordinary truth test there, so the values that
+// test refuses are simply true or false for the default interpreter. Asserting
+// only the refusal would leave the acceptance to nothing but the corpus, and a
+// rule with one side tested is a rule that can be half wrong.
+func TestBoolArgsAreTruthyOnANewInterpreter(t *testing.T) {
+	env := mustNew()
+	for _, tc := range []struct{ src, want string }{
+		{`{{ [3,1,2]|sort(none) }}`, "[1, 2, 3]"},
+		{`{{ [3,1,2]|sort("x") }}`, "[3, 2, 1]"},
+		{`{{ [3,1,2]|sort([]) }}`, "[1, 2, 3]"},
+		{`{{ [3,1,2]|sort(1.5) }}`, "[3, 2, 1]"},
+		{`{{ "a\nb".splitlines(1.5)|list }}`, "['a\\n', 'b']"},
+		{`{{ "a\nb".splitlines(none)|list }}`, "['a', 'b']"},
+		// A value past a C int is just true now, where it used to
+		// overflow the conversion.
+		{`{{ [3,1]|sort(reverse=2147483648) }}`, "[3, 1]"},
+		// center's width is a real integer and did not move.
+		{`{{ "abc"|center(none) }}`, ""},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		got, err := tmpl.RenderString(context.Background(), nil)
+		if tc.want == "" {
+			if err == nil {
+				t.Errorf("%s: rendered %q, want a refusal", tc.src, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %q, %v; want %q", tc.src, got, err, tc.want)
 		}
 	}
 }

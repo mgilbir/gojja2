@@ -72,7 +72,7 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 		if callState == nil {
 			callState = s
 		}
-		if err := checkMethodArity(typeName, name, args); err != nil {
+		if err := checkMethodArity(typeName, name, args, s.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
 		return fn(callState, recv, args)
@@ -89,8 +89,17 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 //
 // A method gojja2 adds that CPython has not got is left alone: there is no
 // signature to bind against and nothing to reproduce.
-func checkMethodArity(typeName, name string, args *value.CallArgs) error {
-	sig, known := methodSignatures[typeName+"."+name]
+func checkMethodArity(typeName, name string, args *value.CallArgs, py value.PythonVersion) error {
+	key := typeName + "." + name
+	sig, known := methodSignatures[key]
+	// CPython reworded many of these in 3.13. The default table is the
+	// current wording; an older interpreter overrides only the entries it
+	// says differently. See method_arity_older.go.
+	if older, ok := methodArityOlder[py]; ok {
+		if s, ok := older[key]; ok {
+			sig, known = s, true
+		}
+	}
 	if !known {
 		return nil
 	}
@@ -146,8 +155,14 @@ func clinicStrArg(args *value.CallArgs, i int, method string, position int) (str
 	return v.AsString(), nil
 }
 
-func bareStr(v value.Value) (string, error) {
+func bareStr(v value.Value, method string, py value.PythonVersion) (string, error) {
 	if v.Kind() != value.KindString {
+		// partition and rpartition keep the bare wording even on 3.14,
+		// so they pass no name and opt out.
+		if method != "" && py.ClinicNamesTheCallee() {
+			return "", errs.New(errs.TypeError,
+				"%s() argument 1 must be str, not %s", method, clinicTypeName(v))
+		}
 		return "", errs.New(errs.TypeError, "must be str, not %s", v.TypeName())
 	}
 	return v.AsString(), nil
@@ -207,6 +222,28 @@ var (
 	// integers rather than truth tests and so carry a range.
 	cInt = cIntType{"int", math.MinInt32, math.MaxInt32}
 )
+
+// clinicBoolArg reads an argument Argument Clinic declares as
+// `bool(accept={int})` -- splitlines' keepends and sorted's reverse.
+//
+// Before 3.12 those were integers rather than truth tests: they went through
+// __index__, so `splitlines(none)` was refused and a value past a C int
+// overflowed. 3.12 made them ordinary truth tests, which accepts both. That is
+// one change with two visible faces, so it is one rule.
+func clinicBoolArg(args *value.CallArgs, i int, name string, py value.PythonVersion) (bool, error) {
+	v, ok := arg(args, i, name)
+	if !ok {
+		return false, nil
+	}
+	if py.BoolArgsAreTruthy() {
+		return value.IsTrue(v)
+	}
+	n, err := indexOf(v, cInt)
+	if err != nil {
+		return false, err
+	}
+	return n != 0, nil
+}
 
 // indexOf is Python's __index__ protocol: the conversion every argument used
 // as an integer goes through, and the complaint it makes.
@@ -325,8 +362,8 @@ func init() {
 		"startswith": affixMethod("startswith", strings.HasPrefix),
 		"endswith":   affixMethod("endswith", strings.HasSuffix),
 		"count":      methodStrCount,
-		"find":       findMethod(strings.Index),
-		"rfind":      findMethod(strings.LastIndex),
+		"find":       findMethod("find", strings.Index),
+		"rfind":      findMethod("rfind", strings.LastIndex),
 		"index":      indexMethod(strings.Index, "index"),
 		"rindex":     indexMethod(strings.LastIndex, "rindex"),
 		"format":     methodFormat,
@@ -378,7 +415,7 @@ func init() {
 // are equal-length strings paired off; a third names characters to delete. The
 // table it returns is always keyed by ordinal, which is why translate can look
 // a character up without knowing how the table was written.
-func methodMaketrans(_ *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
+func methodMaketrans(s *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
 	out := value.NewDict()
 	d, _ := out.Dict()
 	switch len(args.Pos) {
@@ -393,7 +430,7 @@ func methodMaketrans(_ *State, _ value.Value, args *value.CallArgs) (value.Value
 			if err != nil {
 				return value.Undefined, err
 			}
-			if err := d.Set(key, e.Value); err != nil {
+			if err := d.Set(key, e.Value, s.PythonVersion()); err != nil {
 				return value.Undefined, err
 			}
 		}
@@ -419,7 +456,7 @@ func methodMaketrans(_ *State, _ value.Value, args *value.CallArgs) (value.Value
 				"the first two maketrans arguments must have equal length")
 		}
 		for i, c := range from {
-			if err := d.Set(value.Int(int64(c)), value.Int(int64(to[i]))); err != nil {
+			if err := d.Set(value.Int(int64(c)), value.Int(int64(to[i])), s.PythonVersion()); err != nil {
 				return value.Undefined, err
 			}
 		}
@@ -429,7 +466,7 @@ func methodMaketrans(_ *State, _ value.Value, args *value.CallArgs) (value.Value
 					"third argument to maketrans must be a string")
 			}
 			for _, c := range value.Str(args.Pos[2]) {
-				if err := d.Set(value.Int(int64(c)), value.None); err != nil {
+				if err := d.Set(value.Int(int64(c)), value.None, s.PythonVersion()); err != nil {
 					return value.Undefined, err
 				}
 			}
@@ -461,12 +498,12 @@ func transKey(k value.Value) (value.Value, error) {
 
 // translateLookup is `table[ord(c)]` with LookupError meaning "leave this
 // character alone", which is what str.translate does per character.
-func translateLookup(table value.Value, c rune) (value.Value, bool, error) {
+func translateLookup(table value.Value, c rune, py value.PythonVersion) (value.Value, bool, error) {
 	key := value.Int(int64(c))
 	switch table.Kind() {
 	case value.KindDict:
 		d, _ := table.Dict()
-		return d.Get(key)
+		return d.Get(key, py)
 	case value.KindString, value.KindBytes:
 		if ch, in := value.StrIndex(table.AsString(), int(c)); in {
 			return value.String(ch), true, nil
@@ -479,7 +516,7 @@ func translateLookup(table value.Value, c rune) (value.Value, bool, error) {
 		}
 		return value.Undefined, false, nil
 	}
-	if v, ok := lookupItem(table, key); ok {
+	if v, ok := lookupItem(table, key, py); ok {
 		return v, true, nil
 	}
 	if table.Kind() == value.KindObject {
@@ -510,7 +547,7 @@ func methodTranslate(s *State, r value.Value, args *value.CallArgs) (value.Value
 		if err := s.Poll(); err != nil {
 			return value.Undefined, err
 		}
-		repl, found, err := translateLookup(table, c)
+		repl, found, err := translateLookup(table, c, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -674,9 +711,9 @@ func methodExpandtabs(s *State, r value.Value, args *value.CallArgs) (value.Valu
 // 3-tuple: the separator sits in the middle when it was found, and the two
 // empty strings go on whichever side the search came from when it was not.
 func partitionMethod(fromRight bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
-	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	return func(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		v, _ := arg(args, 0, "sep")
-		sep, err := bareStr(v)
+		sep, err := bareStr(v, "", st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -905,17 +942,13 @@ func splitNYielding(st *State, s, sep string, n int) ([]string, error) {
 	return append(out, s), nil
 }
 
-func methodSplitlines(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodSplitlines(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	// keepends is declared `bool(accept={int})`, so it is an integer and
 	// not a truth test: `splitlines(none)` is refused where reading it for
 	// truth quietly kept nothing.
-	keepEnds := false
-	if v, ok := arg(args, 0, "keepends"); ok {
-		n, err := indexOf(v, cInt)
-		if err != nil {
-			return value.Undefined, err
-		}
-		keepEnds = n != 0
+	keepEnds, err := clinicBoolArg(args, 0, "keepends", st.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
 	}
 	lines := splitLines(r.AsString(), keepEnds)
 	items := make([]value.Value, len(lines))
@@ -1121,18 +1154,23 @@ func bounded(args *value.CallArgs, i int) bool {
 	return ok && !v.IsNone()
 }
 
-func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodStrCount(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	// The bounds are converted while the call is parsed, so they are
 	// refused before the substring is looked at: `"ab".count(1, 1.5)` is
 	// about the 1.5.
+	v, _ := arg(args, 0, "sub")
+	sub, subErr := bareStr(v, "count", st.PythonVersion())
+	if subErr != nil && st.PythonVersion().ClinicNamesTheCallee() {
+		// From 3.13 the substring is converted before the bounds, so
+		// `'ab'.count(1, 1.5)` is about the 1 rather than the 1.5.
+		return value.Undefined, subErr
+	}
 	within, _, inRange, err := strSliceBounds(r.AsString(), args, 1)
 	if err != nil {
 		return value.Undefined, err
 	}
-	v, _ := arg(args, 0, "sub")
-	sub, err := bareStr(v)
-	if err != nil {
-		return value.Undefined, err
+	if subErr != nil {
+		return value.Undefined, subErr
 	}
 	if !inRange {
 		return value.Int(0), nil
@@ -1141,16 +1179,19 @@ func methodStrCount(_ *State, r value.Value, args *value.CallArgs) (value.Value,
 }
 
 // findMethod returns a code-point index, or -1, the way str.find does.
-func findMethod(search func(string, string) int) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
-	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func findMethod(name string, search func(string, string) int) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+		v, _ := arg(args, 0, "sub")
+		sub, subErr := bareStr(v, name, st.PythonVersion())
+		if subErr != nil && st.PythonVersion().ClinicNamesTheCallee() {
+			return value.Undefined, subErr
+		}
 		within, offset, inRange, err := strSliceBounds(r.AsString(), args, 1)
 		if err != nil {
 			return value.Undefined, err
 		}
-		v, _ := arg(args, 0, "sub")
-		sub, err := bareStr(v)
-		if err != nil {
-			return value.Undefined, err
+		if subErr != nil {
+			return value.Undefined, subErr
 		}
 		if !inRange {
 			return value.Int(-1), nil
@@ -1166,7 +1207,7 @@ func findMethod(search func(string, string) int) func(*State, value.Value, *valu
 }
 
 func indexMethod(search func(string, string) int, name string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
-	find := findMethod(search)
+	find := findMethod(name, search)
 	return func(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		v, err := find(s, r, args)
 		if err != nil {
@@ -1216,7 +1257,7 @@ func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 				return value.Undefined, err
 			}
 			i = next
-			v, err := resolveFormatField(field, base, &auto)
+			v, err := resolveFormatField(field, base, &auto, st.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -1224,7 +1265,7 @@ func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 			// -- which are resolved against the same arguments before
 			// the spec is read.
 			if strings.IndexByte(spec, '{') >= 0 {
-				spec, err = expandSpec(spec, base, &auto)
+				spec, err = expandSpec(spec, base, &auto, st.PythonVersion())
 				if err != nil {
 					return value.Undefined, err
 				}
@@ -1325,7 +1366,7 @@ split:
 
 // expandSpec resolves the replacement fields inside a format spec, so the width
 // and precision in `{:{w}.{p}f}` can come from the arguments.
-func expandSpec(spec string, base fieldBase, auto *int) (string, error) {
+func expandSpec(spec string, base fieldBase, auto *int, py value.PythonVersion) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(spec); {
 		if spec[i] != '{' {
@@ -1337,7 +1378,7 @@ func expandSpec(spec string, base fieldBase, auto *int) (string, error) {
 		if end < 0 {
 			return "", errs.New(errs.ValueError, "unmatched '{' in format spec")
 		}
-		v, err := resolveFormatField(spec[i+1:i+end], base, auto)
+		v, err := resolveFormatField(spec[i+1:i+end], base, auto, py)
 		if err != nil {
 			return "", err
 		}
@@ -1387,7 +1428,7 @@ func methodFormatMap(s *State, r value.Value, args *value.CallArgs) (value.Value
 			return value.Undefined, errs.New(errs.ValueError,
 				"Format string contains positional fields")
 		}
-		return fieldSubscript(mapping, name)
+		return fieldSubscript(mapping, name, s.PythonVersion())
 	})
 }
 
@@ -1397,7 +1438,7 @@ func methodFormatMap(s *State, r value.Value, args *value.CallArgs) (value.Value
 // accessors: "{0.name}", "{user[id]}", "{0.a[1].b}". The attribute form is a
 // real attribute lookup with no fall-back to items, which is why
 // `"{0.foo}".format({"foo": 42})` raises rather than finding the entry.
-func resolveFormatField(field string, base fieldBase, auto *int) (value.Value, error) {
+func resolveFormatField(field string, base fieldBase, auto *int, py value.PythonVersion) (value.Value, error) {
 	name, accessors := splitFieldName(field)
 
 	v, err := base(name, auto)
@@ -1405,7 +1446,7 @@ func resolveFormatField(field string, base fieldBase, auto *int) (value.Value, e
 		return value.Undefined, err
 	}
 	for _, a := range accessors {
-		if v, err = a.apply(v); err != nil {
+		if v, err = a.apply(v, py); err != nil {
 			return value.Undefined, err
 		}
 	}
@@ -1418,9 +1459,9 @@ type fieldAccessor struct {
 	isIndex bool
 }
 
-func (a fieldAccessor) apply(v value.Value) (value.Value, error) {
+func (a fieldAccessor) apply(v value.Value, py value.PythonVersion) (value.Value, error) {
 	if a.isIndex {
-		return fieldSubscript(v, a.name)
+		return fieldSubscript(v, a.name, py)
 	}
 
 	// Attribute access, with no item fall-back.
@@ -1438,7 +1479,7 @@ func (a fieldAccessor) apply(v value.Value) (value.Value, error) {
 // an integer index, and anything else -- "-1" and " 0" included, since neither
 // is all digits -- is a string key. So a negative index never reaches here, and
 // `{0[-1]}` on a list is a type error rather than the last element.
-func fieldSubscript(v value.Value, name string) (value.Value, error) {
+func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.Value, error) {
 	if name == "" {
 		return value.Undefined, errs.New(errs.ValueError,
 			"Empty attribute in format string")
@@ -1458,7 +1499,7 @@ func fieldSubscript(v value.Value, name string) (value.Value, error) {
 	switch v.Kind() {
 	case value.KindDict:
 		// A dict takes either kind of key and reports a miss as one.
-		if item, ok := lookupItem(v, key); ok {
+		if item, ok := lookupItem(v, key, py); ok {
 			return item, nil
 		}
 		return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
@@ -1491,7 +1532,7 @@ func fieldSubscript(v value.Value, name string) (value.Value, error) {
 
 	// An object may still define __getitem__; anything else is not
 	// subscriptable at all, which is a different complaint from a miss.
-	if item, ok := lookupItem(v, key); ok {
+	if item, ok := lookupItem(v, key, py); ok {
 		return item, nil
 	}
 	if v.Kind() == value.KindObject {
@@ -1768,11 +1809,11 @@ func stringPredicate(f func(string) bool) func(*State, value.Value, *value.CallA
 // --- dict methods ------------------------------------------------------------
 
 var dictMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
-	"keys": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.FromObject(&dictView{d: r, kind: viewKeys}), nil
+	"keys": func(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.FromObject(&dictView{d: r, kind: viewKeys, py: s.PythonVersion()}), nil
 	},
-	"values": func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-		return value.FromObject(&dictView{d: r, kind: viewValues}), nil
+	"values": func(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+		return value.FromObject(&dictView{d: r, kind: viewValues, py: s.PythonVersion()}), nil
 	},
 	"items":  methodDictItems,
 	"get":    methodDictGet,
@@ -1788,11 +1829,11 @@ var dictMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.V
 	"fromkeys":   methodDictFromkeys,
 }
 
-func methodDictItems(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-	return value.FromObject(&dictView{d: r, kind: viewItems}), nil
+func methodDictItems(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+	return value.FromObject(&dictView{d: r, kind: viewItems, py: s.PythonVersion()}), nil
 }
 
-func methodDictGet(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodDictGet(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	// dict.get is a C function: it counts its arguments rather than binding
 	// them by name, so both the shortage and the excess are reported with
@@ -1805,7 +1846,7 @@ func methodDictGet(_ *State, r value.Value, args *value.CallArgs) (value.Value, 
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError, "get expected at least 1 argument, got 0")
 	}
-	v, found, err := d.Get(key)
+	v, found, err := d.Get(key, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1818,7 +1859,7 @@ func methodDictGet(_ *State, r value.Value, args *value.CallArgs) (value.Value, 
 	return value.None, nil
 }
 
-func methodDictPop(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodDictPop(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	key, ok := arg(args, 0, "key")
 	if !ok {
@@ -1828,12 +1869,12 @@ func methodDictPop(_ *State, r value.Value, args *value.CallArgs) (value.Value, 
 		return value.Undefined, errs.New(errs.TypeError,
 			"pop expected at least 1 argument, got %d", len(args.Pos))
 	}
-	v, found, err := d.Get(key)
+	v, found, err := d.Get(key, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
 	if found {
-		if _, err := d.Delete(key); err != nil {
+		if _, err := d.Delete(key, s.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
 		return v, nil
@@ -1844,32 +1885,32 @@ func methodDictPop(_ *State, r value.Value, args *value.CallArgs) (value.Value, 
 	return value.Undefined, errs.New(errs.KeyError, "%s", value.Repr(key))
 }
 
-func methodDictSetdefault(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodDictSetdefault(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	key, ok := arg(args, 0, "key")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError, "setdefault expected at least 1 argument")
 	}
-	if v, found, err := d.Get(key); err != nil {
+	if v, found, err := d.Get(key, s.PythonVersion()); err != nil {
 		return value.Undefined, err
 	} else if found {
 		return v, nil
 	}
 	def, _ := arg(args, 1, "default")
 	if !def.IsUndefined() {
-		return def, d.Set(key, def)
+		return def, d.Set(key, def, s.PythonVersion())
 	}
-	return value.None, d.Set(key, value.None)
+	return value.None, d.Set(key, value.None, s.PythonVersion())
 }
 
-func methodDictUpdate(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodDictUpdate(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	if other, ok := arg(args, 0, ""); ok {
 		// Anything dict() accepts, update() accepts, and anything dict()
 		// refuses it refuses the same way. This used to test only for a
 		// mapping and discard everything else in silence, so
 		// `d.update([("a", 1)])` left the dict empty and reported success.
-		if err := updateDictFrom(d, other); err != nil {
+		if err := updateDictFrom(d, other, s.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
 	}
@@ -1883,7 +1924,7 @@ func methodDictUpdate(_ *State, r value.Value, args *value.CallArgs) (value.Valu
 // dict.update and dict() both take: a dict, any mapping, or an iterable of
 // key/value pairs. It is the single implementation behind both, so the two
 // cannot drift apart again.
-func updateDictFrom(d *value.Dict, src value.Value) error {
+func updateDictFrom(d *value.Dict, src value.Value, py value.PythonVersion) error {
 	if src.IsUndefined() {
 		// dict() probes for a keys() method first, and that probe is what
 		// fails on an Undefined.
@@ -1891,7 +1932,7 @@ func updateDictFrom(d *value.Dict, src value.Value) error {
 	}
 	if sd, ok := src.Dict(); ok {
 		for _, e := range sd.Entries() {
-			if err := d.Set(e.Key, e.Value); err != nil {
+			if err := d.Set(e.Key, e.Value, py); err != nil {
 				return err
 			}
 		}
@@ -1900,7 +1941,7 @@ func updateDictFrom(d *value.Dict, src value.Value) error {
 	if m, ok := src.Interface().(value.Mapping); ok {
 		for _, k := range m.Keys() {
 			v, _ := m.GetItem(k)
-			if err := d.Set(k, v); err != nil {
+			if err := d.Set(k, v, py); err != nil {
 				return err
 			}
 		}
@@ -1916,7 +1957,7 @@ func updateDictFrom(d *value.Dict, src value.Value) error {
 		if err != nil {
 			return err
 		}
-		if err := d.Set(key, val); err != nil {
+		if err := d.Set(key, val, py); err != nil {
 			return err
 		}
 		index++
@@ -1958,10 +1999,10 @@ func unpackDictPair(pair value.Value, index int) (value.Value, value.Value, erro
 	return first, second, nil
 }
 
-func methodDictClear(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+func methodDictClear(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
 	for _, k := range d.Keys() {
-		if _, err := d.Delete(k); err != nil {
+		if _, err := d.Delete(k, s.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
 	}
@@ -2103,7 +2144,7 @@ func methodListReverse(_ *State, r value.Value, _ *value.CallArgs) (value.Value,
 // CPython raises. Unlike a string search's, these bounds have no None form:
 // list.index declares them as indices outright, so the message has no "or
 // None" in it.
-func methodSeqIndex(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodSeqIndex(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	v, ok := arg(args, 0, "")
 	if !ok {
 		return value.Undefined, errs.New(errs.TypeError, "index() takes at least one argument")
@@ -2118,6 +2159,9 @@ func methodSeqIndex(_ *State, r value.Value, args *value.CallArgs) (value.Value,
 		if value.Equal(items[i], v) {
 			return value.Int(int64(i)), nil
 		}
+	}
+	if st.PythonVersion().IndexMessageIsGeneric() {
+		return value.Undefined, errs.New(errs.ValueError, "list.index(x): x not in list")
 	}
 	return value.Undefined, errs.New(errs.ValueError, "%s is not in list", value.Repr(v))
 }
@@ -2219,7 +2263,7 @@ func methodListSort(st *State, r value.Value, args *value.CallArgs) (value.Value
 
 // methodDictPopitem is dict.popitem, which takes the *last* pair inserted:
 // dicts have been ordered since 3.7, so it is a stack rather than arbitrary.
-func methodDictPopitem(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func methodDictPopitem(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	if len(args.Pos) > 0 || len(args.Kwargs) > 0 {
 		return value.Undefined, errs.New(errs.TypeError,
 			"dict.popitem() takes no arguments (%d given)", len(args.Pos)+len(args.Kwargs))
@@ -2231,7 +2275,7 @@ func methodDictPopitem(_ *State, r value.Value, args *value.CallArgs) (value.Val
 			"'popitem(): dictionary is empty'")
 	}
 	last := entries[len(entries)-1]
-	if _, err := d.Delete(last.Key); err != nil {
+	if _, err := d.Delete(last.Key, s.PythonVersion()); err != nil {
 		return value.Undefined, err
 	}
 	return value.NewTuple(last.Key, last.Value), nil
@@ -2257,10 +2301,10 @@ func methodDictFromkeys(st *State, _ value.Value, args *value.CallArgs) (value.V
 	out := value.NewDict()
 	d, _ := out.Dict()
 	for _, k := range items {
-		if err := value.Hashable(k); err != nil {
+		if err := value.Hashable(k, st.PythonVersion(), value.AsDictKey); err != nil {
 			return value.Undefined, err
 		}
-		if err := d.Set(k, fill); err != nil {
+		if err := d.Set(k, fill, st.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
 	}

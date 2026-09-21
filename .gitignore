@@ -11,6 +11,8 @@ __pycache__/
 
 # Build output
 /bin/
+# `go build ./tools/gocase` drops its binary in the repository root.
+/gocase
 *.test
 *.out
 coverage.txt

@@ -21,7 +21,7 @@ import (
 // The right operand decides how arguments are consumed: a tuple is positional,
 // a mapping is consulted by name when the format uses `%(key)s`, and anything
 // else -- a bare dict included -- is a single argument.
-func FormatPercent(format, args Value, budget Budget) (Value, error) {
+func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, error) {
 	spec := format.str
 	// markupsafe wraps each argument so that it escapes as it is
 	// substituted, and returns Markup. Escaping happens *before* padding,
@@ -77,6 +77,7 @@ func FormatPercent(format, args Value, budget Budget) (Value, error) {
 		}
 
 		var conv conversion
+		conv.py = py
 		var err error
 		if i, err = parseConversion(spec, i, &conv); err != nil {
 			return Undefined, err
@@ -212,6 +213,11 @@ type conversion struct {
 	// at is the offset just past the verb, which is the position
 	// CPython names when the verb is not one it knows.
 	at int
+	// py is the interpreter being reproduced, set once where the
+	// conversion is parsed. %c words its refusal differently from 3.14
+	// on, and a conversion is the smallest thing that knows which verb
+	// it is.
+	py PythonVersion
 }
 
 func parseConversion(spec string, i int, c *conversion) (int, error) {
@@ -357,6 +363,17 @@ func (c *conversion) pad(f formatted, budget Budget) (string, error) {
 	}
 }
 
+// errPercentC words %c's refusal for the chosen interpreter. Before 3.14 every
+// wrong argument got the same sentence; 3.14 names what it got instead, and
+// spells a wrong-length string as "a string of length N" rather than by type.
+func (c *conversion) errPercentC(v Value, what string) error {
+	if c.py.PercentCNamesTheType() {
+		return errs.New(errs.TypeError,
+			"%%c requires an int or a unicode character, not %s", what)
+	}
+	return errs.New(errs.TypeError, "%%c requires int or char")
+}
+
 func (c *conversion) apply(v Value, escaping bool, budget Budget) (string, error) {
 	f, err := c.convert(v, escaping)
 	if err != nil {
@@ -435,8 +452,9 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 	case 'c':
 		// Precision is accepted and ignored, as in Python.
 		if v.kind == KindString {
-			if StrLen(v.str) != 1 {
-				return formatted{}, errs.New(errs.TypeError, "%%c requires int or char")
+			if n := StrLen(v.str); n != 1 {
+				return formatted{}, c.errPercentC(v,
+					fmt.Sprintf("a string of length %d", n))
 			}
 			return formatted{body: text(v.str)}, nil
 		}
@@ -445,7 +463,7 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 		// one: the first says %c took the wrong kind of thing, the
 		// second says the code point does not exist.
 		if !v.IsInteger() {
-			return formatted{}, errs.New(errs.TypeError, "%%c requires int or char")
+			return formatted{}, c.errPercentC(v, v.TypeName())
 		}
 		n, ok := v.Int64()
 		if !ok || n < 0 || n > 0x10FFFF {
@@ -598,7 +616,10 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 		return formatted{}, true, errs.New(errs.TypeError,
 			"%%%c format: an integer is required, not _MarkupEscapeHelper", c.verb)
 	case 'c':
-		return formatted{}, true, errs.New(errs.TypeError, "%%c requires int or char")
+		// The operand reaching markupConvert is wrapped in markupsafe's
+		// escape helper, and 3.14 names the wrapper rather than what is
+		// inside it.
+		return formatted{}, true, c.errPercentC(v, "markupsafe._MarkupEscapeHelper")
 
 	case 'r', 'a':
 		// repr() of a Markup is text *about* the markup, so it is

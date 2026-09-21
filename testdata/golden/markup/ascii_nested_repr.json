@@ -4,7 +4,7 @@
     "impl": "cpython-jinja2",
     "version": "3.1.6",
     "markupsafe": "3.0.3",
-    "python": "3.11.15"
+    "python": "3.14.7"
   },
   "ok": true,
   "output": "[[('\\xe9', [{'c': '\\xe9'}])]]|[['\\xe9', ('\\u4e2d',)]]"

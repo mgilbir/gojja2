@@ -51,7 +51,7 @@ func dictOf(t *testing.T, k, v value.Value) value.Value {
 	t.Helper()
 	d := value.NewDict()
 	dict, _ := d.Dict()
-	if err := dict.Set(k, v); err != nil {
+	if err := dict.Set(k, v, value.DefaultPythonVersion); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	return d

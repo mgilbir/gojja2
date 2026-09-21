@@ -18,6 +18,14 @@ SHELL := /bin/bash
 # --- pinned references -------------------------------------------------------
 # The Jinja checkout and the oracle interpreter MUST stay on the same version:
 # expected output is whatever this exact CPython jinja2 produces.
+#
+# PYTHON_VERSION is part of the specification and not a convenience. CPython
+# carries its own Unicode, so the interpreter decides which code points are
+# digits, how repr escapes them, and what every case-mapping table here says --
+# 3.11 is Unicode 14.0.0 and 3.13 is 15.1.0. This used to be whatever `uv venv`
+# found on the machine, which meant the specification was chosen by accident and
+# a contributor on a different interpreter would regenerate different goldens.
+PYTHON_VERSION   := 3.14
 JINJA_VERSION    := 3.1.6
 JINJA_REPO       := https://github.com/pallets/jinja.git
 JINJA_REV        := 2d4ce43010630478ee88b463f731389fa18953f4   # refs/tags/3.1.6
@@ -66,8 +74,12 @@ help: ## Show this help
 # --- toolchain ---------------------------------------------------------------
 
 $(VENV)/.stamp:
-	uv venv $(VENV)
+	uv venv --python $(PYTHON_VERSION) $(VENV)
 	uv pip install --python $(PY) "jinja2==$(JINJA_VERSION)"
+	@$(PY) -c 'import sys, unicodedata; \
+	  v = ".".join(map(str, sys.version_info[:2])); \
+	  assert v == "$(PYTHON_VERSION)", f"venv is {v}, not $(PYTHON_VERSION)"; \
+	  print(f"oracle: CPython {sys.version.split()[0]}, Unicode {unicodedata.unidata_version}")'
 	@touch $@
 
 .PHONY: venv

@@ -44,35 +44,48 @@ func pool() []value.Value {
 	}
 }
 
-// binaryOps maps each operator to the gojja2 entry point that implements it.
+// corpusPythonVersion is the interpreter value/testdata/ops.jsonl was recorded
+// under. It is the default: the corpus is regenerated with `make ops` from the
+// pinned CPython, and the pin and the default move together.
+const corpusPythonVersion = value.DefaultPythonVersion
+
+// binaryOps maps each operator to the gojja2 entry point that implements it,
+// for one interpreter version.
 //
 // The ones that take a budget are given none: this corpus is about what each
 // operator computes, and a nil budget leaves only the hard ceiling, which no
 // case here comes near.
-var binaryOps = map[string]func(a, b value.Value) (value.Value, error){
-	"+":  func(a, b value.Value) (value.Value, error) { return value.Add(a, b, nil) },
-	"-":  func(a, b value.Value) (value.Value, error) { return value.Sub(a, b, nil) },
-	"*":  func(a, b value.Value) (value.Value, error) { return value.Mul(a, b, nil) },
-	"/":  value.Div,
-	"//": value.FloorDiv,
-	"%":  func(a, b value.Value) (value.Value, error) { return value.Mod(a, b, nil) },
-	"**": func(a, b value.Value) (value.Value, error) { return value.Pow(a, b, nil) },
-	"==": func(a, b value.Value) (value.Value, error) { return value.Bool(value.Equal(a, b)), nil },
-	"!=": func(a, b value.Value) (value.Value, error) { return value.Bool(!value.Equal(a, b)), nil },
-	"<":  ordered("<"),
-	"<=": ordered("<="),
-	">":  ordered(">"),
-	">=": ordered(">="),
-	// Python spells this `a in b`, so the container is the second operand.
-	"in": func(a, b value.Value) (value.Value, error) {
-		ok, err := value.Contains(a, b, nil)
-		return value.Bool(ok), err
-	},
+//
+// The version is a parameter because several of these word a failure
+// differently depending on it -- every division by zero collapsed to one
+// sentence in 3.14 -- so the corpus is recorded per version and replayed
+// against the matching one.
+func binaryOpsFor(py value.PythonVersion) map[string]func(a, b value.Value) (value.Value, error) {
+	return map[string]func(a, b value.Value) (value.Value, error){
+		"+":  func(a, b value.Value) (value.Value, error) { return value.Add(a, b, nil) },
+		"-":  func(a, b value.Value) (value.Value, error) { return value.Sub(a, b, nil) },
+		"*":  func(a, b value.Value) (value.Value, error) { return value.Mul(a, b, nil) },
+		"/":  func(a, b value.Value) (value.Value, error) { return value.Div(a, b, py) },
+		"//": func(a, b value.Value) (value.Value, error) { return value.FloorDiv(a, b, py) },
+		"%":  func(a, b value.Value) (value.Value, error) { return value.Mod(a, b, nil, py) },
+		"**": func(a, b value.Value) (value.Value, error) { return value.Pow(a, b, nil, py) },
+		"==": func(a, b value.Value) (value.Value, error) { return value.Bool(value.Equal(a, b)), nil },
+		"!=": func(a, b value.Value) (value.Value, error) { return value.Bool(!value.Equal(a, b)), nil },
+		"<":  ordered("<"),
+		"<=": ordered("<="),
+		">":  ordered(">"),
+		">=": ordered(">="),
+		// Python spells this `a in b`, so the container is the second operand.
+		"in": func(a, b value.Value) (value.Value, error) {
+			ok, err := value.Contains(a, b, nil, py)
+			return value.Bool(ok), err
+		},
+	}
 }
 
 func ordered(op string) func(a, b value.Value) (value.Value, error) {
 	return func(a, b value.Value) (value.Value, error) {
-		ok, err := value.Ordered(op, a, b)
+		ok, err := value.Ordered(op, a, b, value.DefaultPythonVersion)
 		return value.Bool(ok), err
 	}
 }
@@ -157,9 +170,14 @@ func TestOperatorsMatchCPython(t *testing.T) {
 		f.count++
 	}
 
+	// The corpus is recorded under one interpreter, and several operators
+	// word a failure differently by version, so it is replayed against the
+	// one it was recorded with. ops.jsonl carries that version.
+	ops := binaryOpsFor(corpusPythonVersion)
+
 	complexCases := 0
 	for _, c := range cases {
-		fn, ok := binaryOps[c.Op]
+		fn, ok := ops[c.Op]
 		if !ok {
 			t.Fatalf("no implementation registered for operator %q", c.Op)
 		}

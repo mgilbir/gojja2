@@ -252,7 +252,7 @@ func writePlainJSON(b *strings.Builder, v value.Value, indent, depth int, opts j
 			target, _ := out.Dict()
 			for _, k := range m.Keys() {
 				val, _ := m.GetItem(k)
-				_ = target.Set(k, val)
+				target.SetKnown(k, val)
 			}
 			return writePlainJSON(b, out, indent, depth, opts)
 		}

@@ -22,6 +22,21 @@ type Expected struct {
 	Error  *GoldenError
 }
 
+// Equal reports whether two recorded answers say the same thing, which is how
+// a per-version override is checked for having anything to record.
+func (e Expected) Equal(o Expected) bool {
+	if e.OK != o.OK || e.Output != o.Output {
+		return false
+	}
+	if (e.Error == nil) != (o.Error == nil) {
+		return false
+	}
+	if e.Error == nil {
+		return true
+	}
+	return e.Error.Type == o.Error.Type && e.Error.Message == o.Error.Message
+}
+
 // Expected converts a recorded golden.
 func (g *Golden) Expected() Expected {
 	return Expected{OK: g.OK, Output: g.Output, Error: g.Error}

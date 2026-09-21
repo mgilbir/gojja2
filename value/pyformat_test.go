@@ -89,7 +89,7 @@ func TestFormatPercentMatchesCPython(t *testing.T) {
 		{"%d", value.BigInt(bigPow(2, 70)), "1180591620717411303424"},
 		{"%x", value.BigInt(bigPow(2, 70)), "400000000000000000"},
 	} {
-		got, err := value.FormatPercent(value.String(tc.format), tc.arg, nil)
+		got, err := value.FormatPercent(value.String(tc.format), tc.arg, nil, value.DefaultPythonVersion)
 		if err != nil {
 			t.Errorf("%q %% %s: %v", tc.format, value.Repr(tc.arg), err)
 			continue
@@ -117,11 +117,11 @@ func TestFormatPercentRefusesLikeCPython(t *testing.T) {
 		kind   errs.Kind
 		msg    string
 	}{
-		{"%c", value.Float(1), errs.TypeError, "%c requires int or char"},
-		{"%c", value.None, errs.TypeError, "%c requires int or char"},
+		{"%c", value.Float(1), errs.TypeError, "%c requires an int or a unicode character, not float"},
+		{"%c", value.None, errs.TypeError, "%c requires an int or a unicode character, not NoneType"},
 		{"%c", value.Int(1114112), errs.OverflowError, "%c arg not in range(0x110000)"},
 		{"%c", value.Int(-1), errs.OverflowError, "%c arg not in range(0x110000)"},
-		{"%c", value.String("ab"), errs.TypeError, "%c requires int or char"},
+		{"%c", value.String("ab"), errs.TypeError, "%c requires an int or a unicode character, not a string of length 2"},
 		{"%d", value.Float(math.Inf(1)), errs.OverflowError, "cannot convert float infinity to integer"},
 		{"%d", value.Float(math.NaN()), errs.ValueError, "cannot convert float NaN to integer"},
 		// o, x and X take an integer only; d, i and u truncate a float.
@@ -131,7 +131,7 @@ func TestFormatPercentRefusesLikeCPython(t *testing.T) {
 		{"%x", value.String("x"), errs.TypeError, "%x format: an integer is required, not str"},
 		{"%d", value.NewList(), errs.TypeError, "%d format: a real number is required, not list"},
 	} {
-		_, err := value.FormatPercent(value.String(tc.format), tc.arg, nil)
+		_, err := value.FormatPercent(value.String(tc.format), tc.arg, nil, value.DefaultPythonVersion)
 		if err == nil {
 			t.Errorf("%q %% %s: no error, want %s", tc.format, value.Repr(tc.arg), tc.msg)
 			continue
@@ -165,7 +165,7 @@ func TestFormatPercentStarArguments(t *testing.T) {
 		{"%.*f", tup(value.Int(-1), value.Float(1.5)), "2"},
 		{"%.*s", tup(value.Int(-3), value.String("abc")), ""},
 	} {
-		got, err := value.FormatPercent(value.String(tc.format), tc.args, nil)
+		got, err := value.FormatPercent(value.String(tc.format), tc.args, nil, value.DefaultPythonVersion)
 		if err != nil {
 			t.Errorf("%q %% %s: %v", tc.format, value.Repr(tc.args), err)
 			continue

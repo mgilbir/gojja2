@@ -64,7 +64,7 @@ func TestCollectionMethodsMatchCPython(t *testing.T) {
 		{`{% set L = [1] %}{{ L.sort(1) }}`, errs.TypeError,
 			"sort() takes no positional arguments"},
 		{`{% set L = [1] %}{{ L.sort(bogus=1) }}`, errs.TypeError,
-			"'bogus' is an invalid keyword argument for sort()"},
+			"sort() got an unexpected keyword argument 'bogus'"},
 		{`{% set L = [1,'a'] %}{{ L.sort() }}`, errs.TypeError,
 			"'<' not supported between instances of"},
 		// popitem on an empty dict, and with any argument at all.
@@ -73,7 +73,7 @@ func TestCollectionMethodsMatchCPython(t *testing.T) {
 			"dict.popitem() takes no arguments (1 given)"},
 		// fromkeys wants something iterable, and hashable keys.
 		{`{{ {}.fromkeys(5) }}`, errs.TypeError, "'int' object is not iterable"},
-		{`{{ {}.fromkeys([[1]]) }}`, errs.TypeError, "unhashable type: 'list'"},
+		{`{{ {}.fromkeys([[1]]) }}`, errs.TypeError, "cannot use 'list' as a dict key (unhashable type: 'list')"},
 		{`{{ {}.fromkeys() }}`, errs.TypeError, "fromkeys expected at least 1 argument, got 0"},
 		// dict.get counts its arguments, both ways.
 		{`{{ {}.get() }}`, errs.TypeError, "get expected at least 1 argument, got 0"},
@@ -106,7 +106,7 @@ func TestCollectionMethodsMatchCPython(t *testing.T) {
 	if _, err := env.FromString(`{{ [1,2].index(99) }}`); err == nil {
 		out, err := mustTmpl(t, env, `{{ [1,2].index(99) }}`)
 		_ = out
-		if err == nil || !strings.Contains(err.Error(), "99 is not in list") {
+		if err == nil || !strings.Contains(err.Error(), "list.index(x): x not in list") {
 			t.Errorf("list.index: got %v, want \"99 is not in list\"", err)
 		}
 	}

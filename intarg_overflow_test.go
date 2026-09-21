@@ -46,9 +46,14 @@ func TestIntegerArgumentOverflowsAtItsCType(t *testing.T) {
 		{"list.insert index", `{% set L=[1,2] %}{{ L.insert(N,9) }}`, "C ssize_t"},
 		{"list.pop index", `{% set L=[1,2] %}{{ L.pop(N) }}`, "C ssize_t"},
 		// --- C int: refuses at 2**31 ------------------------------------
+		//
+		// expandtabs is the only one left. splitlines' keepends and
+		// sorted's reverse were declared `bool(accept={int})`, which
+		// went through __index__ and so carried this range -- until
+		// 3.12 made them ordinary truth tests, where any integer is
+		// simply true. They are graded per version by the corpus
+		// instead; see TestEveryPythonVersion.
 		{"expandtabs tabsize", `{{ "a	b".expandtabs(N) }}`, "C int"},
-		{"splitlines keepends", `{{ "a\nb".splitlines(N)|list }}`, "C int"},
-		{"sort reverse", `{{ [3,1]|sort(reverse=N) }}`, "C int"},
 	} {
 		// Past Py_ssize_t every site overflows, whatever its C type.
 		src := strings.ReplaceAll(tc.src, "N", wideForSSizeT)
@@ -90,8 +95,10 @@ func TestNonIntegerArgumentStaysATypeError(t *testing.T) {
 		{`{{ "ab"|center(1.5) }}`, "'float' object cannot be interpreted as an integer"},
 		{`{{ "ab"|center([1]) }}`, "'list' object cannot be interpreted as an integer"},
 		{`{{ "a	b".expandtabs("x") }}`, "'str' object cannot be interpreted as an integer"},
-		{`{{ [3,1]|sort(reverse="x") }}`, "'str' object cannot be interpreted as an integer"},
-		{`{{ "a\nb".splitlines(1.5)|list }}`, "'float' object cannot be interpreted as an integer"},
+		// sort's reverse and splitlines' keepends left this set in 3.12,
+		// when Argument Clinic stopped converting them and started
+		// testing them for truth. WithPythonVersion(Python311) still
+		// refuses them, which the corpus grades.
 	} {
 		tmpl, err := mustNew().FromString(tc.src)
 		if err != nil {
