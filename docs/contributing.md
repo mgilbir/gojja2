@@ -138,6 +138,34 @@ If one fails after a toolchain upgrade or a `PYTHON_VERSION` bump, regenerate
 and read the diff: it is telling you either that Unicode moved or that the
 pinned CPython did.
 
+## The exposed tree is compared to jinja2's, byte for byte
+
+`Template.Syntax` gives a template's structure in the vocabulary of the `syntax`
+package, so a caller can ask their own questions of it.
+`tools/oracle/syntax_emit.py` writes **jinja2's** parse tree into the same
+vocabulary, `make syntax` records it in `testdata/syntax.jsonl`, and
+`TestSyntaxMatchesTheReference` requires the two to encode identically for every
+committed case.
+
+Byte equality is the strong form of the guarantee, and the reason the vocabulary
+is normalised rather than faithful to either tree. An analysis that agrees proves
+the two see eye to eye about *that* analysis; trees that agree prove it for every
+question either will ever be asked, including the ones nobody has written. That
+is what makes the tree worth exposing at all — a caller writing a query gets the
+answer jinja2 would have given, and this is the evidence.
+
+The normalisation lives in the two emitters, never in the comparison. jinja2 has
+nine classes for binary operators and the vocabulary has one node with the
+operator on it; jinja2 wraps `{% autoescape %}` in an explicit scope and gojja2
+leaves it implicit, so the Go emitter adds it, because the body **is** a scope. A
+difference that survives to the comparison is either a real disagreement about
+what the parsers understood or a gap in the vocabulary. Both are worth finding,
+and nothing is allowed to forgive one.
+
+If `make syntax` reports "no spelling for …", the vocabulary is missing a node.
+Add it to `gojja2/syntax` and to both emitters rather than skipping the case: a
+tree quietly missing a node compares equal for the wrong reason.
+
 ## What watches the oracle
 
 CI never runs Python: the whole point of committing the goldens is that the

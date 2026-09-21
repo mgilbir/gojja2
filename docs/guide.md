@@ -352,6 +352,40 @@ The check reads the handler wherever a template writes one -- positionally, as
 `s.encode("ascii", h)`, cannot be judged before the render and is not guessed
 at; that one still surfaces as the `LookupError` it always did.
 
+## Asking questions about a template
+
+`Template.Syntax` returns the template's structure in the vocabulary of the
+[`syntax`](https://pkg.go.dev/github.com/mgilbir/gojja2/syntax) package: one node
+type, a closed set of kinds, and children reached through **labelled edges**.
+
+```go
+tmpl, _ := env.FromString(`{% if admin %}{{ name }}{% endif %}`)
+
+syntax.Walk(tmpl.Syntax(), func(n *syntax.Node, role syntax.Role) bool {
+    if role == syntax.RoleTest && n.Kind == syntax.KindName {
+        fmt.Println(n.Attr("name"), "decides something")
+    }
+    return true
+})
+```
+
+The labels are what make a query short. `RoleTest` is a condition wherever it
+appears, so asking "which names decide something" needs no knowledge of the node
+set — where a positional tree would mean knowing that a condition is the first
+field of an `if`, the third of a `for` and the test of a conditional expression.
+
+It is the template **as written**, not as compiled: the constant folder has run
+over the engine's own tree, and whether `{{ xs[[]] }}` is a constant subscript is
+a fact about the optimizer rather than about the template.
+
+The vocabulary is deliberately neither gojja2's internal tree nor jinja2's.
+Matching jinja2's node classes would be a promise to reproduce a data structure
+rather than a behaviour. What is promised instead is stronger and more useful:
+gojja2's tree and jinja2's own parse tree encode to **byte-identical** canonical
+form for every committed conformance case, so a query written against this
+reaches the conclusion jinja2 would have reached. See
+[docs/contributing.md](contributing.md) for how that is checked.
+
 ## Filter policies
 
 `WithPolicies` overrides the defaults jinja2 keeps in `Environment.policies`:
