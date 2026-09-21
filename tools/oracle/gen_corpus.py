@@ -31,6 +31,49 @@ CASES: list[tuple[str, str, dict]] = []
 _SEEN: set[str] = set()
 
 
+def lit(s: str) -> str:
+    """A Python string literal for a corpus template, independent of this
+    interpreter.
+
+    repr() cannot be used for this. It escapes by str.isprintable, which is one
+    of the very properties that moves between CPython releases, so a corpus case
+    holding a newly-assigned character came out as the character itself under one
+    pin and as a backslash escape under another. The *input* to a conformance
+    case must not depend on which interpreter generated it: two contributors on
+    different pins would otherwise commit different templates and read the diff
+    as noise.
+
+    So the rule is fixed here, as a literal set rather than as a property
+    lookup. unicodedata.category cannot be used either: an unassigned code point
+    is Cn until the release that assigns it, which is the same dependency wearing
+    a different hat.
+
+    Escaped: the backslash and the quote, the ASCII controls, DEL, the C1 range
+    and NBSP -- everything that would otherwise sit invisibly in a text file.
+    Everything else goes in as itself. That is what repr() produces on all four
+    interpreters for every character the corpus uses, so this changes no existing
+    case; the difference is that it will keep producing it.
+
+    A character outside that set but still invisible -- a zero-width space, say
+    -- would go in raw. That is deliberate: it stays deterministic, which is what
+    this is for. Write it escaped in the source list if it matters.
+    """
+    short = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+    out = ["'"]
+    for ch in s:
+        cp = ord(ch)
+        if ch in ("\\", "'"):
+            out.append("\\" + ch)
+        elif ch in short:
+            out.append(short[ch])
+        elif cp < 0x20 or cp == 0x7F or 0x80 <= cp <= 0xA0:
+            out.append(f"\\x{cp:02x}")
+        else:
+            out.append(ch)
+    out.append("'")
+    return "".join(out)
+
+
 def case(name: str, template: str, **header) -> None:
     # A name is a path, so two cases sharing one silently overwrote each
     # other: main() writes them in order and the second wins. The count this
@@ -1059,20 +1102,20 @@ _BYTESEP = ".encode().SPLIT(','.encode(), N) }}"
 for _i, _subj in enumerate(["a,b,c,d", ",a,,b,", "a,,b", ",,,", "abc", ""]):
     for _n in (0, 1, 2, 3, 9):
         for _side in ("split", "rsplit"):
-            body = "{{ " + repr(_subj) + _BYTESEP.replace("SPLIT", _side).replace("N", str(_n))
+            body = "{{ " + lit(_subj) + _BYTESEP.replace("SPLIT", _side).replace("N", str(_n))
             case(f"bytes/{_side}_sep_maxsplit_{_i}_{_n}", body)
     for _side in ("split", "rsplit"):
         case(f"bytes/{_side}_sep_nomax_{_i}",
-             "{{ " + repr(_subj) + ".encode()." + _side + "(','.encode()) }}")
+             "{{ " + lit(_subj) + ".encode()." + _side + "(','.encode()) }}")
 
 for _i, _subj in enumerate(_SPLITSUBJECTS + ["", "   ", "\u00e9 \u00e9"]):
     for _n in (0, 1, 2, 3, 9):
         for _side in ("split", "rsplit"):
             case(f"bytes/{_side}_ws_maxsplit_{_i}_{_n}",
-                 "{{ " + repr(_subj) + ".encode()." + _side + "(none, " + str(_n) + ") }}")
+                 "{{ " + lit(_subj) + ".encode()." + _side + "(none, " + str(_n) + ") }}")
     for _side in ("split", "rsplit"):
         case(f"bytes/{_side}_ws_noarg_{_i}",
-             "{{ " + repr(_subj) + ".encode()." + _side + "() }}")
+             "{{ " + lit(_subj) + ".encode()." + _side + "() }}")
 
 
 # A line statement whose prefix is also the block delimiter. The lexer decided
@@ -2498,16 +2541,16 @@ _SENTINEL_SUBJECTS = [
 ]
 for _i, _subj in enumerate(_SENTINEL_SUBJECTS):
     case(f"methods/int_default_is_not_a_disguise_{_i}",
-         "{{ " + repr(_subj) + "|int(-999) }}")
+         "{{ " + lit(_subj) + "|int(-999) }}")
     case(f"methods/float_default_is_not_a_disguise_{_i}",
-         "{{ " + repr(_subj) + "|float(-999) }}")
+         "{{ " + lit(_subj) + "|float(-999) }}")
 # The same for the base forms, where a wrong base silently answers the default
 # rather than saying the digits do not fit it.
 for _i, _subj in enumerate(["1f", "0x1f", "101", "0b101", "17", "0o17",
                             "19", "12", "١٥", "0x١٥", "z"]):
     for _base in (0, 2, 8, 10, 16, 36):
         case(f"methods/int_default_base_{_i}_{_base}",
-             "{{ " + repr(_subj) + "|int(-999, " + str(_base) + ") }}")
+             "{{ " + lit(_subj) + "|int(-999, " + str(_base) + ") }}")
 
 # --- the code points the interpreters disagree about --------------------------
 # CPython carries its own Unicode, so which characters are printable, which are
@@ -2538,20 +2581,21 @@ _UNI = {
     "arabic_indic_four": "٤",
 }
 for _name, _ch in _UNI.items():
+    _l = lit(_ch)
     case(f"unicode/predicates_{_name}",
-         "{{ " + repr(_ch) + ".isdigit() }}|{{ " + repr(_ch) + ".isdecimal() }}|"
-         "{{ " + repr(_ch) + ".isnumeric() }}|{{ " + repr(_ch) + ".isalnum() }}|"
-         "{{ " + repr(_ch) + ".isalpha() }}")
+         "{{ " + _l + ".isdigit() }}|{{ " + _l + ".isdecimal() }}|"
+         "{{ " + _l + ".isnumeric() }}|{{ " + _l + ".isalnum() }}|"
+         "{{ " + _l + ".isalpha() }}")
     case(f"unicode/case_{_name}",
-         "{{ " + repr(_ch) + "|upper }}|{{ " + repr(_ch) + "|lower }}|"
-         "{{ " + repr(_ch) + ".title() }}|{{ " + repr(_ch) + ".casefold() }}|"
-         "{{ " + repr(_ch) + ".swapcase() }}|{{ " + repr(_ch) + ".isupper() }}|"
-         "{{ " + repr(_ch) + ".islower() }}")
+         "{{ " + _l + "|upper }}|{{ " + _l + "|lower }}|"
+         "{{ " + _l + ".title() }}|{{ " + _l + ".casefold() }}|"
+         "{{ " + _l + ".swapcase() }}|{{ " + _l + ".isupper() }}|"
+         "{{ " + _l + ".islower() }}")
     # repr escapes by isprintable, which is where almost all of the difference
     # between the interpreters lives.
-    case(f"unicode/repr_{_name}", "{{ [" + repr(_ch) + "]|pprint }}")
+    case(f"unicode/repr_{_name}", "{{ [" + _l + "]|pprint }}")
     case(f"unicode/numeric_{_name}",
-         "{{ " + repr(_ch) + "|int(-1) }}|{{ " + repr(_ch) + "|float(-1) }}")
+         "{{ " + _l + "|int(-1) }}|{{ " + _l + "|float(-1) }}")
 
 # --- int() and float() do not read ASCII digits -------------------------------
 # Python transforms every character carrying a *decimal* value into the ASCII
@@ -2577,8 +2621,8 @@ _DIGITS = {
     "mixed_the_other_way": "2\u0664",
 }
 for _name, _d in _DIGITS.items():
-    case(f"methods/int_digits_{_name}", "{{ " + repr(_d) + "|int }}")
-    case(f"methods/float_digits_{_name}", "{{ " + repr(_d) + "|float }}")
+    case(f"methods/int_digits_{_name}", "{{ " + lit(_d) + "|int }}")
+    case(f"methods/float_digits_{_name}", "{{ " + lit(_d) + "|float }}")
 
 # The rules layered on top still apply after the transform.
 for _name, _expr in [
