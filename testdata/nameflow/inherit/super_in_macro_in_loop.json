@@ -1,6 +1,6 @@
 {
   "case": "inherit/super_in_macro_in_loop.jj2",
   "variables": {
-    "super": "o?"
+    "super": "o"
   }
 }

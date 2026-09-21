@@ -435,9 +435,18 @@ than a scan for names — `{% set y = x %}{{ y }}` prints `x` without ever namin
 it at an output position, and `{{ "yes" if flag else "no" }}` prints neither
 operand while `flag` decides which.
 
-`Opaque` means the answer has no reliable negative: a computed lookup like
-`{{ data[key] }}` is a route the analysis does not follow. Nothing is ever
-reported as unable to reach the output when it might.
+`Opaque` means the answer has no reliable negative — a route the analysis could
+not follow. Nothing is ever reported as unable to reach the output when it might.
+It is rarer than it sounds: across the chat templates real models ship, under 1%
+of variables come back opaque.
+
+A call the analysis cannot see into — `{{ msg.strip() }}`, or a macro held in a
+variable — is not one of those routes. The result comes out of the receiver and
+the arguments, which is plain enough. What needs care is that a call can also
+*change* its receiver: `{% do items.append(x) %}` renders nothing and leaves `x`
+inside `items`, so a later `{{ items }}` prints it. That is recorded as a
+dependency, which costs some precision in the safe direction — `{{ s.split(sep) }}`
+does not mutate `s`, but `sep` inherits whatever `s` does.
 
 ### Namespaces
 
