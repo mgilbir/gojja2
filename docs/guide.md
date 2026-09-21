@@ -436,9 +436,34 @@ it at an output position, and `{{ "yes" if flag else "no" }}` prints neither
 operand while `flag` decides which.
 
 `Opaque` means the answer has no reliable negative: a computed lookup like
-`{{ data[key] }}`, a `namespace()`, or a template pulled in by `{% include %}`
-are routes the analysis does not follow. Nothing is ever reported as unable to
-reach the output when it might.
+`{{ data[key] }}` or a `namespace()` are routes the analysis does not follow.
+Nothing is ever reported as unable to reach the output when it might.
+
+### Following `{% include %}` and friends
+
+Give it a resolver and it reads the templates a template pulls in, which is how
+a variable that only the *other* template mentions gets reported at all:
+
+```go
+flow := dataflow.Analyze(tree, dataflow.WithResolver(func(name string) *syntax.Tree {
+    other, err := env.GetTemplate(name)
+    if err != nil {
+        return nil
+    }
+    return other.Syntax()
+}))
+```
+
+The defaults differ and the difference is worth knowing: `{% include %}` hands
+over the context, and `{% import %}` and `{% from … import %}` do not. An import
+without context cannot see your variables at all, so it cannot print them —
+a real negative rather than a shrug. A name that is not a constant
+(`{% include page %}`) stays opaque, because which template runs is not a static
+fact; `page` is reported as steering the output, since two names render two
+documents.
+
+Without a resolver, a reference to another template makes everything opaque. A
+cycle terminates rather than recurring.
 
 `Flow.Derives` is the dependency graph the verdict was propagated over, exposed
 because the interesting question is not always "can this be printed" — "what

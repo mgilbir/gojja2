@@ -82,6 +82,11 @@ class Analysis:
         # cannot follow -- an include, or an import. Every context name is then
         # unknown, because the other template can print any of them.
         self.opaque_sink = False
+        # Following a reference to another template needs a way to reach it,
+        # and a way not to follow a cycle round for ever.
+        self.resolver = None
+        self.visiting = set()
+        self.cache = {}
         # A stack of block-set captures: while one is open, output is collected
         # rather than emitted, because it becomes a value instead of a document.
         self.capture: list[set[int]] = []
@@ -148,6 +153,42 @@ class Analysis:
 
     def mark_unknown(self, name):
         self.resolve(name).unknown = True
+
+    # --- other templates -------------------------------------------------
+
+    def context_effects_of(self, name):
+        """What the named template does with the variables it is handed."""
+        if name in self.cache:
+            return self.cache[name]
+        if name in self.visiting:
+            return {}
+        if self.resolver is None:
+            self.opaque_sink = True
+            return {}
+        tree = self.resolver(name)
+        if tree is None:
+            self.opaque_sink = True
+            return {}
+        self.visiting.add(name)
+        sub = Analysis()
+        sub.resolver, sub.visiting, sub.cache = self.resolver, self.visiting, self.cache
+        sub.push(tree)
+        sub.stmts(tree.body)
+        sub.pop()
+        sub.propagate()
+        self.visiting.discard(name)
+        if sub.opaque_sink:
+            self.opaque_sink = True
+        eff = {nm: (s.roles, s.unknown) for nm, s in sub.context.items()}
+        self.cache[name] = eff
+        return eff
+
+    def inherit(self, name):
+        """Apply another template's effects to our own variables."""
+        for nm, (roles, unknown) in self.context_effects_of(name).items():
+            s = self.context_sym(nm)
+            s.roles |= roles
+            s.unknown = s.unknown or unknown
 
     # --- the walk --------------------------------------------------------
     #
@@ -385,13 +426,35 @@ class Analysis:
             self.stmts(n.body)
             self.pop()
 
-        elif isinstance(n, (nodes.Include, nodes.Import, nodes.FromImport,
-                            nodes.Extends)):
-            # Layer 3. Another template receives this context and can print any
-            # of it, so until the edge is followed every context name is in
-            # play. The template reference itself is still ordinary data.
-            self.expr(getattr(n, "template", None))
-            self.opaque_sink = True
+        elif isinstance(n, (nodes.Extends, nodes.Include)):
+            # The named template renders with these variables, so what it does
+            # with them is what this one does with them. Which template that is
+            # steers the output -- two names render two documents -- even though
+            # the name itself is never printed.
+            self.apply(self.expr(n.template), FLOW)
+            name = const_name(n.template)
+            if name is None:
+                self.opaque_sink = True
+            elif isinstance(n, nodes.Include) and not n.with_context:
+                pass          # handed nothing, so it can print nothing of ours
+            else:
+                self.inherit(name)
+
+        elif isinstance(n, (nodes.Import, nodes.FromImport)):
+            # An import binds names rather than rendering, and does not pass the
+            # context unless asked. One that does not cannot see the caller's
+            # variables at all, so it cannot print them.
+            self.apply(self.expr(n.template), FLOW)
+            name = const_name(n.template)
+            if name is None:
+                if n.with_context:
+                    self.opaque_sink = True
+            elif n.with_context:
+                self.inherit(name)
+            # What it binds is a module, or a macro from one. Calling that
+            # reaches code this does not follow.
+            for bound in imported_names(n):
+                self.resolve(bound).unknown = True
 
         elif isinstance(n, nodes.ExprStmt):
             self.expr(n.node)
@@ -461,14 +524,32 @@ class Analysis:
         return out
 
 
-def analyze(tree, globals_=()) -> dict[str, dict]:
+def const_name(ref):
+    """The template a reference names, when it names one at all."""
+    if isinstance(ref, nodes.Const) and isinstance(ref.value, str):
+        return ref.value
+    return None
+
+
+def imported_names(n):
+    """What an import binds locally."""
+    if isinstance(n, nodes.Import):
+        return [n.target] if n.target else []
+    return [x if isinstance(x, str) else x[1] for x in n.names]
+
+
+def analyze(tree, globals_=(), resolver=None) -> dict[str, dict]:
     """Classify every context variable a parsed template reads.
 
     `globals_` are names the environment supplies -- range, dict, lipsum and
     their neighbours. A template reading one is not asking its caller for
     anything, so they are left out rather than reported as requirements.
+
+    `resolver` maps a template name to its parsed tree, so `{% extends %}`,
+    `{% include %}` and `{% import %}` can be followed rather than given up at.
     """
     a = Analysis()
+    a.resolver = resolver
     a.push(tree)
     a.stmts(tree.body)
     a.pop()

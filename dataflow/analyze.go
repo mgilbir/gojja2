@@ -34,18 +34,46 @@ type analyzer struct {
 	// opaqueSink records that the whole context can be handed to a template
 	// this did not follow, which puts every symbol in play.
 	opaqueSink bool
+
+	// resolve, visiting and cache carry the analysis across templates.
+	// visiting and cache are shared with every nested analysis, so a cycle
+	// terminates and a template pulled in twice is analysed once.
+	resolve  Resolver
+	visiting map[string]bool
+	cache    map[string]map[string]Effect
+
+	// external holds symbols for the caller's variables that only the
+	// templates this one pulls in ever mention. They are not in Info,
+	// because Info describes this tree.
+	external map[string]*syntax.Symbol
 }
 
-// Analyze computes what a template does with the values it is given.
-func Analyze(t *syntax.Tree) *Flow {
-	a := &analyzer{
+func newAnalyzer(t *syntax.Tree, resolve Resolver, visiting map[string]bool,
+	cache map[string]map[string]Effect) *analyzer {
+	return &analyzer{
 		tree:        t,
 		derives:     map[*syntax.Symbol]symset{},
 		effects:     map[*syntax.Symbol]Effect{},
 		macroOut:    map[*syntax.Symbol]symset{},
 		macroParams: map[*syntax.Symbol][]*syntax.Symbol{},
 		inMacro:     map[*syntax.Symbol]bool{},
+		resolve:     resolve,
+		visiting:    visiting,
+		cache:       cache,
+		external:    map[string]*syntax.Symbol{},
 	}
+}
+
+// Analyze computes what a template does with the values it is given.
+//
+// Pass [WithResolver] to follow references to other templates; without one, a
+// template that hands its context to another is reported as [Opaque].
+func Analyze(t *syntax.Tree, opts ...Option) *Flow {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	a := newAnalyzer(t, o.resolve, map[string]bool{}, map[string]map[string]Effect{})
 	a.stmt(t.Root)
 	a.propagate()
 
@@ -60,6 +88,7 @@ func Analyze(t *syntax.Tree) *Flow {
 		}
 		out.Derives[s] = list
 	}
+	out.external = a.external
 	for s, e := range a.effects {
 		if a.opaqueSink {
 			e |= Opaque
@@ -86,6 +115,9 @@ func (a *analyzer) allSymbols() []*syntax.Symbol {
 		out = append(out, syms...)
 	}
 	for _, s := range a.tree.Info.Context {
+		out = append(out, s)
+	}
+	for _, s := range a.external {
 		out = append(out, s)
 	}
 	return out

@@ -273,13 +273,47 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		a.apply(a.expr(n.Child(syntax.RoleValue)), Steers)
 		a.stmts(n)
 
-	case syntax.KindExtends, syntax.KindInclude, syntax.KindImport,
-		syntax.KindFromImport:
-		// Another template receives this context and can print any of it,
-		// so until the edge is followed every symbol is in play. The
-		// template reference itself is ordinary data.
-		a.expr(n.Child(syntax.RoleTemplate))
-		a.opaqueSink = true
+	case syntax.KindExtends, syntax.KindInclude:
+		// The named template is rendered with these variables, so what it
+		// does with them is what this one does with them. Which template
+		// that is steers the output -- two names render two documents --
+		// even though the name itself is never printed.
+		a.apply(a.expr(n.Child(syntax.RoleTemplate)), Steers)
+		name, named := constTemplateName(n)
+		if !named {
+			// The name is computed, so which template runs is not a
+			// static fact and it could print anything it is handed.
+			a.opaqueSink = true
+			break
+		}
+		if n.Kind == syntax.KindInclude && !withContext(n) {
+			// `{% include "x" without context %}` hands it nothing.
+			break
+		}
+		a.inherit(name)
+
+	case syntax.KindImport, syntax.KindFromImport:
+		// An import binds names here rather than rendering anything, and
+		// -- unlike include -- it does not pass the context by default.
+		// One that does not cannot see the caller's variables at all, so
+		// it cannot print them: a real answer rather than a shrug.
+		a.apply(a.expr(n.Child(syntax.RoleTemplate)), Steers)
+		name, named := constTemplateName(n)
+		if !named {
+			if withContext(n) {
+				a.opaqueSink = true
+			}
+			break
+		}
+		if withContext(n) {
+			a.inherit(name)
+		}
+		// What the import binds is a module or a macro from one. Calling
+		// it reaches code this does not follow, so the binding is opaque
+		// -- which is about the binding, not about the caller's variables.
+		for _, bound := range importedNames(n) {
+			a.effects[a.lookup(bound)] |= Opaque
+		}
 
 	case syntax.KindExprStmt:
 		a.expr(n.Child(syntax.RoleValue))

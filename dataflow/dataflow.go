@@ -66,6 +66,10 @@ type Flow struct {
 	Derives map[*syntax.Symbol][]*syntax.Symbol
 	// Effects is what each symbol can do, after propagation.
 	Effects map[*syntax.Symbol]Effect
+
+	// external are symbols for the caller's variables that only a template
+	// this one pulls in ever mentions.
+	external map[string]*syntax.Symbol
 }
 
 // Of returns what one symbol can do.
@@ -73,10 +77,18 @@ func (f *Flow) Of(s *syntax.Symbol) Effect { return f.Effects[s] }
 
 // Context is what the caller's variables can do, by name. Names the environment
 // supplies are left out: a template reading `range` is not asking for anything.
+//
+// It includes variables only the templates this one pulls in ever mention,
+// because they are still variables the caller has to supply.
 func (f *Flow) Context(t *syntax.Tree) map[string]Effect {
 	out := map[string]Effect{}
 	for name, sym := range t.Info.Context {
 		if sym.Kind == syntax.SymContext {
+			out[name] = f.Effects[sym]
+		}
+	}
+	for name, sym := range f.external {
+		if _, ok := out[name]; !ok {
 			out[name] = f.Effects[sym]
 		}
 	}

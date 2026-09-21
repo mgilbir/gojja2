@@ -67,7 +67,15 @@ def main() -> int:
         except Exception:
             skipped += 1
             continue
-        result = nameflow.analyze(tree, env.globals)
+        # The case's own templates are what its references resolve to, so the
+        # analysis follows them exactly as the engine's does.
+        def resolver(name, _env=env):
+            try:
+                return _env.parse(_env.loader.get_source(_env, name)[0], name)
+            except Exception:
+                return None
+
+        result = nameflow.analyze(tree, env.globals, resolver)
         out = DST / (rel[: -len(".jj2")] + ".json")
         keep.add(out)
         body = json.dumps(

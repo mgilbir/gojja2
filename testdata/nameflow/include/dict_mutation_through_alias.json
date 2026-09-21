@@ -1,6 +1,6 @@
 {
   "case": "include/dict_mutation_through_alias.jj2",
   "variables": {
-    "d": "-?"
+    "d": "o?"
   }
 }
