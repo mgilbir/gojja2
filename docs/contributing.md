@@ -162,6 +162,16 @@ difference that survives to the comparison is either a real disagreement about
 what the parsers understood or a gap in the vocabulary. Both are worth finding,
 and nothing is allowed to forgive one.
 
+The scope and binding facts are compared the same way, and in the same file. The
+engine gets them from `frameLocals`, the one implementation of jinja2's
+first-mention rule in this codebase; the reference gets them from
+`jinja2.idtracking`, the module jinja2's own code generator uses. Neither side
+reimplements the rule, which is the part that is invisible until it is wrong.
+
+Nodes are named by their position in a pre-order walk, which costs nothing to
+agree on because the trees are already identical — a fact worth noticing: the
+second comparison is only possible because the first one passes.
+
 If `make syntax` reports "no spelling for …", the vocabulary is missing a node.
 Add it to `gojja2/syntax` and to both emitters rather than skipping the case: a
 tree quietly missing a node compares equal for the wrong reason.

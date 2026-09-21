@@ -41,17 +41,20 @@ func TestSyntaxMatchesTheReference(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	want := map[string]string{}
+	wantInfo := map[string]string{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<22)
 	for sc.Scan() {
 		var row struct {
 			Case string `json:"case"`
 			Tree string `json:"tree"`
+			Info string `json:"info"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &row); err != nil {
 			t.Fatalf("parse the reference trees: %v", err)
 		}
 		want[row.Case] = row.Tree
+		wantInfo[row.Case] = row.Info
 	}
 	if err := sc.Err(); err != nil {
 		t.Fatalf("read the reference trees: %v", err)
@@ -65,7 +68,7 @@ func TestSyntaxMatchesTheReference(t *testing.T) {
 		t.Fatalf("collect: %v", err)
 	}
 
-	var matched, differed int
+	var matched, differed, infoDiffered int
 	for _, path := range paths {
 		c, err := conformance.LoadCase(caseRoot, path)
 		if err != nil {
@@ -87,25 +90,46 @@ func TestSyntaxMatchesTheReference(t *testing.T) {
 			t.Errorf("%s has a reference tree but does not compile: %v", c.Rel, err)
 			continue
 		}
-		got, err := syntax.Canonical(tmpl.Syntax())
+		tree := tmpl.Syntax()
+		got, err := syntax.Canonical(tree.Root)
 		if err != nil {
 			t.Errorf("%s: encoding the tree: %v", c.Rel, err)
 			continue
 		}
-		if string(got) == ref {
-			matched++
+		if string(got) != ref {
+			differed++
+			if differed <= 5 {
+				t.Errorf("%s: the two trees are not the same\n%s", c.Rel,
+					firstDifference(ref, string(got)))
+			}
+			// The scope facts are keyed by the tree's nodes, so comparing
+			// them against a tree that already differs would report the
+			// same fault twice.
 			continue
 		}
-		differed++
-		if differed <= 5 {
-			t.Errorf("%s: the two trees are not the same\n%s", c.Rel,
-				firstDifference(ref, string(got)))
+		matched++
+
+		gotInfo, err := syntax.CanonicalInfo(tree)
+		if err != nil {
+			t.Errorf("%s: encoding the scope facts: %v", c.Rel, err)
+			continue
+		}
+		if string(gotInfo) != wantInfo[c.Rel] {
+			infoDiffered++
+			if infoDiffered <= 5 {
+				t.Errorf("%s: the two disagree about scopes or bindings\n%s",
+					c.Rel, firstDifference(wantInfo[c.Rel], string(gotInfo)))
+			}
 		}
 	}
 	if differed > 5 {
 		t.Errorf("... and %d more trees differ", differed-5)
 	}
-	t.Logf("%d templates encode identically from both trees", matched)
+	if infoDiffered > 5 {
+		t.Errorf("... and %d more disagree about scopes or bindings", infoDiffered-5)
+	}
+	t.Logf("%d templates encode identically from both trees, scopes and bindings included",
+		matched-infoDiffered)
 }
 
 // firstDifference shows the two encodings around the first byte they disagree

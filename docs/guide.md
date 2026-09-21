@@ -378,6 +378,34 @@ It is the template **as written**, not as compiled: the constant folder has run
 over the engine's own tree, and whether `{{ xs[[]] }}` is a constant subscript is
 a fact about the optimizer rather than about the template.
 
+### What the names mean
+
+The tree comes with `Info`, which says who binds each name, what each read
+resolves to, and which nodes introduce a scope:
+
+```go
+tree := tmpl.Syntax()
+for name, sym := range tree.Info.Context {
+    if sym.Kind == syntax.SymContext {
+        fmt.Println(name, "must be supplied by the caller")
+    }
+}
+```
+
+These are kept beside the tree rather than on its nodes, the way `go/types`
+keeps them beside `go/ast`. Some of them are not properties of a node at all —
+which scope owns a name is a property of a (scope, name) pair — and keeping the
+tree free of them keeps it immutable, which matters because one compiled
+template is walked from many goroutines.
+
+They are also the part a caller could not work out for themselves. jinja2
+decides per frame, on a name's **first mention**, whether it belongs to the frame
+or resolves from the caller: `{{ x }}{% set x = 1 %}` reads your `x`, and
+`{% for i in [1] %}{{ x }}{% endfor %}{% set x = 1 %}` does not, because the root
+frame claimed `x` before the loop ran. `Info` is graded against jinja2's own
+`idtracking` for every committed case, so it is that rule rather than a second
+reading of it.
+
 The vocabulary is deliberately neither gojja2's internal tree nor jinja2's.
 Matching jinja2's node classes would be a promise to reproduce a data structure
 rather than a behaviour. What is promised instead is stronger and more useful:

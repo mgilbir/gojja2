@@ -4,8 +4,9 @@
 """Record jinja2's parse tree for every corpus case, in gojja2's vocabulary.
 
 syntax_emit.py writes jinja2's tree in the normalised form the `syntax` package
-defines. This writes one line per case, and conformance/syntax_test.go requires
-the engine's own tree to encode to the same bytes.
+defines, together with the scope and binding facts that go with it. This writes
+one line per case, and conformance/syntax_test.go requires the engine to encode
+both to the same bytes.
 
 Byte equality is a much stronger statement than agreeing about the answer to any
 one question. An analysis that matches proves the two agree about *that*
@@ -52,14 +53,16 @@ def main() -> int:
             skipped += 1
             continue
         try:
-            emitted = syntax_emit.canonical(tree)
+            emitted = syntax_emit.canonical(tree, env.globals)
+            info = syntax_emit.canonical_info(tree, env.globals)
         except syntax_emit.Unsupported as exc:
             # A node the vocabulary cannot spell is a gap in the vocabulary,
             # not a case to drop quietly.
             unsupported[str(exc)] = unsupported.get(str(exc), 0) + 1
             continue
-        lines.append(json.dumps({"case": case.rel, "tree": emitted},
-                                ensure_ascii=False, separators=(",", ":")))
+        lines.append(json.dumps(
+            {"case": case.rel, "tree": emitted, "info": info},
+            ensure_ascii=False, separators=(",", ":")))
 
     if unsupported:
         for what, n in sorted(unsupported.items()):

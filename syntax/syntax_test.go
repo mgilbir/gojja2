@@ -59,7 +59,7 @@ func TestWalkCarriesTheEdgeLabel(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", tc.src, err)
 		}
-		got := strings.Join(namesDecidingSomething(tmpl.Syntax()), " ")
+		got := strings.Join(namesDecidingSomething(tmpl.Syntax().Root), " ")
 		if got != tc.want {
 			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
 		}
@@ -77,7 +77,7 @@ func TestSyntaxShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := tmpl.Syntax()
+	root := tmpl.Syntax().Root
 	if root.Kind != syntax.KindTemplate {
 		t.Fatalf("root is %q, want %q", root.Kind, syntax.KindTemplate)
 	}
@@ -114,8 +114,85 @@ func TestSyntaxIsNotFolded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	add := tmpl.Syntax().Child(syntax.RoleBody).Child(syntax.RoleValue)
+	add := tmpl.Syntax().Root.Child(syntax.RoleBody).Child(syntax.RoleValue)
 	if add == nil || add.Kind != syntax.KindBinOp {
 		t.Fatalf("got %v, want the addition as written", add)
+	}
+}
+
+// The scope facts answer the questions a tree alone cannot, and the first one
+// is usually "what does this template want from me".
+func TestInfoNamesWhatTheCallerMustSupply(t *testing.T) {
+	env, err := gojja2.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ src, want string }{
+		{`{{ a }}{{ b }}`, "a b"},
+		// Bound by the template, so not the caller's.
+		{`{% set a = 1 %}{{ a }}`, ""},
+		{`{% for x in xs %}{{ x }}{{ loop.index }}{% endfor %}`, "xs"},
+		{`{% macro m(p) %}{{ p }}{{ caller() }}{% endmacro %}{{ m(q) }}`, "q"},
+		// The environment supplies these, so the caller is not being asked.
+		{`{{ range(3)|list }}{{ n }}`, "n"},
+		// jinja2's first-mention rule, which is the whole reason these facts
+		// cannot be worked out from the tree alone.
+		{`{{ x }}{% set x = 1 %}`, "x"},
+		{`{% for i in [1] %}{{ x }}{% endfor %}{% set x = 1 %}`, ""},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.src, err)
+		}
+		var names []string
+		for name, sym := range tmpl.Syntax().Info.Context {
+			if sym.Kind == syntax.SymContext {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		if got := strings.Join(names, " "); got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// Two occurrences of a name refer to the same symbol exactly when they touch
+// the same storage, which is what a rename or a dataflow pass is really asking.
+func TestInfoDistinguishesShadowedNames(t *testing.T) {
+	env, err := gojja2.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := env.FromString(`{{ x }}{% for x in xs %}{{ x }}{% endfor %}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := tmpl.Syntax()
+
+	var xs []*syntax.Symbol
+	syntax.Walk(tree.Root, func(n *syntax.Node, _ syntax.Role) bool {
+		if n.Kind == syntax.KindName && n.Attr("name") == "x" {
+			xs = append(xs, tree.Info.Symbol(n))
+		}
+		return true
+	})
+	if len(xs) != 3 {
+		t.Fatalf("found %d occurrences of x, want 3", len(xs))
+	}
+	if xs[0] == xs[1] {
+		t.Error("the outer x and the loop target are the same symbol")
+	}
+	if xs[1] != xs[2] {
+		t.Error("the loop target and the read inside the loop are different symbols")
+	}
+	if xs[0].Kind != syntax.SymContext {
+		t.Errorf("the outer x is %q, want %q", xs[0].Kind, syntax.SymContext)
+	}
+	if xs[1].Kind != syntax.SymTarget {
+		t.Errorf("the loop target is %q, want %q", xs[1].Kind, syntax.SymTarget)
+	}
+	if xs[1].Scope == nil || xs[1].Scope.Kind != syntax.KindFor {
+		t.Errorf("the loop target is owned by %v, want the loop", xs[1].Scope)
 	}
 }
