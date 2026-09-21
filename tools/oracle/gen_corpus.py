@@ -2463,6 +2463,119 @@ case("errors/truncate_tuple_end_is_a_list",
 case("methods/int_float_underscores",
      '{{ "1_000"|int }}|{{ "1_"|int }}|{{ "_1"|int }}|{{ "1__0"|int }}|'
      '{{ "1_0.5"|float }}|{{ " 1_0 "|int }}|{{ "1_000_000"|int }}|{{ "1_0e1_0"|float }}')
+# --- the default is not allowed to be a disguise ------------------------------
+# |int and |float answer their default rather than raising, which is jinja2's
+# own behaviour and not a divergence. It is also how a conversion bug hides:
+# `{{ "٤٢"|int }}` was 0 for months, and 0 is what a template gets when the
+# subject genuinely is not a number, so nothing looked wrong.
+#
+# So the default is spelled -999 here, which no subject below converts to. A
+# case whose golden is -999 is one CPython could not convert either; a case
+# where gojja2 answers -999 and CPython answers a number is a silent wrong
+# answer, and the conformance run says so.
+_SENTINEL_SUBJECTS = [
+    # plain
+    "42", "-42", "+42", "0", "007", "0_0", " 42 ", "\t42\n", "",  " ",
+    # underscores, at every legal and illegal position
+    "1_000", "1_000_000", "1_", "_1", "1__0", "_", "1_0.5", "1_0e1_0",
+    # signs
+    "--42", "+-42", "-+42", "- 42", "42-", "++42",
+    # bases and prefixes
+    "0x1f", "0X1F", "0b101", "0B101", "0o17", "0O17", "0x", "0b", "0o",
+    "0x_1f", "0b_1_0", "1f", "17", "101",
+    # floats and specials
+    "1.5", ".5", "5.", "1e5", "1E5", "1e", "e5", "inf", "-inf", "Inf",
+    "infinity", "nan", "NaN", "1.5.5", "1,000", "1 000",
+    # non-ASCII decimal digits, from several scripts
+    "٤٢", "۴۲", "๔๒", "०१",
+    "４２", "\U0001d7dc\U0001d7da", "٠٠٤٢",
+    "٤2", "2٤", "٤_٢", "-٤٢", " ٤٢ ",
+    " ٤٢", "٤.٢", "٤٢e١",
+    # numeric-looking but not decimal
+    "²", "½", "Ⅴ", "一", "٤²", "²٤",
+    # not numbers at all
+    "abc", "0x1f.5", "None", "True", "[]", chr(0), "42" + chr(0),
+]
+for _i, _subj in enumerate(_SENTINEL_SUBJECTS):
+    case(f"methods/int_default_is_not_a_disguise_{_i}",
+         "{{ " + repr(_subj) + "|int(-999) }}")
+    case(f"methods/float_default_is_not_a_disguise_{_i}",
+         "{{ " + repr(_subj) + "|float(-999) }}")
+# The same for the base forms, where a wrong base silently answers the default
+# rather than saying the digits do not fit it.
+for _i, _subj in enumerate(["1f", "0x1f", "101", "0b101", "17", "0o17",
+                            "19", "12", "١٥", "0x١٥", "z"]):
+    for _base in (0, 2, 8, 10, 16, 36):
+        case(f"methods/int_default_base_{_i}_{_base}",
+             "{{ " + repr(_subj) + "|int(-999, " + str(_base) + ") }}")
+
+# --- int() and float() do not read ASCII digits -------------------------------
+# Python transforms every character carrying a *decimal* value into the ASCII
+# digit of that value before parsing, so int("\u0664\u0662") is 42 and the
+# scripts may even be mixed. gojja2 read ASCII only, in all three places it
+# prepared numeric text -- the |int filter, the |float filter and the
+# %-format path -- so `{{ "\u0664\u0662"|int }}` answered the filter's default
+# of 0. A wrong number, silently, for any template handling localised digits.
+#
+# Decimal is the narrowest of the three numeric predicates and that is the
+# point: SUPERSCRIPT TWO is isdigit, VULGAR FRACTION ONE HALF and ROMAN NUMERAL
+# FIVE are isnumeric, and int() refuses all three.
+_DIGITS = {
+    "arabic_indic": "\u0664\u0662",
+    "extended_arabic_indic": "\u06f4\u06f2",
+    "thai": "\u0e54\u0e52",
+    "devanagari": "\u0966\u0967",
+    "fullwidth": "\uff14\uff12",
+    "mathematical": "\U0001d7dc\U0001d7da",
+    "myanmar_leading_zero": "\u1040\u1041",
+    "leading_zeros": "\u0660\u0660\u0664\u0662",
+    "mixed_scripts": "\u06642",
+    "mixed_the_other_way": "2\u0664",
+}
+for _name, _d in _DIGITS.items():
+    case(f"methods/int_digits_{_name}", "{{ " + repr(_d) + "|int }}")
+    case(f"methods/float_digits_{_name}", "{{ " + repr(_d) + "|float }}")
+
+# The rules layered on top still apply after the transform.
+for _name, _expr in [
+    ("underscore", "'\u0664_\u0662'|int"),
+    ("sign_minus", "'-\u0664\u0662'|int"),
+    ("sign_plus", "'+\u0664\u0662'|int"),
+    ("surrounding_space", "' \u0664\u0662 '|int"),
+    ("unicode_space", "'\u00a0\u0664\u0662\u3000'|int"),
+    ("base_sixteen", "'\u0664\u0662'|int(0, 16)"),
+    ("base_two", "'\u0661\u0660'|int(0, 2)"),
+    ("float_fraction", "'\u0664.\u0662'|float"),
+    ("float_exponent", "'\u0664\u0662e\u0661'|float"),
+    ("filesizeformat", "'\u0664\u0662'|filesizeformat"),
+    ("format_verb", '"%d"|safe % \'\u0664\u0662\''),
+    ("format_verb_float", '"%f"|safe % \'\u0664\u0662\''),
+]:
+    case(f"methods/int_digits_rule_{_name}", "{{ " + _expr + " }}")
+
+# And the ones that are not decimal are still refused, by both.
+for _name, _expr in [
+    ("superscript", "'\u00b2'|int(-1)"),
+    ("vulgar_fraction", "'\u00bd'|int(-1)"),
+    ("roman_numeral", "'\u2164'|int(-1)"),
+    ("cjk_one", "'\u4e00'|int(-1)"),
+    ("digit_then_superscript", "'\u0664\u00b2'|int(-1)"),
+    ("trailing_underscore", "'\u0664\u0662_'|int(-1)"),
+    ("doubled_underscore", "'\u0664__\u0662'|int(-1)"),
+]:
+    case(f"methods/int_digits_refused_{_name}", "{{ " + _expr + " }}")
+
+# The classification predicates read the same table now, so they answer for the
+# same set. isdecimal used Go's category tables, which are a later Unicode than
+# the CPython this is graded against, and said True for twenty code points the
+# specification does not have.
+case("methods/str_numeric_predicates",
+     "{{ '\u0664\u0662'.isdecimal() }}|{{ '\u0664\u0662'.isdigit() }}|"
+     "{{ '\u0664\u0662'.isnumeric() }}|{{ '\u00b2'.isdecimal() }}|"
+     "{{ '\u00b2'.isdigit() }}|{{ '\u00b2'.isnumeric() }}|"
+     "{{ '\u00bd'.isdigit() }}|{{ '\u00bd'.isnumeric() }}|"
+     "{{ '\u2164'.isnumeric() }}|{{ '\u4e00'.isnumeric() }}")
+
 case("methods/int_underscores_with_base",
      '{{ "1_f"|int(0,16) }}|{{ "0x_1f"|int(0,16) }}|{{ "a_b"|int(0,16) }}|'
      '{{ "1_0"|int(0,2) }}|{{ "0b_1_0"|int(0,0) }}')

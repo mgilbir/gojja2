@@ -692,7 +692,10 @@ func markupFloat(v Value) (float64, error) {
 // surrounding whitespace and allows single underscores between digits, neither
 // of which Go's parsers accept.
 func pyNumericText(s string, isFloat bool) (string, bool) {
-	s = strings.TrimFunc(s, unicode.IsSpace)
+	// Decimal digits from any script become ASCII first, exactly as
+	// CPython transforms them, so the rules below are about the shape of
+	// the number and not about which alphabet wrote it.
+	s = strings.TrimFunc(DecimalASCII(s), unicode.IsSpace)
 	if s == "" {
 		return "", false
 	}

@@ -164,7 +164,7 @@ clean-suites: ## Remove downloaded suites
 # --- oracle ------------------------------------------------------------------
 
 .PHONY: oracle
-oracle: venv arity methodarity entities strclass casemap utf8 ## Regenerate golden files for testdata/corpus from CPython jinja2
+oracle: venv arity methodarity entities decimal strclass casemap utf8 ## Regenerate golden files for testdata/corpus from CPython jinja2
 	$(PY) tools/oracle/gen_corpus.py
 	$(PY) tools/oracle/oracle.py --corpus testdata/corpus --golden testdata/golden
 
@@ -192,6 +192,11 @@ strclass: venv ## Regenerate strclass.go from CPython's numeric character classe
 casemap: venv ## Regenerate casemap.go from CPython's full case mappings
 	$(PY) tools/oracle/gen_casemap.py
 	gofmt -w casemap.go
+
+.PHONY: decimal
+decimal: venv ## Regenerate value/decimaltable.go from CPython's decimal digits
+	$(PY) tools/oracle/gen_decimal.py
+	gofmt -w value/decimaltable.go
 
 .PHONY: utf8
 utf8: venv ## Regenerate utf8digest.go from CPython's own UTF-8 decoder

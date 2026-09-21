@@ -1,0 +1,3 @@
+{}
+---
+{{ '٤٢'.isdecimal() }}|{{ '٤٢'.isdigit() }}|{{ '٤٢'.isnumeric() }}|{{ '²'.isdecimal() }}|{{ '²'.isdigit() }}|{{ '²'.isnumeric() }}|{{ '½'.isdigit() }}|{{ '½'.isnumeric() }}|{{ 'Ⅴ'.isnumeric() }}|{{ '一'.isnumeric() }}

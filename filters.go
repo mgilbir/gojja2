@@ -2269,7 +2269,11 @@ func filterInt(_ *State, v value.Value, args *value.CallArgs) (value.Value, erro
 // int(float(value)), which is why `"010"|int(0, 0)` is 10 even though Python
 // refuses that string with base 0.
 func pyParseInt(text string, base int) (*big.Int, bool) {
-	s := strings.TrimSpace(text)
+	// The same transform the %-format path runs, and the same function:
+	// both used to read ASCII digits only, so `{{ "\u0664\u0662"|int }}`
+	// answered this filter's default of 0 -- a wrong number, and no error
+	// to say so.
+	s := strings.TrimSpace(value.DecimalASCII(text))
 	neg := false
 	if s != "" && (s[0] == '+' || s[0] == '-') {
 		neg, s = s[0] == '-', s[1:]
