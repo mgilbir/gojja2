@@ -292,6 +292,7 @@ import: suites venv ## Build every imported corpus and record jinja2's answers
 		--corpus testdata/generated/cookiecutter \
 		--golden testdata/generated/cookiecutter-golden
 	$(PY) tools/oracle/report_minijinja.py
+	$(PY) tools/oracle/gen_generated_refs.py
 
 .PHONY: divergence-report
 divergence-report: venv ## Report where MiniJinja disagrees with CPython jinja2

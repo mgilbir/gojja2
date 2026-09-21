@@ -323,8 +323,17 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		if sym != nil {
 			a.macroParams[sym] = params
 		}
-		for _, d := range n.Children(syntax.RoleDefault) {
-			a.expr(d)
+		// Defaults align with the tail of the parameters, and a parameter
+		// holding its default is how an omitted argument reaches the body.
+		defaults := n.Children(syntax.RoleDefault)
+		if off := len(params) - len(defaults); off >= 0 {
+			for i, d := range defaults {
+				a.depend(params[off+i], a.expr(d))
+			}
+		} else {
+			for _, d := range defaults {
+				a.expr(d)
+			}
 		}
 		out := a.captureBody(n)
 		if sym != nil {

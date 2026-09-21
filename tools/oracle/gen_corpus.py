@@ -1213,6 +1213,34 @@ steer("attr_name_decides", "{{ o|attr(n) }}")
 steer("test_decides", "{% if a is defined %}here{% endif %}")
 # ... and one that cannot reach the output at all.
 steer("bound_but_never_read", "{% set unused = s %}done")
+
+# A namespace assigned more than once, which the corpus had no case for and the
+# imported chat templates do -- four of them. jinja2's symbol table makes the
+# second assignment an *alias* of the first when it is in a nested frame, one
+# symbol, while at render time the frame gets its own copy. Reading that as one
+# storage made `{{ ns.b }}` report y as never printed, and it is printed. These
+# are here so the shape is graded rather than found by luck.
+def ns_case(name, body):
+    case(f"dataflow/{name}", body, x="X", y="Y", c=True, xs=[1])
+
+ns_case("namespace_reassigned", "{% set ns = namespace(a=x) %}{% set ns = namespace(b=y) %}{{ ns.b }}")
+ns_case("namespace_reassigned_in_branch",
+        "{% if c %}{% set ns = namespace(a=x) %}{% else %}{% set ns = namespace(b=y) %}{% endif %}{{ ns.b }}")
+ns_case("namespace_reassigned_in_loop",
+        "{% set ns = namespace(a=x) %}{% for i in xs %}{% set ns = namespace(b=y) %}{{ ns.b }}{% endfor %}")
+# A macro parameter's default is how an omitted argument reaches the body, and
+# the analysis was evaluating defaults without binding them -- so a value that
+# reached the output through one was reported as never printed. Found in Jinja's
+# own harvested suite, which is gitignored; this is the committed version.
+case("dataflow/macro_default_reaches_body",
+     "{% macro m(a, b=src) %}{{ a }}{{ b }}{% endmacro %}{{ m(1) }}", src="S")
+# The frame's own copy: the loop writes its own x, so the last read prints 1.
+case("dataflow/loop_writes_its_own_copy",
+     "{% set x = 1 %}{% for i in xs %}[{{ x }}]{% set x = outer %}{% endfor %}[{{ x }}]",
+     xs=[1, 2], outer="O")
+
+ns_case("namespace_field_from_outer",
+        "{% set ns = namespace(a=x) %}{% for i in xs %}{{ ns.a }}{% endfor %}")
 # Every shape a division by zero can take, one case per sentence. CPython had
 # six distinct wordings before 3.14 collapsed them, and the case above reaches
 # only three -- which is why "float modulo" kept the 3.11 wording on 3.13 with

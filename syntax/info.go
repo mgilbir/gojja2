@@ -42,6 +42,12 @@ const (
 	// SymProvided is a name the construct supplies rather than the caller:
 	// loop inside a for, and caller, varargs and kwargs inside a macro.
 	SymProvided SymbolKind = "provided"
+	// SymAlias is a frame's own copy of a name an enclosing frame binds or
+	// mentions. jinja2 gives the frame a copy at entry, so the two hold the
+	// same value until one of them is written and are separate storage
+	// afterwards -- which is why a `{% set %}` inside a loop does not escape
+	// it. [Symbol.Aliases] is the binding it was copied from.
+	SymAlias SymbolKind = "alias"
 )
 
 // Symbol is one storage location a name can refer to.
@@ -55,6 +61,15 @@ type Symbol struct {
 	// Scope is the node that owns the symbol, or nil for a name that comes
 	// from outside the template.
 	Scope *Node
+	// Aliases is set on a [SymAlias]: the binding this one was copied from
+	// when the frame was entered.
+	//
+	// Two occurrences of a name in different frames can be the same name and
+	// different storage, and which question is being asked decides whether
+	// that matters. A rename has to follow the chain; a dataflow analysis has
+	// to know that a write to the copy does not reach the original, which is
+	// exactly what namespaces exist to work around.
+	Aliases *Symbol
 }
 
 // Info is the scope and binding facts about one tree.

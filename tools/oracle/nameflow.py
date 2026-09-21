@@ -179,11 +179,11 @@ class Analysis:
     def declare_namespace(self, sym, call):
         if sym is None:
             return
-        if sym.id in self.namespaces:
-            # Assigned a namespace twice, or a namespace and something else.
-            self.aliased.add(sym.id)
-            return
-        self.namespaces[sym.id] = {}
+        # A name assigned a namespace more than once keeps one field map
+        # holding both, rather than giving up on it. Merging is sound where
+        # replacing is not: the later assignment need not be the one that ran,
+        # because the two can sit in different branches of an `{% if %}`.
+        self.namespaces.setdefault(sym.id, {})
         for kw in call.kwargs or ():
             self.namespace_field(sym, kw.key).deps |= self.expr(kw.value)
         # `namespace(d)` and `namespace(**d)` fill it from something this

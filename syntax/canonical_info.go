@@ -82,6 +82,10 @@ func CanonicalInfo(t *Tree) ([]byte, error) {
 		} else {
 			writeInt(&b, idx[s.Scope])
 		}
+		if s.Aliases != nil {
+			b.WriteString(`,"aliases":`)
+			writeInt(&b, id[s.Aliases])
+		}
 		b.WriteByte('}')
 	}
 	b.WriteString(`],"scopes":[`)

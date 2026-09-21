@@ -81,6 +81,7 @@ func Analyze(t *syntax.Tree, opts ...Option) *Flow {
 		opt(&o)
 	}
 	a := newAnalyzer(t, o.resolve, map[string]bool{}, map[string]map[string]Effect{})
+	a.seedAliases()
 	a.stmt(t.Root)
 	a.sealNamespaces()
 	a.propagate()
@@ -115,6 +116,22 @@ func Analyze(t *syntax.Tree, opts ...Option) *Flow {
 		}
 	}
 	return out
+}
+
+// seedAliases records that a frame's copy of a name starts out holding whatever
+// the enclosing binding held.
+//
+// A write to the copy does not reach the original, which is the whole reason
+// the two are separate symbols -- but everything the original could hold, the
+// copy can, so the edge runs one way.
+func (a *analyzer) seedAliases() {
+	for _, syms := range a.tree.Info.Scopes {
+		for _, s := range syms {
+			if s.Kind == syntax.SymAlias && s.Aliases != nil {
+				a.depend(s, symset{s.Aliases: true})
+			}
+		}
+	}
 }
 
 func (a *analyzer) allSymbols() []*syntax.Symbol {
