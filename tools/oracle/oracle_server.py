@@ -10,10 +10,18 @@ so a differential run can ask tens of thousands of questions.
 Request (one line of JSON):
     {"src": "...", "ctx": {...}, "settings": {...}, "templates": {...}}
     {"hello": true}
+    {"analyze": true, "src": "...", "settings": {...}, "templates": {...}}
 Response (one line of JSON):
     {"ok": true, "output": "..."}
     {"ok": false, "error": {"type": ..., "message": ..., "lineno": ...}}
     {"ok": true, "hello": {"python": ..., "jinja2": ..., "markupsafe": ...}}
+    {"ok": true, "tree": "...", "info": "...", "variables": {...}}
+
+The analyze request is what lets the structure and the analyses be fuzzed rather
+than only the corpus. Starting an interpreter per template costs a tenth of a
+second, which is fine for two thousand cases and hopeless for two hundred
+thousand; this keeps one warm, so a soak can ask the same questions of both
+implementations as fast as it can generate templates.
 
 The hello says which interpreter and which libraries are answering. That is not
 a courtesy: CPython carries its own Unicode and words several errors its own
@@ -36,7 +44,10 @@ import json
 import platform
 import sys
 
-from jinjaoracle import apply_limits, guarded, is_resource_error, render
+import nameflow
+import syntax_emit
+from jinjaoracle import (apply_limits, build_environment, guarded,
+                         is_resource_error, render)
 
 
 def hello() -> dict:
@@ -52,9 +63,55 @@ def hello() -> dict:
     }
 
 
+def analyze(request: dict) -> dict:
+    """The template's structure and what it does with its variables.
+
+    Written in jinja2's vocabulary and then in gojja2's, which is the point:
+    the engine answers the same three questions from its own tree, and a
+    difference is a difference about the template rather than about either
+    tree's shape.
+    """
+    name = request.get("name") or "<fuzz>"
+    src = request.get("src", "")
+    sources = dict(request.get("templates") or {})
+    sources[name] = src
+    env = build_environment(request.get("settings") or {}, sources, name,
+                            request.get("profile"))
+    # Compiled as well as parsed: jinja2 defers several refusals to code
+    # generation, and the engine refuses them too. A template neither will
+    # compile has nothing to compare.
+    env.get_template(name)
+    tree = env.parse(src, name)
+
+    def resolver(other, _env=env):
+        try:
+            return _env.parse(_env.loader.get_source(_env, other)[0], other)
+        except Exception:
+            return None
+
+    return {
+        "ok": True,
+        "tree": syntax_emit.canonical(tree, env.globals),
+        "info": syntax_emit.canonical_info(tree, env.globals),
+        "variables": {k: encode_effects(v) for k, v in
+                      nameflow.analyze(tree, env.globals, resolver).items()},
+    }
+
+
+def encode_effects(v: dict) -> str:
+    s = (("o" if v["output"] else "") + ("f" if v["flow"] else "")
+         + ("r" if v["required"] else ""))
+    return (s or "-") + ("?" if v["unknown"] else "")
+
+
 def handle(request: dict) -> dict:
     if request.get("hello"):
         return hello()
+    if request.get("analyze"):
+        # Under the same limits a render gets: a template that takes the
+        # machine down while being analysed is no better than one that does it
+        # while rendering.
+        return guarded(lambda: analyze(request))
     name = request.get("name") or "<fuzz>"
     result = guarded(
         lambda: render(

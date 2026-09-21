@@ -1,6 +1,4 @@
 {
   "case": "include/basic.jj2",
-  "variables": {
-    "v": "or"
-  }
+  "variables": {}
 }

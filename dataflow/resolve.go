@@ -119,12 +119,15 @@ func (a *analyzer) contextEffectsOf(name string) map[string]Effect {
 // is what handing it the context means.
 func (a *analyzer) inherit(name string) {
 	for nm, e := range a.contextEffectsOf(name) {
-		// Even an effect of nothing is worth recording: the other
-		// template reads the variable, so the caller still has to supply
-		// it, and "supplied but provably cannot change the output" is a
-		// different answer from "never mentioned".
-		s := a.contextByName(nm)
-		a.effects[s] |= e
+		// Whatever the name means *here*, which need not be one of the
+		// caller's variables: `{% set v = 'V' %}{% include 'x' %}` hands
+		// the local v to x, and the caller's v is not involved.
+		//
+		// Even an effect of nothing is worth recording when it is a
+		// caller's variable: the other template reads it, so it still has
+		// to be supplied, and "supplied but provably cannot change the
+		// output" is a different answer from "never mentioned".
+		a.effects[a.lookup(nm)] |= e
 	}
 }
 

@@ -43,7 +43,8 @@ import itertools
 from dataclasses import dataclass, field
 
 from jinja2 import nodes
-from jinja2.idtracking import symbols_for_node
+
+import syntax_emit
 
 OUTPUT = 1
 FLOW = 2
@@ -69,11 +70,10 @@ class Sym:
     unknown: bool = False          # something about it could not be followed
 
 
-class Frame:
-    def __init__(self, node, symbols):
-        self.node = node
-        self.symbols = symbols
-        self.owned: dict[str, Sym] = {}
+# The frames a scope is opened for, which is the set syntax_emit opens one for.
+FRAME_NODES = ("Template", "For", "Macro", "CallBlock", "FilterBlock", "With",
+               "Block", "Scope", "OverlayScope", "ScopedEvalContextModifier",
+               "AssignBlock")
 
 
 class Analysis:
@@ -81,7 +81,10 @@ class Analysis:
         self._ids = itertools.count()
         self.syms: dict[int, Sym] = {}
         self.context: dict[str, Sym] = {}
-        self.frames: list[Frame] = []
+        self.stack: list = []
+        self.em = None
+        self._bysym: dict[int, Sym] = {}
+        self._emsym: dict[int, dict] = {}
         # Set when a construct could route the whole context somewhere this
         # cannot follow -- an include, or an import. Every context name is then
         # unknown, because the other template can print any of them.
@@ -101,10 +104,9 @@ class Analysis:
         # Macros by name, so a call can bind arguments to parameters instead of
         # giving up. Only macros defined in this template and called by their
         # own name; anything else is an opaque call.
-        self.macros: dict[str, object] = {}
-        self.in_macro: set[str] = set()
-        self.macro_frames: dict[str, dict] = {}
-        self.macro_out: dict[str, set[int]] = {}
+        self.in_macro: set[int] = set()
+        self.macro_params: dict[int, list] = {}
+        self.macro_out: dict[int, set[int]] = {}
 
     # --- symbols ---------------------------------------------------------
 
@@ -113,54 +115,81 @@ class Analysis:
         self.syms[s.id] = s
         return s
 
+    def of(self, emitted) -> Sym:
+        """The working symbol for one of the emitter's.
+
+        The scope model is not rebuilt here. syntax_emit derives it from
+        jinja2's own idtracking, the engine derives it from frameLocals, and the
+        two are required to encode identically for every committed and imported
+        template -- so reading it is both less work and less to be wrong about.
+        What is written twice is the dataflow reasoning, which is the thing this
+        file exists to check.
+        """
+        key = id(emitted)
+        if key not in self._bysym:
+            s = self.new_sym(emitted["name"], context=emitted["kind"] == "context")
+            self._bysym[key] = s
+            self._emsym[s.id] = emitted
+            if emitted["kind"] == "context":
+                self.context[emitted["name"]] = s
+            if emitted.get("aliases") is not None:
+                # A frame's own copy starts out holding whatever the enclosing
+                # binding held; a write to it does not reach back.
+                s.deps.add(self.of(emitted["aliases"]).id)
+        return self._bysym[key]
+
     def context_sym(self, name) -> Sym:
+        """A caller's variable named by something other than a name node.
+
+        An imported template can mention a name this one never writes down.
+        """
         if name not in self.context:
             self.context[name] = self.new_sym(name, context=True)
         return self.context[name]
 
-    def resolve(self, name) -> Sym:
-        """The storage a read of `name` sees, innermost frame outwards."""
-        for f in reversed(self.frames):
-            if name in f.owned:
-                return f.owned[name]
+    def node_sym(self, node) -> Sym:
+        """What a Name or NSRef node refers to."""
+        emitted = self.em.sym_of.get(id(node))
+        if emitted is None:
+            return self.context_sym(getattr(node, "name", "?"))
+        return self.of(emitted)
+
+    def scope_symbol(self, name) -> Sym | None:
+        """A name looked up the chain of open scopes.
+
+        Used where there is no node to ask: a macro carries its name as an
+        attribute, and an import binds one without writing it anywhere.
+        """
+        for frame in reversed(self.stack):
+            owned = self.em.owned_of.get(id(frame), {})
+            if name in owned:
+                return self.of(owned[name])
+        return None
+
+    def lookup(self, name) -> Sym:
+        s = self.scope_symbol(name)
+        if s is not None:
+            return s
+        # The emitter's symbol for the name, when it has one, so a mark put here
+        # lands on the same storage a later `{{ name }}` reads. Inventing a
+        # fresh one instead put the mark somewhere nothing looked.
+        emitted = self.em.context.get(name) if self.em is not None else None
+        if emitted is not None:
+            return self.of(emitted)
         return self.context_sym(name)
 
     # --- frames ----------------------------------------------------------
 
-    def push(self, node) -> Frame:
-        parent = self.frames[-1].symbols if self.frames else None
-        sym = symbols_for_node(node, parent) if node is not None else parent
-        f = Frame(node, sym)
-        # Claim the names this frame owns, before walking it: jinja2 decides
-        # ownership for the whole frame up front, not as the walk reaches each
-        # statement.
-        for name, ref in (sym.refs.items() if sym else {}):
-            kind = sym.loads.get(ref, (None, None))[0]
-            if kind in OWNS:
-                f.owned[name] = self.new_sym(name)
-        self.frames.append(f)
-        # An alias is the same value carried into the frame, so the frame's
-        # copy starts out holding whatever the outer one held.
-        for name, ref in (sym.refs.items() if sym else {}):
-            kind, extra = sym.loads.get(ref, (None, None))
-            if kind == "alias":
-                inner = self.new_sym(name)
-                outer = self.resolve(name)
-                inner.deps.add(outer.id)
-                f.owned[name] = inner
-        return f
+    def push(self, node):
+        self.stack.append(node)
 
     def pop(self):
-        self.frames.pop()
+        self.stack.pop()
 
     # --- recording -------------------------------------------------------
 
-    def use(self, name, roles):
-        s = self.resolve(name)
-        s.roles |= roles
-
     def mark_unknown(self, name):
-        self.resolve(name).unknown = True
+        self.lookup(name).unknown = True
 
     # --- namespaces ------------------------------------------------------
     #
@@ -211,7 +240,7 @@ class Analysis:
     def namespace_of(self, node):
         if not isinstance(node, nodes.Name) or node.ctx != "load":
             return None
-        s = self.resolve(node.name)
+        s = self.node_sym(node)
         return s if s.id in self.namespaces else None
 
     def seal_namespaces(self):
@@ -252,6 +281,8 @@ class Analysis:
         self.visiting.add(name)
         sub = Analysis()
         sub.resolver, sub.visiting, sub.cache = self.resolver, self.visiting, self.cache
+        sub.em = syntax_emit.Emitter(self.em.globals)
+        sub.em.stmt(tree)
         sub.push(tree)
         sub.stmts(tree.body)
         sub.pop()
@@ -267,7 +298,10 @@ class Analysis:
     def inherit(self, name):
         """Apply another template's effects to our own variables."""
         for nm, (roles, unknown) in self.context_effects_of(name).items():
-            s = self.context_sym(nm)
+            # lookup rather than context_sym: the name may already have the
+            # emitter's symbol, and a mark put on a fresh one is a mark nothing
+            # reads.
+            s = self.lookup(nm)
             s.roles |= roles
             s.unknown = s.unknown or unknown
 
@@ -321,7 +355,7 @@ class Analysis:
         if isinstance(n, nodes.Name):
             if n.ctx == "store":
                 return set()
-            s = self.resolve(n.name)
+            s = self.node_sym(n)
             if s.id in self.namespaces:
                 # Reached by name rather than through a field, so another name
                 # now refers to the same object and every field is in play.
@@ -337,7 +371,7 @@ class Analysis:
         if isinstance(n, nodes.NSRef):
             # A namespace read. Layer 2 will follow the field; until then the
             # honest answer is that anything could be in it.
-            s = self.resolve(n.name)
+            s = self.node_sym(n)
             s.unknown = True
             return {s.id}
 
@@ -392,10 +426,12 @@ class Analysis:
         if isinstance(n, nodes.Call):
             fn = n.node
             out = self.args_of(n)
-            if isinstance(fn, nodes.Name) and fn.name in self.macros:
-                out |= self.call_macro(fn.name, n)
-                self.apply(out, REQUIRED)
-                return out
+            if isinstance(fn, nodes.Name):
+                called = self.node_sym(fn)
+                if called.id in self.macro_params:
+                    out |= self.call_macro(called, n)
+                    self.apply(out, REQUIRED)
+                    return out
             if isinstance(fn, nodes.Name) and fn.name == "namespace":
                 self.taint(out)
                 self.apply(out, REQUIRED)
@@ -439,9 +475,9 @@ class Analysis:
     def bind(self, target, srcs):
         """Record that `target` now holds a value derived from `srcs`."""
         if isinstance(target, nodes.Name):
-            self.resolve(target.name).deps |= srcs
+            self.node_sym(target).deps |= srcs
         elif isinstance(target, nodes.NSRef):
-            s = self.resolve(target.name)
+            s = self.node_sym(target)
             f = self.namespace_field(s, target.attr)
             if f is not None:
                 f.deps |= srcs
@@ -466,27 +502,25 @@ class Analysis:
         self.stmts(body)
         return self.capture.pop()
 
-    def call_macro(self, name, call) -> set[int]:
+    def call_macro(self, sym, call) -> set[int]:
         """Bind a call's arguments to the macro's parameters, and return what
         the macro's body would print."""
-        m = self.macros[name]
-        if name in self.in_macro:
+        if sym.id in self.in_macro:
             # Recursive; the fixpoint below already carries roles around the
             # cycle, and re-entering would not terminate.
             return set()
-        self.in_macro.add(name)
-        frame = self.macro_frames[name]
-        for i, param in enumerate(m.args):
+        self.in_macro.add(sym.id)
+        for i, param in enumerate(self.macro_params[sym.id]):
             srcs = set()
             if i < len(call.args):
                 srcs = self.expr(call.args[i])
             for kw in call.kwargs or ():
-                if kw.key == param.name:
+                if param is not None and kw.key == param.name:
                     srcs |= self.expr(kw.value)
-            if srcs:
-                frame[param.name].deps |= srcs
-        self.in_macro.discard(name)
-        return self.macro_out[name]
+            if srcs and param is not None:
+                param.deps |= srcs
+        self.in_macro.discard(sym.id)
+        return self.macro_out[sym.id]
 
     def stmt(self, n):
         if isinstance(n, nodes.Output):
@@ -512,8 +546,9 @@ class Analysis:
             # `loop` is supplied by the loop, not by the caller, and what it
             # reports -- index, length, first, last -- is derived from the
             # sequence being walked.
-            self.frames[-1].owned["loop"] = self.new_sym("loop")
-            self.frames[-1].owned["loop"].deps |= srcs
+            loop = self.scope_symbol("loop")
+            if loop is not None:
+                loop.deps |= srcs
             self.apply(self.expr(n.test), FLOW)
             self.stmts(n.body)
             self.stmts(n.else_)
@@ -524,32 +559,37 @@ class Analysis:
                     and isinstance(n.node.node, nodes.Name)
                     and n.node.node.name == "namespace"
                     and isinstance(n.target, nodes.Name)):
-                self.declare_namespace(self.resolve(n.target.name), n.node)
+                self.declare_namespace(self.node_sym(n.target), n.node)
             else:
                 self.bind(n.target, self.expr(n.node))
 
         elif isinstance(n, nodes.AssignBlock):
+            self.push(n)
             srcs = self.capture_body(n.body)
+            self.pop()
             if n.filter is not None:
                 srcs |= self.expr(n.filter)
             self.bind(n.target, srcs)
 
         elif isinstance(n, nodes.FilterBlock):
+            self.push(n)
             srcs = self.capture_body(n.body)
+            self.pop()
             srcs |= self.expr(n.filter)
             self.emit(srcs)
 
         elif isinstance(n, nodes.Macro):
             self.push(n)
-            for supplied in ("varargs", "kwargs", "caller"):
-                self.frames[-1].owned.setdefault(supplied, self.new_sym(supplied))
-            self.macro_frames[n.name] = dict(self.frames[-1].owned)
+            params = [self.scope_symbol(a.name) for a in n.args]
+            sym = self.scope_symbol(n.name)
             for param, default in zip(n.args[len(n.args) - len(n.defaults):],
                                       n.defaults):
                 self.bind(param, self.expr(default))
-            self.macro_out[n.name] = self.capture_body(n.body)
+            out = self.capture_body(n.body)
             self.pop()
-            self.macros[n.name] = n
+            if sym is not None:
+                self.macro_params[sym.id] = params
+                self.macro_out[sym.id] = out
 
         elif isinstance(n, nodes.CallBlock):
             self.push(n)
@@ -598,7 +638,7 @@ class Analysis:
             # What it binds is a module, or a macro from one. Calling that
             # reaches code this does not follow.
             for bound in imported_names(n):
-                self.resolve(bound).unknown = True
+                self.lookup(bound).unknown = True
 
         elif isinstance(n, nodes.ExprStmt):
             self.expr(n.node)
@@ -710,6 +750,8 @@ def analyze(tree, globals_=(), resolver=None) -> dict[str, dict]:
     """
     a = Analysis()
     a.resolver = resolver
+    a.em = syntax_emit.Emitter(globals_)
+    a.em.stmt(tree)
     a.push(tree)
     a.stmts(tree.body)
     a.pop()

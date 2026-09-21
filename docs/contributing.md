@@ -172,6 +172,20 @@ Nodes are named by their position in a pre-order walk, which costs nothing to
 agree on because the trees are already identical — a fact worth noticing: the
 second comparison is only possible because the first one passes.
 
+`make soak-syntax` asks the same three questions of templates nobody chose. The
+generator walks the grammar rather than a list somebody thought of, which is how
+it reaches an autoescape inside a macro inside a loop that assigns the name it
+read. The oracle server answers `{"analyze": true}` as well as a render, so a
+soak can ask both implementations as fast as it can generate: 50,000 templates
+takes minutes rather than the hours a fresh interpreter per template would.
+
+It found four faults in an afternoon, three of them in the reference and one in
+the engine, and they were all the same fault: the reference had its own symbol
+model. It reads the engine's now -- which is not a loss of independence, because
+that model is already checked against jinja2's own idtracking for every
+committed and imported template. What is written twice is the dataflow
+reasoning, which is the thing the differential is for.
+
 `make import` also writes reference trees and analyses for the imported corpora,
 and `TestGeneratedCorporaAgree` grades them the same three ways. It skips when
 they are absent, so it is a check a contributor gets rather than one CI enforces
