@@ -59,7 +59,10 @@ func (t *Template) frameLocalsOf(key any, body []ast.Stmt) frameNames {
 func frameLocals(body []ast.Stmt) frameNames {
 	v := &frameVisitor{seen: map[string]bool{}, stores: map[string]bool{}}
 	v.stmts(body)
-	return frameNames{owns: v.locals, refs: v.seen, stores: v.stores, order: v.order}
+	return frameNames{
+		owns: v.locals, refs: v.seen, stores: v.stores,
+		order: v.order, storeOrder: v.storeOrder,
+	}
 }
 
 // frameNames is what one frame does with names at its own level: owns are the
@@ -79,11 +82,15 @@ type frameNames struct {
 	// but an analysis does, because jinja2 gives the frame its own copy and
 	// the write does not escape it. See syntax_build.go.
 	stores map[string]bool
-	// order is every name in the order it is first mentioned, which is the
-	// order jinja2's own symbol table records them in. Nothing at render
-	// time depends on it; an analysis that has to agree with jinja2 about
-	// its symbol table does.
+	// order is every name in the order it is first mentioned. Nothing at
+	// render time depends on it; an analysis does.
 	order []string
+	// storeOrder is every name this frame writes, in the order it first
+	// writes each one -- which is the order jinja2's symbol table lists a
+	// scope's bindings in, and not first-mention order. A load creates no
+	// binding, so a name read before it is written is recorded where the
+	// write is. See syntax_build.go's declareBody.
+	storeOrder []string
 }
 
 type frameVisitor struct {
@@ -95,6 +102,9 @@ type frameVisitor struct {
 	stores map[string]bool
 	// order is every name in first-mention order.
 	order []string
+	// storeOrder is every name written here, in first-write order. See
+	// frameNames.storeOrder.
+	storeOrder []string
 }
 
 func (v *frameVisitor) load(name string) {
@@ -105,6 +115,9 @@ func (v *frameVisitor) load(name string) {
 }
 
 func (v *frameVisitor) store(name string) {
+	if !v.stores[name] {
+		v.storeOrder = append(v.storeOrder, name)
+	}
 	v.stores[name] = true
 	if !v.seen[name] {
 		v.seen[name] = true
@@ -190,20 +203,14 @@ func (v *frameVisitor) stmt(stmt ast.Stmt) {
 func (v *frameVisitor) ifStmt(n *ast.If) {
 	v.expr(n.Test)
 
-	branch := func(body []ast.Stmt) (mentioned, stored map[string]bool) {
+	branch := func(body []ast.Stmt) (mentioned, bound, written map[string]bool) {
 		sub := &frameVisitor{seen: map[string]bool{}, stores: map[string]bool{}}
 		sub.stmts(body)
-		stored = make(map[string]bool, len(sub.locals))
+		bound = make(map[string]bool, len(sub.locals))
 		for _, name := range sub.locals {
-			stored[name] = true
+			bound[name] = true
 		}
-		// A write inside a branch is still a write at this level, whether
-		// or not every branch makes it, which is what decides whether a
-		// nested frame gets its own copy.
-		for name := range sub.stores {
-			v.stores[name] = true
-		}
-		return sub.seen, stored
+		return sub.seen, bound, sub.stores
 	}
 
 	var elifBody []ast.Stmt
@@ -214,13 +221,23 @@ func (v *frameVisitor) ifStmt(n *ast.If) {
 
 	mentioned := map[string]bool{}
 	counts := map[string]int{}
+	written := map[string]bool{}
 	for _, body := range bodies {
-		seen, stored := branch(body)
+		seen, bound, stores := branch(body)
 		for name := range seen {
 			mentioned[name] = true
 		}
-		for name := range stored {
+		for name := range bound {
 			counts[name]++
+		}
+		// A write inside a branch is still a write at this level, whether
+		// or not every branch makes it, which is what decides whether a
+		// nested frame gets its own copy. Held back until the sorted loop
+		// below has run: setting v.stores here would make store() treat
+		// the name as already written and skip recording where it falls
+		// in this frame's write order.
+		for name := range stores {
+			written[name] = true
 		}
 	}
 	// Sorted, because a map's order is not one: the names a branch mentions
@@ -237,6 +254,14 @@ func (v *frameVisitor) ifStmt(n *ast.If) {
 			continue
 		}
 		v.settle(name)
+	}
+	// ...and now the writes a branch made without every branch making them.
+	// In the same sorted order, for the same reason.
+	for _, name := range names {
+		if written[name] && !v.stores[name] {
+			v.stores[name] = true
+			v.storeOrder = append(v.storeOrder, name)
+		}
 	}
 }
 

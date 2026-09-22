@@ -88,10 +88,15 @@ func (b *synBuilder) declareBody(body []ast.Stmt) {
 	for _, name := range names.owns {
 		owns[name] = true
 	}
-	// In first-mention order, which is the order jinja2's own symbol table
-	// records them in. Declaration order is part of the canonical form, so
-	// the two have to agree about it as well as about the symbols.
-	for _, name := range names.order {
+	// In the order the names are first *written*, which is the order
+	// jinja2's symbol table lists a scope's bindings in. Not first-mention
+	// order: a load creates no binding, so a name read before it is written
+	// is recorded when the write is reached, and
+	// `{% set v = a %}{% set a = 2 %}` lists v before a on both sides.
+	// Declaration order is part of the canonical form, so the two have to
+	// agree about it as well as about the symbols -- and every name that
+	// gets one here is written, so this reaches exactly the same set.
+	for _, name := range names.storeOrder {
 		if names.stores[name] {
 			if outer := b.enclosingSymbol(name); outer != nil {
 				alias := b.declare(name, syntax.SymAlias)
