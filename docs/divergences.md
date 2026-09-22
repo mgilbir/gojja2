@@ -379,37 +379,24 @@ is why `{% block x %}{{ self.x }}{% endblock %}` terminates.
 CPython's `pprint` marks a container it has already entered as
 `<Recursion on dict with id=131095544303808>`. The id is the object's address,
 which differs between two runs of CPython itself, so this case is no more
-gradable than `lipsum()` is.
-
-**gojja2 prints `[...]` or `{...}` instead**, which is what `repr` collapses a
-cycle to:
+gradable than `lipsum()` is. gojja2 prints the same form, with the address of
+its own container -- everything but the number is identical:
 
 ```
-jinja2: [<Recursion on list with id=130853217871040>,
+jinja2: [<Recursion on list with id=135154434729280>,
          'a string long enough that pprint will not fit this on one line']
-gojja2: [[...], 'a string long enough that pprint will not fit this on one line']
+gojja2: [<Recursion on list with id=18132333323128>,
+         'a string long enough that pprint will not fit this on one line']
 ```
-
-The two disagree because of *when* each asks the question. CPython's `_format`
-checks whether the object is already on the path it is printing before it builds
-a repr to measure; gojja2 measures first, and the builtin repr has collapsed the
-cycle to `[...]` by then, which fits -- so the branch that would print the mark
-is never reached. gojja2 has the code for it; nothing arrives there.
-
-This entry used to say gojja2 printed "the same form, with the address of its
-own container", which was wrong. It had no test -- the corpus cannot hold one,
-since CPython's answer carries an id that changes between its own runs -- so
-nothing was watching the sentence. `conformance/recursion_repr_test.go` watches
-it now, and fails if gojja2 ever starts printing the mark, which is what closing
-this divergence would look like.
-
-Of the two, gojja2's answer is the reproducible one: `[...]` is the same on
-every run, and CPython's id is not. That is a reason to be in no hurry about it
-rather than a reason to call it correct.
 
 A cyclic value reaches `pprint` at all only when its `repr` is too wide to
-print on one line; a small one collapses to `{...}` first, which is exact and
-identical in both.
+print on one line; a small one collapses to `{...}` first, which is exact.
+
+This sentence was untrue for a while, and nothing noticed, because the corpus
+cannot hold a case whose answer carries an id that changes between two runs of
+CPython. `conformance/recursion_repr_test.go` asserts it outside the corpus
+instead: it blanks the id and compares the rest against CPython's own output,
+so the form is pinned exactly and only the number is allowed to differ.
 
 ### lipsum() and random
 
