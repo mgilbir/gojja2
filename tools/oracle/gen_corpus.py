@@ -2814,6 +2814,33 @@ case("methods/dict_view_truthiness_tracks_the_dict",
      "{% set d = {'a': 1} %}{% set k = d.keys() %}{% if k %}T{% else %}F{% endif %}"
      "{{ d.clear() }}{% if k %}T{% else %}F{% endif %}")
 
+# --- a dict cannot be resized while a loop walks it ---------------------------
+# Python raises RuntimeError the moment a dict's *size* changes under an
+# iterator, and raises it on every step -- including the one that would have
+# ended the loop, so a single-key dict counts. gojja2 walked a snapshot of the
+# keys and noticed nothing: the loop finished, or failed later with whatever the
+# body's second attempt raised, which is how the generated differential found it
+# (`{% for i in d if d.pop('a') %}` gave KeyError here and RuntimeError there).
+#
+# Changing a *value* is not a resize and is allowed, which is the pair of cases
+# that keeps the guard from being a blanket refusal. A list is deliberately not
+# guarded: CPython does not guard one either.
+case("loops/dict_resized_by_adding", "{% for k in d %}{% set _ = d.update({'z': 1}) %}{% endfor %}", d={"a": 1, "b": 2})
+case("loops/dict_resized_by_removing", "{% for k in d %}{% set _ = d.pop('a') %}{% endfor %}", d={"a": 1, "b": 2})
+case("loops/dict_resized_by_clearing", "{% for k in d %}{% set _ = d.clear() %}{% endfor %}", d={"a": 1, "b": 2})
+case("loops/dict_resized_one_key", "{% for k in d %}{% set _ = d.update({'z': 1}) %}{% endfor %}", d={"a": 1})
+case("loops/dict_resized_in_loop_filter", "{% for k in d if d.pop('a') %}{% endfor %}", d={"a": 1, "b": 2})
+case("loops/dict_resized_through_keys_view",
+     "{% for k in d.keys() %}{% set _ = d.update({'z': 1}) %}{% endfor %}", d={"a": 1, "b": 2})
+case("loops/dict_resized_through_items_view",
+     "{% for k in d.items() %}{% set _ = d.update({'z': 1}) %}{% endfor %}", d={"a": 1, "b": 2})
+# ...and the three that must still be allowed.
+case("loops/dict_value_changed_is_not_a_resize",
+     "{% for k in d %}{% set _ = d.update({'a': 9}) %}{{ k }}{% endfor %}|{{ d.a }}", d={"a": 1, "b": 2})
+case("loops/dict_resized_over_a_snapshot",
+     "{% for k in d|list %}{% set _ = d.update({'z': 1}) %}{{ k }}{% endfor %}", d={"a": 1, "b": 2})
+case("loops/dict_walked_without_touching_it", "{% for k in d %}{{ k }}{% endfor %}", d={"a": 1, "b": 2})
+
 # --- the bytes methods --------------------------------------------------------
 # bytes had one method, decode, so the other forty-one were attribute errors on
 # a type the engine otherwise supports fully. They are not the str methods:

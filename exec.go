@@ -523,9 +523,20 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 	// runs between the body's passes and therefore sees what the body did.
 	nextItem, stop := iter.Pull(seq)
 	_ = stop
+	// The test runs between pulls and can resize the source, so the same
+	// guard the unfiltered loop gets applies here -- checked after every
+	// pull rather than once a pass, because a test that answers false
+	// pulls again without the body running. See sizeGuard.
+	guard := sizeGuard(iterable)
+	if guard == nil {
+		guard = func() error { return nil }
+	}
 	next := func() (value.Value, bool, error) {
 		for {
 			item, ok := nextItem()
+			if err := guard(); err != nil {
+				return value.Undefined, false, err
+			}
 			if !ok {
 				return value.Undefined, false, nil
 			}

@@ -1,0 +1,7 @@
+{
+  "d": {
+    "a": 1
+  }
+}
+---
+{% for k in d %}{% set _ = d.update({'z': 1}) %}{% endfor %}
