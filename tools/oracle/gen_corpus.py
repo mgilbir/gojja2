@@ -1042,7 +1042,6 @@ for _n, _src in [
 ]:
     case(f"classes/{_n}", _src)
 
-
 # Two divergences the page records, pinned so they cannot drift into something
 # else. Python 3.9 made a builtin type subscriptable as a type annotation, so
 # `dict['k']` is a generic alias whose repr is `dict['k']` -- not a lookup, and
@@ -1186,6 +1185,59 @@ case("errors/syntax_unexpected", "{{ 1 + }}")
 case("errors/unknown_tag", "{% nope %}")
 case("errors/unknown_filter", "{{ 1|nosuch }}")
 case("errors/unknown_filter_soft", "{% if true %}{{ 1|nosuch }}{% endif %}")
+
+# An `{% if %}` softens an unknown filter or test that it holds *directly*: the
+# name is resolved when the branch runs, so a branch that is not taken renders.
+# jinja2 spells that soft_frame, sets it in visit_If and visit_CondExpr, and
+# clears it in Frame.inner() -- so every construct that gets a frame of its own
+# refuses the same filter at compile time, even inside a branch that can never
+# run. The hard cases below all say `{% if false %}` to make that the whole
+# claim; the soft ones say `{% if true %}` so the runtime message is graded too.
+for _n, _src in [
+    ("for_body", "{% for i in seq %}{{ 1|nosuch }}{% endfor %}"),
+    ("for_test", "{% for i in seq if 1|nosuch %}{% endfor %}"),
+    ("for_else", "{% for i in seq %}{% else %}{{ 1|nosuch }}{% endfor %}"),
+    ("for_recursive", "{% for i in seq recursive %}{{ 1|nosuch }}{% endfor %}"),
+    ("macro_body", "{% macro m() %}{{ 1|nosuch }}{% endmacro %}"),
+    ("macro_default", "{% macro m(a=1|nosuch) %}{% endmacro %}"),
+    ("call_body", "{% macro m() %}{% endmacro %}"
+                  "{% call m() %}{{ 1|nosuch }}{% endcall %}"),
+    ("call_default", "{% macro m() %}{% endmacro %}"
+                     "{% call(x=1|nosuch) m() %}{% endcall %}"),
+    ("filterblock_name", "{% filter nosuch %}x{% endfilter %}"),
+    ("filterblock_body", "{% filter upper %}{{ 1|nosuch }}{% endfilter %}"),
+    ("block_body", "{% block b %}{{ 1|nosuch }}{% endblock %}"),
+    ("with_body", "{% with a = 1 %}{{ 1|nosuch }}{% endwith %}"),
+    ("setblock_body", "{% set v %}{{ 1|nosuch }}{% endset %}"),
+    ("setblock_filter", "{% set v | nosuch %}x{% endset %}"),
+    ("autoescape_body", "{% autoescape true %}{{ 1|nosuch }}{% endautoescape %}"),
+    ("nested_if_for", "{% if false %}{% for i in seq %}{{ 1|nosuch }}"
+                      "{% endfor %}{% endif %}"),
+    ("elif_for", "{% if true %}{% else %}{% for i in seq %}{{ 1|nosuch }}"
+                 "{% endfor %}{% endif %}"),
+]:
+    case(f"errors/unknown_filter_hard_{_n}",
+         "{% if false %}" + _src + "{% endif %}", **SEQ)
+
+for _n, _src in [
+    ("for_iter", "{% for i in (1|nosuch) %}{% endfor %}"),
+    ("with_value", "{% with a = 1|nosuch %}x{% endwith %}"),
+    ("call_arg", "{% macro m() %}{% endmacro %}"
+                 "{% call m(1|nosuch) %}{% endcall %}"),
+    ("set_value", "{% set v = 1|nosuch %}"),
+    ("test", "{{ 1 is nosuchtest }}"),
+    ("nested_if", "{% if true %}{{ 1|nosuch }}{% endif %}"),
+]:
+    case(f"errors/unknown_filter_soft_{_n}",
+         "{% if true %}" + _src + "{% endif %}", **SEQ)
+
+# A conditional expression softens the same way, and only its own branches:
+# jinja2 calls frame.soft() in visit_CondExpr.
+case("errors/unknown_filter_soft_condexpr", "{{ (1|nosuch) if seq else 2 }}",
+     seq=[])
+case("errors/unknown_filter_soft_condexpr_test", "{{ 1 if (2|nosuch) else 2 }}")
+case("errors/unknown_filter_soft_else", "{% if false %}x{% else %}"
+     "{{ 1|nosuch }}{% endif %}")
 case("errors/unknown_test", "{{ 1 is nosuch }}")
 case("errors/bad_assign", "{% set 1 = 2 %}")
 

@@ -39,10 +39,20 @@ type depChecker struct {
 // Every block-opening construct does that except `{% if %}`, which compiles
 // inline and so leaves the template's top level intact -- that is what makes
 // the conditional-extends idiom legal at any depth of conditions.
-func (c *depChecker) inner(body []ast.Stmt, soft bool) {
+//
+// A frame of its own also stops a branch from softening what it holds. jinja2
+// sets soft_frame on an `{% if %}` (and on an inline conditional) and clears it
+// on every frame.inner(), so an unknown filter directly inside a branch is
+// reported when the branch runs, while the same filter one loop or macro deeper
+// is refused when the template compiles -- the loop's function is generated
+// whether or not the branch can be taken.
+//
+//	{% if nil %}{{ 1|nosuch }}{% endif %}                              renders ""
+//	{% if nil %}{% for i in xs %}{{ 1|nosuch }}{% endfor %}{% endif %}  refused
+func (c *depChecker) inner(body []ast.Stmt) {
 	saved := c.topLevel
 	c.topLevel = false
-	c.stmts(body, soft)
+	c.stmts(body, false)
 	c.topLevel = saved
 }
 
@@ -78,9 +88,13 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 			c.failAt(line, "Can't assign to special loop variable in for-loop target")
 		}
 		c.expr(n.Iter, soft)
-		c.expr(n.Test, soft)
-		c.inner(n.Body, soft)
-		c.inner(n.Else, soft)
+		// The loop's own test is part of the function the loop becomes,
+		// so it is refused at compile time even inside a branch that
+		// cannot be taken. Its *iterable* is evaluated where the loop is
+		// written, and softens with everything else there.
+		c.expr(n.Test, false)
+		c.inner(n.Body)
+		c.inner(n.Else)
 	case *ast.If:
 		// An if softens its whole subtree, condition and body alike.
 		c.expr(n.Test, true)
@@ -93,25 +107,33 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 	case *ast.Assign:
 		c.expr(n.Node, soft)
 	case *ast.AssignBlock:
-		c.expr(n.Filter, soft)
-		c.inner(n.Body, soft)
+		// The filter runs over the block's buffer, and is resolved with
+		// that buffer's frame rather than the one the block sits in.
+		c.expr(n.Filter, false)
+		c.inner(n.Body)
 	case *ast.With:
 		c.exprs(n.Values, soft)
-		c.inner(n.Body, soft)
+		c.inner(n.Body)
 	case *ast.Macro:
 		c.checkCallerDefault(n.Args, n.Defaults, n.Line())
-		c.exprs(n.Defaults, soft)
-		c.inner(n.Body, soft)
+		// Defaults are part of the macro's signature, generated with the
+		// body rather than at the point of definition.
+		c.exprs(n.Defaults, false)
+		c.inner(n.Body)
 	case *ast.CallBlock:
 		c.checkCallerDefault(n.Args, n.Defaults, n.Line())
+		// The call itself is made where the block is written, so it
+		// softens; the block's own parameters belong to its signature.
 		c.expr(n.Call, soft)
-		c.exprs(n.Defaults, soft)
-		c.inner(n.Body, soft)
+		c.exprs(n.Defaults, false)
+		c.inner(n.Body)
 	case *ast.FilterBlock:
-		c.expr(n.Filter, soft)
-		c.inner(n.Body, soft)
+		// The filter naming the block is resolved where the block is
+		// generated, which happens whether or not the branch runs.
+		c.expr(n.Filter, false)
+		c.inner(n.Body)
 	case *ast.Block:
-		c.inner(n.Body, soft)
+		c.inner(n.Body)
 	case *ast.ExprStmt:
 		c.expr(n.Node, soft)
 	case *ast.Include:
@@ -131,10 +153,10 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 		}
 		c.expr(n.Template, soft)
 	case *ast.Scope:
-		c.inner(n.Body, soft)
+		c.inner(n.Body)
 	case *ast.AutoescapeBlock:
 		c.expr(n.Value, soft)
-		c.inner(n.Body, soft)
+		c.inner(n.Body)
 	}
 }
 
