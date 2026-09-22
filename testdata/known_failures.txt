@@ -122,9 +122,3 @@ own/divergence/class_generic_alias_item.jj2    # list['a'] is a generic alias
 own/divergence/class_generic_alias_slice.jj2   # so is list[slice(...)]
 own/divergence/class_generic_alias_attr.jj2    # .a falls back to ['a']
 
-# --- constructing from a type object -------------------------------------------
-# `{{ n.__class__() }}` is `0` on CPython. gojja2 keeps a type object inert, the
-# same decision that leaves __mro__ and __subclasses__ out, so it refuses. This
-# one is open rather than settled -- see docs/divergences.md.
-own/divergence/class_call_int.jj2        # CPython builds int() == 0
-own/divergence/class_call_str_with_arg.jj2   # and str(5) == '5'

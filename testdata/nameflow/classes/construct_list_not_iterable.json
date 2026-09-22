@@ -1,0 +1,7 @@
+{
+  "case": "classes/construct_list_not_iterable.jj2",
+  "variables": {
+    "lst": "or",
+    "n": "or"
+  }
+}

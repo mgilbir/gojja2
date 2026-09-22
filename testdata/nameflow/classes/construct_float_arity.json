@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_float_arity.jj2",
+  "variables": {
+    "f": "or"
+  }
+}

@@ -1107,13 +1107,133 @@ for _n, _src, _ctx in [
 ]:
     case(f"classes/compare_{_n}", _src, **_ctx)
 
-# Calling a type object constructs the value in CPython. gojja2 keeps a type
-# object inert, so it refuses -- listed in known_failures.txt.
-for _n, _src, _ctx in [
-    ("int", "{{ n.__class__() }}", {"n": 1}),
-    ("str_with_arg", "{{ s.__class__(5) }}", {"s": "x"}),
+# Calling a type object constructs the value, as calling a class does in Python.
+# Every subject is a context variable, because a constant call is folded and a
+# fold that raises renders empty on both sides rather than reporting anything.
+_CALL = {"n": 1, "s": "ab", "f": 1.5, "yes": True, "nil": None,
+         "lst": [1, 2], "d": {"a": 1}, "b64": "YWI="}
+for _n, _src in [
+    # The zero-argument form of each class, which is its empty value.
+    ("empty_int", "{{ n.__class__() }}"),
+    ("empty_str", "[{{ s.__class__() }}]"),
+    ("empty_float", "{{ f.__class__() }}"),
+    ("empty_bool", "{{ yes.__class__() }}"),
+    ("empty_none", "{{ nil.__class__() }}"),
+    ("empty_list", "{{ lst.__class__() }}"),
+    ("empty_dict", "{{ d.__class__() }}"),
+    # Conversion, which is the same int() and float() a %d or %f runs.
+    ("int_of_str", "{{ n.__class__('42') }}"),
+    ("int_of_float", "{{ n.__class__(f) }}|{{ n.__class__(-1.5) }}"),
+    ("int_of_bool", "{{ n.__class__(yes) }}"),
+    ("int_bad_str", "{{ n.__class__(s) }}"),
+    ("int_of_none", "{{ n.__class__(nil) }}"),
+    ("int_base", "{{ n.__class__('10', 2) }}|{{ n.__class__('z', 36) }}"),
+    ("int_base_prefix", "{{ n.__class__('0x10', 16) }}|{{ n.__class__('0b11', 0) }}"),
+    ("int_base_keyword", "{{ n.__class__('10', base=2) }}"),
+    ("int_base_range", "{{ n.__class__('10', 1) }}"),
+    ("int_base_without_string", "{{ n.__class__(5, 2) }}"),
+    ("int_base_no_subject", "{{ n.__class__(base=2) }}"),
+    ("int_unexpected_keyword", "{{ n.__class__(x=5) }}"),
+    ("int_arity", "{{ n.__class__(1, 2, 3, 4) }}"),
+    ("float_of_str", "{{ f.__class__('1.5') }}|{{ f.__class__('nan') }}"),
+    ("float_bad_str", "{{ f.__class__(s) }}"),
+    ("float_of_none", "{{ f.__class__(nil) }}"),
+    ("float_arity", "{{ f.__class__(1, 2) }}"),
+    ("float_keyword", "{{ f.__class__(x=1) }}"),
+    # str() is repr for anything that is not one already.
+    ("str_of_list", "{{ s.__class__(lst) }}"),
+    ("str_of_dict", "{{ s.__class__(d) }}"),
+    ("str_of_none", "{{ s.__class__(nil) }}"),
+    ("str_of_float", "{{ s.__class__(f) }}"),
+    ("str_keyword", "{{ s.__class__(object=5) }}"),
+    ("str_encoding_type", "{{ s.__class__(5, 2) }}"),
+    ("str_decoding_str", "{{ s.__class__(s, 'utf-8') }}"),
+    ("str_decoding_int", "{{ s.__class__(5, 'utf-8') }}"),
+    ("str_arity", "{{ s.__class__(1, 2, 3, 4) }}"),
+    # bool() is truthiness, which is the one every short-circuit runs.
+    ("bool_of_values", "{{ yes.__class__(0) }}{{ yes.__class__(lst) }}"
+                       "{{ yes.__class__([]) }}{{ yes.__class__(nil) }}"),
+    ("bool_arity", "{{ yes.__class__(1, 2) }}"),
+    ("none_takes_nothing", "{{ nil.__class__(1) }}"),
+    # list() and tuple() walk an iterable, and refuse what is not one.
+    ("list_of_str", "{{ lst.__class__(s) }}"),
+    ("list_of_dict", "{{ lst.__class__(d) }}"),
+    ("list_of_range", "{{ lst.__class__(range(3)) }}"),
+    ("list_not_iterable", "{{ lst.__class__(n) }}"),
+    ("list_arity", "{{ lst.__class__(lst, 2) }}"),
+    ("list_keyword", "{{ lst.__class__(x=1) }}"),
+    # dict() is the dict global, which is the same class.
+    ("dict_of_dict", "{{ d.__class__(d) }}"),
+    ("dict_of_kwargs", "{{ d.__class__(a=1, b=2) }}"),
+    ("dict_bad_pairs", "{{ d.__class__(s) }}"),
+    # A class object is the class global, so it compares equal to one.
+    ("is_the_global_dict", "{{ d.__class__ == dict }}"),
+    ("is_the_global_range", "{{ range(3).__class__ == range }}"),
+    ("is_the_global_namespace", "{{ namespace().__class__ == namespace }}"),
+    ("namespace_of_kwargs", "{{ namespace().__class__(a=1) }}"),
+    ("range_of_int", "{{ range(3).__class__(4) }}|{{ range(3).__class__(1, 5, 2) }}"),
+    ("range_no_args", "{{ range(3).__class__() }}"),
+    # An undefined's class builds another undefined, and still binds.
+    ("undefined_builds_undefined", "[{{ nope.__class__() }}]"),
+    ("undefined_keyword", "{{ nope.__class__(zz=1) }}"),
+    # A dict view cannot be instantiated at all, and says so.
+    ("dict_view_refuses", "{{ d.keys().__class__() }}"),
+    ("dict_items_refuses", "{{ d.items().__class__(1) }}"),
 ]:
-    case(f"divergence/class_call_{_n}", _src, **_ctx)
+    case(f"classes/construct_{_n}", _src, **_CALL)
+
+# Markup's class, reached through `|safe`. Markup does not escape what it is
+# handed -- that is what it is for -- and its own binding wraps str's, so the
+# arity and keyword refusals are Markup's while anything past them is str's.
+for _n, _src in [
+    ("markup_keeps_markup", "{{ m.__class__('<b>') }}"),
+    ("markup_of_escaped", "{{ m.__class__(s) }}"),
+    ("markup_empty", "[{{ m.__class__() }}]"),
+    ("markup_arity", "{{ m.__class__(1, 2, 3, 4) }}"),
+    ("markup_keyword", "{{ m.__class__(zz=1) }}"),
+    ("markup_object_keyword", "{{ m.__class__(object=5) }}"),
+    ("markup_encoding_type", "{{ m.__class__(5, 2) }}"),
+]:
+    case(f"classes/construct_{_n}",
+         "{% set m = '<i>'|safe %}" + _src, s="<b>&amp;")
+
+# The same two, autoescaping, where losing the safe mark is visible as escaped
+# output rather than only as a different type.
+case("classes/construct_markup_autoescape",
+     "{% autoescape true %}{% set m = '<i>'|safe %}{{ m.__class__('<b>') }}"
+     "|{{ m.__class__(s) }}{% endautoescape %}", s="<b>")
+
+# str() of an undefined follows the undefined's own rules: a StrictUndefined
+# refuses to become a string, where a plain one is "". Written under every
+# setting, because the constructor must not decide this for itself.
+for _kind in ("strict", "chainable", "debug", "default"):
+    case(f"classes/construct_str_of_{_kind}_undefined",
+         "[{{ s.__class__(nope) }}]", s="x",
+         __settings__={"undefined": _kind})
+
+# bytes() needs a bytes in the context, which JSON cannot carry, so these decode
+# one first. The count and the iterable forms are budget-charged; see
+# construct_budget_test.go.
+for _n, _src in [
+    ("bytes_empty", "{{ b.__class__() }}"),
+    ("bytes_count", "{{ b.__class__(4) }}"),
+    ("bytes_negative", "{{ b.__class__(-1) }}"),
+    ("bytes_of_ints", "{{ b.__class__([104, 105]) }}"),
+    ("bytes_out_of_range", "{{ b.__class__([300]) }}"),
+    ("bytes_of_str", "{{ b.__class__('a') }}"),
+    ("bytes_encoded", "{{ b.__class__('ab', 'utf-8') }}"),
+    ("bytes_encoding_type", "{{ b.__class__(5, 2) }}"),
+    ("bytes_encoding_without_str", "{{ b.__class__(5, 'utf-8') }}"),
+    # bytes kept the pre-3.13 arity wording when int and str changed theirs,
+    # while its *keyword* wording changed with them. The pair is here so the
+    # version matrix grades the asymmetry rather than one half of it.
+    ("bytes_arity", "{{ b.__class__(1, 2, 3, 4) }}"),
+    ("bytes_unexpected_keyword", "{{ b.__class__(zz=5) }}"),
+    ("bytes_of_none", "{{ b.__class__(nil) }}"),
+    ("str_of_bytes", "{{ s.__class__(b, 'utf-8') }}"),
+]:
+    case(f"classes/construct_{_n}",
+         "{% set b = 'ab'.encode() %}" + _src, nil=None)
 
 # The generic-alias divergence, reached through `__class__` rather than through
 # the `dict` global: CPython answers a types.GenericAlias, gojja2 has none.

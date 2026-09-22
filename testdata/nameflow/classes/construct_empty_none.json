@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_empty_none.jj2",
+  "variables": {
+    "nil": "or"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "case": "classes/construct_int_of_none.jj2",
+  "variables": {
+    "n": "or",
+    "nil": "or"
+  }
+}

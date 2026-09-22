@@ -1,0 +1,5 @@
+{
+  "nil": null
+}
+---
+{% set b = 'ab'.encode() %}{{ b.__class__('a') }}

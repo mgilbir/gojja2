@@ -136,6 +136,13 @@ func isCallableValue(v value.Value) bool {
 	if _, ok := v.Interface().(*macroObject); ok {
 		return true
 	}
+	// A statefulCaller is invoked one check earlier than value.Caller, and
+	// need not implement it: a type object is called that way so that
+	// constructing a list or a bytes can charge the render's budget.
+	// Testing only for Caller answered False for a class that calls fine.
+	if _, ok := v.Interface().(statefulCaller); ok {
+		return true
+	}
 	_, ok := v.Interface().(value.Caller)
 	return ok
 }

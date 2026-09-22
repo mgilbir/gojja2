@@ -1,0 +1,14 @@
+{
+  "case": "classes/construct_int_unexpected_keyword.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "'x' is an invalid keyword argument for int()"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_int_base_range.jj2",
+  "variables": {
+    "n": "or"
+  }
+}
