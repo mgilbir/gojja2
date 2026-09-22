@@ -1,0 +1,14 @@
+{
+  "case": "errors/bytes_percent_unsupported_verb.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "unsupported format character 'q' (0x71) at index 1"
+  }
+}

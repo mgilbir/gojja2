@@ -1,0 +1,14 @@
+{
+  "case": "errors/bytes_percent_s_wants_bytes_not_int.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "%b requires a bytes-like object, or an object that implements __bytes__, not 'int'"
+  }
+}

@@ -2844,6 +2844,34 @@ case("errors/nonempty_bytes_decode_unknown", "{{ 'x'.encode().decode('nope') }}"
 case("errors/empty_str_encode_unknown", "{{ ''.encode('nope') }}")
 case("errors/empty_bytes_decode_bad_type", "{{ ''.encode().decode(1) }}")
 
+# --- printf-style formatting on bytes (PEP 461) --------------------------------
+# 3.5 gave bytes the same `%` formatting str has. gojja2 had it for str only, so
+# every one of these was "unsupported operand type(s) for %". The numeric verbs
+# behave identically and the result is bytes; three things differ:
+#
+#   %b and %s want a bytes-like object and nothing else -- not a str, not a
+#     number -- and the refusal names %b whichever of the two was written;
+#   %r is ascii(), because a bytes cannot hold what repr() may produce;
+#   %c takes a single byte or an int in range(256), not a code point.
+#
+# And %b stays unsupported in a *str* format, which is the case that keeps the
+# two apart.
+case("format/bytes_percent_numeric",
+     "{{ '%d'.encode() % 5 }}|{{ '%x'.encode() % 255 }}|{{ '%5.2f'.encode() % 1.5 }}|{{ '%e'.encode() % 1.5 }}")
+case("format/bytes_percent_b_and_s",
+     "{{ '%s'.encode() % 'x'.encode() }}|{{ '%b'.encode() % 'x'.encode() }}"
+     "|{{ '%10s'.encode() % 'x'.encode() }}|{{ '%.2s'.encode() % 'abcd'.encode() }}")
+case("format/bytes_percent_repr_and_ascii", "{{ '%a'.encode() % 'x' }}|{{ '%r'.encode() % 'x' }}")
+case("format/bytes_percent_c", "{{ '%c'.encode() % 65 }}|{{ '%c'.encode() % 'A'.encode() }}")
+case("format/bytes_percent_tuple_and_literal",
+     "{{ '%s %s'.encode() % ('a'.encode(), 'b'.encode()) }}|{{ '%%'.encode() % () }}")
+case("errors/bytes_percent_s_wants_bytes", "{{ '%s'.encode() % 'x' }}")
+case("errors/bytes_percent_s_wants_bytes_not_int", "{{ '%s'.encode() % 5 }}")
+case("errors/bytes_percent_too_many_args", "{{ 'ab'.encode() % 1 }}")
+case("errors/bytes_percent_c_out_of_range", "{{ '%c'.encode() % 256 }}")
+case("errors/bytes_percent_unsupported_verb", "{{ '%q'.encode() % 1 }}")
+case("errors/str_percent_has_no_b", "{{ '%b' % 'x'.encode() }}")
+
 # ...and the sixth surface, which *was* wrong: an empty view is falsey.
 #
 # Python takes bool() from __bool__, or from __len__ when there is no __bool__,

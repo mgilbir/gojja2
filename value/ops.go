@@ -711,9 +711,11 @@ func FloorDiv(a, b Value, py PythonVersion) (Value, error) {
 // result: it may be nil, which means nobody is counting but the hard ceiling
 // still applies.
 func Mod(a, b Value, budget Budget, py PythonVersion) (Value, error) {
-	if a.kind == KindString {
+	if a.kind == KindString || a.kind == KindBytes {
 		// `"%s" % nope` formats the undefined as "", so the operand
-		// check must not run before the string path.
+		// check must not run before the string path. PEP 461 gave bytes
+		// the same formatting, and FormatPercent tells the two apart by
+		// the format's own kind.
 		return FormatPercent(a, b, budget, py)
 	}
 	if err := undefinedOperand(a, b); err != nil {

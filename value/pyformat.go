@@ -23,10 +23,15 @@ import (
 // else -- a bare dict included -- is a single argument.
 func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, error) {
 	spec := format.str
+	// PEP 461 gave bytes the same printf-style formatting, with three
+	// differences: %b and %s want a bytes-like object rather than anything
+	// str() accepts, %r is ascii() as %a is, and the result is bytes. The
+	// spec itself is the same field, since KindBytes carries its bytes there.
+	asBytes := format.kind == KindBytes
 	// markupsafe wraps each argument so that it escapes as it is
 	// substituted, and returns Markup. Escaping happens *before* padding,
-	// so a width applies to the escaped text.
-	escaping := format.safe
+	// so a width applies to the escaped text. A bytes is never Markup.
+	escaping := format.safe && !asBytes
 
 	// A tuple subclass *is* the argument tuple: the check CPython makes is
 	// PyTuple_Check, which a subclass passes, so `"%s|%s" % g` fills two
@@ -111,6 +116,8 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 			conv.prec, conv.hasPrec = max(p, 0), true
 		}
 
+		conv.bytes = asBytes
+
 		// Resolve the value this conversion formats.
 		var arg Value
 		switch {
@@ -118,7 +125,7 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 			if !hasMapping {
 				return Undefined, errs.New(errs.TypeError, "format requires a mapping")
 			}
-			v, err := lookupFormatKey(mapping, conv.key)
+			v, err := lookupFormatKeyAs(mapping, conv.key, asBytes)
 			if err != nil {
 				return Undefined, err
 			}
@@ -137,8 +144,15 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 	}
 
 	if !hasMapping && next != len(positional) {
+		kind := "string"
+		if asBytes {
+			kind = "bytes"
+		}
 		return Undefined, errs.New(errs.TypeError,
-			"not all arguments converted during string formatting")
+			"not all arguments converted during %s formatting", kind)
+	}
+	if asBytes {
+		return Bytes([]byte(out.String())), nil
 	}
 	if escaping {
 		return Safe(out.String()), nil
@@ -167,6 +181,23 @@ func isMappingArg(v Value) bool {
 }
 
 // lookupFormatKey resolves `%(name)s` against the right operand.
+// lookupFormatKeyAs is lookupFormatKey with the key's type decided by the
+// format string's: `b'%(k)s' % {'k': b'v'}` raises KeyError b'k', because the
+// name parsed out of a bytes format is itself bytes and a str key does not
+// match it.
+func lookupFormatKeyAs(mapping Value, key string, asBytes bool) (Value, error) {
+	if !asBytes {
+		return lookupFormatKey(mapping, key)
+	}
+	if d, ok := mapping.Dict(); ok {
+		if v, found := d.GetKnown(Bytes([]byte(key))); found {
+			return v, nil
+		}
+		return Undefined, errs.New(errs.KeyError, "%s", Repr(Bytes([]byte(key))))
+	}
+	return lookupFormatKey(mapping, key)
+}
+
 func lookupFormatKey(mapping Value, key string) (Value, error) {
 	switch mapping.kind {
 	case KindDict:
@@ -210,6 +241,9 @@ type conversion struct {
 	hasPrec   bool
 	starPrec  bool
 	verb      byte
+	// bytes is set when the format string is a bytes, which changes what
+	// %b, %s, %r and %c accept. See FormatPercent.
+	bytes bool
 	// at is the offset just past the verb, which is the position
 	// CPython names when the verb is not one it knows.
 	at int
@@ -366,6 +400,19 @@ func (c *conversion) pad(f formatted, budget Budget) (string, error) {
 // errPercentC words %c's refusal for the chosen interpreter. Before 3.14 every
 // wrong argument got the same sentence; 3.14 names what it got instead, and
 // spells a wrong-length string as "a string of length N" rather than by type.
+// bytesArg formats %b and %s for a bytes format string, which take a bytes-like
+// object and nothing else -- not a str, not a number, and not anything str()
+// would have accepted. The message names %b whichever of the two was written.
+func (c *conversion) bytesArg(v Value) (formatted, error) {
+	if v.kind != KindBytes {
+		return formatted{}, errs.New(errs.TypeError,
+			"%%b requires a bytes-like object, "+
+				"or an object that implements __bytes__, not '%s'", v.TypeName())
+	}
+	// A bytes is never Markup, so there is no escaping helper to apply.
+	return formatted{body: c.truncate(v.str)}, nil
+}
+
 func (c *conversion) errPercentC(v Value, what string) error {
 	if c.py.PercentCNamesTheType() {
 		return errs.New(errs.TypeError,
@@ -436,7 +483,21 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 	// unsupported format character. Laying out a padded "%" instead let
 	// `{{ "%281%2C+2%29=x" % 2 }}`, which is what a urlencoded tuple key
 	// looks like, format quietly where CPython refuses.
+	case 'b':
+		// Only a bytes format has %b; a str one has no case for it and
+		// reports an unsupported format character, as CPython does.
+		if !c.bytes {
+			return formatted{}, errs.New(errs.ValueError,
+				"unsupported format character '%c' (0x%x) at index %d",
+				c.verb, c.verb, c.at-1)
+		}
+		return c.bytesArg(v)
 	case 's':
+		if c.bytes {
+			// %s is an alias for %b here, and says so when it
+			// refuses: CPython's message names %b either way.
+			return c.bytesArg(v)
+		}
 		// %s is str(), which a StrictUndefined refuses. %r and %a are
 		// repr() and ascii(), which it does not -- Undefined leaves
 		// __repr__ alone under every class.
@@ -445,11 +506,36 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 		}
 		return formatted{body: c.truncate(text(Str(v)))}, nil
 	case 'r':
+		if c.bytes {
+			// A bytes cannot hold repr()'s non-ASCII, so %r is
+			// ascii() there -- the same answer %a gives.
+			return formatted{body: c.truncate(text(Ascii(v)))}, nil
+		}
 		return formatted{body: c.truncate(text(Repr(v)))}, nil
 	case 'a':
 		return formatted{body: c.truncate(text(Ascii(v)))}, nil
 
 	case 'c':
+		if c.bytes {
+			// A byte, or a code point that fits in one.
+			if v.kind == KindBytes {
+				if len(v.str) != 1 {
+					return formatted{}, errs.New(errs.TypeError,
+						"%%c requires an integer in range(256) or a single byte")
+				}
+				return formatted{body: text(v.str)}, nil
+			}
+			if !v.IsInteger() {
+				return formatted{}, errs.New(errs.TypeError,
+					"%%c requires an integer in range(256) or a single byte")
+			}
+			n, ok := v.Int64()
+			if !ok || n < 0 || n > 255 {
+				return formatted{}, errs.New(errs.OverflowError,
+					"%%c arg not in range(256)")
+			}
+			return formatted{body: text(string(rune(n)))}, nil
+		}
 		// Precision is accepted and ignored, as in Python.
 		if v.kind == KindString {
 			if n := StrLen(v.str); n != 1 {
