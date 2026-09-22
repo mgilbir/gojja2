@@ -4,35 +4,43 @@
 package conformance_test
 
 import (
-	"strings"
+	"regexp"
 	"testing"
 
 	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/conformance"
 )
 
-// What `|pprint` does with a value that contains itself.
+// `|pprint` of a value that contains itself: the form is exact, the id cannot be.
 //
 // docs/divergences.md records this case, and says of the whole file that "Each
 // one is asserted by a test, so it cannot quietly turn into something else".
-// This one had no test, and it had quietly turned into something else -- the
-// entry described gojja2 as printing "the same form, with the address of its
-// own container", and it does not.
+// This one had none, and had quietly turned into something else -- gojja2 was
+// printing repr's `[...]` collapse where CPython prints the mark.
 //
-// The corpus cannot hold this: CPython's answer carries an id that differs
+// The corpus cannot hold it: CPython's answer carries an id that differs
 // between two of its own runs, so a golden would record one run and fail on the
-// next. That is exactly why it went unwatched, and why the check belongs here.
+// next. That is why it went unwatched, and why the check belongs here.
 func TestPprintOfACyclicValue(t *testing.T) {
 	env, err := gojja2.New()
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
 	const pad = `'a string long enough that pprint will not fit this on one line'`
-	for _, tc := range []struct{ name, src string }{
-		// CPython: [<Recursion on list with id=NNN>,\n 'a string ...']
-		{"list", `{% set l = [] %}{% set _ = l.append(l) %}{% set _ = l.append(` + pad + `) %}{{ l|pprint }}`},
-		// CPython: [<Recursion on list with id=NNN>]
-		{"bare list", `{% set l = [] %}{% set _ = l.append(l) %}{{ l|pprint }}`},
+	for _, tc := range []struct{ name, src, want string }{
+		// Each `want` is CPython's own answer with the id blanked.
+		{"list",
+			`{% set l = [] %}{% set _ = l.append(l) %}{% set _ = l.append(` + pad + `) %}{{ l|pprint }}`,
+			"[<Recursion on list with id=N>,\n 'a string long enough that pprint will not fit this on one line']"},
+		{"bare list",
+			`{% set l = [] %}{% set _ = l.append(l) %}{{ l|pprint }}`,
+			"[<Recursion on list with id=N>]"},
+		{"dict",
+			`{% set d = {} %}{% set _ = d.update({'self': d}) %}{% set _ = d.update({'pad': ` + pad + `}) %}{{ d|pprint }}`,
+			"{'pad': 'a string long enough that pprint will not fit this on one line',\n 'self': <Recursion on dict with id=N>}"},
+		{"indirect",
+			`{% set i = [] %}{% set o = [i] %}{% set _ = i.append(o) %}{% set _ = o.append(` + pad + `) %}{{ o|pprint }}`,
+			"[[<Recursion on list with id=N>],\n 'a string long enough that pprint will not fit this on one line']"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpl, err := env.FromString(tc.src)
@@ -43,15 +51,46 @@ func TestPprintOfACyclicValue(t *testing.T) {
 			if err != nil {
 				t.Fatalf("render: %v", err)
 			}
-			if strings.Contains(out, "<Recursion on") {
-				t.Fatalf("gojja2 now prints CPython's recursion mark, which it did not "+
-					"when this test was written. That is the divergence closing: update "+
-					"docs/divergences.md and this test.\n  %s", out)
+			ids := regexp.MustCompile(`id=\d+`)
+			if got := ids.ReplaceAllString(out, "id=N"); got != tc.want {
+				t.Errorf("pprint of a cyclic value:\n got %q\nwant %q", got, tc.want)
 			}
-			if !strings.Contains(out, "[...]") {
-				t.Errorf("expected repr's cycle collapse, got:\n  %s", out)
+			// The id really is an address, which is the divergence: it
+			// is not reproducible in CPython either, so nothing here
+			// can assert a value for it.
+			if !ids.MatchString(out) {
+				t.Errorf("no id in %q", out)
 			}
 		})
+	}
+}
+
+// An acyclic value must lay out exactly as it did before pprint learned about
+// cycles, because the recursion-aware repr is only reached for a cyclic one.
+func TestPprintOfAnAcyclicValueIsUnchanged(t *testing.T) {
+	env, err := gojja2.New()
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	for _, tc := range []struct{ src, want string }{
+		{`{{ {'b': 2, 'a': 1, 'C': 3}|pprint }}`, `{'C': 3, 'a': 1, 'b': 2}`},
+		{`{{ {'x': {'y': [1, 2]}}|pprint }}`, `{'x': {'y': [1, 2]}}`},
+		// The same list twice is shared, not cyclic, and expands both times.
+		{`{% set x = [1] %}{{ [x, x]|pprint }}`, `[[1], [1]]`},
+		{`{{ [1, 2, 3]|pprint }}`, `[1, 2, 3]`},
+		{`{{ (1,)|pprint }}`, `(1,)`},
+	} {
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %s: %v", tc.src, err)
+		}
+		out, err := tmpl.RenderString(t.Context(), nil)
+		if err != nil {
+			t.Fatalf("render %s: %v", tc.src, err)
+		}
+		if out != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, out, tc.want)
+		}
 	}
 }
 

@@ -1662,12 +1662,12 @@ func escapeArg(safe bool, v value.Value) value.Value {
 func filterPprint(st *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	// pformat returns a str even for Markup input -- what it renders is the
 	// repr, which for Markup is `Markup('...')`.
-	sorted, err := sortDictKeys(v, 0, st.PythonVersion())
+	sorted, cyclic, err := sortDictKeysCyclic(v, 0, st.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
 	var b strings.Builder
-	if err := pformat(st, &b, sorted, 0, 0, 0); err != nil {
+	if err := pformat(st, &b, sorted, cyclic, 0, 0, 0); err != nil {
 		return value.Undefined, err
 	}
 	return value.String(b.String()), nil
@@ -1699,8 +1699,8 @@ const pprintWidth = 80
 // column the value starts at; allowance is the space reserved on the last line
 // for whatever closes around it; level counts how deep the dispatch has gone,
 // because a long string only gains its wrapping parentheses at the top.
-func pformat(st *State, b *strings.Builder, v value.Value, indent, allowance, level int) error {
-	return pformatSeen(st, b, v, indent, allowance, level, nil)
+func pformat(st *State, b *strings.Builder, v value.Value, cyclic bool, indent, allowance, level int) error {
+	return pformatSeen(st, b, v, cyclic, indent, allowance, level, nil)
 }
 
 // pformatSeen carries the containers on the active path.
@@ -1709,7 +1709,7 @@ func pformat(st *State, b *strings.Builder, v value.Value, indent, allowance, le
 // reaches the recursive arms below; one whose repr is too wide to print on a
 // line does. CPython's pprint marks that case with the container's id, which
 // differs between runs there as it does here -- see docs/divergences.md.
-func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance, level int, seen map[any]bool) error {
+func pformatSeen(st *State, b *strings.Builder, v value.Value, cyclic bool, indent, allowance, level int, seen map[any]bool) error {
 	if err := st.Poll(); err != nil {
 		return err
 	}
@@ -1720,6 +1720,17 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 	// cannot fit and does not have to be built to establish that. Building
 	// it escaped the whole of a 23MB string before anything was printed:
 	// the slowest part of the filter, and a pass nothing could interrupt.
+	// Before the repr is built, not after: CPython's _format asks whether
+	// the object is already on the path being printed and writes the mark
+	// straight out if it is. Asking afterwards is too late -- the repr has
+	// decided the layout by then.
+	switch v.Kind() {
+	case value.KindList, value.KindTuple, value.KindDict:
+		if seen[v.Interface()] {
+			fmt.Fprintf(b, "<Recursion on %s with id=%d>", v.TypeName(), recursionID(v))
+			return nil
+		}
+	}
 	limit := pprintWidth - indent - allowance
 	if text, ok := longPlainString(v, limit); ok {
 		return pformatString(st, b, text, "", indent, allowance, level+1)
@@ -1727,6 +1738,11 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 	// Charged and interruptible: this is the repr of the whole value, so for
 	// a Markup string it is the entire output and as long as the data.
 	rep, err := value.ReprBudget(v, st, st.PythonVersion())
+	if cyclic {
+		// A cycle is measured with the mark in place rather than with the
+		// builtin repr's "[...]" collapse. See safeRepr.
+		rep, err = safeRepr(st, v, seen)
+	}
 	if err != nil {
 		return err
 	}
@@ -1766,7 +1782,7 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 		}
 		b.WriteString(open)
 		err := pformatItems(st, b, s.Items(), indent, allowance+1, func(b *strings.Builder, item value.Value, at, room int) error {
-			return pformatSeen(st, b, item, at, room, level+1, seen)
+			return pformatSeen(st, b, item, cyclic, at, room, level+1, seen)
 		})
 		if err != nil {
 			return err
@@ -1787,7 +1803,7 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 			b.WriteString(keyRep)
 			b.WriteString(": ")
 			val, _, _ := d.Get(key, st.PythonVersion())
-			return pformatSeen(st, b, val, at+len(keyRep)+2, room, level+1, seen)
+			return pformatSeen(st, b, val, cyclic, at+len(keyRep)+2, room, level+1, seen)
 		})
 		if err != nil {
 			return err
@@ -1798,6 +1814,82 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, indent, allowance
 		b.WriteString(rep)
 	}
 	return nil
+}
+
+// safeRepr is the repr pprint measures with when the value contains itself.
+//
+// It is not the builtin repr, and that difference is the whole of this: the
+// builtin collapses a cycle to "[...]", which is short and therefore fits, so
+// measuring with it decides to print the value on one line and the mark for a
+// cycle is never reached. CPython measures with pprint._safe_repr, which writes
+// the mark instead -- much longer than the collapse, so the value does not fit
+// and is laid out across lines, where each element is asked again and the one
+// that points back is marked.
+//
+// Only reached for a value that really is cyclic, which sortDictKeysCyclic has
+// already established. Everything acyclic keeps measuring with the builtin
+// repr, exactly as before, so no layout anywhere else can move.
+func safeRepr(st *State, v value.Value, seen map[any]bool) (string, error) {
+	if err := st.Poll(); err != nil {
+		return "", err
+	}
+	switch v.Kind() {
+	case value.KindList, value.KindTuple, value.KindDict:
+	default:
+		return value.ReprBudget(v, st, st.PythonVersion())
+	}
+	if seen[v.Interface()] {
+		return fmt.Sprintf("<Recursion on %s with id=%d>", v.TypeName(), recursionID(v)), nil
+	}
+	seen = markSeen(seen, v.Interface())
+	defer delete(seen, v.Interface())
+
+	var b strings.Builder
+	if v.Kind() == value.KindDict {
+		d, _ := v.Dict()
+		b.WriteString("{")
+		for i, key := range d.Keys() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			keyRep, err := value.ReprBudget(key, st, st.PythonVersion())
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(keyRep)
+			b.WriteString(": ")
+			val, _, _ := d.Get(key, st.PythonVersion())
+			valRep, err := safeRepr(st, val, seen)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(valRep)
+		}
+		b.WriteString("}")
+		return b.String(), nil
+	}
+
+	seq, _ := v.Seq()
+	open, close := "[", "]"
+	if v.Kind() == value.KindTuple {
+		open, close = "(", ")"
+	}
+	b.WriteString(open)
+	for i, item := range seq.Items() {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		itemRep, err := safeRepr(st, item, seen)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(itemRep)
+	}
+	if v.Kind() == value.KindTuple && seq.Len() == 1 {
+		b.WriteString(",")
+	}
+	b.WriteString(close)
+	return b.String(), nil
 }
 
 // longPlainString reports a string that is certainly too long to print on one
@@ -2004,57 +2096,91 @@ func pformatItems[T any](st *State, b *strings.Builder, items []T, indent, allow
 // cycle, and rebuilding one without noticing runs until memory is gone; a
 // container already being rebuilt is left as it is, which is enough for
 // pformat to reach it and print its recursion marker.
-func sortDictKeys(v value.Value, level int, py value.PythonVersion) (value.Value, error) {
-	return sortDictKeysSeen(v, nil, level, py)
+// sortDictKeysCyclic rebuilds v with every dict's keys in sorted order.
+//
+// The rebuilt graph keeps the shape of the original, cycles included. Each
+// container is entered into copies *before* its contents are filled in, so a
+// back-reference comes back pointing at the copy rather than at the original --
+// which is what makes the copy cyclic in the same places.
+//
+// Substituting the original there instead, which is what this used to do,
+// produces a graph whose cycle sits one level below where it was: the top is a
+// fresh container that merely *contains* the cyclic one. pprint then cannot
+// recognise the cycle at all, because the object it is looking at is never the
+// object a back-reference points to, and the mark CPython prints for one was
+// unreachable for exactly that reason.
+//
+// It also reports whether anything in v contained itself, which is the one case
+// pformat has to measure differently. See safeRepr.
+func sortDictKeysCyclic(v value.Value, level int, py value.PythonVersion) (value.Value, bool, error) {
+	c := &dictSorter{copies: map[any]value.Value{}, open: map[any]bool{}, py: py}
+	out, err := c.walk(v, level)
+	return out, c.cyclic, err
 }
 
-func sortDictKeysSeen(v value.Value, seen map[any]bool, level int, py value.PythonVersion) (value.Value, error) {
+type dictSorter struct {
+	copies map[any]value.Value
+	// open holds the containers being filled in right now. A reference back
+	// to one of those is a cycle; a reference to one already finished is a
+	// shared subtree, which is not.
+	open   map[any]bool
+	cyclic bool
+	py     value.PythonVersion
+}
+
+func (c *dictSorter) walk(v value.Value, level int) (value.Value, error) {
 	if level > maxPPrintDepth {
 		return value.Undefined, tooDeepToPrint()
 	}
 	switch v.Kind() {
-	case value.KindDict:
-		if seen[v.Interface()] {
-			return v, nil
+	case value.KindDict, value.KindList, value.KindTuple:
+	default:
+		return v, nil
+	}
+	id := v.Interface()
+	if done, ok := c.copies[id]; ok {
+		if c.open[id] {
+			c.cyclic = true
 		}
-		seen = markSeen(seen, v.Interface())
-		defer delete(seen, v.Interface())
+		return done, nil
+	}
+	c.open[id] = true
+	defer delete(c.open, id)
+
+	if v.Kind() == value.KindDict {
+		out := value.NewDict()
+		c.copies[id] = out
+		target, _ := out.Dict()
 		d, _ := v.Dict()
 		entries := append([]value.DictEntry(nil), d.Entries()...)
 		sort.SliceStable(entries, func(i, j int) bool {
 			return value.Str(entries[i].Key) < value.Str(entries[j].Key)
 		})
-		out := value.NewDict()
-		target, _ := out.Dict()
 		for _, e := range entries {
-			sorted, err := sortDictKeysSeen(e.Value, seen, level+1, py)
+			sorted, err := c.walk(e.Value, level+1)
 			if err != nil {
 				return value.Undefined, err
 			}
-			_ = target.Set(e.Key, sorted, py)
+			_ = target.Set(e.Key, sorted, c.py)
 		}
 		return out, nil
-	case value.KindList, value.KindTuple:
-		if seen[v.Interface()] {
-			return v, nil
-		}
-		seen = markSeen(seen, v.Interface())
-		defer delete(seen, v.Interface())
-		seq, _ := v.Seq()
-		items := make([]value.Value, seq.Len())
-		for i, item := range seq.Items() {
-			sorted, err := sortDictKeysSeen(item, seen, level+1, py)
-			if err != nil {
-				return value.Undefined, err
-			}
-			items[i] = sorted
-		}
-		if v.Kind() == value.KindTuple {
-			return value.NewTuple(items...), nil
-		}
-		return value.NewList(items...), nil
 	}
-	return v, nil
+
+	out := value.NewList()
+	if v.Kind() == value.KindTuple {
+		out = value.NewTuple()
+	}
+	c.copies[id] = out
+	target, _ := out.Seq()
+	seq, _ := v.Seq()
+	for _, item := range seq.Items() {
+		sorted, err := c.walk(item, level+1)
+		if err != nil {
+			return value.Undefined, err
+		}
+		target.Append(sorted)
+	}
+	return out, nil
 }
 
 // recursionID is the identity CPython's pprint prints for a repeated
