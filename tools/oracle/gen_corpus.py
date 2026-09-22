@@ -2864,6 +2864,32 @@ case("loops/dict_resized_over_a_snapshot",
      "{% for k in d|list %}{% set _ = d.update({'z': 1}) %}{{ k }}{% endfor %}", d={"a": 1, "b": 2})
 case("loops/dict_walked_without_touching_it", "{% for k in d %}{{ k }}{% endfor %}", d={"a": 1, "b": 2})
 
+# --- a list is walked live, where a dict is guarded ----------------------------
+# The other half of the cases above, and the opposite answer. CPython refuses a
+# dict that changes size under an iterator and says nothing at all about a list:
+# a list iterator holds an index and asks the list its length each time, so a
+# body that shortens the list ends the loop early and one that lengthens it runs
+# on. gojja2 walked a snapshot, so none of that showed -- `{{ i }}` with a pop in
+# the body printed every original element instead of stopping halfway.
+#
+# Not an error-class difference: a wrong *output*, which is why the render soak
+# found it and the corpus had not.
+case("loops/list_shortened_while_walking",
+     "{% for i in lst %}{{ i }}{% set _ = lst.pop() %}{% endfor %}", lst=[1, 2, 3, 4])
+case("loops/list_cleared_while_walking",
+     "{% for i in lst %}{{ i }}{% set _ = lst.clear() %}{% endfor %}", lst=[1, 2, 3, 4])
+case("loops/list_grown_while_walking",
+     "{% for i in lst %}{{ i }}{% if loop.index == 1 %}{% set _ = lst.insert(0, 9) %}{% endif %}{% endfor %}",
+     lst=[1, 2, 3])
+case("loops/list_shortened_by_a_loop_filter",
+     "{% for i in lst %}{% for j in users if lst.pop() %}{% endfor %}{% endfor %}[{{ lst }}]",
+     lst=[1, 2, 3, 4], users=[1, 2, 3])
+# loop.length is the live length too, asked afresh each pass.
+case("loops/list_length_while_walking",
+     "{% for i in lst %}{{ loop.length }}{% endfor %}", lst=[1, 2, 3, 4])
+# A tuple cannot be mutated, so it is the same either way.
+case("loops/tuple_is_walked_the_same", "{% for i in (1, 2, 3) %}{{ i }}{% endfor %}")
+
 # --- the 'z' format code ------------------------------------------------------
 # Python 3.11 added `z` to the format mini-language (PEP 682): it renders what
 # rounds to zero without its sign. gojja2 did not know the letter at all, so

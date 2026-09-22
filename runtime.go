@@ -99,6 +99,15 @@ func (s *guardedSource) at(i int) value.Value { return s.items[i] }
 func (s *guardedSource) length() int          { return len(s.items) }
 func (s *guardedSource) err() error           { return s.bad }
 
+// liveSeqSource walks a list as Python's list iterator does: by index, against
+// whatever the list holds now. See makeLoopSource.
+type liveSeqSource struct{ seq *value.Seq }
+
+func (s liveSeqSource) has(i int) bool       { return i >= 0 && i < s.seq.Len() }
+func (s liveSeqSource) at(i int) value.Value { return s.seq.At(i) }
+func (s liveSeqSource) length() int          { return s.seq.Len() }
+func (s liveSeqSource) err() error           { return nil }
+
 // filteredSource applies a loop's `if` as the loop walks it.
 //
 // Filtering up front is the same answer whenever the test is pure, and a
@@ -170,7 +179,19 @@ func (s objectSource) at(i int) value.Value {
 // charge in runLoop would never be reached.
 func makeLoopSource(st *State, v value.Value) (loopSource, error) {
 	switch v.Kind() {
-	case value.KindList, value.KindTuple:
+	case value.KindList:
+		// Live, not a snapshot: Python's list iterator holds an index and
+		// asks the list its length each time, so a body that shortens the
+		// list ends the loop early --
+		// `{% for i in lst %}{{ i }}{% set _ = lst.pop() %}{% endfor %}`
+		// on [1,2,3,4] prints "12" there and printed "1234" here. One that
+		// lengthens it runs forever in CPython and runs into the iteration
+		// budget here, which is the bound docs/limits.md records.
+		seq, _ := v.Seq()
+		return liveSeqSource{seq}, nil
+	case value.KindTuple:
+		// A tuple cannot be mutated, so a snapshot and the live sequence
+		// are the same thing.
 		s, _ := v.Seq()
 		return sliceSource(s.Items()), nil
 	case value.KindDict:
