@@ -33,6 +33,10 @@ SITES = [
     (ROOT / "dataflow/walk.go", r"^\s*a\.(apply|taint|emit|depend)\(.*\)$"),
     (ROOT / "dataflow/analyze.go", r"^\s*a\.(apply|taint|emit|depend)\(.*\)$"),
     (ROOT / "dataflow/namespace.go", r"^\s*a\.(apply|taint|emit|depend)\(.*\)$"),
+    # The tree the analysis runs on is built here, and every answer rests on
+    # it: a Def, a Use or a Scope that goes unrecorded is a name the analysis
+    # cannot see, which is indistinguishable from a name that does nothing.
+    (ROOT / "syntax_build.go", r"^\s*b\.info\.(Defs|Uses|Scopes|Context)\[.*\] = .*$"),
 ]
 
 # Rules that are a single predicate rather than a call, mutated by inverting
@@ -86,14 +90,18 @@ def drop_the_call(line: str):
     the recording is -- and for a site that is the only reader of a loop
     variable, commenting the whole line out removes both and does not compile.
     """
-    m = re.match(r"^(\s*)a\.(?:apply|taint|emit|depend)\((.*)\)$", line)
-    if m is None:
-        return None
-    indent, args = m.group(1), split_args(m.group(2))
-    if not args:
-        return None
-    blanks = ", ".join("_" for _ in args)
-    return f"{indent}{blanks} = {', '.join(args)} // MUTATED: recording dropped"
+    if m := re.match(r"^(\s*)a\.(?:apply|taint|emit|depend)\((.*)\)$", line):
+        indent, args = m.group(1), split_args(m.group(2))
+        if not args:
+            return None
+        blanks = ", ".join("_" for _ in args)
+        return f"{indent}{blanks} = {', '.join(args)} // MUTATED: recording dropped"
+    # An assignment records by landing somewhere; keep the value, drop the
+    # landing. `b.info.Uses[out] = b.resolve(n.Name)` still resolves, and the
+    # tree simply does not learn the answer.
+    if m := re.match(r"^(\s*)[\w.\[\]()]+ = (.*)$", line):
+        return f"{m.group(1)}_ = {m.group(2)} // MUTATED: recording dropped"
+    return None
 
 
 def caught() -> bool:
