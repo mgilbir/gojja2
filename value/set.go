@@ -127,6 +127,48 @@ func (s *Set) Equals(other Value) (bool, bool) {
 	return true, true
 }
 
+// setReverseDifference is `other - view`, which a template reaches by writing
+// the view second: `xs - d.keys()`.
+//
+// CPython gets here through the view's __rsub__, which builds set(other) before
+// it builds set(view) -- so a left operand that is not iterable is reported
+// before the view is hashed at all, and a left operand holding something
+// unhashable is reported before the view's own elements are looked at. Both
+// orders are observable when each side is wrong in a different way.
+func setReverseDifference(other Value, view SetOperand, py PythonVersion, budget Budget) (Value, error) {
+	seq, err := Iterate(other)
+	if err != nil {
+		return Undefined, err
+	}
+	var items []Value
+	for v := range seq {
+		if err := chargeItems(budget, 1); err != nil {
+			return Undefined, err
+		}
+		items = append(items, v)
+	}
+	left, err := NewSet(items, py, budget)
+	if err != nil {
+		return Undefined, err
+	}
+	elements, _ := view.SetElements()
+	remove, err := NewSet(elements, py, budget)
+	if err != nil {
+		return Undefined, err
+	}
+	var kept []Value
+	for _, v := range left.items {
+		if _, drop := remove.index.GetKnown(v); !drop {
+			kept = append(kept, v)
+		}
+	}
+	out, err := NewSet(kept, py, budget)
+	if err != nil {
+		return Undefined, err
+	}
+	return FromObject(out), nil
+}
+
 // setDifference is `view - other`: the view's elements that other does not hold.
 //
 // other is any iterable, which is the view's rule rather than the set's -- a

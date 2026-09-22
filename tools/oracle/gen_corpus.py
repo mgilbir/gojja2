@@ -2936,6 +2936,37 @@ case("errors/set_difference_hashes_the_view_first_too",
 case("errors/set_difference_then_the_other_operand",
      "{% set d = {'a': 1} %}{{ d.items() - 1.5 }}")
 
+# ...and with the view written second, which CPython reaches through the view's
+# __rsub__: the left operand is iterated into a set and the view taken out of it.
+# gojja2 answered "unsupported operand type(s) for -" to all of these.
+#
+# The order is the other way round from the forward form, and observably so:
+# __rsub__ builds set(other) *before* set(view), so a left operand that is not
+# iterable is reported before the view is hashed, and a left operand holding
+# something unhashable is reported before the view's own elements are looked at.
+# Sorted, not printed: three elements print in CPython's hash order, which is
+# randomised per process. Only a set of one or none has a stable repr -- see
+# docs/divergences.md, "The order a set prints in".
+case("methods/set_reverse_difference",
+     "{% set d = {'b': 2, 'a': 1} %}{{ ('[1]' - d.items())|list|sort }}"
+     "|{{ ('[1]' - d.items())|length }}")
+case("methods/set_reverse_difference_one_element",
+     "{% set d = {'b': 2, 'a': 1} %}{{ 'ax' - d.keys() }}")
+case("methods/set_reverse_difference_empty",
+     "{% set d = {'b': 2, 'a': 1} %}{{ 'ab' - d.keys() }}|{{ ['a'] - d.keys() }}")
+case("errors/set_reverse_left_not_iterable",
+     "{% set d = {'a': 1} %}{{ true - d.items() }}")
+case("errors/set_reverse_left_not_iterable_wins",
+     "{% set nd = {'x': {'y': [1, 2]}} %}{{ true - nd.items() }}")
+case("errors/set_reverse_left_unhashable_wins",
+     "{% set nd = {'x': {'y': [1, 2]}} %}{{ [[1]] - nd.items() }}")
+case("errors/set_reverse_view_unhashable",
+     "{% set nd = {'x': {'y': [1, 2]}} %}{{ 'ab' - nd.items() }}")
+case("errors/set_reverse_values_has_none",
+     "{% set d = {'a': 1} %}{{ ['a'] - d.values() }}")
+# ...and subtraction that has nothing to do with sets is untouched.
+case("methods/set_reverse_leaves_arithmetic_alone", "{{ 5 - 3 }}|{{ 2.5 - 1 }}")
+
 # ...and the sixth surface, which *was* wrong: an empty view is falsey.
 #
 # Python takes bool() from __bool__, or from __len__ when there is no __bool__,
