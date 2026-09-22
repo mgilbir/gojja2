@@ -99,6 +99,27 @@ func (s *guardedSource) at(i int) value.Value { return s.items[i] }
 func (s *guardedSource) length() int          { return len(s.items) }
 func (s *guardedSource) err() error           { return s.bad }
 
+// liveValues walks v the way a `{% for %}` must, which for a list means by
+// index against whatever it holds now rather than over a snapshot of it.
+//
+// value.Iterate takes the slice as it is when the walk starts, which is right
+// for a filter consuming a sequence in one go and wrong for a loop: the body,
+// or the loop's own test, runs between two steps and can shorten the list. See
+// liveSeqSource, which is the same rule for a loop without a test.
+func liveValues(v value.Value) (iter.Seq[value.Value], error) {
+	if v.Kind() != value.KindList {
+		return value.Iterate(v)
+	}
+	seq, _ := v.Seq()
+	return func(yield func(value.Value) bool) {
+		for i := 0; i < seq.Len(); i++ {
+			if !yield(seq.At(i)) {
+				return
+			}
+		}
+	}, nil
+}
+
 // liveSeqSource walks a list as Python's list iterator does: by index, against
 // whatever the list holds now. See makeLoopSource.
 type liveSeqSource struct{ seq *value.Seq }
