@@ -125,6 +125,16 @@ func ResourceError(err error) bool {
 // addressRe matches the repr of a Python object that embeds its address.
 var addressRe = regexp.MustCompile(`(?i)0x[0-9a-f]{6,}`)
 
+// recursionRe matches pprint's mark for a container it has already entered:
+// `<Recursion on list with id=130853217871040>`.
+//
+// The id is an address, so this is as ungradable as the reprs addressRe screens
+// out -- but it is written in *decimal*, which addressRe cannot match however
+// many digits it has. Nothing generated one until the generator learned to call
+// append, and then a self-referential subject would have reported a divergence
+// per template with none of them real. See docs/divergences.md.
+var recursionRe = regexp.MustCompile(`<Recursion on \w+ with id=\d+>`)
+
 // Comparable reports whether a result can be graded at all.
 //
 // Some renders are not reproducible by anything, CPython included: a repr that
@@ -141,6 +151,7 @@ func Comparable(r *OracleResult) bool {
 	}
 	lower := strings.ToLower(text)
 	return !addressRe.MatchString(text) &&
+		!recursionRe.MatchString(text) &&
 		!strings.Contains(lower, "<generator object") &&
 		!strings.Contains(lower, " object at ")
 }
