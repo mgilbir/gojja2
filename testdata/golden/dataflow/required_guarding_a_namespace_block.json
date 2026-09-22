@@ -1,0 +1,14 @@
+{
+  "case": "dataflow/required_guarding_a_namespace_block.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "'NoneType' object does not support item assignment"
+  }
+}
