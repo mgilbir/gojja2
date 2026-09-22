@@ -226,6 +226,19 @@ reasoning is right, and that the exposed tree is enough to do the reasoning with
 An analysis the engine could only write from the inside would mean the exposure
 had failed.
 
+Three checks stand behind the vocabulary itself, because comparing the two trees
+cannot catch a field *neither* side writes down — two emitters that both forget
+`ignore missing` agree perfectly and are both wrong:
+
+- `TestEveryAttributeIsCarried` pairs templates that differ in exactly one
+  attribute and requires the encodings to differ. One pair per attribute.
+- `syntax_emit.check_fields` holds the vocabulary to jinja2's own field lists.
+  Every field a node declares is carried or named as deliberately not, and the
+  emitter refuses rather than drops: a `{% set %}` through an attribute, an
+  extension's scope overlay, an eval-context option that is not `autoescape`.
+- `TestEncodingTheSameMeans…` renders every pair of generated templates that
+  share an encoding and requires the output to match.
+
 If `make syntax` reports "no spelling for …", the vocabulary is missing a node.
 Add it to `gojja2/syntax` and to both emitters rather than skipping the case: a
 tree quietly missing a node compares equal for the wrong reason.

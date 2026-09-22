@@ -37,6 +37,11 @@ def main() -> int:
     if not CORPUS.is_dir():
         raise SystemExit(f"{CORPUS} does not exist; run `make oracle` first")
 
+    # Before anything is written: every field jinja2's nodes declare is either
+    # carried by the vocabulary or named as deliberately not. Comparing the two
+    # trees cannot catch a field neither side writes down.
+    syntax_emit.check_fields()
+
     lines, skipped = [], 0
     unsupported = {}
     for path in sorted(CORPUS.rglob("*.jj2")):

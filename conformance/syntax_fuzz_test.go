@@ -225,3 +225,95 @@ func (h *harness) verifyNegatives(tmpl *gojja2.Template, effects map[string]data
 	}
 	return ""
 }
+
+// Two templates that encode the same must render the same.
+//
+// Comparing gojja2's tree to jinja2's cannot catch a field neither side writes
+// down. This can: if two different sources produce identical canonical bytes and
+// then render differently, the vocabulary dropped whatever distinguishes them,
+// and every query built on it is answering about a template it cannot see the
+// whole of.
+//
+// Templates that differ only in whitespace control or a comment encode the same
+// and render the same, which is the point rather than a problem: the vocabulary
+// is meant to describe what a template means.
+func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
+	h := newHarness(t)
+
+	count := envInt(t, "GOJJA2_FUZZ_N", 4000)
+	seed := uint64(envInt(t, "GOJJA2_FUZZ_SEED", 20260922))
+	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
+
+	type seen struct{ source, output string }
+	byTree := make(map[string]seen, count)
+
+	var compared, collisions int
+	for range count {
+		input := make([]byte, 1+rng.IntN(96))
+		for i := range input {
+			input[i] = byte(rng.UintN(256))
+		}
+		c := conformance.GenerateCase(input)
+		if strings.TrimSpace(c.Source) == "" {
+			continue
+		}
+		out, panicked, err := h.renderGojja2(c)
+		if panicked != "" {
+			continue
+		}
+		if err != nil {
+			out = "\x00error: " + err.Error()
+		}
+
+		sources := make(map[string]string, len(h.templates)+1)
+		for name, text := range h.templates {
+			sources[name] = text
+		}
+		sources[fuzzTemplateName] = c.Source
+		env, err := gojja2.New(
+			gojja2.WithLoader(gojja2.DictLoader(sources)),
+			gojja2.WithAutoescape(c.Autoescape))
+		if err != nil {
+			continue
+		}
+		tmpl, err := env.GetTemplate(fuzzTemplateName)
+		if err != nil {
+			continue
+		}
+		raw, err := syntax.Canonical(tmpl.Syntax().Root)
+		if err != nil {
+			continue
+		}
+		// Autoescaping is the environment's, not the template's, so two
+		// templates that encode the same under different settings are not a
+		// collision.
+		key := string(raw)
+		if c.Autoescape {
+			key = "escaped\x00" + key
+		}
+
+		prev, ok := byTree[key]
+		if !ok {
+			byTree[key] = seen{c.Source, out}
+			continue
+		}
+		if prev.source == c.Source {
+			continue
+		}
+		compared++
+		if prev.output != out {
+			collisions++
+			if collisions <= 5 {
+				t.Errorf("these encode identically and render differently, so "+
+					"the vocabulary is missing what tells them apart:\n"+
+					"  %q -> %q\n  %q -> %q", prev.source, prev.output,
+					c.Source, out)
+			}
+		}
+	}
+	if collisions > 5 {
+		t.Errorf("... and %d more", collisions-5)
+	}
+	t.Logf("injectivity: %d distinct templates encoded (seed %d); %d pairs shared "+
+		"an encoding and were compared by rendering", len(byTree), seed, compared)
+}

@@ -279,8 +279,12 @@ class Emitter:
         if t == "Operand":
             return N("operand", {"op": n.op}, [["value", self.expr(n.expr)]])
         if t == "Getattr":
+            if n.ctx != "load":
+                raise Unsupported(f"attribute access in {n.ctx} context")
             return N("getattr", {"attr": n.attr}, [["subject", self.expr(n.node)]])
         if t == "Getitem":
+            if n.ctx != "load":
+                raise Unsupported(f"subscript in {n.ctx} context")
             return N("getitem", None,
                      [["subject", self.expr(n.node)], ["index", self.expr(n.arg)]])
         if t == "Slice":
@@ -431,7 +435,12 @@ class Emitter:
                      [["template", self.expr(n.template)]])
         if t == "ExprStmt":
             return N("expr_stmt", None, [["value", self.expr(n.node)]])
-        if t in ("Scope", "OverlayScope"):
+        if t == "OverlayScope":
+            # Carries a context expression the vocabulary cannot spell. No template
+            # can write one; an extension can, and it is refused rather than
+            # silently flattened into an ordinary scope.
+            raise Unsupported("an extension's scope overlay")
+        if t == "Scope":
             out = scope_node("scope")
             self.push(out, n)
             self.declare_body()
@@ -444,8 +453,12 @@ class Emitter:
             # template can actually write.
             value = None
             for kw in n.options:
-                if kw.key == "autoescape":
-                    value = self.expr(kw.value)
+                if kw.key != "autoescape":
+                    # `{% autoescape %}` is the one form a template can write. An
+                    # extension setting something else would be dropped here, so it
+                    # is refused instead.
+                    raise Unsupported(f"an eval-context option named {kw.key!r}")
+                value = self.expr(kw.value)
             out = scope_node("autoescape")
             self.push(out, n)
             self.declare_body()
@@ -516,3 +529,93 @@ def canonical_info(tree, globals_=()) -> str:
     return json.dumps(out, ensure_ascii=False, separators=(",", ":"),
                       sort_keys=False)
 
+
+
+# Which of each node's fields the vocabulary carries.
+#
+# Comparing the two trees cannot catch a field *neither* side writes down: two
+# emitters that both forget `ignore missing` agree perfectly and are both wrong.
+# This is the check that does. Every field jinja2 declares is either carried or
+# named here as deliberately not, with the reason -- and if jinja2 grows a field,
+# nothing matches and the build says so rather than the tree quietly shrinking.
+CARRIED = {
+    "Template": {"body"},
+    "Output": {"nodes"},
+    "If": {"test", "body", "elif_", "else_"},
+    "For": {"target", "iter", "body", "else_", "test", "recursive"},
+    "Assign": {"target", "node"},
+    "AssignBlock": {"target", "filter", "body"},
+    "Macro": {"name", "args", "defaults", "body"},
+    "CallBlock": {"call", "args", "defaults", "body"},
+    "FilterBlock": {"body", "filter"},
+    "With": {"targets", "values", "body"},
+    "Block": {"name", "body", "scoped", "required"},
+    "Extends": {"template"},
+    "Include": {"template", "with_context", "ignore_missing"},
+    "Import": {"template", "target", "with_context"},
+    "FromImport": {"template", "names", "with_context"},
+    "ExprStmt": {"node"},
+    "Scope": {"body"},
+    "Break": set(),
+    "Continue": set(),
+    "Const": {"value"},
+    "TemplateData": {"data"},
+    "Name": {"name", "ctx"},
+    "NSRef": {"name", "attr"},
+    "Tuple": {"items", "ctx"},
+    "List": {"items"},
+    "Dict": {"items"},
+    "Pair": {"key", "value"},
+    "Keyword": {"key", "value"},
+    "CondExpr": {"test", "expr1", "expr2"},
+    "Concat": {"nodes"},
+    "Compare": {"expr", "ops"},
+    "Operand": {"op", "expr"},
+    "Slice": {"start", "stop", "step"},
+    "Call": {"node", "args", "kwargs", "dyn_args", "dyn_kwargs"},
+    "Filter": {"node", "name", "args", "kwargs", "dyn_args", "dyn_kwargs"},
+    "Test": {"node", "name", "args", "kwargs", "dyn_args", "dyn_kwargs"},
+    # The operators are one node with the spelling on it.
+    "BinExpr": {"left", "right"},
+    "UnaryExpr": {"node"},
+    # `{% autoescape %}` is the one form a template can write, and the emitter
+    # refuses any other option rather than dropping it.
+    "EvalContextModifier": {"options"},
+    "ScopedEvalContextModifier": {"options", "body"},
+}
+
+# Fields that are read to be *checked* rather than carried, because the
+# vocabulary has no room for them and a template cannot produce a second value.
+# The emitter refuses anything else, so this is a claim the build tests rather
+# than a note.
+CHECKED = {
+    "Getattr": {"node", "attr", "ctx"},
+    "Getitem": {"node", "arg", "ctx"},
+    # An extension's scope overlay carries a context expression the vocabulary
+    # has no spelling for. No template can write one; an extension can, and it
+    # is refused rather than silently flattened.
+    "OverlayScope": {"context", "body"},
+}
+
+
+def check_fields() -> None:
+    """Every field jinja2 declares is carried, or named as deliberately not."""
+    missing = []
+    for name, fields in list(CARRIED.items()) + list(CHECKED.items()):
+        cls = getattr(nodes, name, None)
+        if cls is None:
+            missing.append(f"{name}: jinja2 no longer has this node")
+            continue
+        gap = set(cls.fields) - fields
+        if gap:
+            missing.append(f"{name}: {sorted(gap)} is not carried or accounted for")
+    for name in ("Add", "Neg"):
+        cls = getattr(nodes, name, None)
+        if cls is not None:
+            base = "BinExpr" if name == "Add" else "UnaryExpr"
+            gap = set(cls.fields) - CARRIED[base]
+            if gap:
+                missing.append(f"{name}: {sorted(gap)} beyond {base}")
+    if missing:
+        raise SystemExit("the syntax vocabulary has fallen behind jinja2:\n  "
+                         + "\n  ".join(missing))
