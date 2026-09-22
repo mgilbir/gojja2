@@ -172,6 +172,18 @@ Nodes are named by their position in a pre-order walk, which costs nothing to
 agree on because the trees are already identical — a fact worth noticing: the
 second comparison is only possible because the first one passes.
 
+`make mutate` asks the question a passing suite cannot answer. A suite that
+passes says the code does what the tests ask; it does not say the tests ask for
+much. So each place the analysis records something -- an effect applied, a
+dependency drawn, a value emitted -- is taken out in turn, and anything that
+still passes is a line no test constrains.
+
+36 mutations, none surviving. The two that did survive the first run were both
+worth knowing about: no test covered a template named by an expression rather
+than a constant, and no test covered the walk's default for an assignment target
+it does not recognise -- gojja2's own parser cannot build one, and the tree type
+is public, so a caller can.
+
 `make soak-syntax` asks the same three questions of templates nobody chose, and
 then asks the engine whether the answers are true. Where the analysis says a
 variable is never printed, the render gets a marker and the output must not hold

@@ -134,3 +134,36 @@ func TestWithoutAResolverAReferenceIsOpaque(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "v:o?")
 	}
 }
+
+// A template named by an expression rather than a constant. Which template runs
+// is not a static fact, so it steers the output and can stop the render, and the
+// import cannot be followed.
+//
+// Mutation testing found this: removing the line that records it broke nothing,
+// because every import in the corpus names a constant.
+func TestComputedImportName(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"import", `{% import which as m %}{{ m.a() }}`, "which:fr"},
+		{"from import", `{% from which import a %}{{ a() }}`, "which:fr"},
+		{"include", `{% include which %}`, "which:fr?"},
+		{"extends", `{% extends which %}`, "which:fr?"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, err := gojja2.New(gojja2.WithLoader(gojja2.DictLoader(map[string]string{
+				"mod": `{% macro a() %}A{% endmacro %}`,
+				"t":   tc.src,
+			})))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmpl, err := env.GetTemplate("t")
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			tree := tmpl.Syntax()
+			if got := format(dataflow.Analyze(tree).Context(tree)); got != tc.want {
+				t.Errorf("\n got %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}

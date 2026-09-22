@@ -10,6 +10,7 @@ import (
 
 	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/dataflow"
+	"github.com/mgilbir/gojja2/syntax"
 )
 
 // What the analysis answers, case by case.
@@ -230,5 +231,39 @@ func TestGuardingConditionsAreRequired(t *testing.T) {
 		if got := format(dataflow.Analyze(tree).Context(tree)); got != tc.want {
 			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
 		}
+	}
+}
+
+// The tree type is public, so a caller can hand Analyze something the parser
+// would never build. An assignment to a target that is not a name, a namespace
+// field or an unpacking is the case the walk has a default for, and the default
+// has to be the safe one: whatever was being assigned becomes opaque rather than
+// silently losing its way.
+//
+// Mutation testing found this line untested, for the good reason that gojja2's
+// own parser cannot produce it. A caller's tree is not gojja2's own parser.
+func TestAnalyzeToleratesATargetItDoesNotKnow(t *testing.T) {
+	name := &syntax.Node{Kind: syntax.KindName, Attrs: map[string]any{"name": "x"}}
+	odd := &syntax.Node{Kind: syntax.KindConst, Attrs: map[string]any{"value": 1}}
+	assign := &syntax.Node{Kind: syntax.KindAssign, Edges: []syntax.Edge{
+		{Role: syntax.RoleTarget, Node: odd},
+		{Role: syntax.RoleValue, Node: name},
+	}}
+	root := &syntax.Node{Kind: syntax.KindTemplate, Edges: []syntax.Edge{
+		{Role: syntax.RoleBody, Node: assign},
+	}}
+	sym := &syntax.Symbol{Name: "x", Kind: syntax.SymContext}
+	tree := &syntax.Tree{Root: root, Info: &syntax.Info{
+		Defs:    map[*syntax.Node]*syntax.Symbol{},
+		Uses:    map[*syntax.Node]*syntax.Symbol{name: sym},
+		Scopes:  map[*syntax.Node][]*syntax.Symbol{root: nil},
+		Context: map[string]*syntax.Symbol{"x": sym},
+	}}
+
+	got := dataflow.Analyze(tree).Context(tree)["x"]
+	if got&dataflow.Opaque == 0 {
+		t.Errorf("assigning to a target the walk does not know left %q as %v; "+
+			"it has to be opaque, because where the value went is not known",
+			"x", got)
 	}
 }
