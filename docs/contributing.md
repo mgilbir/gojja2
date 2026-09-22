@@ -208,13 +208,23 @@ was never mutated is not a site nothing could break. Those three now drop the
 `_ = a.expr(c)` -- which is both compilable and the more precise mutation, since
 it removes what the site records without removing the traversal underneath it.
 
-Three survivors have been found this way, each a line no test constrained: no
+Four survivors have been found this way, each a line no test constrained: no
 test covered a template named by an expression rather than a constant; none
-covered the walk's default for an assignment *target* it does not recognise; and
-none covered the default for a *statement* kind it does not recognise. The last
-of those was one of the three that had never been exercised, and turned up in the
-first run after the tool learned to make the mutation. gojja2's own parser cannot
-build any of the three, and the tree type is public, so a caller can.
+covered the walk's default for an assignment *target* it does not recognise;
+none covered the default for a *statement* kind it does not recognise; and none
+covered the load an `ns.attr` target performs, which is what settles the name so
+a later `{% set ns = ... %}` does not claim it. gojja2's own parser cannot build
+the first three, and the tree type is public, so a caller can.
+
+**One survivor is open.** `frames.go`'s `v.store(name)` for a name every branch of
+an `{% if %}` binds is not constrained by anything: not the corpus, not
+`make soak-syntax` at 60,000 templates on two seeds. Replacing it with
+`v.settle(name)` *does* fail a soak, so the distinction it draws is real; removing
+it altogether has not been made to fail. The likely reason is that the writes a
+branch makes are applied separately, after the sorted loop, so the store there
+adds only an ownership claim that nothing reads. It has been left alone rather
+than simplified on that hypothesis: a line that cannot be shown to matter is not
+the same as one shown not to.
 
 `make soak-syntax` asks the same three questions of templates nobody chose, and
 then asks the engine whether the answers are true. Where the analysis says a
