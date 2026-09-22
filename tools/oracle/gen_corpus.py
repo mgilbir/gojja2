@@ -2794,6 +2794,27 @@ for _n, _src in [
     case(f"methods/sort_key_{_n}", _src,
          e=[], one=[5], lst=[3, 1, 2], words=["b", "a", "c"])
 
+# The select/reject family's refusals. selectattr and rejectattr share one
+# message that names neither the filter nor the position, because both reach it
+# through jinja2's prepare_attribute_parts; gojja2 had written its own wording
+# for it, naming selectattr in rejectattr's error too.
+#
+# These also grade the error *class*, which a side-by-side probe of rendered
+# strings does not: the golden carries the type, so FilterArgumentError and
+# TemplateRuntimeError are distinguished here and nowhere else.
+for _n, _src in [
+    ("selectattr_no_attribute", "{{ lst|selectattr()|list }}"),
+    ("rejectattr_no_attribute", "{{ lst|rejectattr()|list }}"),
+    ("map_no_filter", "{{ lst|map()|list }}"),
+    ("select_no_test_is_truthiness", "{{ lst|select()|list }}"),
+    ("reject_no_test_is_truthiness", "{{ lst|reject()|list }}"),
+    ("select_unknown_test", "{{ lst|select('nosuchtest')|list }}"),
+    ("selectattr_unknown_test", "{{ pairs|selectattr('x','nosuchtest')|list }}"),
+    ("map_unknown_filter", "{{ lst|map('nosuchfilter')|list }}"),
+    ("groupby_no_attribute", "{{ lst|groupby()|list }}"),
+]:
+    case(f"filters/seqarg_{_n}", _src, lst=[1, 0], pairs=[{"x": 1}])
+
 # Neither format_map nor translate converts the argument it is handed.
 # translate is `table[ord(c)]` per character, catching LookupError, so an empty
 # string never touches the table and anything subscriptable by an integer will
