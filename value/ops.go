@@ -291,6 +291,14 @@ func Sub(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 			return setDifference(view, b, py, budget)
 		}
 	}
+	// ...and with the view written second, which CPython reaches through
+	// the view's __rsub__. `'ab' - d.keys()` is a set of the string's
+	// characters minus the keys.
+	if view, ok := b.Interface().(SetOperand); ok {
+		if _, isOperand := view.SetElements(); isOperand {
+			return setReverseDifference(a, view, py, budget)
+		}
+	}
 	if !bothNumbers(a, b) {
 		return Undefined, binTypeError("-", a, b)
 	}
