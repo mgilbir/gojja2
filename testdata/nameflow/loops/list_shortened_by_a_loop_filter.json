@@ -1,0 +1,7 @@
+{
+  "case": "loops/list_shortened_by_a_loop_filter.jj2",
+  "variables": {
+    "lst": "ofr",
+    "users": "fr"
+  }
+}

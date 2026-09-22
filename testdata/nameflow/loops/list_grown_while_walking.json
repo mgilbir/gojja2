@@ -1,0 +1,7 @@
+{
+  "case": "loops/list_grown_while_walking.jj2",
+  "variables": {
+    "_": "-",
+    "lst": "ofr"
+  }
+}

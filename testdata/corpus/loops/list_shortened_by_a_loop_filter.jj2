@@ -1,0 +1,15 @@
+{
+  "lst": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "users": [
+    1,
+    2,
+    3
+  ]
+}
+---
+{% for i in lst %}{% for j in users if lst.pop() %}{% endfor %}{% endfor %}[{{ lst }}]
