@@ -87,6 +87,13 @@ func reversible(v value.Value) bool {
 		switch v.Interface().(type) {
 		case value.Sequence, value.Mapping:
 			return true
+		case *dictView:
+			// A view defines __reversed__ -- 3.8 gave dict and its
+			// views a defined order to reverse -- so `{{ d.keys()|last }}`
+			// answers where `{{ loop|last }}` still raises. It is not a
+			// Sequence here on purpose: it has a length and cannot be
+			// indexed, which is what makes it a view rather than a list.
+			return true
 		}
 	}
 	return false

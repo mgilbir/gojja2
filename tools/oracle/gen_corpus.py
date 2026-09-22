@@ -2810,6 +2810,21 @@ case("methods/dict_view_equality",
      "|{{ {'a':1}.items() == {'a':2}.items() }}|{{ {'a':1,'b':2}.keys() == {'b':2,'a':1}.keys() }}")
 case("methods/dict_view_values_equality", "{% set d = {'a': 1} %}{{ d.values() == d.values() }}|{{ d.keys() == d.keys() }}")
 
+# A view can be reversed. 3.8 gave dict and its views a defined order, so
+# `reversed()` works on one -- which is how `|last` reaches the last key without
+# walking the whole thing. gojja2's reversible() asked for a Sequence or a
+# Mapping, and a view is deliberately neither: it has a length and cannot be
+# indexed, which is the whole of what makes it a view. So `{{ d.keys()|last }}`
+# raised "'dict_keys' object is not reversible" where CPython answers.
+case("methods/dict_view_last",
+     "{% set d = {'b': 2, 'a': 1} %}{{ d.keys()|last }}|{{ d.values()|last }}|{{ d.items()|last }}")
+case("methods/dict_view_last_of_empty", "{% set e = {} %}[{{ e.keys()|last }}]")
+case("methods/dict_view_first_and_reverse",
+     "{% set d = {'b': 2, 'a': 1} %}{{ d.keys()|first }}|{{ d.keys()|reverse|list }}|{{ d.items()|reverse|list }}")
+# ...and something that genuinely cannot be reversed still says so: a loop is
+# walked forwards only, which is the case the wording exists for.
+case("errors/loop_is_not_reversible", "{% for i in [1, 2] %}{{ loop|last }}{% endfor %}")
+
 # ...and the sixth surface, which *was* wrong: an empty view is falsey.
 #
 # Python takes bool() from __bool__, or from __len__ when there is no __bool__,
