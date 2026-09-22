@@ -37,10 +37,15 @@ func TestAnalyze(t *testing.T) {
 		{`{% macro m(v) %}{{ v }}{% endmacro %}{{ m(q) }}`, "q:or"},
 		{`{% filter upper %}{{ a }}{% endfilter %}`, "a:o"},
 
-		// A conditional's test steers; its branches print.
-		{`{{ "yes" if flag else "no" }}`, "flag:f"},
-		{`{{ a if flag else b }}`, "a:o b:o flag:f"},
-		{`{% set label = "yes" if flag else "no" %}{{ label }}`, "flag:f"},
+		// A conditional's test steers; its branches print. It is also
+		// Required, and always: the test picks which value the expression
+		// yields, and what happens to that value afterwards is not visible
+		// from the conditional -- `{{ f + (xs if c else 1) }}` fails on one
+		// branch and not the other. Over-reported here, never under-reported
+		// there.
+		{`{{ "yes" if flag else "no" }}`, "flag:fr"},
+		{`{{ a if flag else b }}`, "a:o b:o flag:fr"},
+		{`{% set label = "yes" if flag else "no" %}{{ label }}`, "flag:fr"},
 
 		// A loop's sequence does both.
 		{`{% for x in items %}{{ x }}{% endfor %}`, "items:ofr"},
@@ -172,6 +177,45 @@ func TestRequired(t *testing.T) {
 		// A key that cannot be hashed stops the render, and is printed
 		// besides.
 		{`{{ {k: 1} }}`, "k:or"},
+	} {
+		env, err := gojja2.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl, err := env.FromString(tc.src)
+		if err != nil {
+			t.Errorf("%s: compile: %v", tc.src, err)
+			continue
+		}
+		tree := tmpl.Syntax()
+		if got := format(dataflow.Analyze(tree).Context(tree)); got != tc.want {
+			t.Errorf("%s\n got %q\nwant %q", tc.src, got, tc.want)
+		}
+	}
+}
+
+// A condition decides whether the code it guards runs, so it decides whether
+// that code's failures happen. The fuzzer found this by rendering: a template
+// whose `{% if %}` guarded a failing expression succeeded or died depending on a
+// variable the analysis had reported as unable to break it.
+func TestGuardingConditionsAreRequired(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		// Nothing under the condition can fail, so neither can it.
+		{`{% if c %}plain{% else %}text{% endif %}`, "c:f"},
+		// A filter can, and c decides whether it runs.
+		{`{% if c %}{{ 1|upper }}{% endif %}`, "c:fr"},
+		// From the else side too.
+		{`{% if c %}plain{% else %}{{ 1|upper }}{% endif %}`, "c:fr"},
+		// An elif does not own the else it shares: `b` decides whether the
+		// else arm runs, so the failure in it is b's doing as well as a's.
+		{`{% if a %}x{% elif b %}y{% else %}{{ 1|upper }}{% endif %}`, "a:fr b:fr"},
+		// ...and an `{% if %}` written inside an `{% else %}` does own it,
+		// so the outer condition is not answerable for what the inner one
+		// guards. The two spellings render the same and are not the same
+		// question.
+		{`{% if a %}x{% else %}{% if b %}y{% else %}z{% endif %}{% endif %}`, "a:f b:f"},
+		// A loop's own filter guards the body in the same way.
+		{`{% for i in xs if p %}{{ 1|upper }}{% endfor %}`, "p:fr xs:fr"},
 	} {
 		env, err := gojja2.New()
 		if err != nil {

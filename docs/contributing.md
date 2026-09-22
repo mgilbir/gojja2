@@ -172,7 +172,15 @@ Nodes are named by their position in a pre-order walk, which costs nothing to
 agree on because the trees are already identical — a fact worth noticing: the
 second comparison is only possible because the first one passes.
 
-`make soak-syntax` asks the same three questions of templates nobody chose. The
+`make soak-syntax` asks the same three questions of templates nobody chose, and
+then asks the engine whether the answers are true. Where the analysis says a
+variable is never printed, the render gets a marker and the output must not hold
+it; where it says a variable cannot break the render, values with nothing in
+common must not change whether it does. That second half is the important one:
+the differential proves the two implementations agree, and they are both written
+here, so agreement is close to a statement about transcription. Rendering is not.
+
+ The
 generator walks the grammar rather than a list somebody thought of, which is how
 it reaches an autoescape inside a macro inside a loop that assigns the name it
 read. The oracle server answers `{"analyze": true}` as well as a render, so a

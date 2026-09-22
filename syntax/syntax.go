@@ -102,6 +102,7 @@ type Role string
 const (
 	RoleBody     Role = "body"     // statements that run
 	RoleElse     Role = "else"     // the other statements that run
+	RoleElif     Role = "elif"     // the next arm of an if chain
 	RoleTest     Role = "test"     // a condition: chooses, rather than contributes
 	RoleTarget   Role = "target"   // what is being bound
 	RoleValue    Role = "value"    // what it is being bound to, or what is printed

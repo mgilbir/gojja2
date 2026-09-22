@@ -166,6 +166,14 @@ class Analysis:
                 return self.of(owned[name])
         return None
 
+    def enclosing_scope_symbol(self, name) -> Sym | None:
+        """scope_symbol ignoring the innermost scope."""
+        for frame in reversed(self.stack[:-1]):
+            owned = self.em.owned_of.get(id(frame), {})
+            if name in owned:
+                return self.of(owned[name])
+        return None
+
     def lookup(self, name) -> Sym:
         s = self.scope_symbol(name)
         if s is not None:
@@ -386,7 +394,9 @@ class Analysis:
             return key | self.expr(n.value)
 
         if isinstance(n, nodes.CondExpr):
-            self.apply(self.expr(n.test), FLOW)
+            # The test chooses which value the expression yields, and what is
+            # done with that value afterwards is not visible from here.
+            self.apply(self.expr(n.test), FLOW | REQUIRED)
             return self.expr(n.expr1) | self.expr(n.expr2)
 
         if isinstance(n, nodes.Getitem):
@@ -522,17 +532,28 @@ class Analysis:
         self.in_macro.discard(sym.id)
         return self.macro_out[sym.id]
 
+    def if_stmt(self, n, chain_fails):
+        test = self.expr(n.test)
+        self.apply(test, FLOW)
+        if chain_fails:
+            self.apply(test, REQUIRED)
+        self.stmts(n.body)
+        for elif_ in getattr(n, "elif_", None) or ():
+            self.if_stmt(elif_, chain_fails)
+        self.stmts(n.else_)
+
     def stmt(self, n):
         if isinstance(n, nodes.Output):
             for item in n.nodes:
                 self.emit(self.expr(item))
 
         elif isinstance(n, nodes.If):
-            self.apply(self.expr(n.test), FLOW)
-            self.stmts(n.body)
-            for elif_ in getattr(n, "elif_", None) or ():
-                self.stmt(elif_)
-            self.stmts(n.else_)
+            # chainFails is computed once for the whole chain: jinja2 hangs the
+            # else off the outermost if, so an elif's own subtree does not hold
+            # the arm that runs when it is false -- and it decides whether that
+            # arm runs.
+            self.if_stmt(n, can_fail_in(n.body) or can_fail_in(n.elif_)
+                         or can_fail_in(n.else_))
 
         elif isinstance(n, nodes.For):
             # The iterable is evaluated outside the loop's own frame.
@@ -549,7 +570,10 @@ class Analysis:
             loop = self.scope_symbol("loop")
             if loop is not None:
                 loop.deps |= srcs
-            self.apply(self.expr(n.test), FLOW)
+            loop_test = self.expr(n.test)
+            self.apply(loop_test, FLOW)
+            if can_fail_in(n.body):
+                self.apply(loop_test, REQUIRED)
             self.stmts(n.body)
             self.stmts(n.else_)
             self.pop()
@@ -581,7 +605,9 @@ class Analysis:
         elif isinstance(n, nodes.Macro):
             self.push(n)
             params = [self.scope_symbol(a.name) for a in n.args]
-            sym = self.scope_symbol(n.name)
+            # Outside the macro's own scope: a macro binds its name where it is
+            # written, and its body may declare that name again.
+            sym = self.enclosing_scope_symbol(n.name)
             for param, default in zip(n.args[len(n.args) - len(n.defaults):],
                                       n.defaults):
                 self.bind(param, self.expr(default))
@@ -722,6 +748,28 @@ _RAISING = tuple(getattr(nodes, n) for n in
 
 def can_raise(n) -> bool:
     return isinstance(n, _RAISING)
+
+
+# The constructs that can stop a render, asked of a whole body rather than of
+# one value. A test guards the code beneath it, so if that code can fail the
+# test decides whether it does.
+_CAN_FAIL = tuple(getattr(nodes, n) for n in
+                  ("Add", "Sub", "Mul", "Div", "FloorDiv", "Mod", "Pow", "And",
+                   "Or", "Not", "Neg", "Pos", "Compare", "Operand", "Test",
+                   "Filter", "Call", "Getitem", "Pair", "For", "Include",
+                   "Extends", "Import", "FromImport")
+                  if hasattr(nodes, n))
+
+
+def can_fail_in(body) -> bool:
+    if body is None:
+        return False
+    for n in body if isinstance(body, list) else [body]:
+        if isinstance(n, _CAN_FAIL):
+            return True
+        for _ in n.find_all(_CAN_FAIL):
+            return True
+    return False
 
 
 def const_name(ref):
