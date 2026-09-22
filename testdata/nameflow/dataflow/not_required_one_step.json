@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/not_required_one_step.jj2",
+  "variables": {
+    "src": "o"
+  }
+}

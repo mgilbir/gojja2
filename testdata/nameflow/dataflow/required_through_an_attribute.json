@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/required_through_an_attribute.jj2",
+  "variables": {
+    "src": "or"
+  }
+}

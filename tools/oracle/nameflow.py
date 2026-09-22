@@ -374,7 +374,16 @@ class Analysis:
             ns = self.namespace_of(n.node)
             if ns is not None:
                 return {self.namespace_field(ns, n.attr).id}
-            return self.expr(n.node)
+            out = self.expr(n.node)
+            # Reaching *through* an undefined raises, and the thing most likely
+            # to be one is an attribute that was not there. `x.a` cannot fail
+            # whatever x holds -- a missing attribute is undefined and prints
+            # empty -- while `(x.a).b` can, because `x.a` is undefined for most
+            # x. A plain name or a constant as the subject is what makes the
+            # one-step case safe; anything computed can hand back an undefined.
+            if not isinstance(n.node, (nodes.Name, nodes.Const)):
+                self.apply(out, REQUIRED)
+            return out
 
         if isinstance(n, nodes.NSRef):
             # A namespace read. Layer 2 will follow the field; until then the
@@ -760,7 +769,9 @@ _RAISING = tuple(getattr(nodes, n) for n in
 
 
 def can_raise(n) -> bool:
-    return isinstance(n, _RAISING)
+    if isinstance(n, _RAISING):
+        return True
+    return False
 
 
 # The constructs that can stop a render, asked of a whole body rather than of

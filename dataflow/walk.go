@@ -63,6 +63,20 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		return out
 
 	case syntax.KindGetattr:
+		// Reaching *through* an undefined raises, and the thing most
+		// likely to be one is an attribute that was not there. So `x.a`
+		// cannot fail whatever x holds -- a missing attribute is
+		// undefined and prints empty -- while `(x.a).b` can, because
+		// `x.a` is undefined for most x and `.b` on an undefined raises.
+		//
+		// A plain name or a constant as the subject is what makes the
+		// one-step case safe. Anything computed -- another attribute, an
+		// item, a filter, a call -- can hand back an undefined, so
+		// reaching through it decides whether the render finishes.
+		if sub := n.Child(syntax.RoleSubject); sub != nil &&
+			sub.Kind != syntax.KindName && sub.Kind != syntax.KindConst {
+			defer func() { a.apply(out, Required) }()
+		}
 		if ns := a.namespaceOf(n.Child(syntax.RoleSubject)); ns != nil {
 			if f := a.namespaceField(ns, n.Attr("attr")); f != nil {
 				out[f] = true
