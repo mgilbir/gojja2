@@ -1,0 +1,5 @@
+{
+  "s": "<b>"
+}
+---
+{% autoescape true %}{% set m = '<i>'|safe %}{{ m.__class__('<b>') }}|{{ m.__class__(s) }}{% endautoescape %}

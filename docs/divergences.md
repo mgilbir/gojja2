@@ -579,19 +579,16 @@ resolution order is the first step of the walk from a value to the interpreter's
 builtins, which is the escape route the two sandbox tests above document. A class
 object here has a name, a repr and equality, and nothing that leads anywhere.
 
-Calling one is the same decision. A type is callable, and `is callable` says so
-on both sides, but CPython builds the value and gojja2 refuses:
+Calling one is *not* the same decision, and is implemented: `{{ n.__class__() }}`
+is `0` and `{{ s.__class__(lst) }}` is the list's repr, exactly as in Python.
+Construction is the one thing a type object does that leads nowhere further into
+the interpreter -- an int, a str or a list is an ordinary value -- so refusing it
+bought no safety and cost conformance.
 
-```jinja
-{{ n.__class__() }}    "0" on CPython for an int, a TypeError here
-{{ s.__class__(5) }}   "5" on CPython for a str, a TypeError here
-```
-
-Construction is the one thing a type object could usefully do that does not lead
-further into the interpreter, so this one is open rather than settled. What a
-type object here *does* answer matches exactly: `__name__`, `__qualname__`,
-`__module__`, its repr, equality with another type object, and its behaviour as
-a dict key or in `unique`. Ordering two of them is a `TypeError` on both sides.
+Everything else a type object answers matches too: `__name__`, `__qualname__`,
+`__module__`, its repr, equality with another type object *and with the class
+global it is* (`{{ d.__class__ == dict }}` is true), and its behaviour as a dict
+key or in `unique`. Ordering two of them is a `TypeError` on both sides.
 
 Two of Jinja's sandbox-escape tests go further, and those are not implemented:
 

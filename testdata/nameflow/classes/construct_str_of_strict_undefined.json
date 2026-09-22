@@ -1,0 +1,7 @@
+{
+  "case": "classes/construct_str_of_strict_undefined.jj2",
+  "variables": {
+    "nope": "or",
+    "s": "or"
+  }
+}

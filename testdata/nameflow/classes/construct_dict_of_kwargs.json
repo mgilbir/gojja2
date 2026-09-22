@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_dict_of_kwargs.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

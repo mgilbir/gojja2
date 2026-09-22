@@ -1,0 +1,7 @@
+{
+  "case": "classes/construct_float_bad_str.jj2",
+  "variables": {
+    "f": "or",
+    "s": "or"
+  }
+}

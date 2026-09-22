@@ -1,0 +1,7 @@
+{
+  "case": "classes/construct_dict_bad_pairs.jj2",
+  "variables": {
+    "d": "or",
+    "s": "or"
+  }
+}

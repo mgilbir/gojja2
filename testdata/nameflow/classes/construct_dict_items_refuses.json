@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_dict_items_refuses.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

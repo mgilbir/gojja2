@@ -1,0 +1,7 @@
+{
+  "case": "classes/construct_float_of_none.jj2",
+  "variables": {
+    "f": "or",
+    "nil": "or"
+  }
+}

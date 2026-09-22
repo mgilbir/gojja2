@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_str_encoding_type.jj2",
+  "variables": {
+    "s": "or"
+  }
+}
