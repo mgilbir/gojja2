@@ -1282,6 +1282,21 @@ case("dataflow/loop_writes_its_own_copy",
 ns_case("namespace_field_from_outer",
         "{% set ns = namespace(a=x) %}{% for i in xs %}{{ ns.a }}{% endfor %}")
 
+# Writing a namespace field *mentions* the namespace, which settles the name at
+# that level: the later `{% set ns = ... %}` no longer claims it, so ns stays the
+# caller's rather than becoming the loop's own.
+#
+# Mutation testing found this untested -- dropping the load the NSRef performs
+# changed ns from one of the caller's variables into a loop-local, and nothing
+# failed. It is the first-mention rule reached through a target rather than
+# through a read, which is the part with no other case.
+case("scope/nsref_write_settles_the_name",
+     "{% for i in xs %}{% set ns.v = 1 %}{% set ns = namespace() %}{{ ns }}{% endfor %}",
+     xs=[], ns=None)
+case("scope/nsref_write_settles_the_name_block",
+     "{% for i in xs %}{% set ns.v %}q{% endset %}{% set ns = namespace() %}{{ ns }}{% endfor %}",
+     xs=[], ns=None)
+
 # Reaching *through* an attribute can stop the render, and the analysis did not
 # know it. `x.a` cannot fail whatever x holds -- a missing attribute is
 # undefined and prints empty -- but `(x.a).b` can, because `x.a` is undefined

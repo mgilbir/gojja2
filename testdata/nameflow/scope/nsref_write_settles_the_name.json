@@ -1,0 +1,7 @@
+{
+  "case": "scope/nsref_write_settles_the_name.jj2",
+  "variables": {
+    "ns": "or?",
+    "xs": "fr"
+  }
+}
