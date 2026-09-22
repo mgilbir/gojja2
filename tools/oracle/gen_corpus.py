@@ -2872,6 +2872,25 @@ case("errors/bytes_percent_c_out_of_range", "{{ '%c'.encode() % 256 }}")
 case("errors/bytes_percent_unsupported_verb", "{{ '%q'.encode() % 1 }}")
 case("errors/str_percent_has_no_b", "{{ '%b' % 'x'.encode() }}")
 
+# A bytes counts as a mapping on the right of `%`.
+#
+# CPython decides between "a mapping" and "one positional argument" by asking
+# whether the operand supports subscripting, and names tuple and str as the two
+# exceptions. A bytes is subscriptable and is neither, so it counts -- which is
+# why `"0" % b""` renders "0" instead of complaining that the b"" was never
+# converted. gojja2 had dict, list and undefined on that list and not bytes.
+#
+# Looking a *name* up in one still fails, as it does for a list, and CPython
+# words it "byte indices" rather than "bytes indices".
+case("format/percent_bytes_is_a_mapping",
+     "[{{ '0' % ''.encode() }}]|[{{ '0' % 'xy'.encode() }}]|{{ '%s' % 'xy'.encode() }}")
+case("errors/percent_bytes_key_lookup", "{{ '%(k)s' % ''.encode() }}")
+case("errors/percent_bytes_not_enough_args", "{{ '%s %s' % 'xy'.encode() }}")
+# ...and the operands that are still refused, which is what makes the rule a
+# rule rather than a blanket.
+case("errors/percent_str_is_not_a_mapping", "{{ '0' % 'x' }}")
+case("errors/percent_int_is_not_a_mapping", "{{ '0' % 1 }}")
+
 # --- a dict view subtracts as a set --------------------------------------------
 # `d.keys() - xs` is the whole of the set arithmetic a template can write:
 # jinja2's grammar has no `&` or `^`, `|` is the filter operator, and CPython
