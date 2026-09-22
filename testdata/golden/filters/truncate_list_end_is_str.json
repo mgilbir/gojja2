@@ -1,0 +1,14 @@
+{
+  "case": "filters/truncate_list_end_is_str.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "can only concatenate list (not \"str\") to list"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "case": "filters/truncate_bytes_under_leeway.jj2",
+  "variables": {}
+}

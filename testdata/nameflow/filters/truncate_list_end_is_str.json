@@ -1,0 +1,6 @@
+{
+  "case": "filters/truncate_list_end_is_str.jj2",
+  "variables": {
+    "longlist": "or"
+  }
+}
