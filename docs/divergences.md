@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-four divergences below, **one** is worth going looking for:
+Of the twenty-five divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -43,6 +43,7 @@ are safety controls rather than behavioural choices, and they live in
 | [Which codecs and handlers are known](#which-codecs-and-error-handlers-encode-and-decode-know) | utf-8, ascii, latin-1; jinja2 has ~100. Three error handlers are missing too | Only outside those three, or with `namereplace` or a surrogate handler on a decode |
 | [Objects whose repr carries an address](#objects-whose-repr-carries-an-address) | a different address | No -- unreproducible in CPython too |
 | [`\|pprint` of a value that contains itself](#pprint-of-a-value-that-contains-itself) | a different address | No -- likewise |
+| [The order a set prints in](#the-order-a-set-prints-in) | sorted, where CPython's is its hash order | No -- CPython's own order differs between runs |
 | [lipsum() and random](#lipsum-and-random) | a different random draw | No -- likewise |
 | [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there | Only for a literal-vs-literal `sameas`, which is a tautology |
 | [Comparison order inside a long sort](#comparison-order-inside-a-long-sort) | which pair a failing sort names | Only inside an error message, above 64 elements |
@@ -397,6 +398,42 @@ cannot hold a case whose answer carries an id that changes between two runs of
 CPython. `conformance/recursion_repr_test.go` asserts it outside the corpus
 instead: it blanks the id and compares the rest against CPython's own output,
 so the form is pinned exactly and only the number is allowed to differ.
+
+### The order a set prints in
+
+```jinja
+{{ d.keys() - [] }}
+```
+
+`d.keys() - xs` is the whole of the set arithmetic a template can write --
+jinja2's grammar has no `&` or `^`, `|` is the filter operator, and CPython
+refuses `set - list`, so the result cannot be the left operand of another one.
+The operation itself matches: the same elements, the same refusals, the same
+four error messages.
+
+The *order* it prints in does not, and cannot. A set is unordered and CPython's
+repr follows its hash table, which string hashing randomises per process. Three
+runs of the same expression on the same four keys:
+
+```
+{'b', 'delta', 'a', 'c'}
+{'c', 'delta', 'a', 'b'}
+{'a', 'b', 'delta', 'c'}
+```
+
+gojja2 sorts by each element's repr, so it prints `{'a', 'b', 'c', 'delta'}`
+every time. Sorting by repr rather than by value is what makes it total: a set
+may hold numbers and strings together, which Python cannot order and a repr can.
+
+A set of one element, and the empty `set()`, have only one spelling either way
+and are graded against CPython as usual -- as are the length, the membership
+test, the truthiness, the equality, and `|list|sort`. Only the multi-element
+repr is unreproducible, and `conformance.Comparable` screens it out of the
+generated differential for the same reason it screens an address.
+
+Of the two answers gojja2's is the reproducible one, which is a reason to prefer
+it rather than a claim that CPython is wrong: an unordered collection has no
+order to be right about.
 
 ### lipsum() and random
 

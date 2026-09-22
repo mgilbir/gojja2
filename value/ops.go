@@ -278,9 +278,18 @@ func markupText(v Value) string {
 }
 
 // Sub implements `-`, which is numeric only.
-func Sub(a, b Value, budget Budget) (Value, error) {
+func Sub(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
+	}
+	// A dict's keys or items view subtracts as a set, taking any iterable
+	// on the right. Its values view does not, and neither does a Set: in
+	// CPython `set - list` is a TypeError, so the only set arithmetic a
+	// template can write is one view difference. See Set.
+	if view, ok := a.Interface().(SetOperand); ok {
+		if _, isOperand := view.SetElements(); isOperand {
+			return setDifference(view, b, py, budget)
+		}
 	}
 	if !bothNumbers(a, b) {
 		return Undefined, binTypeError("-", a, b)

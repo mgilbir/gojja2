@@ -135,6 +135,55 @@ var addressRe = regexp.MustCompile(`(?i)0x[0-9a-f]{6,}`)
 // per template with none of them real. See docs/divergences.md.
 var recursionRe = regexp.MustCompile(`<Recursion on \w+ with id=\d+>`)
 
+// holdsAMultiElementSet reports a set repr with more than one element in it.
+//
+// CPython's set has no order and prints in hash order, which is randomised per
+// process -- three runs of `{{ d.keys() - [] }}` on the same four keys gave
+// `{'b', 'delta', 'a', 'c'}`, `{'c', 'delta', 'a', 'b'}` and
+// `{'a', 'b', 'delta', 'c'}`. gojja2 sorts, so its answer is stable and neither
+// can be graded against the other. One element, and the empty `set()`, have only
+// one spelling and are graded as usual.
+//
+// A brace group is a set rather than a dict when nothing in it carries a colon
+// at the top level, and it has more than one element when something in it
+// carries a comma there. "At the top level" is the whole reason this counts
+// depth rather than matching a pattern: `{('b', 2)}` is one element and its
+// comma is inside the tuple, so a regexp that cannot count would screen a case
+// that grades perfectly well.
+func holdsAMultiElementSet(text string) bool {
+	for i := 0; i < len(text); i++ {
+		if text[i] != '{' {
+			continue
+		}
+		depth, comma, colon := 0, false, false
+		for j := i; j < len(text); j++ {
+			switch text[j] {
+			case '{', '[', '(':
+				depth++
+			case '}', ']', ')':
+				depth--
+				if depth == 0 {
+					if comma && !colon {
+						return true
+					}
+					i = j
+					goto next
+				}
+			case ',':
+				if depth == 1 {
+					comma = true
+				}
+			case ':':
+				if depth == 1 {
+					colon = true
+				}
+			}
+		}
+	next:
+	}
+	return false
+}
+
 // Comparable reports whether a result can be graded at all.
 //
 // Some renders are not reproducible by anything, CPython included: a repr that
@@ -152,6 +201,7 @@ func Comparable(r *OracleResult) bool {
 	lower := strings.ToLower(text)
 	return !addressRe.MatchString(text) &&
 		!recursionRe.MatchString(text) &&
+		!holdsAMultiElementSet(text) &&
 		!strings.Contains(lower, "<generator object") &&
 		!strings.Contains(lower, " object at ")
 }

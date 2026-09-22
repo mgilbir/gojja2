@@ -2872,6 +2872,37 @@ case("errors/bytes_percent_c_out_of_range", "{{ '%c'.encode() % 256 }}")
 case("errors/bytes_percent_unsupported_verb", "{{ '%q'.encode() % 1 }}")
 case("errors/str_percent_has_no_b", "{{ '%b' % 'x'.encode() }}")
 
+# --- a dict view subtracts as a set --------------------------------------------
+# `d.keys() - xs` is the whole of the set arithmetic a template can write:
+# jinja2's grammar has no `&` or `^`, `|` is the filter operator, and CPython
+# refuses `set - list` so the result cannot be the left operand of another one.
+# gojja2 answered "unsupported operand type(s) for -" to all of it.
+#
+# The cases below are the ones with a stable answer. A set of two or more prints
+# in CPython's hash order, which is randomised per process, so its repr is no
+# more gradable than lipsum() is -- see docs/divergences.md, and
+# TestSetOrderIsSorted for what is asserted instead.
+case("methods/dict_view_difference_one_left",
+     "{% set d = {'b': 2, 'a': 1} %}{{ d.keys() - ['a'] }}")
+case("methods/dict_view_difference_empty",
+     "{% set d = {'b': 2, 'a': 1} %}{{ d.keys() - ['a', 'b'] }}|{{ d.keys() - 'ab' }}")
+case("methods/dict_view_difference_items",
+     "{% set d = {'b': 2, 'a': 1} %}{{ d.items() - [('a', 1)] }}")
+# Everything about the result that does not depend on its order.
+case("methods/dict_view_difference_length_and_membership",
+     "{% set d = {'b': 2, 'a': 1} %}{{ (d.keys() - [])|length }}|{{ 'b' in (d.keys() - ['a']) }}"
+     "|{{ 'a' in (d.keys() - ['a']) }}|{{ (d.keys() - [])|list|sort }}")
+case("methods/dict_view_difference_truthiness",
+     "{% set d = {'b': 2, 'a': 1} %}{% if d.keys() - ['a','b'] %}T{% else %}F{% endif %}"
+     "{% if d.keys() - ['a'] %}T{% else %}F{% endif %}")
+case("methods/dict_view_difference_equality",
+     "{% set d = {'b': 2, 'a': 1} %}{{ (d.keys() - []) == (d.keys() - []) }}")
+# ...and the four refusals, each for its own reason.
+case("errors/dict_view_difference_not_iterable", "{% set d = {'a': 1} %}{{ d.keys() - 0 }}")
+case("errors/dict_values_has_no_difference", "{% set d = {'a': 1} %}{{ d.values() - [1] }}")
+case("errors/dict_view_difference_unhashable", "{% set d = {'a': 1} %}{{ d.keys() - [[1]] }}")
+case("errors/set_minus_a_list", "{% set d = {'a': 1} %}{{ (d.keys() - []) - [] }}")
+
 # ...and the sixth surface, which *was* wrong: an empty view is falsey.
 #
 # Python takes bool() from __bool__, or from __len__ when there is no __bool__,
