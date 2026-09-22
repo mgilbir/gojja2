@@ -1012,6 +1012,14 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 			// this is a result and not only a way to fail.
 			return value.Add(sliced, end, s)
 		}
+		// A bytes *has* rsplit. What it refuses is the separator:
+		// jinja2 passes the str " " unconditionally, so the complaint
+		// is about that and not about the receiver. Every other kind
+		// here has no rsplit at all.
+		if v.Kind() == value.KindBytes {
+			return value.Undefined, errs.New(errs.TypeError,
+				"a bytes-like object is required, not 'str'")
+		}
 		return value.Undefined, noAttribute(v, "rsplit")
 	}
 

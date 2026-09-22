@@ -1677,6 +1677,30 @@ case("filters/abs", "{{ -3|abs }}|{{ -3.5|abs }}|{{ (-2**70)|abs }}")
 case("filters/string_ops", "{{ 'a-b'|replace('-','+') }}|{{ 'aaa'|replace('a','b',2) }}|{{ 'ab'|center(6) }}|{{ text|wordcount }}", **TEXT)
 case("filters/indent", "{{ 'a\\nb\\n\\nc'|indent(2) }}|{{ 'a\\nb'|indent(2, true) }}|{{ 'a\\n\\nb'|indent(2, blank=true) }}")
 case("filters/truncate", "{{ text|truncate(20) }}|{{ text|truncate(20, true) }}|{{ 'short'|truncate(20) }}", **TEXT)
+
+# |truncate over a value that is not a string. jinja2 measures it, slices it,
+# and then either concatenates the end or calls rsplit -- so what fails, and
+# what the message is about, depends on the kind rather than on the filter.
+#
+# bytes is the one that is not an AttributeError: it *has* rsplit, and refuses
+# the str separator jinja2 passes. The render differential found gojja2 saying
+# `'bytes' object has no attribute 'rsplit'`, which is wrong about the type.
+# The bytes here is built in the template, because JSON carries no bytes.
+_LONG = "{% set big = ('ab' * 30).encode() %}"
+for _n, _src in [
+    ("bytes_rsplit_separator", _LONG + "{{ big|truncate(10) }}"),
+    ("bytes_short_is_returned", "{{ 'ab'.encode()|truncate(10) }}"),
+    ("bytes_end_is_str", _LONG + "{{ big|truncate(10, true) }}"),
+    ("bytes_end_is_bytes", _LONG + "{{ big|truncate(10, true, 'xy'.encode()) }}"),
+    ("bytes_end_is_bytes_no_kill", _LONG + "{{ big|truncate(10, false, 'xy'.encode()) }}"),
+    ("bytes_under_leeway", _LONG + "{{ big|truncate(60) }}"),
+    ("list_has_no_rsplit", "{{ longlist|truncate(10) }}"),
+    ("list_end_is_str", "{{ longlist|truncate(10, true) }}"),
+    ("dict_under_leeway", "{{ d|truncate(10) }}"),
+    ("int_has_no_len", "{{ n|truncate(10) }}"),
+]:
+    case(f"filters/truncate_{_n}", _src,
+         longlist=list(range(30)), d={"a": 1}, n=3)
 case("filters/wordwrap", "{{ text|wordwrap(10) }}", **TEXT)
 case("filters/striptags", "{{ '<p>a  <b>b</b></p>'|striptags }}|{{ '&lt;a&gt;'|striptags }}")
 # Only complete tags and comments go; an unpaired "<" stays.

@@ -1,0 +1,4 @@
+{
+  "case": "filters/truncate_bytes_end_is_str.jj2",
+  "variables": {}
+}
