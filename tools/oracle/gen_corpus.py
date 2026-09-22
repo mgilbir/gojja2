@@ -2787,6 +2787,33 @@ case("methods/dict_view_equality",
      "|{{ {'a':1}.items() == {'a':2}.items() }}|{{ {'a':1,'b':2}.keys() == {'b':2,'a':1}.keys() }}")
 case("methods/dict_view_values_equality", "{% set d = {'a': 1} %}{{ d.values() == d.values() }}|{{ d.keys() == d.keys() }}")
 
+# ...and the sixth surface, which *was* wrong: an empty view is falsey.
+#
+# Python takes bool() from __bool__, or from __len__ when there is no __bool__,
+# and only then defaults to true. A view has a length and no __bool__, so an
+# empty one is false. gojja2 answered the Object switch in IsTrue with Booler,
+# Mapping and Sequence and a view is deliberately none of the three, so it fell
+# through to the default and was true however empty it was.
+#
+# That is a wrong *branch*, not a wrong error: `{% if d.keys() %}` on an empty
+# dict ran its body and printed something jinja2 printed nothing for. The
+# generated differential found it once the generator learned to call methods,
+# and the five cases above could not have: every one of them holds a dict with
+# something in it.
+case("methods/dict_view_empty_is_falsey",
+     "{% set e = {} %}{% if e.keys() %}T{% else %}F{% endif %}"
+     "{% if e.values() %}T{% else %}F{% endif %}{% if e.items() %}T{% else %}F{% endif %}")
+case("methods/dict_view_nonempty_is_truthy",
+     "{% set d = {'a': 1} %}{% if d.keys() %}T{% else %}F{% endif %}"
+     "{% if d.values() %}T{% else %}F{% endif %}{% if d.items() %}T{% else %}F{% endif %}")
+case("methods/dict_view_not_and_or",
+     "{% set e = {} %}{% set d = {'a': 1} %}"
+     "{{ not e.keys() }}|{{ not d.keys() }}|{{ e.keys() or 'fallback' }}|{{ d.values() and 'yes' }}")
+# A view is live, so emptying the dict makes a view taken earlier falsey too.
+case("methods/dict_view_truthiness_tracks_the_dict",
+     "{% set d = {'a': 1} %}{% set k = d.keys() %}{% if k %}T{% else %}F{% endif %}"
+     "{{ d.clear() }}{% if k %}T{% else %}F{% endif %}")
+
 # --- the bytes methods --------------------------------------------------------
 # bytes had one method, decode, so the other forty-one were attribute errors on
 # a type the engine otherwise supports fully. They are not the str methods:
