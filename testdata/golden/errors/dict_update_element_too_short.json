@@ -1,0 +1,14 @@
+{
+  "case": "errors/dict_update_element_too_short.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "dictionary update sequence element #0 has length 1; 2 is required"
+  }
+}

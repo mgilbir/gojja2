@@ -1444,6 +1444,33 @@ case("errors/unknown_filter_soft_else", "{% if false %}x{% else %}"
 case("errors/unknown_test", "{{ 1 is nosuch }}")
 case("errors/bad_assign", "{% set 1 = 2 %}")
 
+# dict() built from a sequence of pairs has two refusals, and they are not alike.
+# An element that cannot be iterated at all is a TypeError; one that iterates to
+# the wrong length is a ValueError. Neither had any coverage, which is why a 3.14
+# change to the first went unnoticed: the version matrix can only compare cases
+# the corpus holds, and a message nothing exercises reads as agreement in every
+# column.
+#
+# 3.14 replaced the TypeError with a bare "object is not iterable" -- no index,
+# no type name. The ValueError did not move. Both are written here, through every
+# path that reaches unpackDictPair, because they share one routine and nothing
+# else proves they stay wired to it.
+for _n, _src in [
+    ("element_not_iterable", "{{ dict([1, 2]) }}"),
+    ("element_none", "{{ dict([none]) }}"),
+    ("element_second_is_bad", "{{ dict(['ab', 3]) }}"),
+    ("element_too_long", "{{ dict([(1, 2, 3)]) }}"),
+    ("element_too_short", "{{ dict(['a']) }}"),
+    ("element_str_pair", "{{ dict(['ab', 'cd']) }}"),
+    ("argument_not_iterable", "{{ dict(1) }}"),
+    ("namespace_element", "{{ namespace([1]) }}"),
+    ("namespace_too_long", "{{ namespace([(1, 2, 3)]) }}"),
+    ("update_element", "{{ d.update([1]) }}"),
+    ("update_too_long", "{{ d.update([(1, 2, 3)]) }}"),
+    ("class_element", "{{ d.__class__([1]) }}"),
+]:
+    case(f"errors/dict_update_{_n}", _src, d={})
+
 # `{% set ns.attr = value %}` checks that the target is a namespace before it
 # evaluates the value, because jinja2 compiles that check as a statement ahead
 # of the assignment rather than as part of it. Every case below has a value

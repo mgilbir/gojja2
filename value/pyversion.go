@@ -182,6 +182,22 @@ func (v PythonVersion) WordwrapDropsTheSpaceBeforeABreak() bool { return v.AtLea
 // symmetrical. Corpus: minijinja/loop_bad_unpacking_wrong_len_txt.
 func (v PythonVersion) UnpackErrorNamesTheCount() bool { return v.AtLeast(Python314) }
 
+// DictUpdateNamesTheElement reports whether an element of a dict-update
+// sequence that cannot be iterated is reported as "cannot convert dictionary
+// update sequence element #N to a sequence".
+//
+// 3.14 replaced it with a bare "object is not iterable" -- no index, and no type
+// name either, which is unusual enough to be worth writing down.
+//
+// The ValueError beside it, for an element of the right kind and the wrong
+// length, did *not* change: "dictionary update sequence element #0 has length 3;
+// 2 is required" is the same in every version. The two halves of unpackDictPair
+// moved apart, so they are versioned apart. Assuming a neighbouring pair of
+// messages moved together is how bytes ended up a version ahead of itself in
+// the constructor work.
+// Corpus: errors/dict_update_element_not_iterable and its neighbours.
+func (v PythonVersion) DictUpdateNamesTheElement() bool { return !v.AtLeast(Python314) }
+
 // UnhashableNamesTheUse reports whether an unhashable value says what it was
 // about to be used as.
 //
