@@ -53,7 +53,7 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 
 	// Methods.
 	case "conjugate":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.BigInt(asBig(base)), nil
 		}), true
 	case "is_integer":
@@ -63,18 +63,18 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 		if !s.PythonVersion().IntHasIsInteger() {
 			return value.Undefined, false
 		}
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.True, nil
 		}), true
 	case "bit_length":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.Int(int64(asBig(base).BitLen())), nil
 		}), true
 	case "bit_count":
 		// The number of ones in the absolute value, which is what
 		// Python counts -- it is defined on the magnitude, so -4 has
 		// one bit set just as 4 does.
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			n := 0
 			for _, w := range new(big.Int).Abs(asBig(base)).Bits() {
 				for ; w != 0; w &= w - 1 {
@@ -84,7 +84,7 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 			return value.Int(int64(n)), nil
 		}), true
 	case "as_integer_ratio":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.NewTuple(value.BigInt(asBig(base)), value.Int(1)), nil
 		}), true
 	case "to_bytes":
@@ -110,15 +110,15 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 		return value.Float(0), true
 
 	case "conjugate":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.Float(x), nil
 		}), true
 	case "is_integer":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.Bool(!math.IsInf(x, 0) && !math.IsNaN(x) && x == math.Trunc(x)), nil
 		}), true
 	case "hex":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			h, err := floatHex(x)
 			if err != nil {
 				return value.Undefined, err
@@ -126,7 +126,7 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 			return value.String(h), nil
 		}), true
 	case "as_integer_ratio":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return floatRatio(x)
 		}), true
 	case "fromhex":
@@ -146,6 +146,34 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 
 // boundNumeric wraps a numeric method as the callable an attribute lookup hands
 // back, the way builtinMethod does for the container types.
+// boundNoArgs is boundNumeric for a method that takes nothing at all, which is
+// most of them.
+//
+// CPython refuses an argument rather than ignoring it, and names the receiver's
+// own type rather than where the method was defined: `true.bit_length(1)` is
+// "bool.bit_length() takes no arguments (1 given)", not "int.". A keyword beats
+// a count, as it does everywhere else in CPython's binding.
+//
+// None of these had an arity check at all, so `{{ (1).bit_length(1) }}` answered
+// 1 where CPython refuses. Found by auditing the error sites no corpus case
+// reaches: the *absence* of a message is invisible to that audit, but the
+// methods showed up when their neighbours were probed.
+func boundNoArgs(s *State, base value.Value, name string,
+	fn func() (value.Value, error)) value.Value {
+	return boundNumeric(s, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+		if len(args.Kwargs) > 0 {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s.%s() takes no keyword arguments", base.TypeName(), name)
+		}
+		if len(args.Pos) > 0 {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s.%s() takes no arguments (%d given)",
+				base.TypeName(), name, len(args.Pos))
+		}
+		return fn()
+	})
+}
+
 func boundNumeric(s *State, name string, fn func(*State, *value.CallArgs) (value.Value, error)) value.Value {
 	return Func(name, func(callState *State, args *value.CallArgs) (value.Value, error) {
 		if callState == nil {

@@ -1,0 +1,6 @@
+{
+  "case": "methods/noargs_n_is_integer.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

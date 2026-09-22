@@ -182,6 +182,25 @@ func (v PythonVersion) WordwrapDropsTheSpaceBeforeABreak() bool { return v.AtLea
 // symmetrical. Corpus: minijinja/loop_bad_unpacking_wrong_len_txt.
 func (v PythonVersion) UnpackErrorNamesTheCount() bool { return v.AtLeast(Python314) }
 
+// FromhexTakesBytesLike reports whether bytes.fromhex accepts a bytes argument
+// as well as a str, and says so when it refuses one.
+//
+// 3.14 widened it: `bytes.fromhex(b'61')` is b'a' there and a TypeError before,
+// the refusal became "fromhex() argument must be str or bytes-like, not int",
+// and None in that message went back to being spelled NoneType.
+// Corpus: bytes/fromhex_not_a_string and its neighbours.
+func (v PythonVersion) FromhexTakesBytesLike() bool { return v.AtLeast(Python314) }
+
+// FromhexCountsTheDigits reports whether a hex string that ends mid-pair is
+// refused as an odd number of digits rather than at a position.
+//
+// 3.14 replaced "non-hexadecimal number found in fromhex() arg at position 1"
+// with "fromhex() arg must contain an even number of hexadecimal digits" -- but
+// only for a pair cut short by the end of the input. A pair spoiled by an actual
+// character still reports that character's position, on every version.
+// Corpus: bytes/fromhex_short_pair, bytes/fromhex_one_digit.
+func (v PythonVersion) FromhexCountsTheDigits() bool { return v.AtLeast(Python314) }
+
 // DictUpdateNamesTheElement reports whether an element of a dict-update
 // sequence that cannot be iterated is reported as "cannot convert dictionary
 // update sequence element #N to a sequence".

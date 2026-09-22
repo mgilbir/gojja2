@@ -900,11 +900,40 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 	}
 	sep := ""
 	if v, ok := arg(args, 0, "sep"); ok {
-		if !v.IsString() {
-			return value.Undefined, errs.New(errs.TypeError,
-				"sep must be str or bytes, not %s", v.TypeName())
+		// CPython asks four questions about the separator, in this
+		// order, and answering them out of order gets the wrong one.
+		// It *measures* before it looks at the type, so an int fails
+		// as something with no length rather than as a wrong type;
+		// only a value that is exactly one long is asked what it is.
+		//
+		// This checked the type alone, which got the wording wrong for
+		// every kind, accepted a separator of any length ("--" grouped
+		// as `61--62` where CPython refuses it, and "" silently meant
+		// no separator at all), and rejected a bytes -- reporting `sep
+		// must be str or bytes, not bytes`, a message that contradicts
+		// itself, which is the same tell that gave away the dict-update
+		// pair bug.
+		n, err := value.LenValue(v)
+		if err != nil {
+			return value.Undefined, err
 		}
-		sep = value.Str(v)
+		if b, _ := n.BigInt(); !b.IsInt64() || b.Int64() != 1 {
+			return value.Undefined, errs.New(errs.ValueError,
+				"sep must be length 1.")
+		}
+		if !v.IsString() && v.Kind() != value.KindBytes {
+			return value.Undefined, errs.New(errs.TypeError,
+				"sep must be str or bytes.")
+		}
+		// AsString rather than Str, so a bytes separator is its own
+		// byte and not the `b'-'` its repr would be.
+		sep = v.AsString()
+		for i := 0; i < len(sep); i++ {
+			if sep[i] >= 0x80 {
+				return value.Undefined, errs.New(errs.ValueError,
+					"sep must be ASCII.")
+			}
+		}
 	}
 	perSep := 1
 	if v, ok := arg(args, 1, "bytes_per_sep"); ok {
@@ -941,13 +970,24 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 	return value.String(strings.Join(parts, sep)), nil
 }
 
-func bytesFromhex(_ *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
+func bytesFromhex(s *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
+	py := s.PythonVersion()
 	v, _ := args.Arg(0)
-	if !v.IsString() {
+	// 3.14 widened the argument to anything bytes-like, and reworded the
+	// refusal -- including spelling None as NoneType again.
+	if py.FromhexTakesBytesLike() {
+		if !v.IsString() && v.Kind() != value.KindBytes {
+			return value.Undefined, errs.New(errs.TypeError,
+				"fromhex() argument must be str or bytes-like, not %s",
+				value.QualifiedTypeName(v))
+		}
+	} else if !v.IsString() {
+		// clinicTypeName: before 3.14 this message spells None as None,
+		// where every other spelling of the same type is NoneType.
 		return value.Undefined, errs.New(errs.TypeError,
-			"fromhex() argument must be str, not %s", v.TypeName())
+			"fromhex() argument must be str, not %s", clinicTypeName(v))
 	}
-	out, err := decodeHexIgnoringSpaces(value.Str(v))
+	out, err := decodeHexIgnoringSpaces(v.AsString(), py)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -956,17 +996,52 @@ func bytesFromhex(_ *State, _ value.Value, args *value.CallArgs) (value.Value, e
 
 // decodeHexIgnoringSpaces is bytes.fromhex, which skips ASCII spaces between
 // pairs and names the position of the first character it cannot read.
-func decodeHexIgnoringSpaces(s string) ([]byte, error) {
+// decodeHexIgnoringSpaces is bytes.fromhex(), which is fussier than it looks.
+//
+// Whitespace separates byte pairs and may not sit inside one, so `"61 62"` is
+// two bytes and `"6 1"` is an error. CPython skips every ASCII space -- tab,
+// newline, vertical tab, form feed and carriage return as well as " " -- and
+// this skipped only " ", so `"\t61"` was refused where CPython decodes it.
+//
+// The reported position is the offending character's, and a pair cut short by
+// the end of the string is reported at the end: `"a"` is position 1, not 0.
+// This reported the start of the pair for every failure, which is right only
+// when the *first* digit is the bad one.
+//
+// CPython counts the position in code points, because the argument is a str --
+// `"61é"` is position 2 -- and the byte offset is the same number here: every
+// character this loop walks past is a hex digit or an ASCII space, and a
+// multi-byte character is neither, so it fails at the offset it starts on.
+// Carrying a separate code-point counter looked necessary and was not; the
+// plant that perturbed it changed no answer, which is what said so.
+func decodeHexIgnoringSpaces(s string, py value.PythonVersion) ([]byte, error) {
+	fail := func(at int) error {
+		return errs.New(errs.ValueError,
+			"non-hexadecimal number found in fromhex() arg at position %d", at)
+	}
 	var out []byte
-	i := 0
-	for i < len(s) {
-		if s[i] == ' ' {
+	for i := 0; i < len(s); {
+		if asciiIsSpace(s[i]) {
 			i++
 			continue
 		}
-		if i+1 >= len(s) || !isHexDigit(s[i]) || !isHexDigit(s[i+1]) {
-			return nil, errs.New(errs.ValueError,
-				"non-hexadecimal number found in fromhex() arg at position %d", i)
+		if !isHexDigit(s[i]) {
+			return nil, fail(i)
+		}
+		// A pair cut short by the end of the string is a different
+		// complaint from one spoiled by a character, and 3.14 made
+		// them different messages: the first counts the digits, the
+		// second still points at the character. Before 3.14 both
+		// pointed at the second position.
+		if i+1 >= len(s) {
+			if py.FromhexCountsTheDigits() {
+				return nil, errs.New(errs.ValueError, "fromhex() arg "+
+					"must contain an even number of hexadecimal digits")
+			}
+			return nil, fail(i + 1)
+		}
+		if !isHexDigit(s[i+1]) {
+			return nil, fail(i + 1)
 		}
 		b, _ := hex.DecodeString(s[i : i+2])
 		out = append(out, b[0])
