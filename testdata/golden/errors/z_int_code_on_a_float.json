@@ -1,0 +1,14 @@
+{
+  "case": "errors/z_int_code_on_a_float.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "Unknown format code 'd' for object of type 'float'"
+  }
+}

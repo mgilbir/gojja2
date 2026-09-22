@@ -2841,6 +2841,42 @@ case("loops/dict_resized_over_a_snapshot",
      "{% for k in d|list %}{% set _ = d.update({'z': 1}) %}{{ k }}{% endfor %}", d={"a": 1, "b": 2})
 case("loops/dict_walked_without_touching_it", "{% for k in d %}{{ k }}{% endfor %}", d={"a": 1, "b": 2})
 
+# --- the 'z' format code ------------------------------------------------------
+# Python 3.11 added `z` to the format mini-language (PEP 682): it renders what
+# rounds to zero without its sign. gojja2 did not know the letter at all, so
+# every spec below was "Unknown format code 'z'".
+#
+# It sits between the sign and '#' and nowhere else, which is the difference
+# between `{:z#}` (a spec) and `{:#z}` (a '#' and a type called z). And the
+# refusals go by the *value's* type rather than the presentation type, which is
+# why `{:zx}` on an int is about the z while `{:zd}` on a float is about the d.
+#
+# 3.11 is the oldest interpreter modelled here, so this needs no version gate.
+case("format/z_coerces_negative_zero",
+     "{{ '{:z}'.format(nz) }}|{{ '{:z}'.format(0.0) }}|{{ '{:z.2f}'.format(nz) }}|{{ '{:zf}'.format(nz) }}", nz=-0.0)
+case("format/z_keeps_a_real_sign", "{{ '{:z}'.format(-1.5) }}|{{ '{:z.2%}'.format(-0.001) }}|{{ '{:z}'.format(1.5) }}")
+# The coercion is decided after rounding, not on -0.0 alone.
+case("format/z_after_rounding", "{{ '{:z.1f}'.format(-0.04) }}|{{ '{:z.2f}'.format(-0.004) }}|{{ '{:.1f}'.format(-0.04) }}")
+case("format/z_every_float_type",
+     "{{ '{:ze}'.format(nz) }}|{{ '{:zg}'.format(nz) }}|{{ '{:z%}'.format(nz) }}|{{ '{:zE}'.format(nz) }}", nz=-0.0)
+case("format/z_with_width_and_sign",
+     "{{ '{:+z.2f}'.format(nz) }}|{{ '{:z08.2f}'.format(nz) }}|{{ '{:>z.2f}'.format(nz) }}|{{ '{:z#}'.format(1.5) }}", nz=-0.0)
+# An infinity has no digits to round, so it keeps its sign.
+# The infinity is computed from a context value, not written down. JSON cannot
+# express one, and any constant expression that makes one gets folded -- into
+# `inf` in jinja2's generated Python, which is the separate divergence recorded
+# in docs/divergences.md rather than anything about z.
+case("format/z_leaves_infinity_alone",
+     "{{ '{:z}'.format(big * -10) }}|{{ '{:z}'.format(big * 10) }}", big=1e308)
+case("errors/z_not_allowed_on_int", "{{ '{:z}'.format(1) }}")
+case("errors/z_not_allowed_on_int_code", "{{ '{:zx}'.format(255) }}")
+case("errors/z_not_allowed_on_bool", "{{ '{:z}'.format(true) }}")
+case("errors/z_not_allowed_on_str", "{{ '{:zs}'.format('a') }}")
+case("errors/z_out_of_position_after", "{{ '{:z+.2f}'.format(1.5) }}")
+case("errors/z_out_of_position_before", "{{ '{:0z.2f}'.format(1.5) }}")
+case("errors/z_after_hash_is_a_type", "{{ '{:#z}'.format(1.5) }}")
+case("errors/z_int_code_on_a_float", "{{ '{:zd}'.format(1.5) }}")
+
 # --- the bytes methods --------------------------------------------------------
 # bytes had one method, decode, so the other forty-one were attribute errors on
 # a type the engine otherwise supports fully. They are not the str methods:

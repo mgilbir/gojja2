@@ -1,0 +1,11 @@
+{
+  "case": "format/z_with_width_and_sign.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "+0.00|00000.00|0.00|1.5"
+}
