@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_positional_is_refused.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

@@ -4,6 +4,8 @@
 package gojja2
 
 import (
+	"strings"
+
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/internal/ast"
 	"github.com/mgilbir/gojja2/value"
@@ -172,6 +174,23 @@ func (ex *exec) invoke(callee value.Value, args *value.CallArgs) (value.Value, e
 	}
 	return value.Undefined, errs.New(errs.TypeError,
 		"'%s' object is not callable", callee.TypeName())
+}
+
+// invoke calls a value from outside the evaluator.
+//
+// A method holds a *State and nothing else, so it could not reach exec.invoke --
+// which is where a macro is bound and run -- and anything that takes a callable
+// from the template had no way to call one. list.sort(key=...) is the first, and
+// it will not be the last.
+//
+// The exec built here is the same shape renderState builds, with output going to
+// a buffer that is discarded. That is not a shortcut: a macro's *return* value
+// is its rendered body, so what it prints is the answer rather than something
+// that belongs in the page.
+func (s *State) invoke(callee value.Value, args *value.CallArgs) (value.Value, error) {
+	var sink strings.Builder
+	ex := &exec{st: s, sc: s.ctx, out: &sink, stream: &sink, autoescape: s.autoescape}
+	return ex.invoke(callee, args)
 }
 
 // callMacro binds arguments and renders a macro body.

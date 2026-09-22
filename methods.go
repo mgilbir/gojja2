@@ -2023,6 +2023,11 @@ func methodDictClear(s *State, r value.Value, _ *value.CallArgs) (value.Value, e
 
 // --- list and tuple methods --------------------------------------------------
 
+// sort is registered here rather than in the table below because it calls back
+// into the evaluator for a key function, and naming it in the literal makes an
+// initialisation cycle out of a call graph that is fine at run time.
+func init() { listMethods["sort"] = methodListSort }
+
 var listMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
 	"append":  methodListAppend,
 	"insert":  methodListInsert,
@@ -2034,7 +2039,6 @@ var listMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.V
 	"extend":  methodListExtend,
 	"copy":    func(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) { return r.AsList(), nil },
 	"clear":   methodListClear,
-	"sort":    methodListSort,
 }
 
 func methodListClear(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -2242,7 +2246,8 @@ func methodListSort(st *State, r value.Value, args *value.CallArgs) (value.Value
 		return value.Undefined, errs.New(errs.TypeError,
 			"sort() takes no positional arguments")
 	}
-	reverse := false
+	reverse, hasKey := false, false
+	var keyFn value.Value
 	for _, kw := range args.Kwargs {
 		switch kw.Name {
 		case "reverse":
@@ -2252,20 +2257,61 @@ func methodListSort(st *State, r value.Value, args *value.CallArgs) (value.Value
 			}
 			reverse = b
 		case "key":
+			// None means "sort by the value itself", which is the
+			// default; anything else is called once per element.
 			if !kw.Value.IsNone() {
-				return value.Undefined, errs.New(errs.TypeError,
-					"sort() key must be None")
+				keyFn, hasKey = kw.Value, true
 			}
 		default:
-			return value.Undefined, errs.New(errs.TypeError,
-				"'%s' is an invalid keyword argument for sort()", kw.Name)
+			// The same wording 3.13 changed for int, str and bytes:
+			// KeywordMessageNamesTheCallee. sort()'s *positional*
+			// refusal did not move, which is the split those three
+			// showed too.
+			return value.Undefined,
+				clinicKeyword(st.PythonVersion(), "sort", kw.Name)
 		}
 	}
 	seq, _ := r.Seq()
-	items := seq.Items()
-	if err := stableSortBy(st, items, func(v value.Value) (value.Value, error) {
-		return v, nil
-	}, reverse); err != nil {
+	// The key is *called*, so a key that is not callable is refused by the
+	// call and not by the binding: `{{ [].sort(key=1) }}` is None on both
+	// sides, because an empty list never calls it. Refusing it up front --
+	// which is what `sort() key must be None` did -- reported an error
+	// where CPython has none.
+	keyOf := func(v value.Value) (value.Value, error) { return v, nil }
+	if hasKey {
+		keyOf = func(v value.Value) (value.Value, error) {
+			return st.invoke(keyFn, &value.CallArgs{Pos: []value.Value{v}})
+		}
+	}
+
+	// CPython takes the elements *out* of the list for the duration, leaving
+	// it empty, and refuses to put them back if anything touched it
+	// meanwhile. Both halves are observable, and only became reachable with
+	// a key that can run template code:
+	//
+	//	{% macro k(v) %}{{ L.append(9) }}{{ v }}{% endmacro %}
+	//	{{ L.sort(key=k) }}      ValueError: list modified during sort
+	//	{% macro k(v) %}{{ L.sort(key=k) }}{% endmacro %}
+	//	{{ L.sort(key=k) }}      None -- the inner sort sees an empty list
+	//
+	// Sorting the live slice instead let an append reallocate underneath the
+	// sort, and made the recursive case recurse to the depth limit.
+	items := append([]value.Value(nil), seq.Items()...)
+	*seq = *mustSeq(value.NewList())
+	err := stableSortBy(st, items, keyOf, reverse)
+	if seq.Len() != 0 {
+		// CPython reports the modification even when the key also
+		// failed, because it checks on the way out either way.
+		return value.Undefined, errs.New(errs.ValueError,
+			"list modified during sort")
+	}
+	// The elements go back whether or not the key raised. On the error path
+	// no template can see that -- the render is over -- so this is here to
+	// leave the value consistent for a Go caller holding it, not to satisfy
+	// a case. Splitting it into two branches gave one that nothing could
+	// ever exercise, which is what the plant said by catching nothing.
+	*seq = *mustSeq(value.NewList(items...))
+	if err != nil {
 		return value.Undefined, err
 	}
 	// Sorting a list in place answers None, not the list -- which is why

@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_not_callable_int.jj2",
+  "variables": {
+    "one": "or"
+  }
+}

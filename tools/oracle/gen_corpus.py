@@ -2742,6 +2742,58 @@ for _n, _arg in [
 ]:
     case(f"bytes/fromhex_{_n}", "{{ ''.encode().fromhex(%s) }}" % _arg)
 
+# list.sort(key=...) calls the key once per element, which is the first thing in
+# gojja2 that runs template code from inside a method. gojja2 refused every key
+# with `sort() key must be None`, so none of this was reachable.
+#
+# Two halves of CPython's implementation become observable with a key that can
+# run: it takes the elements *out* of the list for the duration, leaving it
+# empty, and refuses to put them back if anything touched it meanwhile.
+_K = "{% macro k(v) %}{{ 9 - v }}{% endmacro %}"
+for _n, _src in [
+    # A key that is not callable is refused by the *call*, so an empty list
+    # never notices.
+    ("empty_list_never_calls", "{{ e.sort(key=1) }}|{{ e }}"),
+    ("not_callable_int", "{{ one.sort(key=1) }}"),
+    ("not_callable_str", "{{ lst.sort(key='x') }}"),
+    ("not_callable_list", "{{ lst.sort(key=[]) }}"),
+    ("key_none_is_the_default", "{{ lst.sort(key=none) }}{{ lst }}"),
+    ("bad_keyword_beats_the_key", "{{ lst.sort(key=1, zz=2) }}"),
+    ("bad_keyword_first", "{{ lst.sort(zz=2, key=1) }}"),
+    ("positional_is_refused", "{{ lst.sort(1) }}"),
+    # A macro key, which is the reachable callable.
+    ("macro_key", _K + "{{ lst.sort(key=k) }}{{ lst }}"),
+    ("macro_key_reversed", _K + "{{ lst.sort(key=k, reverse=true) }}{{ lst }}"),
+    ("macro_key_wrong_arity", "{% macro k() %}x{% endmacro %}{{ lst.sort(key=k) }}"),
+    ("macro_key_empty_body",
+     "{% macro k(v) %}{% endmacro %}{{ lst.sort(key=k) }}{{ lst }}"),
+    ("macro_key_is_stable",
+     "{% macro k(v) %}{{ v|int }}{% endmacro %}{{ words.sort(key=k) }}{{ words }}"),
+    ("class_global_key", "{{ lst.sort(key=namespace) }}"),
+    ("function_global_key", "{{ lst.sort(key=lipsum) }}"),
+    ("joiner_key", "{{ lst.sort(key=joiner()) }}"),
+    # The list is empty while the sort runs, and modifying it is refused.
+    ("key_appends", "{% macro k(v) %}{{ lst.append(9) }}{{ v }}{% endmacro %}"
+                    "{{ lst.sort(key=k) }}{{ lst }}"),
+    ("key_pops", "{% macro k(v) %}{{ lst.pop() }}{{ v }}{% endmacro %}"
+                 "{{ lst.sort(key=k) }}"),
+    ("key_clears", "{% macro k(v) %}{{ lst.clear() }}{{ v }}{% endmacro %}"
+                   "{{ lst.sort(key=k) }}{{ lst }}"),
+    ("key_sees_an_empty_list",
+     "{% macro k(v) %}{{ lst }}{% endmacro %}{{ lst.sort(key=k) }}{{ lst }}"),
+    ("key_measures_an_empty_list",
+     "{% macro k(v) %}{{ lst|length }}{% endmacro %}{{ lst.sort(key=k) }}{{ lst }}"),
+    ("key_sorts_the_same_list",
+     "{% macro k(v) %}{{ lst.sort(key=k) }}{% endmacro %}{{ lst.sort(key=k) }}"),
+    ("key_touches_another_list",
+     "{% macro k(v) %}{{ lst.append(9) }}{% endmacro %}{{ e.sort(key=k) }}{{ lst }}"),
+    # A key that raises leaves the elements where they were.
+    ("key_raises", "{% macro k(v) %}{{ v.nosuch.deeper }}{% endmacro %}"
+                   "{{ lst.sort(key=k) }}"),
+]:
+    case(f"methods/sort_key_{_n}", _src,
+         e=[], one=[5], lst=[3, 1, 2], words=["b", "a", "c"])
+
 # Neither format_map nor translate converts the argument it is handed.
 # translate is `table[ord(c)]` per character, catching LookupError, so an empty
 # string never touches the table and anything subscriptable by an integer will
