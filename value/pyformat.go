@@ -166,6 +166,14 @@ func isMappingArg(v Value) bool {
 	switch v.kind {
 	case KindDict, KindList:
 		return true
+	case KindBytes:
+		// CPython's test is "supports subscripting", with tuple and str
+		// named as the two exceptions. A bytes is subscriptable and is
+		// not one of the two, so it counts -- which is why `"0" % b""`
+		// renders "0" rather than complaining that the b"" was never
+		// converted. Looking a *name* up in one still fails, as it does
+		// for a list; see lookupFormatKey.
+		return true
 	case KindUndefined:
 		// Undefined defines __getitem__, so it passes the subscript
 		// check and `"x" % nope` formats rather than complaining about
@@ -212,6 +220,10 @@ func lookupFormatKey(mapping Value, key string) (Value, error) {
 		// cannot actually be indexed by name.
 		return Undefined, errs.New(errs.TypeError,
 			"list indices must be integers or slices, not str")
+	case KindBytes:
+		// The same, and CPython says "byte" rather than "bytes" here.
+		return Undefined, errs.New(errs.TypeError,
+			"byte indices must be integers or slices, not str")
 	case KindUndefined:
 		// An undefined passes the subscript check -- it defines
 		// __getitem__ -- and then raises its own error when the key is
