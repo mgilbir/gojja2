@@ -196,3 +196,20 @@ func TestInfoDistinguishesShadowedNames(t *testing.T) {
 		t.Errorf("the loop target is owned by %v, want the loop", xs[1].Scope)
 	}
 }
+
+// Attr answers for a node that has no attributes, and for a nil one, because a
+// query walking a tree should not have to check first.
+func TestAttrIsSafe(t *testing.T) {
+	var none *syntax.Node
+	if got := none.Attr("name"); got != "" {
+		t.Errorf("a nil node answered %q", got)
+	}
+	bare := &syntax.Node{Kind: syntax.KindBreak}
+	if got := bare.Attr("name"); got != "" {
+		t.Errorf("a node with no attributes answered %q", got)
+	}
+	if got := (&syntax.Node{Kind: syntax.KindConst,
+		Attrs: map[string]any{"value": 1}}).Attr("value"); got != "" {
+		t.Errorf("a non-string attribute answered %q, want the empty string", got)
+	}
+}

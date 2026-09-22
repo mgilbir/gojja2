@@ -1,0 +1,6 @@
+{
+  "case": "errors/nsref_checked_before_value.jj2",
+  "variables": {
+    "d": "r?"
+  }
+}
