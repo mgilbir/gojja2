@@ -204,8 +204,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, err
 	}
 	if relTrue && !rel.IsString() {
-		return value.Undefined, errs.New(errs.AttributeError,
-			"'%s' object has no attribute 'split'", rel.TypeName())
+		return value.Undefined, noAttribute(rel, "split")
 	}
 	if !relTrue {
 		rel = value.String("")
@@ -837,8 +836,7 @@ func itemsAttributeError(v value.Value) error {
 	if o, ok := v.Interface().(interface{ AttributeError(string) string }); ok {
 		return errs.New(errs.AttributeError, "%s", o.AttributeError("items"))
 	}
-	return errs.New(errs.AttributeError,
-		"'%s' object has no attribute 'items'", v.TypeName())
+	return noAttribute(v, "items")
 }
 
 // unpackPair destructures one element into a key and a value, reporting the

@@ -1,0 +1,6 @@
+{
+  "yes": true,
+  "n": 1
+}
+---
+{{ yes.__class__ == n.__class__ }}

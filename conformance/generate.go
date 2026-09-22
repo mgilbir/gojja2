@@ -564,7 +564,12 @@ func (g *generator) expr(depth int) string {
 		return g.atom()
 	}
 	switch g.c.intn(17) {
-	case 15, 16:
+	case 15:
+		return g.methodCall(depth)
+	case 16:
+		if g.c.chance(3) {
+			return g.classObject()
+		}
 		return g.methodCall(depth)
 	case 0, 1, 2, 3:
 		return g.atom()
@@ -901,6 +906,43 @@ var roundable = []string{
 	"1.15", "2.675", "0.125", "1.005",
 	"1234.5678", "-1234.5678", "0.0", "-0.0",
 	"f", "fz", "fneg", "n", "zero", "neg",
+}
+
+// classObject writes a `__class__` chain, which nothing generated reached.
+//
+// classes.go was entirely at 0% under the render differential while the corpus
+// graded it: the generator had no way to write `__class__` at all, so the class
+// object never met a filter, a comparison or a subscript. The answers are stable
+// -- `<class 'int'>`, `int` -- which is what makes them worth generating rather
+// than screening out.
+//
+// `__mro__` is deliberately absent: it is not implemented, for the reason
+// docs/divergences.md gives, and generating a known divergence would fail every
+// soak rather than teach anything.
+func (g *generator) classObject() string {
+	// `list` and `dict` are the two classes here that Python 3.9 made
+	// subscriptable as a type annotation, so `lst.__class__['a']` is the
+	// generic alias `list['a']` on CPython and undefined here -- the
+	// divergence docs/divergences.md records for the `dict` global,
+	// reached a second way. jinja2's attribute fallback puts `.a` in the
+	// same position. Those two subjects therefore always carry an
+	// accessor that leaves the class object behind, so the generator
+	// cannot hand one to a subscript further out.
+	if g.c.chance(4) {
+		return g.c.pick([]string{"lst", "d", "[1]", "{}", "dict(a=1)"}) +
+			".__class__" + g.c.pick([]string{
+			".__name__", ".__name__|upper", "|string", "|length",
+		})
+	}
+	subject := g.c.pick([]string{
+		"n", "s", "yes", "nil", "f", "uni", "html", "nope",
+		"(1.5)", "(1)", "'x'", "none", "true",
+		"namespace()", "cycler('a','b')", "joiner('-')", "range(3)",
+		"'x'|safe",
+	})
+	return subject + ".__class__" + g.c.pick([]string{
+		"", "", ".__name__", ".__name__|upper", "|string", "|length",
+	})
 }
 
 // methodCall writes a call to one of Python's own methods on a receiver of the

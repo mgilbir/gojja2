@@ -1,0 +1,7 @@
+{
+  "case": "classes/attrerror_wrapstring.jj2",
+  "variables": {
+    "n": "or",
+    "s": "or"
+  }
+}

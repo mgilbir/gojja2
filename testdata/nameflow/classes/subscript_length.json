@@ -1,0 +1,6 @@
+{
+  "case": "classes/subscript_length.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

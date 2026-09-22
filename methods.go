@@ -525,8 +525,7 @@ func translateLookup(table value.Value, c rune, py value.PythonVersion) (value.V
 	if table.Kind() == value.KindObject {
 		return value.Undefined, false, nil
 	}
-	return value.Undefined, false, errs.New(errs.TypeError,
-		"'%s' object is not subscriptable", table.TypeName())
+	return value.Undefined, false, notSubscriptable(table)
 }
 
 // methodTranslate is str.translate: every character is looked up by ordinal and
@@ -1478,8 +1477,7 @@ func (a fieldAccessor) apply(v value.Value, py value.PythonVersion) (value.Value
 	if attr, ok := lookupAttr(nil, v, a.name); ok {
 		return attr, nil
 	}
-	return value.Undefined, errs.New(errs.AttributeError,
-		"'%s' object has no attribute '%s'", v.TypeName(), a.name)
+	return value.Undefined, noAttribute(v, a.name)
 }
 
 // fieldSubscript is the `[key]` step of a replacement field, which is a real
@@ -1548,8 +1546,7 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 	if v.Kind() == value.KindObject {
 		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, py))
 	}
-	return value.Undefined, errs.New(errs.TypeError,
-		"'%s' object is not subscriptable", v.TypeName())
+	return value.Undefined, notSubscriptable(v)
 }
 
 // splitFieldName separates the base of a replacement field from its accessors,
