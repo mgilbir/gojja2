@@ -544,7 +544,14 @@ func canFailIn(n *syntax.Node) bool {
 			syntax.KindOperand, syntax.KindTest, syntax.KindFilter,
 			syntax.KindCall, syntax.KindGetitem, syntax.KindPair,
 			syntax.KindFor, syntax.KindInclude, syntax.KindExtends,
-			syntax.KindImport, syntax.KindFromImport:
+			syntax.KindImport, syntax.KindFromImport,
+			// An nsref appears only as the target of a `{% set %}`, and
+			// writing a field needs something to write it to: the `=`
+			// form wants a namespace, and the block form does an item
+			// assignment that a list, a string or a None refuses. So a
+			// branch holding one can stop the render, and the test that
+			// guards it decides whether it does.
+			syntax.KindNSRef:
 			found = true
 			return false
 		}

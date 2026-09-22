@@ -777,11 +777,15 @@ def can_raise(n) -> bool:
 # The constructs that can stop a render, asked of a whole body rather than of
 # one value. A test guards the code beneath it, so if that code can fail the
 # test decides whether it does.
+# NSRef is in the list because it appears only as the target of a `{% set %}`,
+# and writing a field needs something to write it to: the `=` form wants a
+# namespace, and the block form does an item assignment that a list, a string or
+# a None refuses.
 _CAN_FAIL = tuple(getattr(nodes, n) for n in
                   ("Add", "Sub", "Mul", "Div", "FloorDiv", "Mod", "Pow", "And",
                    "Or", "Not", "Neg", "Pos", "Compare", "Operand", "Test",
                    "Filter", "Call", "Getitem", "Pair", "For", "Include",
-                   "Extends", "Import", "FromImport")
+                   "Extends", "Import", "FromImport", "NSRef")
                   if hasattr(nodes, n))
 
 

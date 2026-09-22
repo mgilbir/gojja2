@@ -1295,6 +1295,23 @@ case("dataflow/required_through_an_attribute", "{{ (src.real).name }}", src=2.5)
 case("dataflow/required_through_an_item", "{{ (src.real)[0] }}", src=2.5)
 case("dataflow/not_required_one_step", "[{{ src.nosuch }}]", src=2.5)
 
+# A guard whose branch writes a namespace field decides whether the render
+# finishes, because writing one needs something to write it to: the `=` form
+# wants a namespace, and the block form does an item assignment that a None
+# refuses. An nsref appears only as a `{% set %}` target, so its presence in a
+# branch is the whole test.
+#
+# Found by the soak's render check, like the two above it, and the Python
+# reference had the same gap.
+case("dataflow/required_guarding_a_namespace_write",
+     "{% if src %}{% set nothing.v = 1 %}{% endif %}", src=True, nothing=None)
+case("dataflow/required_guarding_a_namespace_block",
+     "{% if src %}{% set nothing.v %}x{% endset %}{% endif %}", src=True, nothing=None)
+# ...and a branch that only binds a plain name cannot fail, so the guard is not
+# Required -- which is what keeps the rule about namespace writes.
+case("dataflow/not_required_guarding_a_plain_set",
+     "{% if src %}{% set q = 1 %}{{ q }}{% endif %}", src=True)
+
 # A macro whose name is not a binding in any scope.
 #
 # jinja2's first-mention rule resolves a name outward when an earlier branch
