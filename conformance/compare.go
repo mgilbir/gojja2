@@ -157,6 +157,17 @@ func holdsAMultiElementSet(text string) bool {
 		}
 		depth, comma, colon := 0, false, false
 		for j := i; j < len(text); j++ {
+			// A repr quotes its strings, and their contents are not
+			// structure: `{']', '[', '1'}` closes on its own final
+			// brace and not on the bracket inside the first element.
+			// Under autoescape the quote itself is written `&#39;`,
+			// which is why both spellings are skipped here -- the
+			// first version of this counted the `]` in that set as a
+			// closing bracket and let the whole thing through.
+			if n := quoteRun(text[j:]); n > 0 {
+				j += n - 1
+				continue
+			}
 			switch text[j] {
 			case '{', '[', '(':
 				depth++
@@ -182,6 +193,32 @@ func holdsAMultiElementSet(text string) bool {
 	next:
 	}
 	return false
+}
+
+// quoteRun reports the length of a quoted string starting at the front of s,
+// or 0 when there is not one. Both the raw quote and the HTML-escaped one an
+// autoescaping render produces are recognised, since the output is compared as
+// text and that is what the text holds.
+func quoteRun(s string) int {
+	for _, q := range []string{"'", `"`, "&#39;", "&#34;"} {
+		if !strings.HasPrefix(s, q) {
+			continue
+		}
+		for at := len(q); at < len(s); {
+			if s[at] == '\\' {
+				at += 2
+				continue
+			}
+			if strings.HasPrefix(s[at:], q) {
+				return at + len(q)
+			}
+			at++
+		}
+		// Unterminated: not a quoted run, so the caller scans it as
+		// ordinary text rather than swallowing the rest of the output.
+		return 0
+	}
+	return 0
 }
 
 // Comparable reports whether a result can be graded at all.
