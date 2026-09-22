@@ -1,0 +1,3 @@
+{}
+---
+{% set e = {} %}{% set d = {'a': 1} %}{{ not e.keys() }}|{{ not d.keys() }}|{{ e.keys() or 'fallback' }}|{{ d.values() and 'yes' }}

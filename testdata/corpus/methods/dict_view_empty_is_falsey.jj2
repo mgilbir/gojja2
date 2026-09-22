@@ -1,0 +1,3 @@
+{}
+---
+{% set e = {} %}{% if e.keys() %}T{% else %}F{% endif %}{% if e.values() %}T{% else %}F{% endif %}{% if e.items() %}T{% else %}F{% endif %}

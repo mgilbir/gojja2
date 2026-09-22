@@ -55,6 +55,14 @@ func IsTrue(v Value) (bool, error) {
 			return o.Len() != 0, nil
 		case Sequence:
 			return o.Len() != 0, nil
+		case Sized:
+			// Checked last, as in Len: a Sequence is Sized too and
+			// answers above as the sequence it is. Without this an
+			// object with a length and no __bool__ fell through to
+			// the default and was true however empty it was --
+			// `{% if d.keys() %}` on an empty dict took its branch,
+			// which is Python's rule inverted rather than missing.
+			return o.Len() != 0, nil
 		}
 		return true, nil
 	}
