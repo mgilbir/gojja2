@@ -193,7 +193,12 @@ much. So each place the analysis records something -- an effect applied, a
 dependency drawn, a value emitted -- is taken out in turn, and anything that
 still passes is a line no test constrains.
 
-36 mutations, all 36 *exercised*, none surviving. The count of exercised ones is
+The tree the analysis runs on is mutated too, at every place `syntax_build.go`
+records a Def, a Use, a Scope or a context name. Those are further upstream than
+anything in `dataflow/`: a binding that goes unrecorded is a name the analysis
+cannot see, which is indistinguishable to it from a name that does nothing.
+
+42 mutations, all 42 *exercised*, none surviving. The count of exercised ones is
 reported separately because it used to be smaller than the total without saying
 so: three sites are the only reader of a loop variable, so commenting the line
 out left something declared and not used, the build failed, and the tool called
