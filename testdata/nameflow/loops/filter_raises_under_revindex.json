@@ -1,0 +1,6 @@
+{
+  "case": "loops/filter_raises_under_revindex.jj2",
+  "variables": {
+    "d": "fr"
+  }
+}

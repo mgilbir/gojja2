@@ -3016,6 +3016,31 @@ case("loops/list_length_while_walking",
 # A tuple cannot be mutated, so it is the same either way.
 case("loops/tuple_is_walked_the_same", "{% for i in (1, 2, 3) %}{{ i }}{% endfor %}")
 
+# --- a loop filter that raises, reported where jinja2 reports it ---------------
+# `loop.length`, `loop.revindex` and `loop.last` need the total, which for a
+# filtered loop means running the test over the rest of the input -- and the test
+# can raise. jinja2 raises it out of the property access; gojja2's source
+# recorded it and waited for the loop's next pass, so a body that failed for its
+# own reason first reported that instead.
+#
+# `loop.index` does not need the total and does not force the test, which is the
+# case that tells the two apart: there the body's own error is correct.
+case("loops/filter_raises_under_revindex",
+     "{% for i in range(3) if d.pop('a') %}{{ loop.revindex|length }}{% endfor %}",
+     d={"a": 1, "b": 2, "c": 3})
+case("loops/filter_raises_under_length",
+     "{% for i in range(3) if d.pop('a') %}{{ loop.length|length }}{% endfor %}",
+     d={"a": 1, "b": 2, "c": 3})
+case("loops/filter_raises_under_last",
+     "{% for i in range(3) if d.pop('a') %}{{ loop.last|length }}{% endfor %}",
+     d={"a": 1, "b": 2, "c": 3})
+case("loops/filter_not_forced_by_index",
+     "{% for i in range(3) if d.pop('a') %}{{ loop.index|length }}{% endfor %}",
+     d={"a": 1, "b": 2, "c": 3})
+# ...and a filtered loop whose test does not raise still answers the totals.
+case("loops/revindex_under_a_working_filter",
+     "{% for i in range(3) if i %}{{ loop.revindex }}{{ loop.length }}{{ loop.last }}{% endfor %}")
+
 # --- the 'z' format code ------------------------------------------------------
 # Python 3.11 added `z` to the format mini-language (PEP 682): it renders what
 # rounds to zero without its sign. gojja2 did not know the letter at all, so

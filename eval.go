@@ -383,6 +383,23 @@ func (ex *exec) getAttr(base value.Value, name string) (value.Value, error) {
 		return value.Undefined, base.UndefinedError()
 	}
 	if v, ok := lookupAttr(ex.st, base, name); ok {
+		// `loop.length`, `loop.revindex` and `loop.last` need the total,
+		// which for a filtered loop means running the test over the rest
+		// of the input -- and the test can raise. value.Object.GetAttr
+		// has no way to report that, so the source records it and this
+		// is where it surfaces: at the property access, which is where
+		// jinja2 raises it too.
+		//
+		// Without this the failure waits for the loop's next pass, and a
+		// body that fails for its own reason first reports that instead:
+		// `{{ loop.revindex|length }}` said an int has no len() where
+		// jinja2 said KeyError, because the filter's error was still
+		// sitting in the source unread.
+		if loop, isLoop := base.Interface().(*loopObject); isLoop {
+			if err := loop.src.err(); err != nil {
+				return value.Undefined, err
+			}
+		}
 		return v, nil
 	}
 	if v, ok := lookupItem(base, value.String(name), ex.pyVersion()); ok {
