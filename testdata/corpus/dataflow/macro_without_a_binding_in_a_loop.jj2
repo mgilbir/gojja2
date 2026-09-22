@@ -1,0 +1,8 @@
+{
+  "xs": [
+    "P",
+    "Q"
+  ]
+}
+---
+{% if false %}{% macro m(a) %}A{% endmacro %}{% endif %}{% macro m(a) %}{% for i in xs %}{{ i }}{% endfor %}{% endmacro %}{{ m(1) }}

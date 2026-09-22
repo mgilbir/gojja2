@@ -1281,6 +1281,29 @@ case("dataflow/loop_writes_its_own_copy",
 
 ns_case("namespace_field_from_outer",
         "{% set ns = namespace(a=x) %}{% for i in xs %}{{ ns.a }}{% endfor %}")
+
+# A macro whose name is not a binding in any scope.
+#
+# jinja2's first-mention rule resolves a name outward when an earlier branch
+# merely *mentions* it, so a macro defined once inside a dead `{% if %}` and
+# again for real afterwards has no local symbol at all: both definitions write
+# to the caller's variable. The analysis had nothing to hang the body on and
+# dropped what the body would print, which made everything inside the macro
+# invisible -- `src` reported as never printed, and it is printed.
+#
+# Found by `make soak-syntax` at 59,414 templates, by rendering rather than by
+# comparing: both analyses agreed, and both were wrong. That is the case the
+# render check exists for.
+case("dataflow/macro_without_a_binding",
+     "{% if false %}{% macro m(a) %}A{% endmacro %}{% endif %}"
+     "{% macro m(a) %}{{ src }}{% endmacro %}{{ m(1) }}", src="S")
+case("dataflow/macro_without_a_binding_in_a_loop",
+     "{% if false %}{% macro m(a) %}A{% endmacro %}{% endif %}"
+     "{% macro m(a) %}{% for i in xs %}{{ i }}{% endfor %}{% endmacro %}{{ m(1) }}", xs=["P", "Q"])
+# ...and the shape that must keep answering "not printed": here `m` *is* a local
+# binding, the second definition wins, and it does not print src.
+case("dataflow/macro_redefined_does_not_print",
+     "{% macro m(a) %}{{ src }}{% endmacro %}{% macro m(a) %}A{% endmacro %}{{ m(1) }}", src="S")
 # Every shape a division by zero can take, one case per sentence. CPython had
 # six distinct wordings before 3.14 collapsed them, and the case above reaches
 # only three -- which is why "float modulo" kept the 3.11 wording on 3.13 with

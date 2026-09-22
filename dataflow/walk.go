@@ -396,6 +396,27 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		out := a.captureBody(n)
 		if sym != nil {
 			a.macroOut[sym] = out
+		} else {
+			// The macro's name is not a binding in any scope. jinja2's
+			// first-mention rule resolved it outward to the caller's
+			// variables, which is what happens when an earlier branch
+			// mentioned the name --
+			// `{% if false %}{% macro m() %}{% endmacro %}{% endif %}`
+			// followed by the real definition is the shape that does it.
+			//
+			// There is nothing to hang the body on, so a call cannot be
+			// matched to it, and dropping what the body captured makes
+			// everything the macro prints *invisible*: the capture
+			// swallowed the emits and no symbol carries them. That is a
+			// false negative, and the one answer this analysis must
+			// never give.
+			//
+			// So the output is emitted here instead. A macro that is
+			// defined can be called, and if it is, its body reaches the
+			// document; claiming Printed for one that is never called
+			// over-claims in the safe direction, where claiming nothing
+			// does not.
+			a.emit(out)
 		}
 
 	case syntax.KindCallBlock:
