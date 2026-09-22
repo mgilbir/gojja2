@@ -172,6 +172,21 @@ Nodes are named by their position in a pre-order walk, which costs nothing to
 agree on because the trees are already identical — a fact worth noticing: the
 second comparison is only possible because the first one passes.
 
+Two properties hold whatever the answer is, and so need no second opinion at
+all -- which is what makes them the only checks a mistake *shared* by both
+implementations cannot hide from. Analysing the same template twice must give
+the same answer, and renaming its variables must rename the answer and change
+nothing else. The analysis is entitled to recognise a handful of names --
+`namespace`, `loop`, `caller`, the environment's globals -- and nothing else,
+and the renaming is done on the tree rather than in the source so there is no
+chance of rewriting the inside of a string literal and comparing two templates
+that were never the same one.
+
+Writing the rename was itself worth it: a macro's name, an import's target and a
+from-import's aliases are bindings carried as *attributes* rather than as name
+nodes, and a block's, a filter's, a test's and a keyword argument's names are not
+bindings at all. The test has to know the difference, so it is written down.
+
 `make mutate` asks the question a passing suite cannot answer. A suite that
 passes says the code does what the tests ask; it does not say the tests ask for
 much. So each place the analysis records something -- an effect applied, a
