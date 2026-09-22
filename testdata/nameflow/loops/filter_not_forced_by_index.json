@@ -1,0 +1,6 @@
+{
+  "case": "loops/filter_not_forced_by_index.jj2",
+  "variables": {
+    "d": "fr"
+  }
+}
