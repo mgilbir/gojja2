@@ -1,0 +1,5 @@
+{
+  "d": 1
+}
+---
+{% set ns = namespace() %}{% set ns.a, d.b = 1/0, 2 %}

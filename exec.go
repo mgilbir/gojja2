@@ -565,6 +565,11 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 }
 
 func (ex *exec) execAssign(n *ast.Assign) error {
+	// Before the value, not with the assignment: see checkNamespaceTargets.
+	// `{% set %}` with a body does not do this, and neither does jinja2.
+	if err := ex.checkNamespaceTargets(n.Target); err != nil {
+		return err
+	}
 	v, err := ex.eval(n.Node)
 	if err != nil {
 		return err

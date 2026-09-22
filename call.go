@@ -457,6 +457,59 @@ func (ex *exec) evalTest(n *ast.Test) (value.Value, error) {
 
 // --- assignment --------------------------------------------------------------
 
+// namespaceTarget reports the namespace `name` holds, for an `ns.attr` target.
+//
+// The target's type is checked before it is used, so a name that resolves to
+// undefined reports the namespace error rather than the undefined one -- the
+// fix is to create a namespace either way, and that is what the message should
+// say.
+func (ex *exec) namespaceTarget(name string) (*namespaceObject, error) {
+	base, _, err := ex.sc.lookup(name)
+	if err != nil {
+		return nil, err
+	}
+	ns, ok := base.Interface().(*namespaceObject)
+	if !ok {
+		return nil, errs.New(errs.TemplateRuntimeError,
+			"cannot assign attribute on non-namespace object")
+	}
+	return ns, nil
+}
+
+// checkNamespaceTargets requires every `ns.attr` in an assignment target to
+// name a namespace, before any of the value has been evaluated.
+//
+// jinja2 compiles that check as a statement ahead of the assignment rather
+// than as part of it, so `{% set d.v = 1 / 0 %}` on a `d` that is not a
+// namespace reports the namespace error and never divides. A name is checked
+// once however often it appears, as it is there.
+func (ex *exec) checkNamespaceTargets(target ast.Expr) error {
+	switch t := target.(type) {
+	case *ast.Name:
+		// The common target, and it cannot contain a reference.
+		return nil
+	case *ast.NSRef:
+		_, err := ex.namespaceTarget(t.Name)
+		return err
+	}
+	// Unpacking, where the references are somewhere inside the tuple.
+	var names []string
+	seen := map[string]bool{}
+	ast.Inspect(target, func(n ast.Node) bool {
+		if ref, ok := n.(*ast.NSRef); ok && !seen[ref.Name] {
+			seen[ref.Name] = true
+			names = append(names, ref.Name)
+		}
+		return true
+	})
+	for _, name := range names {
+		if _, err := ex.namespaceTarget(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // assign binds a value to a target, unpacking tuples.
 func (ex *exec) assign(target ast.Expr, v value.Value) error {
 	switch t := target.(type) {
@@ -471,18 +524,9 @@ func (ex *exec) assign(target ast.Expr, v value.Value) error {
 		return nil
 
 	case *ast.NSRef:
-		// The target's type is checked before it is used, so a name that
-		// resolves to undefined reports the namespace error rather than
-		// the undefined one -- the fix is to create a namespace either
-		// way, and that is what the message should say.
-		base, _, err := ex.sc.lookup(t.Name)
+		ns, err := ex.namespaceTarget(t.Name)
 		if err != nil {
 			return err
-		}
-		ns, ok := base.Interface().(*namespaceObject)
-		if !ok {
-			return errs.New(errs.TemplateRuntimeError,
-				"cannot assign attribute on non-namespace object")
 		}
 		ns.SetAttr(t.Attr, v)
 		return nil

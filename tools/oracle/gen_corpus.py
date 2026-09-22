@@ -1188,6 +1188,20 @@ case("errors/unknown_filter", "{{ 1|nosuch }}")
 case("errors/unknown_filter_soft", "{% if true %}{{ 1|nosuch }}{% endif %}")
 case("errors/unknown_test", "{{ 1 is nosuch }}")
 case("errors/bad_assign", "{% set 1 = 2 %}")
+
+# `{% set ns.attr = value %}` checks that the target is a namespace before it
+# evaluates the value, because jinja2 compiles that check as a statement ahead
+# of the assignment rather than as part of it. Every case below has a value
+# that also fails, so a check made in the wrong order reports the wrong error
+# rather than no error -- which is what the generated differential caught.
+case("errors/nsref_checked_before_value", "{% set d.v = 1/0 %}", d=1)
+case("errors/nsref_checked_before_value_undefined", "{% set d.v = 1/0 %}")
+case("errors/nsref_checked_before_value_tuple",
+     "{% set ns = namespace() %}{% set ns.a, d.b = 1/0, 2 %}", d=1)
+# ... and the same check does not refuse a target that is a namespace, however
+# many times the name appears in it.
+case("errors/nsref_repeated_in_tuple",
+     "{% set ns = namespace() %}{% set ns.a, ns.b = 1, 2 %}[{{ ns.a }}{{ ns.b }}]")
 case("errors/nested_mismatch", "{% for x in [1] %}{% endif %}")
 case("errors/zero_division", "{{ 1/0 }}|{{ 1//0 }}|{{ 1%0 }}|{{ 1.0/0 }}")
 

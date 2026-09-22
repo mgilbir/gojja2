@@ -446,17 +446,55 @@ func (g *generator) forStmt(depth int) {
 }
 
 func (g *generator) setStmt(depth int) {
-	switch g.c.intn(4) {
+	switch g.c.intn(6) {
 	case 0:
 		g.b.WriteString("{% set v = " + g.expr(3) + " %}{{ v }}")
 	case 1:
 		g.b.WriteString("{% set p, q = " + g.c.pick([]string{"1, 2", "lst[0], lst[1]", "pairs[0]"}) + " %}{{ p }}{{ q }}")
 	case 2:
 		g.b.WriteString("{% set ns = namespace(total=0) %}{% for i in lst %}{% set ns.total = ns.total + i %}{% endfor %}{{ ns.total }}")
+	case 3, 4:
+		g.namespaceStmt()
 	default:
 		g.b.WriteString("{% set v %}")
 		g.body(depth - 1)
 		g.b.WriteString("{% endset %}{{ v }}")
+	}
+}
+
+// namespaceStmt writes the namespace shapes the accumulator above never reaches.
+//
+// Coverage said so: the code that gives up on a namespace once it has been
+// handed somewhere was reached by three statements in ten thousand, and the code
+// that builds one from a mapping was reached by none. Those are the shapes where
+// the analysis has to stop being precise, so they are the ones worth generating.
+func (g *generator) namespaceStmt() {
+	switch g.c.intn(6) {
+	case 0:
+		// Two names for one object: a write through either reaches the other.
+		g.b.WriteString("{% set ns = namespace(v=0) %}{% set other = ns %}" +
+			"{% set ns.v = " + g.expr(2) + " %}{{ other.v }}{{ ns.v }}")
+	case 1:
+		// Handed to a macro, which is the same thing by another route.
+		g.b.WriteString("{% macro nsm(o) %}{{ o.v }}{% endmacro %}" +
+			"{% set ns = namespace(v=" + g.expr(2) + ") %}{{ nsm(ns) }}")
+	case 2:
+		// Built from a mapping, so the fields cannot be told apart.
+		g.b.WriteString("{% set ns = namespace(**" +
+			g.c.pick([]string{"d", "{'v': 1}", "dict(v=2)"}) + ") %}{{ ns.v }}")
+	case 3:
+		// Assigned twice, which is one namespace to jinja2's symbol table
+		// and two objects at render time.
+		g.b.WriteString("{% set ns = namespace(a=" + g.expr(2) + ") %}" +
+			"{% for i in lst %}{% set ns = namespace(b=i) %}{{ ns.b }}{% endfor %}{{ ns.a }}")
+	case 4:
+		// Fields that are never read, and one that is.
+		g.b.WriteString("{% set ns = namespace(a=" + g.expr(2) + ", b=" +
+			g.expr(2) + ") %}{{ ns.a }}")
+	default:
+		// A field written on something that is not a namespace at all.
+		g.b.WriteString("{% set " + g.c.pick([]string{"d", "given"}) +
+			".v = " + g.expr(2) + " %}")
 	}
 }
 

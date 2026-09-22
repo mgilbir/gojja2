@@ -267,3 +267,39 @@ func TestAnalyzeToleratesATargetItDoesNotKnow(t *testing.T) {
 			"x", got)
 	}
 }
+
+// The accessors are part of the surface and were reachable by no test, which
+// coverage said plainly: a caller holding a symbol rather than a name asks
+// Flow.Of, and nothing did.
+func TestFlowOf(t *testing.T) {
+	env, err := gojja2.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := env.FromString(`{% if admin %}{{ name }}{% endif %}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := tmpl.Syntax()
+	flow := dataflow.Analyze(tree)
+
+	for name, want := range map[string]dataflow.Effect{
+		"admin": dataflow.Steers,
+		"name":  dataflow.Printed,
+	} {
+		sym := tree.Info.Context[name]
+		if sym == nil {
+			t.Fatalf("%q is not one of the caller's variables", name)
+		}
+		if got := flow.Of(sym); got != want {
+			t.Errorf("Of(%q) = %v, want %v", name, got, want)
+		}
+		if got := flow.Context(tree)[name]; got != flow.Of(sym) {
+			t.Errorf("Of(%q) and Context disagree: %v vs %v", name, flow.Of(sym), got)
+		}
+	}
+	// A symbol the flow never saw has no effects rather than a missing entry.
+	if got := flow.Of(&syntax.Symbol{Name: "stranger"}); got != 0 {
+		t.Errorf("a symbol from nowhere has effects %v, want none", got)
+	}
+}
