@@ -56,6 +56,16 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
 			return value.BigInt(asBig(base)), nil
 		}), true
+	case "is_integer":
+		// An int always is one. 3.12 added the method so that a caller
+		// can ask without knowing which kind of number it holds; before
+		// that the name is simply absent from an int.
+		if !s.PythonVersion().IntHasIsInteger() {
+			return value.Undefined, false
+		}
+		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+			return value.True, nil
+		}), true
 	case "bit_length":
 		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
 			return value.Int(int64(asBig(base).BitLen())), nil
