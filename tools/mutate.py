@@ -56,6 +56,46 @@ CHECK_CONFORMANCE = [
 ]
 
 
+def split_args(text: str) -> list[str]:
+    """Split a call's arguments on the commas that are not inside anything."""
+    out, depth, start, quote = [], 0, 0, ""
+    for i, ch in enumerate(text):
+        if quote:
+            if ch == quote and text[i - 1] != "\\":
+                quote = ""
+            continue
+        if ch in "'\"`":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            out.append(text[start:i].strip())
+            start = i + 1
+    tail = text[start:].strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def drop_the_call(line: str):
+    """Rewrite `a.emit(expr)` as `_ = expr`, keeping the arguments evaluated.
+
+    The traversal a site's arguments perform is not the thing being mutated --
+    the recording is -- and for a site that is the only reader of a loop
+    variable, commenting the whole line out removes both and does not compile.
+    """
+    m = re.match(r"^(\s*)a\.(?:apply|taint|emit|depend)\((.*)\)$", line)
+    if m is None:
+        return None
+    indent, args = m.group(1), split_args(m.group(2))
+    if not args:
+        return None
+    blanks = ", ".join("_" for _ in args)
+    return f"{indent}{blanks} = {', '.join(args)} // MUTATED: recording dropped"
+
+
 def caught() -> bool:
     """Does anything fail with the mutation in place?"""
     for cmd in (CHECK, CHECK_CONFORMANCE):
@@ -87,7 +127,7 @@ def main() -> int:
                 backups[path] = Path(td) / path.name
                 shutil.copyfile(path, backups[path])
 
-        survivors, total = [], 0
+        survivors, total, uncompilable = [], 0, 0
         for path, where, what, line_no, replacement in mutations():
             total += 1
             original = backups[path].read_text(encoding="utf-8")
@@ -101,10 +141,25 @@ def main() -> int:
 
             build = subprocess.run(["go", "build", "./..."], cwd=ROOT,
                                    capture_output=True, text=True)
+            if build.returncode != 0 and line_no is not None:
+                # Commenting the line out left something declared and not
+                # used -- the site is the only reader of a loop variable, so
+                # removing it removes the traversal too. Drop the *recording*
+                # and keep the arguments, which is the mutation this meant to
+                # make in the first place and a harder one to catch.
+                kept = drop_the_call(original.split("\n")[line_no])
+                if kept is not None:
+                    lines = original.split("\n")
+                    lines[line_no] = kept
+                    path.write_text("\n".join(lines), encoding="utf-8")
+                    build = subprocess.run(["go", "build", "./..."], cwd=ROOT,
+                                           capture_output=True, text=True)
             if build.returncode != 0:
-                # Removing the line does not compile, so it is not a mutation
-                # this can make. Counted, and not a survivor.
+                # Not a mutation this can make at all. Counted, not a
+                # survivor, and reported apart so the headline cannot read as
+                # though every site was exercised.
                 status = "uncompilable"
+                uncompilable += 1
             elif caught():
                 status = "caught"
             else:
@@ -115,7 +170,13 @@ def main() -> int:
 
         subprocess.run(["go", "build", "./..."], cwd=ROOT, capture_output=True)
 
-    print(f"\n{total} mutations, {len(survivors)} survived", file=sys.stderr)
+    exercised = total - uncompilable
+    print(f"\n{total} mutations, {exercised} exercised, {len(survivors)} survived",
+          file=sys.stderr)
+    if uncompilable:
+        print(f"  {uncompilable} could not be made at all -- neither removing the "
+              f"line nor dropping the call compiles, so nothing was measured there",
+              file=sys.stderr)
     for where, what in survivors:
         print(f"  survived: {where}  {what}", file=sys.stderr)
     return 1 if survivors else 0
