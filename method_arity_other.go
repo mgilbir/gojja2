@@ -18,7 +18,7 @@ import "github.com/mgilbir/gojja2/value"
 // Regenerate with `make arity-matrix`.
 // 3.14 is absent because it words every entry exactly as the pin does.
 var methodArityOther = map[value.PythonVersion]map[string]methodSignature{
-	// CPython 3.11: 27 of the table's entries differ.
+	// CPython 3.11: 26 of the table's entries differ.
 	value.Python311: {
 		"bytes.count":      {minArgs: 1, maxArgs: 3, fewMessage: "count() takes at least 1 argument (%d given)", manyMessage: "count() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "bytes.count() takes no keyword arguments", anyKw: false},
 		"bytes.decode":     {minArgs: 0, maxArgs: 2, fewMessage: "", manyMessage: "decode() takes at most 2 arguments (%d given)", kwNames: []string{"encoding", "errors"}, kwMessage: "'%s' is an invalid keyword argument for decode()", anyKw: false},
@@ -33,7 +33,6 @@ var methodArityOther = map[value.PythonVersion]map[string]methodSignature{
 		"bytes.split":      {minArgs: 0, maxArgs: 2, fewMessage: "", manyMessage: "split() takes at most 2 arguments (%d given)", kwNames: []string{"sep", "maxsplit"}, kwMessage: "'%s' is an invalid keyword argument for split()", anyKw: false},
 		"bytes.splitlines": {minArgs: 0, maxArgs: 1, fewMessage: "", manyMessage: "splitlines() takes at most 1 argument (%d given)", kwNames: []string{"keepends"}, kwMessage: "'%s' is an invalid keyword argument for splitlines()", anyKw: false},
 		"bytes.startswith": {minArgs: 1, maxArgs: 3, fewMessage: "startswith() takes at least 1 argument (%d given)", manyMessage: "startswith() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "bytes.startswith() takes no keyword arguments", anyKw: false},
-		"list.sort":        {minArgs: 0, maxArgs: 2, fewMessage: "", manyMessage: "sort() takes at most 2 arguments (%d given)", kwNames: []string{"key", "reverse"}, kwMessage: "'%s' is an invalid keyword argument for sort()", anyKw: false},
 		"str.count":        {minArgs: 1, maxArgs: 3, fewMessage: "count() takes at least 1 argument (%d given)", manyMessage: "count() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "str.count() takes no keyword arguments", anyKw: false},
 		"str.encode":       {minArgs: 0, maxArgs: 2, fewMessage: "", manyMessage: "encode() takes at most 2 arguments (%d given)", kwNames: []string{"encoding", "errors"}, kwMessage: "'%s' is an invalid keyword argument for encode()", anyKw: false},
 		"str.endswith":     {minArgs: 1, maxArgs: 3, fewMessage: "endswith() takes at least 1 argument (%d given)", manyMessage: "endswith() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "str.endswith() takes no keyword arguments", anyKw: false},
@@ -48,7 +47,7 @@ var methodArityOther = map[value.PythonVersion]map[string]methodSignature{
 		"str.splitlines":   {minArgs: 0, maxArgs: 1, fewMessage: "", manyMessage: "splitlines() takes at most 1 argument (%d given)", kwNames: []string{"keepends"}, kwMessage: "'%s' is an invalid keyword argument for splitlines()", anyKw: false},
 		"str.startswith":   {minArgs: 1, maxArgs: 3, fewMessage: "startswith() takes at least 1 argument (%d given)", manyMessage: "startswith() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "str.startswith() takes no keyword arguments", anyKw: false},
 	},
-	// CPython 3.12: 27 of the table's entries differ.
+	// CPython 3.12: 26 of the table's entries differ.
 	value.Python312: {
 		"bytes.count":      {minArgs: 1, maxArgs: 3, fewMessage: "count() takes at least 1 argument (%d given)", manyMessage: "count() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "bytes.count() takes no keyword arguments", anyKw: false},
 		"bytes.decode":     {minArgs: 0, maxArgs: 2, fewMessage: "", manyMessage: "decode() takes at most 2 arguments (%d given)", kwNames: []string{"encoding", "errors"}, kwMessage: "'%s' is an invalid keyword argument for decode()", anyKw: false},
@@ -63,7 +62,6 @@ var methodArityOther = map[value.PythonVersion]map[string]methodSignature{
 		"bytes.split":      {minArgs: 0, maxArgs: 2, fewMessage: "", manyMessage: "split() takes at most 2 arguments (%d given)", kwNames: []string{"sep", "maxsplit"}, kwMessage: "'%s' is an invalid keyword argument for split()", anyKw: false},
 		"bytes.splitlines": {minArgs: 0, maxArgs: 1, fewMessage: "", manyMessage: "splitlines() takes at most 1 argument (%d given)", kwNames: []string{"keepends"}, kwMessage: "'%s' is an invalid keyword argument for splitlines()", anyKw: false},
 		"bytes.startswith": {minArgs: 1, maxArgs: 3, fewMessage: "startswith() takes at least 1 argument (%d given)", manyMessage: "startswith() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "bytes.startswith() takes no keyword arguments", anyKw: false},
-		"list.sort":        {minArgs: 0, maxArgs: 2, fewMessage: "", manyMessage: "sort() takes at most 2 arguments (%d given)", kwNames: []string{"key", "reverse"}, kwMessage: "'%s' is an invalid keyword argument for sort()", anyKw: false},
 		"str.count":        {minArgs: 1, maxArgs: 3, fewMessage: "count() takes at least 1 argument (%d given)", manyMessage: "count() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "str.count() takes no keyword arguments", anyKw: false},
 		"str.encode":       {minArgs: 0, maxArgs: 2, fewMessage: "", manyMessage: "encode() takes at most 2 arguments (%d given)", kwNames: []string{"encoding", "errors"}, kwMessage: "'%s' is an invalid keyword argument for encode()", anyKw: false},
 		"str.endswith":     {minArgs: 1, maxArgs: 3, fewMessage: "endswith() takes at least 1 argument (%d given)", manyMessage: "endswith() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "str.endswith() takes no keyword arguments", anyKw: false},

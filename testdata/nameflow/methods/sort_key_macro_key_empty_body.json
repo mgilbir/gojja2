@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_macro_key_empty_body.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

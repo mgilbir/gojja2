@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_macro_key_is_stable.jj2",
+  "variables": {
+    "words": "or"
+  }
+}

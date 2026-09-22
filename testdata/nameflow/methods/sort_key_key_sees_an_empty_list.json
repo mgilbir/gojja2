@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_key_sees_an_empty_list.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

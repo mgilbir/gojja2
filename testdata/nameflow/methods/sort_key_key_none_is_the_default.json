@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_key_none_is_the_default.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}
