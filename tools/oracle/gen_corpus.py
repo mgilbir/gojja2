@@ -2825,6 +2825,25 @@ case("methods/dict_view_first_and_reverse",
 # walked forwards only, which is the case the wording exists for.
 case("errors/loop_is_not_reversible", "{% for i in [1, 2] %}{{ loop|last }}{% endfor %}")
 
+# --- an empty bytes decodes without looking the codec up -----------------------
+# CPython answers "" for an empty bytes before it consults the codec registry,
+# so `b''.decode('nope')` is not an error and `b'x'.decode('nope')` is. The
+# handler is skipped the same way. It is a decode-side fast path only:
+# `''.encode('nope')` still raises, which is the asymmetry to get right.
+#
+# This also settles every codec gojja2 does not implement, for the empty case:
+# `b''.decode('utf-16')` now agrees exactly rather than falling under the
+# divergence docs/divergences.md records for the rest of them.
+case("codecs/empty_bytes_decode_unknown", "[{{ ''.encode().decode('nope') }}]")
+case("codecs/empty_bytes_decode_unsupported", "[{{ ''.encode().decode('utf-16') }}]")
+case("codecs/empty_bytes_decode_bad_handler",
+     "[{{ ''.encode().decode('utf-8', 'nope') }}]|[{{ ''.encode().decode('nope', 'nope') }}]")
+# ...and the three that must still fail, which is what makes the fast path a
+# fast path rather than a hole.
+case("errors/nonempty_bytes_decode_unknown", "{{ 'x'.encode().decode('nope') }}")
+case("errors/empty_str_encode_unknown", "{{ ''.encode('nope') }}")
+case("errors/empty_bytes_decode_bad_type", "{{ ''.encode().decode(1) }}")
+
 # ...and the sixth surface, which *was* wrong: an empty view is falsey.
 #
 # Python takes bool() from __bool__, or from __len__ when there is no __bool__,

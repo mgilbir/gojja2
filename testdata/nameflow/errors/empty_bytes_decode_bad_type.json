@@ -1,0 +1,4 @@
+{
+  "case": "errors/empty_bytes_decode_bad_type.jj2",
+  "variables": {}
+}
