@@ -1,0 +1,6 @@
+{
+  "case": "format/z_leaves_infinity_alone.jj2",
+  "variables": {
+    "big": "or"
+  }
+}

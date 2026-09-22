@@ -1,0 +1,6 @@
+{
+  "case": "format/z_every_float_type.jj2",
+  "variables": {
+    "nz": "or"
+  }
+}

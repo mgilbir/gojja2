@@ -59,6 +59,10 @@ type formatSpec struct {
 	prec     int
 	hasPrec  bool
 	typ      byte
+	// zcoerce is 'z', which renders what rounds to zero without its sign.
+	// Python 3.11 added it (PEP 682), which is every version modelled here,
+	// so it needs no version gate.
+	zcoerce bool
 }
 
 func parseFormatSpec(spec string, v Value) (formatSpec, error) {
@@ -79,6 +83,23 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 	if i < len(r) && (r[i] == '+' || r[i] == '-' || r[i] == ' ') {
 		f.sign = byte(r[i])
 		i++
+	}
+	// 'z' sits between the sign and '#', and nowhere else: `{:z#}` is a
+	// spec and `{:#z}` is a '#' followed by a type called z.
+	if i < len(r) && r[i] == 'z' {
+		f.zcoerce = true
+		i++
+		// Which values may ask for it is decided here rather than at the
+		// render, because CPython decides it here too: `{:zx}` on an int
+		// is about the z and not about the x.
+		switch {
+		case v.Kind() == KindInt || v.Kind() == KindBool:
+			return f, errs.New(errs.ValueError,
+				"Negative zero coercion (z) not allowed in integer format specifier")
+		case v.Kind() == KindString:
+			return f, errs.New(errs.ValueError,
+				"Negative zero coercion (z) not allowed in string format specifier")
+		}
 	}
 	if i < len(r) && r[i] == '#' {
 		f.alt = true
@@ -448,7 +469,25 @@ func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
 	if percent {
 		body += "%"
 	}
-	return f.withSign(math.Signbit(x), "", body), nil
+	// 'z' drops the sign from what *rounds* to zero rather than from -0.0
+	// alone, so `{:z.1f}` of -0.04 is "0.0" while `{:z.2%}` of -0.001 keeps
+	// its sign at "-0.10%". An infinity has no digits and is never coerced.
+	negative := math.Signbit(x)
+	if f.zcoerce && negative && !math.IsInf(x, 0) && !math.IsNaN(x) && !hasNonZeroDigit(body) {
+		negative = false
+	}
+	return f.withSign(negative, "", body), nil
+}
+
+// hasNonZeroDigit reports whether a formatted body still has a digit that is
+// not zero, which is what says a rounded result is not zero after all.
+func hasNonZeroDigit(body string) bool {
+	for i := range len(body) {
+		if body[i] >= '1' && body[i] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 // splitExponent separates the mantissa from the exponent, which is where both
