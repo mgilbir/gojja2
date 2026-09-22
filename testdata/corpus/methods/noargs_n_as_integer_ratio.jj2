@@ -1,0 +1,7 @@
+{
+  "n": 3,
+  "f": 1.5,
+  "yes": true
+}
+---
+{{ n.as_integer_ratio() }}|{{ n.as_integer_ratio(1) }}

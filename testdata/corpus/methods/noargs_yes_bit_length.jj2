@@ -1,0 +1,7 @@
+{
+  "n": 3,
+  "f": 1.5,
+  "yes": true
+}
+---
+{{ yes.bit_length() }}|{{ yes.bit_length(1) }}

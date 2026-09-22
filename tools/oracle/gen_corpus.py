@@ -2606,6 +2606,142 @@ case("errors/maketrans_first_arg", "{{ 'ab'.maketrans(1, 'b') }}")
 case("errors/join_any_iterable", "{{ '-'.join(none) }}")
 case("errors/encode_errors_before_codec", "{{ 'ab'.encode('nosuch', 1) }}")
 
+# bytes.hex asks four questions about its separator, in an order that matters.
+# CPython *measures* it before looking at its type, so an int fails as something
+# with no length rather than as a wrong type; only a value exactly one long is
+# asked what it is; and only a str or bytes gets as far as the ASCII check.
+#
+# An audit of error sites no corpus case reaches found this: gojja2 asked the
+# type alone, which got every wording wrong, silently accepted a separator of
+# any length, and rejected a bytes while saying `sep must be str or bytes, not
+# bytes`.
+for _n, _src in [
+    ("no_len_int", "{{ b.hex(1) }}"),
+    ("no_len_float", "{{ b.hex(1.5) }}"),
+    ("no_len_none", "{{ b.hex(none) }}"),
+    ("length_zero_list", "{{ b.hex([]) }}"),
+    ("length_zero_str", "{{ b.hex('') }}"),
+    ("length_two_str", "{{ b.hex('--') }}"),
+    ("length_zero_bytes", "{{ b.hex(''.encode()) }}"),
+    ("not_str_or_bytes_list", "{{ b.hex(['x']) }}"),
+    ("not_str_or_bytes_dict", "{{ b.hex({'a': 1}) }}"),
+    ("not_str_or_bytes_range", "{{ b.hex(range(1)) }}"),
+    ("not_ascii_str", "{{ b.hex('\u00e9') }}"),
+    ("not_ascii_bytes", "{{ b.hex((255).to_bytes(1, 'big')) }}"),
+    ("bytes_separator", "{{ b.hex('-'.encode()) }}"),
+    ("str_separator", "{{ b.hex('-') }}"),
+    ("separator_keyword", "{{ b.hex(sep='-') }}"),
+    ("grouped_from_the_right", "{{ 'abcdef'.encode().hex('_', 2) }}"),
+    ("grouped_from_the_left", "{{ 'abcdef'.encode().hex('_', -2) }}"),
+    ("group_of_zero", "{{ b.hex('-', 0) }}"),
+    ("group_not_an_integer", "{{ b.hex('-', 'x') }}"),
+    ("empty_receiver", "{{ ''.encode().hex('-') }}"),
+    ("empty_receiver_bad_sep", "{{ ''.encode().hex(1) }}"),
+    ("no_separator", "{{ b.hex() }}"),
+]:
+    case(f"bytes/hex_{_n}", "{% set b = 'ab'.encode() %}" + _src)
+
+# |xmlattr refuses a key that could close the attribute and open another. The
+# same audit found the message reversed -- gojja2 said `Invalid character 'a b'
+# in attribute name.` where jinja2 says `Invalid character in attribute name:
+# 'a b'` -- and nothing anywhere had ever compared it.
+#
+# jinja2 matches [\s/>=] with re.ASCII, so the set is exactly these six plus
+# ASCII whitespace: a non-breaking space is a legal attribute name.
+for _n, _src in [
+    ("space", "{{ {'a b': 1}|xmlattr }}"),
+    ("slash", "{{ {'a/b': 1}|xmlattr }}"),
+    ("gt", "{{ {'a>b': 1}|xmlattr }}"),
+    ("equals", "{{ {'a=b': 1}|xmlattr }}"),
+    ("tab", "{{ {'a\tb': 1}|xmlattr }}"),
+    ("newline", "{{ {'a\nb': 1}|xmlattr }}"),
+    ("nbsp_is_allowed", "{{ {'a\u00a0b': 1}|xmlattr }}"),
+    ("lt_is_allowed", "{{ {'a<b': 1}|xmlattr }}"),
+    ("quote_is_allowed", "{{ {\"a'b\": 1}|xmlattr }}"),
+    ("empty_key", "{{ {'': 1}|xmlattr }}"),
+    ("later_key", "{{ {'a': 1, 'b c': 2}|xmlattr }}"),
+    ("skipped_none_then_bad", "{{ {'a': none, 'b c': 2}|xmlattr }}"),
+]:
+    case(f"filters/xmlattr_key_{_n}", _src)
+
+# Nine numeric methods take no arguments at all, and none of them checked: gojja2
+# answered `{{ n.bit_length(1) }}` as 1 where CPython refuses the call. Found
+# while probing the neighbours of the ungraded error sites -- a *missing* message
+# is invisible to that audit, which only sees the ones that exist.
+#
+# CPython names the receiver's own type rather than where the method was defined,
+# so a bool says bool.bit_length(), and a keyword beats a count.
+for _recv, _meths in [("n", ["conjugate", "is_integer", "bit_length",
+                             "bit_count", "as_integer_ratio"]),
+                      ("f", ["conjugate", "is_integer", "hex",
+                             "as_integer_ratio"]),
+                      ("yes", ["bit_length", "conjugate"])]:
+    for _m in _meths:
+        case(f"methods/noargs_{_recv}_{_m}",
+             "{{ %s.%s() }}|{{ %s.%s(1) }}" % (_recv, _m, _recv, _m),
+             n=3, f=1.5, yes=True)
+for _recv, _m in [("n", "bit_length"), ("f", "hex"), ("yes", "conjugate")]:
+    case(f"methods/noargs_{_recv}_{_m}_keyword",
+         "{{ %s.%s(x=1) }}" % (_recv, _m), n=3, f=1.5, yes=True)
+    case(f"methods/noargs_{_recv}_{_m}_keyword_beats_count",
+         "{{ %s.%s(1, x=2) }}" % (_recv, _m), n=3, f=1.5, yes=True)
+    case(f"methods/noargs_{_recv}_{_m}_two",
+         "{{ %s.%s(1, 2) }}" % (_recv, _m), n=3, f=1.5, yes=True)
+
+# bytes.fromhex is fussier than it looks. Whitespace separates byte pairs and may
+# not sit inside one, every ASCII space counts and no other does, and the
+# reported position is the offending character's -- with a pair cut short by the
+# end of the string reported at the end rather than at the digit that began it.
+# Positions are code points, because CPython counts them in a str.
+#
+# gojja2 skipped only " " and reported the start of the pair for every failure,
+# which is right only when the first digit is the bad one. Found by the audit of
+# error sites no corpus case reaches.
+for _n, _arg in [
+    ("short_pair", "'a'"),
+    ("space_inside_a_pair", "'6 1'"),
+    ("bad_first_digit", "'zz'"),
+    ("bad_second_digit", "'6z'"),
+    ("bad_later_digit", "'661z'"),
+    ("surrounding_spaces", "'  61  '"),
+    ("underscore", "'6_1'"),
+    ("ends_after_a_digit", "'61 6'"),
+    ("one_digit", "'6'"),
+    ("empty", "''"),
+    ("bad_in_the_middle", "'61z1'"),
+    ("tab_separates", "'\t61'"),
+    ("newline_separates", "'\n61'"),
+    ("trailing_tab", "'61\t'"),
+    ("tab_inside_a_pair", "'6\t1'"),
+    ("return_separates", "'\r61'"),
+    ("trailing_space_in_a_pair", "'6 '"),
+    ("only_spaces", "'  '"),
+    ("two_spaces_between", "'61  61'"),
+    ("two_spaces_inside", "'6  1'"),
+    ("nbsp_is_not_a_space", "'\u00a061'"),
+    ("position_counts_code_points", "'61\u00e9'"),
+    ("non_ascii_first", "'\u00e961'"),
+    ("non_ascii_second", "'6\u00e9'"),
+    ("non_ascii_after_a_space", "'61 \u00e9'"),
+    ("wide_non_ascii", "'\u4e0061'"),
+    ("non_ascii_in_the_middle", "'61\u00e91'"),
+    ("not_a_string", "1"),
+    ("valid", "'61'"),
+    # 3.14 widened the argument to anything bytes-like and reworded the
+    # refusal, and it replaced the position message with a digit count --
+    # but only for a pair cut short by the end of the input. A pair spoiled
+    # by a character still reports that character, on every version. The
+    # version matrix caught all three while this branch was being gated.
+    ("not_a_string_none", "none"),
+    ("not_a_string_list", "[]"),
+    ("bytes_argument", "'61'.encode()"),
+    ("bytes_argument_bad_digit", "'6z'.encode()"),
+    ("bytes_argument_short", "'a'.encode()"),
+    ("bytes_argument_spaced", "'61 61'.encode()"),
+    ("bytes_argument_empty", "''.encode()"),
+]:
+    case(f"bytes/fromhex_{_n}", "{{ ''.encode().fromhex(%s) }}" % _arg)
+
 # Neither format_map nor translate converts the argument it is handed.
 # translate is `table[ord(c)]` per character, catching LookupError, so an empty
 # string never touches the table and anything subscriptable by an integer will

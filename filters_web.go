@@ -439,7 +439,7 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		// and start another, so it is refused rather than escaped.
 		if strings.ContainsAny(key, " \t\n\r\f\v/>=") {
 			return value.Undefined, errs.New(errs.ValueError,
-				"Invalid character %s in attribute name.",
+				"Invalid character in attribute name: %s",
 				value.ReprFor(value.String(key), s.PythonVersion()))
 		}
 		parts = append(parts, fmt.Sprintf(`%s="%s"`, escapeHTML(key), escapeHTML(value.Str(e.Value))))

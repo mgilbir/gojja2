@@ -1,0 +1,6 @@
+{
+  "case": "methods/noargs_yes_bit_length.jj2",
+  "variables": {
+    "yes": "or"
+  }
+}

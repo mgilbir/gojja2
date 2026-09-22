@@ -1,0 +1,14 @@
+{
+  "case": "bytes/fromhex_ends_after_a_digit.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.14"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "fromhex() arg must contain an even number of hexadecimal digits"
+  }
+}
