@@ -37,6 +37,11 @@ SITES = [
     # it: a Def, a Use or a Scope that goes unrecorded is a name the analysis
     # cannot see, which is indistinguishable from a name that does nothing.
     (ROOT / "syntax_build.go", r"^\s*b\.info\.(Defs|Uses|Scopes|Context)\[.*\] = .*$"),
+    # ...and the frame rules the tree is built from. Which names a frame owns
+    # is decided here, on jinja2's first-mention rule, so a load, a store or a
+    # settle that goes unrecorded moves a name into or out of a scope -- which
+    # is a different answer to every question asked afterwards.
+    (ROOT / "frames.go", r"^\s*v\.(load|store|settle)\(.*\)$"),
 ]
 
 # Rules that are a single predicate rather than a call, mutated by inverting

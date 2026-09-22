@@ -1282,6 +1282,19 @@ case("dataflow/loop_writes_its_own_copy",
 ns_case("namespace_field_from_outer",
         "{% set ns = namespace(a=x) %}{% for i in xs %}{{ ns.a }}{% endfor %}")
 
+# Reaching *through* an attribute can stop the render, and the analysis did not
+# know it. `x.a` cannot fail whatever x holds -- a missing attribute is
+# undefined and prints empty -- but `(x.a).b` can, because `x.a` is undefined
+# for most x and reaching through an undefined raises. So x decides whether the
+# render finishes, which is what Required says.
+#
+# Found by the soak's render check rather than by the differential: the Python
+# reference had the same gap, so the two agreed with each other and both were
+# wrong. `{{ (f.real).name }}` renders for a float and raises for a string.
+case("dataflow/required_through_an_attribute", "{{ (src.real).name }}", src=2.5)
+case("dataflow/required_through_an_item", "{{ (src.real)[0] }}", src=2.5)
+case("dataflow/not_required_one_step", "[{{ src.nosuch }}]", src=2.5)
+
 # A macro whose name is not a binding in any scope.
 #
 # jinja2's first-mention rule resolves a name outward when an earlier branch

@@ -1,6 +1,6 @@
 {
   "case": "inherit/self_super_undefined.jj2",
   "variables": {
-    "self": "o"
+    "self": "or"
   }
 }
