@@ -1,0 +1,5 @@
+{
+  "src": "S"
+}
+---
+{% macro m(a) %}{{ src }}{% endmacro %}{% macro m(a) %}A{% endmacro %}{{ m(1) }}

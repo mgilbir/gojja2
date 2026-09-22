@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/macro_redefined_does_not_print.jj2",
+  "variables": {
+    "src": "-"
+  }
+}

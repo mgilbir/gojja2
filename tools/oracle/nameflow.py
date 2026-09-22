@@ -616,6 +616,19 @@ class Analysis:
             if sym is not None:
                 self.macro_params[sym.id] = params
                 self.macro_out[sym.id] = out
+            else:
+                # The macro's name is not a binding in any scope: jinja2's
+                # first-mention rule resolved it outward to the caller's
+                # variables, which is what a dead `{% if %}` mentioning the
+                # name first does. There is nothing to hang the body on, so a
+                # call cannot be matched to it -- and dropping what the body
+                # captured makes everything the macro prints invisible, which
+                # is a false negative and the one answer this must never give.
+                #
+                # A defined macro can be called, and if it is, its body reaches
+                # the document. Claiming that for one never called over-claims
+                # in the safe direction; claiming nothing does not.
+                self.emit(out)
 
         elif isinstance(n, nodes.CallBlock):
             self.push(n)
