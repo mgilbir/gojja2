@@ -1202,6 +1202,32 @@ case("errors/nsref_checked_before_value_tuple",
 # many times the name appears in it.
 case("errors/nsref_repeated_in_tuple",
      "{% set ns = namespace() %}{% set ns.a, ns.b = 1, 2 %}[{{ ns.a }}{{ ns.b }}]")
+
+# `{% set ns.attr %}...{% endset %}` is not the same operation, and the contrast
+# is the point of these. jinja2 compiles the two forms through different
+# visitors: visit_Assign emits the namespace check above, visit_AssignBlock
+# emits none and visit_NSRef writes a bare `ref[attr]`. So the block form is a
+# plain item assignment -- which *succeeds* on a dict, where the `=` form on the
+# same dict raises.
+case("errors/nsref_block_dict", "{% set d.v %}x{% endset %}[{{ d }}]", d={})
+case("errors/nsref_block_dict_nonempty", "{% set d.v %}x{% endset %}[{{ d }}]", d={"a": 1})
+case("errors/nsref_eq_dict_still_raises", "{% set d.v = 1 %}", d={})
+# The rest fail the way Python's __setitem__ fails, naming the concrete type.
+case("errors/nsref_block_int", "{% set d.v %}x{% endset %}", d=1)
+case("errors/nsref_block_none", "{% set d.v %}x{% endset %}", d=None)
+case("errors/nsref_block_list", "{% set d = [1] %}{% set d.v %}x{% endset %}")
+case("errors/nsref_block_tuple", "{% set d = (1,) %}{% set d.v %}x{% endset %}")
+case("errors/nsref_block_markup", "{% set d = 'a'|safe %}{% set d.v %}x{% endset %}")
+# A namespace still works, a filter on the block still applies, and a tuple
+# target unpacks the captured text into whichever kind of thing each name holds.
+case("errors/nsref_block_namespace",
+     "{% set ns = namespace() %}{% set ns.v %}x{% endset %}[{{ ns.v }}]")
+case("errors/nsref_block_filtered", "{% set d.v | upper %}ab{% endset %}[{{ d['v'] }}]", d={})
+case("errors/nsref_block_tuple_target",
+     "{% set ns = namespace() %}{% set ns.a, d.b %}xy{% endset %}[{{ ns.a }}{{ d }}]", d={})
+# Listed in known_failures.txt: jinja2 names the sentinel its resolver returns
+# for a name that was never set, and `_MissingType` has no counterpart here.
+case("errors/nsref_block_undefined", "{% set d.v %}x{% endset %}")
 case("errors/nested_mismatch", "{% for x in [1] %}{% endif %}")
 case("errors/zero_division", "{{ 1/0 }}|{{ 1//0 }}|{{ 1%0 }}|{{ 1.0/0 }}")
 

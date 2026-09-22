@@ -80,6 +80,80 @@ func TestRenderDoesNotMutateCallerData(t *testing.T) {
 	}
 }
 
+// TestRenderValuesLetsATemplateMutateWhatItIsGiven is the other side of the
+// test above, and the reason that one says "Render" rather than "a render".
+//
+// RenderValues exists to skip the conversion from Go, and the conversion is
+// what protects the caller. So the values handed to it are the render's to
+// write to: the writes are visible afterwards and to every later render given
+// the same values. That is jinja2's behaviour, and here it is the documented
+// trade for skipping the conversion rather than an accident -- so it is pinned,
+// because the alternative is that it changes without anyone noticing.
+//
+// `{% set d.v %}...{% endset %}` is in the list because it is the one that does
+// not look like a mutation: it is an item assignment, not a namespace write,
+// and jinja2 emits no namespace check for the block form. See
+// docs/divergences.md.
+func TestRenderValuesLetsATemplateMutateWhatItIsGiven(t *testing.T) {
+	env := mustEnv(gojja2.WithExtensions("do"))
+	for _, tc := range []struct {
+		name, src string
+		first     string // what `{{ lst }}` says on the first render
+		second    string // ...and on the second, given the same values
+	}{
+		{"append", `{% do lst.append(9) %}`, "[1, 9]", "[1, 9, 9]"},
+		{"sort in place", `{% do lst.sort() %}`, "[1]", "[1]"},
+		{"set block writes an item", `{% set d.v %}x{% endset %}`, "[1]", "[1]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpl, err := env.FromString(tc.src + "{{ lst }}")
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			lst := value.NewList(value.Int(1))
+			d := value.NewDict()
+			vars := map[string]value.Value{"lst": lst, "d": d}
+
+			var first strings.Builder
+			if err := tmpl.RenderValues(context.Background(), &first, vars); err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			if got := first.String(); got != tc.first {
+				t.Fatalf("first render = %q, want %q", got, tc.first)
+			}
+			// The second render starts from what the first left behind,
+			// which is the whole point: nothing was copied.
+			var second strings.Builder
+			if err := tmpl.RenderValues(context.Background(), &second, vars); err != nil {
+				t.Fatalf("second render: %v", err)
+			}
+			if got := second.String(); got != tc.second {
+				t.Errorf("second render = %q, want %q -- the caller's value "+
+					"did not carry the write over", got, tc.second)
+			}
+		})
+	}
+
+	// And the block form really did write into the caller's dict.
+	tmpl, err := env.FromString(`{% set d.v %}x{% endset %}`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	d := value.NewDict()
+	var sink strings.Builder
+	if err := tmpl.RenderValues(context.Background(), &sink,
+		map[string]value.Value{"d": d}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	dict, ok := d.Dict()
+	if !ok {
+		t.Fatalf("d is not a dict")
+	}
+	if got, ok := dict.GetString("v"); !ok || got.AsString() != "x" {
+		t.Errorf("caller's dict holds %v (present=%v), want \"x\"", got, ok)
+	}
+}
+
 // TestContextVariableIsOneValuePerRender: a render argument is converted on
 // first use, so it has to be remembered. Converting it again on the second
 // mention would hand out a second copy, and a change made through the first --

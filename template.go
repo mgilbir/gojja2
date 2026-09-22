@@ -85,6 +85,19 @@ func (t *Template) RenderString(ctx context.Context, vars map[string]any) (strin
 
 // RenderValues renders into w with variables that are already template values,
 // skipping the conversion from Go.
+//
+// Skipping the conversion also skips what it protects. [Template.Render]
+// converts what it is given, so a template cannot write to the caller's data;
+// the values passed here are used as they are, and a template can mutate them:
+// `{% set _ = lst.append(9) %}`, `{% set _ = d.update(x) %}` and
+// `{% set d.v %}...{% endset %}` all write through to the caller's [value.Value].
+// The writes are visible after the render and to every later render given the
+// same values, so a prepared vars map reused across requests carries whatever
+// an earlier template put in it.
+//
+// Build the values per render, or use [Template.Render], if a template must not
+// be able to do that. See docs/divergences.md, "A render does not mutate the
+// caller's data".
 func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[string]value.Value) (err error) {
 	// A bufio.Writer keeps the many small writes a template makes from
 	// becoming many small syscalls, and gives the render one place to

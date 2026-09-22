@@ -175,15 +175,19 @@ var fuzzProbes = []value.Value{
 func (h *harness) verifyNegatives(tmpl *gojja2.Template, effects map[string]dataflow.Effect,
 	claims *int) string {
 	render := func(name string, probe value.Value) (string, bool, bool) {
-		vars := make(map[string]value.Value, len(h.context)+1)
-		for k, v := range h.context {
-			vars[k] = v
+		// Decoded per render, not copied from a shared map: a shallow
+		// copy shares the values themselves, so one probe's render
+		// could mutate `d` or `lst` and change what the next one sees.
+		// See the harness type comment.
+		vars, err := h.context()
+		if err != nil {
+			return "", false, false
 		}
 		vars[name] = probe
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		var sb strings.Builder
-		err := tmpl.RenderValues(ctx, &sb, vars)
+		err = tmpl.RenderValues(ctx, &sb, vars)
 		if err != nil && ctx.Err() != nil {
 			return "", false, false // ran out of time; says nothing
 		}

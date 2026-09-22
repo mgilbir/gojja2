@@ -195,7 +195,10 @@ func (a *analyzer) bind(target *syntax.Node, srcs symset) {
 		// Not a namespace this is following -- one that was passed in, or
 		// one that got away. The write still happened, so the whole thing
 		// becomes opaque rather than silently lost, and writing a field of
-		// something that is not a namespace stops the render.
+		// something that is not a namespace can stop the render: always for
+		// `{% set ns.v = value %}`, and for the block form on everything
+		// but a dict. Either way the name decides whether the render
+		// finishes, which is what Required claims.
 		a.depend(s, srcs)
 		if s != nil {
 			a.effects[s] |= Opaque | Required

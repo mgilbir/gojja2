@@ -1,0 +1,6 @@
+{
+  "case": "errors/nsref_block_undefined.jj2",
+  "variables": {
+    "d": "r?"
+  }
+}

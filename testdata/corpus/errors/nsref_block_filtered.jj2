@@ -1,0 +1,5 @@
+{
+  "d": {}
+}
+---
+{% set d.v | upper %}ab{% endset %}[{{ d['v'] }}]

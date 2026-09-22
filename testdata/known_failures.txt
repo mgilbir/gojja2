@@ -94,3 +94,13 @@ own/divergence/dict_attr_fallback.jj2    dict.nosuch falls back to a generic ali
 # failing. See docs/divergences.md.
 own/divergence/self_is_iterable.jj2      the legacy iteration protocol accepts __getitem__
 own/divergence/self_list.jj2             list(self) asks for index 0 and raises KeyError
+
+# --- a `{% set %}` block writing to a name that was never set ------------------
+# The block form is an item assignment, not a namespace write -- jinja2 emits no
+# isinstance check for it -- so both engines raise TypeError here. jinja2's
+# generated code still holds the sentinel its resolver returns for an unknown
+# name, because nothing has read it, so the message names `_MissingType`: a
+# private class of jinja2's implementation with no counterpart here. gojja2 names
+# what it actually holds. Every other target type matches exactly, dict and
+# namespace included. See docs/divergences.md.
+own/errors/nsref_block_undefined.jj2   # jinja2 names its own resolver sentinel
