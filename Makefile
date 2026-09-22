@@ -311,7 +311,7 @@ mutate: venv ## Break the analysis on purpose and report what nothing notices
 .PHONY: soak-syntax
 soak-syntax: venv ## Differential-test the structure and analyses: make soak-syntax N=200000 SEED=7
 	GOJJA2_FUZZ_N=$(if $(N),$(N),50000) GOJJA2_FUZZ_SEED=$(if $(SEED),$(SEED),0) \
-		go test ./conformance/ -run 'TestSyntaxDifferential|TestEncodingTheSameMeans' \
+		go test ./conformance/ -run 'TestSyntaxDifferential|TestEncodingTheSameMeans|TestAnalysisIsDeterministic|TestRenamingVariables' \
 		-timeout 60m -v
 
 .PHONY: soak
