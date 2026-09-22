@@ -571,8 +571,11 @@ func (g *generator) expr(depth int) string {
 	case 4:
 		return g.binary(depth)
 	case 14:
-		if g.c.chance(3) {
+		switch {
+		case g.c.chance(3):
 			return g.wrongArity()
+		case g.c.chance(3):
+			return g.demandingFilter()
 		}
 		return g.percentFormat()
 	case 5:
@@ -828,6 +831,76 @@ var loopAttrs = []string{
 	"loop.previtem", "loop.nextitem", "loop.cycle('a', 'b')",
 	"loop.cycle(1, 2, 3)", "loop.changed(i)", "loop.changed(1)",
 	"loop", "loop|string",
+}
+
+// demandingFilter pairs a filter with a subject that reaches its work.
+//
+// These filters were already generated and their insides still were not: every
+// subject the generator builds is short, flat and shallow, so `|wordwrap` never
+// met a word longer than its width, `|pprint` never met a structure deep enough
+// to break across lines, and `|round` never met a halfway case. Six functions
+// behind wordwrap, seven behind pprint and six behind round had never run.
+//
+// The pairing is the point. A filter's arguments are already varied above; what
+// was missing is something for them to act on.
+func (g *generator) demandingFilter() string {
+	switch g.c.intn(4) {
+	case 0:
+		return g.c.pick(wrappable) + "|wordwrap(" + g.c.pick([]string{
+			"5", "8", "11", "8, false", "8, true", "4, true, '\n'",
+			"8, false, none, true", "1", "0",
+		}) + ")"
+	case 1:
+		return g.c.pick(printable) + "|pprint"
+	case 2:
+		return g.c.pick(roundable) + "|round(" + g.c.pick([]string{
+			"", "0", "1", "2", "-1", "-2", "20", "0, 'ceil'", "0, 'floor'",
+			"1, 'common'", "2, 'ceil'", "-1, 'floor'",
+		}) + ")"
+	default:
+		return g.c.pick(wrappable) + "|" + g.c.pick([]string{
+			"truncate(5)", "truncate(5, true)", "truncate(8, false, '~')",
+			"truncate(8, true, '~', 2)", "truncate(0)",
+			"indent(2)", "indent(2, true)", "indent(2, true, true)",
+			"center(30)", "wordcount", "striptags", "urlize", "urlize(10)",
+		})
+	}
+}
+
+// wrappable are subjects with something for a wrapper to do: words longer than
+// any width generated, hyphens to break at (or not), newlines already in place,
+// and the empty string.
+var wrappable = []string{
+	"'antidisestablishmentarianism'",
+	"'a-very-long-hyphenated-thing-indeed'",
+	"'short and-then a-really-long-hyphenated-word at the end'",
+	"'line one\nline two\nline three'",
+	"'no-break' ~ 'ing-here-at-all'",
+	"t", "s", "uni", "blank", "html",
+	"'tabs\tand  double  spaces'",
+	"'a b c d e f g h i j k l m n o p'",
+}
+
+// printable are subjects deep or long enough for pprint to lay out rather than
+// print on one line -- including a list that contains itself, which is only
+// buildable now that the generator can call append.
+var printable = []string{
+	"nested", "users", "d", "pairs",
+	"[[[[[1, 2]]]]]",
+	"{'a': {'b': {'c': {'d': [1, 2, 3]}}}}",
+	"[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]",
+	"['a long string that will not fit on one line with the others', 1, 2]",
+	"{'k': 'a long string that will not fit on one line with the others'}",
+	"lst", "e", "mix",
+}
+
+// roundable include the halfway cases, which are the whole of round's
+// difficulty: Python rounds half to even, and the naive implementation does not.
+var roundable = []string{
+	"0.5", "1.5", "2.5", "-0.5", "-1.5", "-2.5",
+	"1.15", "2.675", "0.125", "1.005",
+	"1234.5678", "-1234.5678", "0.0", "-0.0",
+	"f", "fz", "fneg", "n", "zero", "neg",
 }
 
 // methodCall writes a call to one of Python's own methods on a receiver of the
