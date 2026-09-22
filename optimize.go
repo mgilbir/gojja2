@@ -583,7 +583,7 @@ func (c *constEvaluator) constBinOp(n *ast.BinOp) (value.Value, bool) {
 	case ast.OpAdd:
 		out, err = value.Add(left, right, c.st)
 	case ast.OpSub:
-		out, err = value.Sub(left, right, c.st)
+		out, err = value.Sub(left, right, c.st, c.st.PythonVersion())
 	case ast.OpMul:
 		// The fold budget is passed in, so the multiplication refuses
 		// itself before allocating rather than being pre-screened here

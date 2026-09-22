@@ -64,7 +64,7 @@ const corpusPythonVersion = value.DefaultPythonVersion
 func binaryOpsFor(py value.PythonVersion) map[string]func(a, b value.Value) (value.Value, error) {
 	return map[string]func(a, b value.Value) (value.Value, error){
 		"+":  func(a, b value.Value) (value.Value, error) { return value.Add(a, b, nil) },
-		"-":  func(a, b value.Value) (value.Value, error) { return value.Sub(a, b, nil) },
+		"-":  func(a, b value.Value) (value.Value, error) { return value.Sub(a, b, nil, value.DefaultPythonVersion) },
 		"*":  func(a, b value.Value) (value.Value, error) { return value.Mul(a, b, nil) },
 		"/":  func(a, b value.Value) (value.Value, error) { return value.Div(a, b, py) },
 		"//": func(a, b value.Value) (value.Value, error) { return value.FloorDiv(a, b, py) },

@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'b': 2, 'a': 1} %}{{ (d.keys() - [])|length }}|{{ 'b' in (d.keys() - ['a']) }}|{{ 'a' in (d.keys() - ['a']) }}|{{ (d.keys() - [])|list|sort }}

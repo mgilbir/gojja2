@@ -200,7 +200,7 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 	case ast.OpAdd:
 		return value.Add(left, right, ex.st)
 	case ast.OpSub:
-		return value.Sub(left, right, ex.st)
+		return value.Sub(left, right, ex.st, ex.st.PythonVersion())
 	case ast.OpMul:
 		return value.Mul(left, right, ex.st)
 	case ast.OpDiv:

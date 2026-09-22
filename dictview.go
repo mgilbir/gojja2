@@ -80,6 +80,17 @@ func (v *dictView) GetAttr(string) (value.Value, bool) { return value.Undefined,
 
 func (v *dictView) TypeName() string { return v.kind.name() }
 
+// SetElements makes a keys or items view an operand of set arithmetic, which
+// is what `d.keys() - xs` needs. A *values* view is deliberately not one: its
+// elements need be neither unique nor hashable, and CPython refuses the
+// operation on it for that reason.
+func (v *dictView) SetElements() (elements []value.Value, ok bool) {
+	if v.kind == viewValues {
+		return nil, false
+	}
+	return v.entries(), true
+}
+
 func (v *dictView) Len() int {
 	d, ok := v.d.Dict()
 	if !ok {
