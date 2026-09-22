@@ -30,8 +30,9 @@ const Separator = "\n---\n"
 type Case struct {
 	// Rel is the case's path relative to the corpus root, and its name.
 	Rel string
-	// Context is the render context.
-	Context map[string]value.Value
+	// contextJSON is the render context, still undecoded. It is not a
+	// decoded map, and that is deliberate: see [Case.Context].
+	contextJSON map[string]json.RawMessage
 	// Templates are extra templates the case can include or extend.
 	Templates map[string]string
 	// Settings are the environment options the case runs under.
@@ -133,15 +134,44 @@ func LoadCase(root, path string) (*Case, error) {
 		delete(fields, "__templates__")
 	}
 
-	c.Context = make(map[string]value.Value, len(fields))
-	for name, raw := range fields {
+	c.contextJSON = fields
+	// Decoded once here so a malformed case fails at load rather than at
+	// the first render. The values are discarded; Context decodes its own.
+	if _, err := c.Context(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// Context decodes the case's render context, fresh on every call.
+//
+// Returning a new map of new values each time is the whole point, and costs a
+// small JSON decode to get. A render can *mutate* what it is given --
+// `{% set _ = lst.append(9) %}`, `{% set _ = d.update(x) %}` and
+// `{% set d.v %}...{% endset %}` all write through, and
+// [gojja2.Template.RenderValues] skips the conversion that would otherwise
+// protect the caller -- so a context shared between two renders carries
+// whatever the first one did to it into the second.
+//
+// That has gone wrong three times in this package, in three different shapes:
+// a field decoded once in a constructor, and twice a shallow copy of such a
+// field, which copies the map and shares the values it holds. None of the
+// three looks wrong at the call site, and all three fail the same way: not by
+// erroring, but by quietly comparing against a context an earlier template had
+// already edited. Handing out a decoded map at all is what made them writable,
+// so this does not.
+//
+// TestRenderingACaseTwiceGivesTheSameAnswer is the guard.
+func (c *Case) Context() (map[string]value.Value, error) {
+	out := make(map[string]value.Value, len(c.contextJSON))
+	for name, raw := range c.contextJSON {
 		v, err := fromJSON(raw)
 		if err != nil {
 			return nil, fmt.Errorf("%s: context %q: %w", c.Rel, name, err)
 		}
-		c.Context[name] = v
+		out[name] = v
 	}
-	return c, nil
+	return out, nil
 }
 
 // fromJSON decodes a context value.
@@ -348,8 +378,12 @@ func (c *Case) RenderFor(py gojja2.PythonVersion) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	vars, err := c.Context()
+	if err != nil {
+		return "", err
+	}
 	var out strings.Builder
-	if err := tmpl.RenderValues(context.Background(), &out, c.Context); err != nil {
+	if err := tmpl.RenderValues(context.Background(), &out, vars); err != nil {
 		return "", err
 	}
 	return out.String(), nil
@@ -376,7 +410,11 @@ func (c *Case) RenderFor(py gojja2.PythonVersion) (string, error) {
 // the committed cases. One key cannot be out of order, so the question is only
 // about two or more.
 func (c *Case) HasOrderedDict() bool {
-	for _, v := range c.Context {
+	vars, err := c.Context()
+	if err != nil {
+		return false
+	}
+	for _, v := range vars {
 		if holdsOrderedDict(v, 0) {
 			return true
 		}
@@ -427,8 +465,12 @@ func (c *Case) RenderViaGo() (string, error) {
 	// Go-to-value conversion beneath it -- which is where the worst defect
 	// in this engine lived, and where a corpus of 869 cases was looking at
 	// nothing at all.
-	vars := make(map[string]any, len(c.Context))
-	for k, v := range c.Context {
+	values, err := c.Context()
+	if err != nil {
+		return "", err
+	}
+	vars := make(map[string]any, len(values))
+	for k, v := range values {
 		vars[k] = value.ToGo(v)
 	}
 	var out strings.Builder
