@@ -3041,6 +3041,28 @@ case("loops/filter_not_forced_by_index",
 case("loops/revindex_under_a_working_filter",
      "{% for i in range(3) if i %}{{ loop.revindex }}{{ loop.length }}{{ loop.last }}{% endfor %}")
 
+# A *filtered* loop walks the list live too.
+#
+# The live walk added earlier in this stack reached the plain `{% for %}` and not
+# the filtered one: that path pulls from an iterator, and value.Iterate takes the
+# slice as it is when the walk starts. So a test that shortens the list changed
+# nothing, and the loop ran over every original element -- `{% for i in mix if
+# mix.clear() or 7 %}` printed five where CPython prints one.
+#
+# The test runs between passes, so it sees what the body did *and* what it did
+# itself, which is the whole reason the walk has to be live on this path too.
+case("loops/filtered_list_cleared_by_its_own_test",
+     "{% for i in mix if mix.clear() or 7 %}x{% endfor %}", mix=[1, 2, 3, 4, 5])
+case("loops/filtered_list_shortened_by_its_own_test",
+     "{% for i in mix if mix.pop() %}x{% endfor %}", mix=[1, 2, 3, 4, 5])
+case("loops/filtered_list_shortened_by_the_body",
+     "{% for i in mix if 1 %}x{% set _ = mix.pop() %}{% endfor %}", mix=[1, 2, 3, 4, 5])
+# ...and the shapes that must not move: a test that touches nothing, and the
+# containers a snapshot and a live walk cannot tell apart.
+case("loops/filtered_list_untouched", "{% for i in mix if 1 %}x{% endfor %}", mix=[1, 2, 3, 4, 5])
+case("loops/filtered_tuple_and_range",
+     "{% for i in (1,2,3) if 1 %}x{% endfor %}|{% for i in range(3) if 1 %}y{% endfor %}")
+
 # --- the 'z' format code ------------------------------------------------------
 # Python 3.11 added `z` to the format mini-language (PEP 682): it renders what
 # rounds to zero without its sign. gojja2 did not know the letter at all, so

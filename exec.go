@@ -515,12 +515,14 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 	if n.Test == nil {
 		return makeLoopSource(ex.st, iterable)
 	}
-	seq, err := value.Iterate(iterable)
+	seq, err := liveValues(iterable)
 	if err != nil {
 		return nil, err
 	}
 	// Pulled one item at a time, as jinja2's filter generator is: the test
-	// runs between the body's passes and therefore sees what the body did.
+	// runs between the body's passes and therefore sees what the body did --
+	// including what it did to the list being walked, which is why the walk
+	// is live rather than over a snapshot.
 	nextItem, stop := iter.Pull(seq)
 	_ = stop
 	// The test runs between pulls and can resize the source, so the same
