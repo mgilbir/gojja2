@@ -60,11 +60,25 @@ func TestComparableScreensOutAMultiElementSet(t *testing.T) {
 		{"{'a', 'b'}", false},
 		{"{('b', 2), ('a', 1)}", false},
 		{"[{'a', 'b'}]", false},
+		// ...including when the elements hold the bracket characters the
+		// scan counts. A soak found this one: the `]` inside the first
+		// element closed the group early, the comma was never seen, and
+		// a set of three was graded against CPython's hash order.
+		{"{']', '[', '1'}", false},
+		{"{'}', '{'}", false},
+		// ...and the same under autoescape, where a quote is written out
+		// as an entity and the raw-quote skip does not fire.
+		{"{&#39;]&#39;, &#39;[&#39;, &#39;1&#39;}", false},
+		{"{&#39;a&#39;, &#39;b&#39;}", false},
 		// Stable, and must keep being graded.
 		{"{'a'}", true},
 		{"{1}", true},
 		{"set()", true},
 		{"{('b', 2)}", true}, // one element; the comma is inside the tuple
+		{"{']'}", true},      // one element holding a bracket
+		{"{&#39;a&#39;}", true},
+		{"a, b", true}, // commas with no braces at all
+		{"{'a': 1}", true},
 		{"{'a': 1, 'b': 2}", true},
 		{"{}", true},
 		{"[1, 2]", true},
