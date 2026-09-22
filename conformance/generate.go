@@ -563,7 +563,9 @@ func (g *generator) expr(depth int) string {
 	if depth <= 0 || g.c.exhausted() {
 		return g.atom()
 	}
-	switch g.c.intn(15) {
+	switch g.c.intn(17) {
+	case 15, 16:
+		return g.methodCall(depth)
 	case 0, 1, 2, 3:
 		return g.atom()
 	case 4:
@@ -826,6 +828,131 @@ var loopAttrs = []string{
 	"loop.previtem", "loop.nextitem", "loop.cycle('a', 'b')",
 	"loop.cycle(1, 2, 3)", "loop.changed(i)", "loop.changed(1)",
 	"loop", "loop|string",
+}
+
+// methodCall writes a call to one of Python's own methods on a receiver of the
+// right type.
+//
+// Coverage said nothing here was reached: the generator emitted filters, tests,
+// operators and subscripts, and not one method call, so two thirds of
+// methods.go had never seen a generated template. The receiver is matched to
+// the method on purpose -- `lst.upper()` is an AttributeError and grades only
+// the lookup, while `s.replace(...)` grades the argument handling, which is
+// where the behaviour is.
+//
+// The mutating ones are safe to generate only because a case now decodes its
+// context per render; before that, one `lst.append(9)` poisoned every later
+// comparison in the run.
+func (g *generator) methodCall(depth int) string {
+	switch g.c.intn(10) {
+	case 0, 1, 2:
+		return g.c.pick(strReceivers) + "." + g.c.pick(strMethods)
+	case 3:
+		return g.formatCall()
+	case 4, 5:
+		return g.c.pick(seqReceivers) + "." + g.c.pick(seqMethods)
+	case 6:
+		return g.c.pick(seqReceivers) + "." + g.c.pick(seqMutators)
+	case 7, 8:
+		return g.c.pick(dictReceivers) + "." + g.c.pick(dictMethods)
+	default:
+		return g.c.pick(dictReceivers) + "." + g.c.pick(dictMutators)
+	}
+}
+
+// formatCall writes a str.format or str.format_map, whose field parser and
+// spec expander are the largest thing in methods.go that nothing reached.
+func (g *generator) formatCall() string {
+	if g.c.chance(6) {
+		return g.c.pick([]string{
+			`'{a}'.format_map(d)`, `'{b}'.format_map(d)`,
+			`'{nope}'.format_map(d)`, `'{a}{b}'.format_map(ed)`,
+			`'{}'.format_map(d)`,
+		})
+	}
+	return g.c.pick(formatCalls)
+}
+
+// The receivers are context names of the matching type, so the call is about
+// the method rather than about the lookup failing.
+var (
+	strReceivers  = []string{"s", "t", "uni", "blank", "html", "'a,b,c'", "'Ab1'", "' x\ty '"}
+	seqReceivers  = []string{"lst", "strs", "mix", "e", "pairs", "[3,1,2]"}
+	dictReceivers = []string{"d", "ed", "nested"}
+)
+
+// strMethods are str's own, spelled with arguments that reach the branches:
+// counts that run off the end, separators that are not strings, widths that are
+// negative, and the whitespace/explicit fork in split and rsplit.
+var strMethods = []string{
+	"upper()", "lower()", "title()", "capitalize()", "swapcase()", "casefold()",
+	"strip()", "strip('H')", "lstrip()", "rstrip('d ')",
+	"split()", "split(',')", "split(',', 1)", "split('')", "split(None, 1)",
+	"rsplit()", "rsplit(',')", "rsplit(',', 1)", "rsplit(None, 2)",
+	"splitlines()", "splitlines(true)",
+	"join(strs)", "join(lst)", "join([])", "join('ab')", "join(mix)",
+	"replace('l', 'L')", "replace('l', 'L', 1)", "replace('', '-')", "replace('x', 'y')",
+	"count('l')", "count('l', 2)", "count('l', 2, 4)", "count('')",
+	"find('o')", "find('o', 5)", "index('o')", "index('zz')",
+	"rfind('o')", "rindex('o')",
+	"startswith('He')", "startswith(('a', 'He'))", "endswith('ld')",
+	"zfill(10)", "zfill(0)", "zfill(-1)",
+	"expandtabs()", "expandtabs(4)", "expandtabs(0)",
+	"center(20)", "center(20, '-')", "ljust(20, '.')", "rjust(3)",
+	"partition(' ')", "rpartition(' ')", "partition('zz')",
+	"removeprefix('He')", "removesuffix('ld')",
+	"isascii()", "isprintable()", "istitle()", "isidentifier()",
+	"isdecimal()", "isdigit()", "isnumeric()", "isalpha()", "isalnum()",
+	"isupper()", "islower()", "isspace()",
+	"encode()", "encode('ascii')",
+	"translate({72: 'X'})", "translate({})",
+	"maketrans('ab', 'xy')", "maketrans({'a': 'z'})",
+}
+
+// formatCalls reach the field parser -- positional, named, attribute, index --
+// and the spec expander, including a nested spec.
+var formatCalls = []string{
+	`'{}'.format(1)`, `'{} {}'.format(1, 2)`, `'{0}{0}'.format('a')`,
+	`'{1}'.format(1)`, `'{}'.format()`,
+	`'{x}'.format(x=1)`, `'{x}'.format(y=1)`,
+	`'{0[1]}'.format(lst)`, `'{0[a]}'.format(d)`, `'{0[9]}'.format(lst)`,
+	`'{0.imag}'.format(1)`, `'{0.nope}'.format(1)`,
+	`'{:>10}'.format('a')`, `'{:<10}'.format('a')`, `'{:^10}'.format('a')`,
+	`'{:-^10}'.format('a')`, `'{:.2f}'.format(1.5)`, `'{:+d}'.format(3)`,
+	`'{:08.3f}'.format(1.5)`, `'{:x}'.format(255)`, `'{:#o}'.format(8)`,
+	`'{:e}'.format(1.5)`, `'{:%}'.format(0.5)`, `'{:,}'.format(1000)`,
+	`'{!r}'.format('a')`, `'{!s}'.format(1)`, `'{!a}'.format('é')`,
+	`'{!q}'.format(1)`, `'{{}}'.format()`, `'{'.format()`, `'}'.format()`,
+	`'{:{}}'.format(1, '>5')`, `'{:{w}}'.format(1, w=5)`,
+	`'{:s}'.format(1)`, `'{:d}'.format('a')`, `'{:z}'.format(1)`,
+}
+
+// seqMethods are the ones that only read.
+var seqMethods = []string{
+	"index(1)", "index(99)", "index(1, 1)", "count(1)", "count('a')",
+}
+
+// seqMutators write, and every one of them returns None -- so what they are
+// worth is what the receiver looks like afterwards, which the surrounding
+// template prints.
+var seqMutators = []string{
+	"append(9)", "append([1])", "extend([1])", "extend('ab')", "extend(1)",
+	"insert(0, 9)", "insert(99, 9)", "insert(-1, 9)",
+	"pop()", "pop(0)", "pop(99)", "remove(1)", "remove(99)",
+	"reverse()", "clear()", "sort()", "sort(reverse=true)",
+}
+
+var dictMethods = []string{
+	"items()", "keys()", "values()", "items()|list", "keys()|list",
+	"get('a')", "get('nope')", "get('nope', 7)", "get('a', 7)",
+	"copy()",
+}
+
+var dictMutators = []string{
+	"pop('a')", "pop('nope')", "pop('nope', 7)",
+	"setdefault('a', 9)", "setdefault('new', 9)",
+	"update({'z': 1})", "update(pairs)", "update(1)",
+	"clear()", "popitem()",
 }
 
 func (g *generator) list(n int) string {
