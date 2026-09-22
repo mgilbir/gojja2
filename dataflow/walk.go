@@ -51,7 +51,13 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		return out
 
 	case syntax.KindCond:
-		a.apply(a.expr(n.Child(syntax.RoleTest)), Steers)
+		// The test chooses which value the expression yields, and what is
+		// done with that value afterwards is not visible from here: in
+		// `{{ f + (xs if c else 1) }}` neither branch can fail on its own
+		// and the addition can fail on one of them. So the test is
+		// Required, which over-reports `{{ "a" if c else "b" }}` and never
+		// under-reports anything.
+		a.apply(a.expr(n.Child(syntax.RoleTest)), Steers|Required)
 		out.add(a.expr(n.Child(syntax.RoleThen)))
 		out.add(a.expr(n.Child(syntax.RoleOther)))
 		return out
@@ -239,6 +245,19 @@ func (a *analyzer) scopeSymbol(name string) *syntax.Symbol {
 	return nil
 }
 
+// enclosingScopeSymbol is scopeSymbol ignoring the innermost scope, for a name
+// a construct binds outside the scope it opens.
+func (a *analyzer) enclosingScopeSymbol(name string) *syntax.Symbol {
+	for i := len(a.scopes) - 2; i >= 0; i-- {
+		for _, s := range a.tree.Info.Scopes[a.scopes[i]] {
+			if s.Name == name {
+				return s
+			}
+		}
+	}
+	return nil
+}
+
 func (a *analyzer) enterScope(n *syntax.Node) bool {
 	if _, ok := a.tree.Info.Scopes[n]; !ok {
 		return false
@@ -250,6 +269,31 @@ func (a *analyzer) enterScope(n *syntax.Node) bool {
 func (a *analyzer) leaveScope(entered bool) {
 	if entered {
 		a.scopes = a.scopes[:len(a.scopes)-1]
+	}
+}
+
+// ifStmt walks an if and its elif chain.
+//
+// A condition decides whether the code it guards runs, so it decides whether
+// that code's failures happen: `{% if c %}{{ x|upper }}{% endif %}` renders
+// nothing or dies, and which one is c's doing.
+//
+// chainFails is computed once for the whole chain and handed down, because an
+// elif does not own the else. jinja2 hangs `{% else %}` off the outermost if, so
+// an elif's own subtree does not contain the arm that runs when it is false --
+// and it decides whether that arm runs.
+func (a *analyzer) ifStmt(n *syntax.Node, chainFails bool) {
+	test := a.expr(n.Child(syntax.RoleTest))
+	a.apply(test, Steers)
+	if chainFails {
+		a.apply(test, Required)
+	}
+	a.stmts(n)
+	for _, c := range n.Children(syntax.RoleElif) {
+		a.ifStmt(c, chainFails)
+	}
+	for _, c := range n.Children(syntax.RoleElse) {
+		a.stmt(c)
 	}
 }
 
@@ -270,11 +314,13 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		}
 
 	case syntax.KindIf:
-		a.apply(a.expr(n.Child(syntax.RoleTest)), Steers)
-		a.stmts(n)
-		for _, c := range n.Children(syntax.RoleElse) {
-			a.stmt(c)
-		}
+		// Over the arms, not over the whole node: an if's own test runs
+		// whatever happens, so it is not guarded by itself. An elif's test
+		// is guarded, because it only runs when the ones before it were
+		// false, and it travels with the arms.
+		a.ifStmt(n, canFailInAny(n.Children(syntax.RoleBody)) ||
+			canFailInAny(n.Children(syntax.RoleElif)) ||
+			canFailInAny(n.Children(syntax.RoleElse)))
 
 	case syntax.KindFor:
 		// The sequence's length decides how many times the body runs, so
@@ -288,7 +334,14 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		if loop := a.scopeSymbol("loop"); loop != nil {
 			a.depend(loop, srcs)
 		}
-		a.apply(a.expr(n.Child(syntax.RoleTest)), Steers)
+		loopTest := a.expr(n.Child(syntax.RoleTest))
+		a.apply(loopTest, Steers)
+		for _, guarded := range n.Children(syntax.RoleBody) {
+			if canFailIn(guarded) {
+				a.apply(loopTest, Required)
+				break
+			}
+		}
 		a.stmts(n)
 		for _, c := range n.Children(syntax.RoleElse) {
 			a.stmt(c)
@@ -313,7 +366,12 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		a.emit(srcs)
 
 	case syntax.KindMacro:
-		sym := a.scopeSymbol(n.Attr("name"))
+		// Looked up outside the macro's own scope. A macro binds its name
+		// where it is written, and its body may declare that name again --
+		// `{% macro m() %}...{% macro m() %}...{% endmacro %}{% endmacro %}`
+		// is two macros, and registering the outer one against the inner
+		// one's binding loses the outer body entirely.
+		sym := a.enclosingScopeSymbol(n.Attr("name"))
 		var params []*syntax.Symbol
 		for _, s := range a.tree.Info.Scopes[n] {
 			if s.Kind == syntax.SymParam {
@@ -426,6 +484,46 @@ func canRaise(k syntax.Kind) bool {
 	case syntax.KindBinOp, syntax.KindUnaryOp, syntax.KindCompare,
 		syntax.KindOperand, syntax.KindTest:
 		return true
+	}
+	return false
+}
+
+// canFailIn reports whether anything in a subtree can stop the render.
+//
+// It is the same set of constructs Required is attached at -- an operator, a
+// comparison, a filter, a call, a subscript, a mapping key, a loop, a reference
+// to another template -- asked of a whole body rather than of one value. What
+// it answers is used to decide whether a condition is Required: a test guards
+// the code beneath it, so if that code can fail, the test decides whether it
+// does.
+//
+// An over-approximation, like Required itself: the construct *can* raise.
+func canFailIn(n *syntax.Node) bool {
+	found := false
+	syntax.Walk(n, func(nd *syntax.Node, _ syntax.Role) bool {
+		if found {
+			return false
+		}
+		switch nd.Kind {
+		case syntax.KindBinOp, syntax.KindUnaryOp, syntax.KindCompare,
+			syntax.KindOperand, syntax.KindTest, syntax.KindFilter,
+			syntax.KindCall, syntax.KindGetitem, syntax.KindPair,
+			syntax.KindFor, syntax.KindInclude, syntax.KindExtends,
+			syntax.KindImport, syntax.KindFromImport:
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// canFailInAny is canFailIn over a list.
+func canFailInAny(list []*syntax.Node) bool {
+	for _, n := range list {
+		if canFailIn(n) {
+			return true
+		}
 	}
 	return false
 }

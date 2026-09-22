@@ -4,14 +4,18 @@
 package conformance_test
 
 import (
+	"context"
+	"fmt"
 	"math/rand/v2"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/conformance"
 	"github.com/mgilbir/gojja2/dataflow"
 	"github.com/mgilbir/gojja2/syntax"
+	"github.com/mgilbir/gojja2/value"
 )
 
 // The structure and the analyses, on templates nobody chose.
@@ -39,7 +43,7 @@ func TestSyntaxDifferential(t *testing.T) {
 	seed := uint64(envInt(t, "GOJJA2_FUZZ_SEED", 20260921))
 	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
 
-	var checked, skipped, failures int
+	var checked, skipped, failures, claims int
 	for range count {
 		input := make([]byte, 1+rng.IntN(96))
 		for i := range input {
@@ -50,7 +54,7 @@ func TestSyntaxDifferential(t *testing.T) {
 			skipped++
 			continue
 		}
-		if d := h.compareSyntax(t, c); d != "" {
+		if d := h.compareSyntax(t, c, &claims); d != "" {
 			failures++
 			t.Errorf("%s\n  template: %q", d, c.Source)
 			if failures >= 10 {
@@ -62,11 +66,12 @@ func TestSyntaxDifferential(t *testing.T) {
 		checked++
 	}
 	t.Logf("syntax differential: %d generated templates compared against "+
-		"CPython jinja2 (seed %d), %d empty", checked, seed, skipped)
+		"CPython jinja2 (seed %d), %d empty; %d of the analysis's negatives "+
+		"checked by rendering", checked, seed, skipped, claims)
 }
 
 // compareSyntax returns a description of the first divergence, or "".
-func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase) string {
+func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claims *int) string {
 	t.Helper()
 
 	sources := make(map[string]string, len(h.templates)+1)
@@ -142,6 +147,81 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase) strin
 	}
 	if diff := diffEffects(ref.Variables, gotVars); diff != "" {
 		return "the two analyses disagree\n" + diff
+	}
+	return h.verifyNegatives(tmpl, flow.Context(tree), claims)
+}
+
+// Probe values with nothing in common: a different type, a different length, a
+// different truthiness. A marker string no generated template can contain, so
+// finding it in the output means it came from the variable.
+const fuzzMarker = "zqxjmarkerzqxj"
+
+var fuzzProbes = []value.Value{
+	value.String(fuzzMarker), value.Int(0), value.None,
+}
+
+// verifyNegatives asks the engine whether the analysis told the truth.
+//
+// The differential above proves the two implementations agree, and they are
+// both written here, so agreement is close to a statement about transcription.
+// This is the part that is not: where the analysis says a variable's value
+// cannot be printed, the engine is handed a marker and the output must not
+// contain it; where it says a variable cannot break the render, two values with
+// nothing in common must not change whether it does.
+//
+// A generated template is free to ask for a billion iterations, so every render
+// gets the same deadline the differential gives them and a render that runs out
+// is not evidence either way.
+func (h *harness) verifyNegatives(tmpl *gojja2.Template, effects map[string]dataflow.Effect,
+	claims *int) string {
+	render := func(name string, probe value.Value) (string, bool, bool) {
+		vars := make(map[string]value.Value, len(h.context)+1)
+		for k, v := range h.context {
+			vars[k] = v
+		}
+		vars[name] = probe
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var sb strings.Builder
+		err := tmpl.RenderValues(ctx, &sb, vars)
+		if err != nil && ctx.Err() != nil {
+			return "", false, false // ran out of time; says nothing
+		}
+		return sb.String(), err == nil, true
+	}
+
+	for name, e := range effects {
+		if e&dataflow.Opaque != 0 {
+			continue
+		}
+		if e&dataflow.Printed == 0 {
+			out, _, usable := render(name, fuzzProbes[0])
+			if usable {
+				*claims++
+				if strings.Contains(out, fuzzMarker) {
+					return fmt.Sprintf("the analysis says %q is never printed, "+
+						"but its value is in the output:\n  %q", name, out)
+				}
+			}
+		}
+		if e&dataflow.Required == 0 {
+			_, first, usable := render(name, fuzzProbes[0])
+			if !usable {
+				continue
+			}
+			for _, probe := range fuzzProbes[1:] {
+				_, ok, usable := render(name, probe)
+				if !usable {
+					continue
+				}
+				*claims++
+				if ok != first {
+					return fmt.Sprintf("the analysis says the render cannot fail "+
+						"because of %q, but changing it changes whether it does",
+						name)
+				}
+			}
+		}
 	}
 	return ""
 }

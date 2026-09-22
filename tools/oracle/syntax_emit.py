@@ -322,7 +322,9 @@ class Emitter:
         if t == "If":
             e = [["test", self.expr(n.test)]]
             e += [["body", self.stmt(s)] for s in n.body]
-            e += [["else", self.stmt(s)] for s in n.elif_]
+            # An elif is its own edge: it does not own the else it shares, and
+            # an `{% if %}` written inside an `{% else %}` does.
+            e += [["elif", self.stmt(s)] for s in n.elif_]
             e += [["else", self.stmt(s)] for s in n.else_]
             return N("if", None, e)
         if t == "For":

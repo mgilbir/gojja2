@@ -245,11 +245,16 @@ func (b *synBuilder) stmt(s ast.Stmt) *syntax.Node {
 		out := node(syntax.KindIf, n.Line())
 		b.edge(out, syntax.RoleTest, b.expr(n.Test))
 		b.body(out, syntax.RoleBody, n.Body)
-		// jinja2 hangs elif branches off the outermost if as further If
-		// nodes; so does gojja2. They stay nested rather than being
-		// flattened, because that is what both trees say.
+		// An elif is its own edge, not another else.
+		//
+		// `{% if a %}X{% elif b %}Y{% else %}Z{% endif %}` and
+		// `{% if a %}X{% else %}{% if b %}Y{% else %}Z{% endif %}{% endif %}`
+		// render the same thing, so it is tempting to spell them the same.
+		// They are not the same to a query: an elif does not own the else it
+		// shares, and an if inside an else does. Collapsing the two made a
+		// condition look as though it guarded an arm it cannot reach.
 		for _, elif := range n.Elif {
-			b.edge(out, syntax.RoleElse, b.stmt(elif))
+			b.edge(out, syntax.RoleElif, b.stmt(elif))
 		}
 		b.body(out, syntax.RoleElse, n.Else)
 		return out
