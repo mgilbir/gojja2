@@ -1,0 +1,6 @@
+{
+  "case": "classes/subscript_key_falls_back.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

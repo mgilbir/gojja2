@@ -567,6 +567,32 @@ and keeping it in step with the version being compared against, to answer an
 attribute that says nothing about the value. A 352-case sweep of attribute and
 item lookup across every kind found this and nothing else.
 
+`__mro__` is not implemented either, and that sweep did not find it because it
+asked values rather than the class objects behind them:
+
+```jinja
+{{ (1).__class__.__mro__ }}     "(<class 'int'>, <class 'object'>)" on CPython, "" here
+```
+
+It belongs with `__subclasses__` rather than with `__class__`: the method
+resolution order is the first step of the walk from a value to the interpreter's
+builtins, which is the escape route the two sandbox tests above document. A class
+object here has a name, a repr and equality, and nothing that leads anywhere.
+
+Calling one is the same decision. A type is callable, and `is callable` says so
+on both sides, but CPython builds the value and gojja2 refuses:
+
+```jinja
+{{ n.__class__() }}    "0" on CPython for an int, a TypeError here
+{{ s.__class__(5) }}   "5" on CPython for a str, a TypeError here
+```
+
+Construction is the one thing a type object could usefully do that does not lead
+further into the interpreter, so this one is open rather than settled. What a
+type object here *does* answer matches exactly: `__name__`, `__qualname__`,
+`__module__`, its repr, equality with another type object, and its behaviour as
+a dict key or in `unique`. Ordering two of them is a `TypeError` on both sides.
+
 Two of Jinja's sandbox-escape tests go further, and those are not implemented:
 
 ```jinja
@@ -714,6 +740,35 @@ which is what the global is for -- is identical in both.
 
 The other class globals are unaffected: `range['k']` raises in CPython too,
 because only a handful of builtins accept the annotation form.
+
+`__class__` reaches the same two classes a second way, and diverges the same
+way. `lst` is `[1]` and `d` is `{'a': 1}` here, from the context rather than
+written as literals, because both engines fold a constant expression and a fold
+hides the difference:
+
+```jinja
+{{ lst.__class__['a'] }}   {{ lst.__class__[1:] }}   {{ d.__class__.a }}
+```
+
+CPython renders `list['a']`, `list[slice(1, None, None)]` and `dict['a']` --
+the third because jinja2 retries a missing attribute as an item. gojja2 renders
+the first and third empty and raises `type 'list' is not subscriptable` on the
+slice.
+
+Every other class reachable from a value agrees exactly, including two wordings
+CPython reserves for a type object:
+
+| expression | CPython |
+| --- | --- |
+| `{{ f[1:] }}` | `'float' object is not subscriptable` |
+| `{{ f.__class__[1:] }}` | `type 'float' is not subscriptable` |
+| `{{ f\|dictsort }}` | `'float' object has no attribute 'items'` |
+| `{{ n.__class__\|dictsort }}` | `type object 'int' has no attribute 'items'` |
+
+Five filters reach the second of those -- `dictsort`, `xmlattr`, `wordwrap`,
+`wordwrap(wrapstring=...)` and `urlize(rel=...)`. A 161-shape sweep over every
+subject the template generator writes and every accessor it can follow one with
+found the generic alias above and nothing else.
 
 ### Which line an error inside a multi-line tag names
 

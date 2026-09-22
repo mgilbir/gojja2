@@ -842,14 +842,12 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	// have said -- reworded to name `+=`.
 	switch {
 	case v.Kind() == value.KindList:
-		return value.Undefined, errs.New(errs.AttributeError,
-			"'%s' object has no attribute 'splitlines'", v.TypeName())
+		return value.Undefined, noAttribute(v, "splitlines")
 	case !v.IsString():
 		if _, err := value.Add(v, value.String("\n"), s); err != nil {
 			return value.Undefined, augmentedAssign(err)
 		}
-		return value.Undefined, errs.New(errs.AttributeError,
-			"'%s' object has no attribute 'splitlines'", v.TypeName())
+		return value.Undefined, noAttribute(v, "splitlines")
 	}
 	// The first line is handled apart from the rest: `first` indents it
 	// whether or not it is blank, while `blank` governs only the lines
@@ -1014,8 +1012,7 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 			// this is a result and not only a way to fail.
 			return value.Add(sliced, end, s)
 		}
-		return value.Undefined, errs.New(errs.AttributeError,
-			"'%s' object has no attribute 'rsplit'", v.TypeName())
+		return value.Undefined, noAttribute(v, "rsplit")
 	}
 
 	head, _ := value.StrSlice(text, nil, ptr(cut), nil)
@@ -1071,8 +1068,7 @@ func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value,
 		// left before evaluating the argument -- so a wrapstring that
 		// is not a string fails first, ahead of anything about s.
 		if !w.IsString() {
-			return value.Undefined, errs.New(errs.AttributeError,
-				"'%s' object has no attribute 'join'", w.TypeName())
+			return value.Undefined, noAttribute(w, "join")
 		}
 		wrapString = value.Str(w)
 	}
@@ -1094,8 +1090,7 @@ func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	// which is why the emptiness is checked rather than assumed.
 	if !v.IsString() {
 		if v.Kind() != value.KindBytes {
-			return value.Undefined, errs.New(errs.AttributeError,
-				"'%s' object has no attribute 'splitlines'", v.TypeName())
+			return value.Undefined, noAttribute(v, "splitlines")
 		}
 		if len(splitLines(v.AsString(), false)) == 0 {
 			return value.String(""), nil

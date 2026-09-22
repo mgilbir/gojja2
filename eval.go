@@ -843,6 +843,5 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.Python
 		}
 		return value.Undefined, errs.New(errs.TypeError, "unhashable type: 'slice'")
 	}
-	return value.Undefined, errs.New(errs.TypeError,
-		"'%s' object is not subscriptable", base.TypeName())
+	return value.Undefined, notSubscriptable(base)
 }

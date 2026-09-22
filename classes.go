@@ -51,9 +51,13 @@ func (c *classObject) GetAttr(name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
-// Call reports that gojja2 cannot construct a value from its type object. A
-// type is callable in Python, and `is callable` must say so, but there is
-// nothing sensible to build here.
+// Call refuses to construct a value from its type object. A type is callable in
+// Python, and `is callable` must say so, but a type object here is inert on
+// purpose: the same decision that leaves `__mro__` and `__subclasses__` out.
+//
+// CPython *would* build one -- `{{ n.__class__() }}` is `0` for an int -- so
+// this is a divergence, recorded in docs/divergences.md and graded by
+// divergence/class_call_*.
 func (c *classObject) Call(*value.CallArgs) (value.Value, error) {
 	return value.Undefined, errs.New(errs.TypeError,
 		"cannot instantiate %s from a template", c.qualified)
@@ -73,3 +77,36 @@ func (c *classObject) Repr() string { return "<class '" + c.qualified + "'>" }
 func (c *classObject) TypeName() string { return "type" }
 
 func (c *classObject) HashKey() (string, bool) { return "class:" + c.qualified, true }
+
+// notSubscriptable is the TypeError for a value that takes no index at all.
+//
+// CPython words it differently for a type object -- `type 'float' is not
+// subscriptable` rather than `'float' object is not subscriptable` -- and a
+// template reaches a type object through `__class__`, so the two wordings are
+// both reachable from the same expression:
+//
+//	{{ (1.5)[1:] }}            'float' object is not subscriptable
+//	{{ (1.5).__class__[1:] }}  type 'float' is not subscriptable
+func notSubscriptable(v value.Value) error {
+	if c, ok := v.Interface().(*classObject); ok {
+		return errs.New(errs.TypeError, "type '%s' is not subscriptable", c.name())
+	}
+	return errs.New(errs.TypeError,
+		"'%s' object is not subscriptable", v.TypeName())
+}
+
+// noAttribute is the AttributeError for a value that does not carry a name.
+//
+// CPython words it differently for a type object -- `type object 'bool' has no
+// attribute 'items'` rather than `'bool' object has no attribute 'items'` --
+// and a template reaches a type object through `__class__`, so both wordings
+// are reachable from the same expression. Found by the render differential:
+// `{{ true.__class__|dictsort }}` is the shortest spelling.
+func noAttribute(v value.Value, name string) error {
+	if c, ok := v.Interface().(*classObject); ok {
+		return errs.New(errs.AttributeError,
+			"type object '%s' has no attribute '%s'", c.name(), name)
+	}
+	return errs.New(errs.AttributeError,
+		"'%s' object has no attribute '%s'", v.TypeName(), name)
+}

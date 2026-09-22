@@ -104,3 +104,27 @@ own/divergence/self_list.jj2             list(self) asks for index 0 and raises 
 # what it actually holds. Every other target type matches exactly, dict and
 # namespace included. See docs/divergences.md.
 own/errors/nsref_block_undefined.jj2   # jinja2 names its own resolver sentinel
+
+# --- the method resolution order ----------------------------------------------
+# `__class__` is implemented and inert: a class object here has a name, a repr
+# and equality, and nothing that leads anywhere. `__mro__` is the first step of
+# the walk from a value to the interpreter's builtins, which is the escape route
+# the two sandbox tests above document, so it belongs with __subclasses__ rather
+# than with __class__. See docs/divergences.md.
+own/divergence/class_mro.jj2   # __mro__ leads where __subclasses__ leads
+
+# --- a class object as a type annotation ---------------------------------------
+# Python 3.9 made `list` and `dict` subscriptable as a type annotation, so
+# `[1].__class__['a']` is the generic alias `list['a']` on CPython. gojja2 models
+# no generic aliases, exactly as it does not for the `dict` global above. jinja2's
+# attribute fallback puts `.a` in the same position. See docs/divergences.md.
+own/divergence/class_generic_alias_item.jj2    # list['a'] is a generic alias
+own/divergence/class_generic_alias_slice.jj2   # so is list[slice(...)]
+own/divergence/class_generic_alias_attr.jj2    # .a falls back to ['a']
+
+# --- constructing from a type object -------------------------------------------
+# `{{ n.__class__() }}` is `0` on CPython. gojja2 keeps a type object inert, the
+# same decision that leaves __mro__ and __subclasses__ out, so it refuses. This
+# one is open rather than settled -- see docs/divergences.md.
+own/divergence/class_call_int.jj2        # CPython builds int() == 0
+own/divergence/class_call_str_with_arg.jj2   # and str(5) == '5'

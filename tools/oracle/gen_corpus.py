@@ -1042,6 +1042,89 @@ for _n, _src in [
 ]:
     case(f"classes/{_n}", _src)
 
+# The method resolution order is not implemented, and belongs with
+# __subclasses__ rather than with __class__: it is the first step of the walk
+# from a value to the interpreter's builtins. Listed in known_failures.txt.
+case("divergence/class_mro", "{{ (1).__class__.__mro__ }}")
+
+# Subscripting a type object: CPython words the refusal differently from the
+# refusal the same expression gets one step earlier, and a template reaches a
+# type object through `__class__`. A slice is the reachable spelling, because
+# jinja2 retries an integer or string key as an attribute and gets undefined.
+#
+# Every subject is a context variable rather than a literal, because both
+# engines fold a constant expression and *swallow* the error while folding, so
+# `{{ (1.5).__class__[1:] }}` renders empty on both sides and grades nothing.
+# The first six of these were written with literals and had to be rewritten.
+for _n, _src, _ctx in [
+    ("float", "{{ f.__class__[1:] }}", {"f": 1.5}),
+    ("int", "{{ n.__class__[1:] }}", {"n": 1}),
+    ("str", "{{ s.__class__[1:] }}", {"s": "x"}),
+    ("bool", "{{ yes.__class__[1:] }}", {"yes": True}),
+    ("none", "{{ nil.__class__[1:] }}", {"nil": None}),
+    ("plain_object_contrast", "{{ f[1:] }}", {"f": 1.5}),
+    ("key_falls_back", "{{ n.__class__[0] }}|{{ n.__class__['a'] }}", {"n": 1}),
+    ("length", "{{ n.__class__|length }}", {"n": 1}),
+]:
+    case(f"classes/subscript_{_n}", _src, **_ctx)
+
+# The two globals whose type object is built rather than converted; a call is
+# not constant, so these are not folded away.
+case("classes/subscript_namespace", "{{ namespace().__class__[1:] }}")
+case("classes/subscript_range_global", "{{ range(3).__class__[1:] }}")
+
+# The AttributeError for a type object is worded specially too -- `type object
+# 'int' has no attribute 'items'` -- and eight filters reach it by asking a
+# value for a method it does not have. The render differential found it as
+# `true.__class__|dictsort`; these pin the four filters that surface it.
+for _n, _src, _ctx in [
+    ("dictsort", "{{ n.__class__|dictsort }}", {"n": 1}),
+    ("xmlattr", "{{ n.__class__|xmlattr }}", {"n": 1}),
+    ("wordwrap", "{{ n.__class__|wordwrap }}", {"n": 1}),
+    ("wrapstring", "{{ s|wordwrap(3, wrapstring=n.__class__) }}",
+     {"s": "a b c d", "n": 1}),
+    ("urlize_rel", "{{ s|urlize(rel=n.__class__) }}", {"s": "x", "n": 1}),
+    ("plain_object_contrast", "{{ f|dictsort }}", {"f": 1.5}),
+]:
+    case(f"classes/attrerror_{_n}", _src, **_ctx)
+
+# Two type objects compare and hash by the class they name, which is what a
+# template can actually observe about one.
+for _n, _src, _ctx in [
+    ("eq_same", "{{ n.__class__ == n.__class__ }}", {"n": 1}),
+    ("eq_different", "{{ n.__class__ == s.__class__ }}", {"n": 1, "s": "x"}),
+    ("eq_bool_is_not_int", "{{ yes.__class__ == n.__class__ }}",
+     {"yes": True, "n": 1}),
+    ("eq_not_a_class", "{{ n.__class__ == 1 }}", {"n": 1}),
+    ("ne", "{{ n.__class__ != f.__class__ }}", {"n": 1, "f": 1.5}),
+    ("in_list", "{{ n.__class__ in [s.__class__, n.__class__] }}",
+     {"n": 1, "s": "x"}),
+    ("dict_key", "{{ {n.__class__: 1} }}", {"n": 1}),
+    ("unique", "{{ [n.__class__, s.__class__, n.__class__]|unique|list }}",
+     {"n": 1, "s": "x"}),
+    ("ordering_refused", "{{ n.__class__ < s.__class__ }}", {"n": 1, "s": "x"}),
+    ("callable", "{{ n.__class__ is callable }}", {"n": 1}),
+]:
+    case(f"classes/compare_{_n}", _src, **_ctx)
+
+# Calling a type object constructs the value in CPython. gojja2 keeps a type
+# object inert, so it refuses -- listed in known_failures.txt.
+for _n, _src, _ctx in [
+    ("int", "{{ n.__class__() }}", {"n": 1}),
+    ("str_with_arg", "{{ s.__class__(5) }}", {"s": "x"}),
+]:
+    case(f"divergence/class_call_{_n}", _src, **_ctx)
+
+# The generic-alias divergence, reached through `__class__` rather than through
+# the `dict` global: CPython answers a types.GenericAlias, gojja2 has none.
+# Listed in known_failures.txt with the global.
+for _n, _src in [
+    ("item", "{{ lst.__class__['a'] }}"),
+    ("slice", "{{ lst.__class__[1:] }}"),
+    ("attr", "{{ d.__class__.a }}"),
+]:
+    case(f"divergence/class_generic_alias_{_n}", _src, lst=[1], d={"a": 1})
+
 # Two divergences the page records, pinned so they cannot drift into something
 # else. Python 3.9 made a builtin type subscriptable as a type annotation, so
 # `dict['k']` is a generic alias whose repr is `dict['k']` -- not a lookup, and

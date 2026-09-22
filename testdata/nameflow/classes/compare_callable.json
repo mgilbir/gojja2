@@ -1,0 +1,6 @@
+{
+  "case": "classes/compare_callable.jj2",
+  "variables": {
+    "n": "or"
+  }
+}
