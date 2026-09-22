@@ -844,7 +844,7 @@ var loopAttrs = []string{
 // context per render; before that, one `lst.append(9)` poisoned every later
 // comparison in the run.
 func (g *generator) methodCall(depth int) string {
-	switch g.c.intn(10) {
+	switch g.c.intn(11) {
 	case 0, 1, 2:
 		return g.c.pick(strReceivers) + "." + g.c.pick(strMethods)
 	case 3:
@@ -853,10 +853,18 @@ func (g *generator) methodCall(depth int) string {
 		return g.c.pick(seqReceivers) + "." + g.c.pick(seqMethods)
 	case 6:
 		return g.c.pick(seqReceivers) + "." + g.c.pick(seqMutators)
-	case 7, 8:
+	case 7:
 		return g.c.pick(dictReceivers) + "." + g.c.pick(dictMethods)
-	default:
+	case 8:
 		return g.c.pick(dictReceivers) + "." + g.c.pick(dictMutators)
+	case 9:
+		return g.c.pick(numReceivers) + "." + g.c.pick(numMethods)
+	default:
+		// Bytes exist here only because a template can make them: the
+		// shared context is JSON, and JSON has no bytes value. So the
+		// receiver is always an encode(), which is also the one method
+		// that gets from a str to a bytes at all.
+		return g.c.pick(bytesReceivers) + "." + g.c.pick(bytesMethods)
 	}
 }
 
@@ -946,6 +954,54 @@ var dictMethods = []string{
 	"items()", "keys()", "values()", "items()|list", "keys()|list",
 	"get('a')", "get('nope')", "get('nope', 7)", "get('a', 7)",
 	"copy()",
+}
+
+// numReceivers are ints and floats, in both flavours: a literal in parentheses
+// as Python requires, and a context name that carries the same kind.
+var numReceivers = []string{
+	"n", "m", "neg", "zero", "one", "f", "fz", "fneg",
+	"(255)", "(0)", "(-1)", "(2.5)", "(0.0)", "(-0.0)",
+}
+
+// numMethods are int's and float's own. from_bytes and fromhex are
+// classmethods, which Python lets an instance call, and that is the only route
+// to them from a template: there is no `int` global to call them on.
+var numMethods = []string{
+	"bit_length()", "bit_count()", "as_integer_ratio()", "conjugate()",
+	"real", "imag", "numerator", "denominator",
+	"to_bytes()", "to_bytes(2, 'big')", "to_bytes(2, 'little')",
+	"to_bytes(1, 'big')", "to_bytes(0, 'big')", "to_bytes(2, 'sideways')",
+	"to_bytes(-1, 'big')",
+	"from_bytes('ab'.encode(), 'big')", "from_bytes('ab'.encode(), 'nope')",
+	"is_integer()", "hex()", "fromhex('0x1p3')", "fromhex('nope')",
+}
+
+// bytesReceivers are the ways a template can get a bytes at all.
+var bytesReceivers = []string{
+	"'ab'.encode()", "''.encode()", "uni.encode()", "s.encode()",
+	"'a,b,c'.encode()", "' x '.encode()",
+}
+
+// bytesMethods mirror the str ones, plus the two that only bytes have.
+var bytesMethods = []string{
+	"upper()", "lower()", "title()", "capitalize()", "swapcase()",
+	"strip()", "strip('a'.encode())", "lstrip()", "rstrip()",
+	"split()", "split(','.encode())", "split(','.encode(), 1)", "split('')",
+	"rsplit()", "rsplit(','.encode())", "splitlines()",
+	"join(['a'.encode(), 'b'.encode()])", "join([])", "join(strs)",
+	"replace('a'.encode(), 'X'.encode())", "replace('a'.encode(), 'X'.encode(), 1)",
+	"count('a'.encode())", "find('b'.encode())", "index('z'.encode())",
+	"rfind('b'.encode())", "startswith('a'.encode())", "endswith('c'.encode())",
+	"partition(','.encode())", "rpartition(','.encode())",
+	"removeprefix('a'.encode())", "removesuffix('c'.encode())",
+	"center(10)", "center(10, '-'.encode())", "ljust(10)", "rjust(10)",
+	"zfill(10)", "expandtabs()", "expandtabs(4)",
+	"isalpha()", "isdigit()", "isalnum()", "isspace()", "isascii()",
+	"islower()", "isupper()", "istitle()",
+	"hex()", "hex('-')", "fromhex('4142')", "fromhex('zz')",
+	"decode()", "decode('ascii')", "decode('nope')",
+	"maketrans('a'.encode(), 'z'.encode())",
+	"translate(none)", "translate(none, 'a'.encode())",
 }
 
 var dictMutators = []string{
