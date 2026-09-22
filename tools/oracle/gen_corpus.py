@@ -2903,6 +2903,20 @@ case("errors/dict_values_has_no_difference", "{% set d = {'a': 1} %}{{ d.values(
 case("errors/dict_view_difference_unhashable", "{% set d = {'a': 1} %}{{ d.keys() - [[1]] }}")
 case("errors/set_minus_a_list", "{% set d = {'a': 1} %}{{ (d.keys() - []) - [] }}")
 
+# The left operand is hashed before the right one is even looked at: CPython
+# builds the set from the view first, so items holding a dict are refused
+# whatever is on the other side -- including an empty list, which is iterable and
+# perfectly fine. Doing it the other way round reports whichever operand is wrong
+# second, which is what the generated differential caught.
+case("errors/set_difference_hashes_the_view_first",
+     "{% set d = {'x': {'y': [1, 2]}} %}{{ d.items() - [] }}")
+case("errors/set_difference_hashes_the_view_first_too",
+     "{% set d = {'x': {'y': [1, 2]}} %}{{ d.items() - 1.5 }}")
+# ...and with hashable elements on the left it is the right operand that is
+# reported, which is the pair that makes the order observable.
+case("errors/set_difference_then_the_other_operand",
+     "{% set d = {'a': 1} %}{{ d.items() - 1.5 }}")
+
 # ...and the sixth surface, which *was* wrong: an empty view is falsey.
 #
 # Python takes bool() from __bool__, or from __len__ when there is no __bool__,
