@@ -1961,7 +1961,7 @@ func updateDictFrom(d *value.Dict, src value.Value, py value.PythonVersion) erro
 	}
 	index := 0
 	for pair := range pairs {
-		key, val, err := unpackDictPair(pair, index)
+		key, val, err := unpackDictPair(pair, index, py)
 		if err != nil {
 			return err
 		}
@@ -1982,9 +1982,13 @@ func updateDictFrom(d *value.Dict, src value.Value, py value.PythonVersion) erro
 // sequence instead rejected that, and reported it as "has length 2; 2 is
 // required" -- a message that contradicts itself, which is what gave the bug
 // away.
-func unpackDictPair(pair value.Value, index int) (value.Value, value.Value, error) {
+func unpackDictPair(pair value.Value, index int, py value.PythonVersion) (value.Value, value.Value, error) {
 	items, err := value.Iterate(pair)
 	if err != nil {
+		if !py.DictUpdateNamesTheElement() {
+			return value.Undefined, value.Undefined,
+				errs.New(errs.TypeError, "object is not iterable")
+		}
 		return value.Undefined, value.Undefined, errs.New(errs.TypeError,
 			"cannot convert dictionary update sequence element #%d to a sequence", index)
 	}
