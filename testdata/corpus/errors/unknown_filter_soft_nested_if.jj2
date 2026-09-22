@@ -1,0 +1,11 @@
+{
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{% if true %}{% if true %}{{ 1|nosuch }}{% endif %}{% endif %}

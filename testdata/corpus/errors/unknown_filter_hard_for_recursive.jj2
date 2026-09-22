@@ -1,0 +1,11 @@
+{
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{% if false %}{% for i in seq recursive %}{{ 1|nosuch }}{% endfor %}{% endif %}

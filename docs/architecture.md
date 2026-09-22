@@ -68,7 +68,7 @@ flowchart TD
     class P2,P3 warn
 ```
 
-Two things about this path catch people out.
+Three things about this path catch people out.
 
 **Compilation takes no `context.Context` and has no budget.** The bounds in
 [limits.md](limits.md) are *render* bounds. What protects compile time instead is
@@ -78,6 +78,16 @@ that can do arbitrary work.
 
 **Only `GetTemplate` caches**, and only on success. `FromString` compiles every
 time, which is why it is the wrong thing to call in a loop.
+
+**An unknown filter is not always a compile error.** jinja2 reports one at
+compile time, except inside an `{% if %}` or an inline conditional, where the
+name is looked up when the branch runs -- which is what lets a template name a
+filter only some deployments register. The exemption reaches exactly as far as
+the code jinja2 emits inline: a `{% for %}`, `{% macro %}`, `{% call %}`,
+`{% filter %}`, `{% block %}`, `{% with %}`, `{% set %}...{% endset %}` or
+`{% autoescape %}` gets a frame of its own, and a name inside one is refused
+when the template compiles however many untakeable branches enclose it. `depcheck.go`
+carries the same rule, graded by the `errors/unknown_filter_{soft,hard}_*` cases.
 
 ## Rendering, and the five ways it nests
 
