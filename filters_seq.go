@@ -840,8 +840,12 @@ func filterSelectReject(keep, byAttribute bool) Filter {
 		var attribute value.Value
 		if byAttribute {
 			if len(pos) == 0 {
+				// jinja2's wording, which names neither the
+				// filter nor the position -- the same message
+				// for selectattr and rejectattr, because both
+				// reach it through prepare_attribute_parts.
 				return value.Undefined, errs.New(errs.FilterArgumentError,
-					"selectattr requires an attribute name")
+					"Missing parameter for attribute name")
 			}
 			attribute, pos = pos[0], pos[1:]
 		}
