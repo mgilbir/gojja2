@@ -193,11 +193,23 @@ much. So each place the analysis records something -- an effect applied, a
 dependency drawn, a value emitted -- is taken out in turn, and anything that
 still passes is a line no test constrains.
 
-36 mutations, none surviving. The two that did survive the first run were both
-worth knowing about: no test covered a template named by an expression rather
-than a constant, and no test covered the walk's default for an assignment target
-it does not recognise -- gojja2's own parser cannot build one, and the tree type
-is public, so a caller can.
+36 mutations, all 36 *exercised*, none surviving. The count of exercised ones is
+reported separately because it used to be smaller than the total without saying
+so: three sites are the only reader of a loop variable, so commenting the line
+out left something declared and not used, the build failed, and the tool called
+that "uncompilable" and counted it with the ones nothing survived. A site that
+was never mutated is not a site nothing could break. Those three now drop the
+*recording* and keep the arguments -- `a.emit(a.expr(c))` becomes
+`_ = a.expr(c)` -- which is both compilable and the more precise mutation, since
+it removes what the site records without removing the traversal underneath it.
+
+Three survivors have been found this way, each a line no test constrained: no
+test covered a template named by an expression rather than a constant; none
+covered the walk's default for an assignment *target* it does not recognise; and
+none covered the default for a *statement* kind it does not recognise. The last
+of those was one of the three that had never been exercised, and turned up in the
+first run after the tool learned to make the mutation. gojja2's own parser cannot
+build any of the three, and the tree type is public, so a caller can.
 
 `make soak-syntax` asks the same three questions of templates nobody chose, and
 then asks the engine whether the answers are true. Where the analysis says a

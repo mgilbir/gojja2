@@ -268,6 +268,44 @@ func TestAnalyzeToleratesATargetItDoesNotKnow(t *testing.T) {
 	}
 }
 
+// A statement kind the walk was never taught must not read as "nothing happens".
+//
+// This is the other half of the case above, and the same argument: gojja2's own
+// parser cannot produce a statement kind the walk has no arm for, and
+// syntax.Node is public, so a caller's tree can. The default taints everything
+// the unknown statement reaches, because a statement nobody modelled might do
+// anything with what it touches -- including print it.
+//
+// Mutation testing found this line untested only after the tool learned to make
+// the mutation at all. Commenting the line out left the loop variable declared
+// and not used, so the build failed, and a mutation that does not compile was
+// reported as "uncompilable" and counted with the ones nothing survived. The
+// site had never been exercised; the headline said otherwise.
+func TestAnalyzeToleratesAStatementItDoesNotKnow(t *testing.T) {
+	secret := &syntax.Node{Kind: syntax.KindName, Attrs: map[string]any{"name": "secret"}}
+	// A kind no arm of the walk matches, holding a name in an edge.
+	odd := &syntax.Node{Kind: syntax.Kind("nothing-models-this"), Edges: []syntax.Edge{
+		{Role: syntax.RoleValue, Node: secret},
+	}}
+	root := &syntax.Node{Kind: syntax.KindTemplate, Edges: []syntax.Edge{
+		{Role: syntax.RoleBody, Node: odd},
+	}}
+	sym := &syntax.Symbol{Name: "secret", Kind: syntax.SymContext}
+	tree := &syntax.Tree{Root: root, Info: &syntax.Info{
+		Defs:    map[*syntax.Node]*syntax.Symbol{},
+		Uses:    map[*syntax.Node]*syntax.Symbol{secret: sym},
+		Scopes:  map[*syntax.Node][]*syntax.Symbol{root: nil},
+		Context: map[string]*syntax.Symbol{"secret": sym},
+	}}
+
+	got := dataflow.Analyze(tree).Context(tree)["secret"]
+	if got&dataflow.Opaque == 0 {
+		t.Errorf("a statement the walk does not know left %q as %v; it has to be "+
+			"opaque, because a statement nobody modelled might do anything with "+
+			"what it reaches", "secret", got)
+	}
+}
+
 // The accessors are part of the surface and were reachable by no test, which
 // coverage said plainly: a caller holding a symbol rather than a name asks
 // Flow.Of, and nothing did.
