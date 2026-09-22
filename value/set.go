@@ -132,6 +132,17 @@ func (s *Set) Equals(other Value) (bool, bool) {
 // other is any iterable, which is the view's rule rather than the set's -- a
 // real set refuses anything that is not another set, and CPython says so.
 func setDifference(left SetOperand, other Value, py PythonVersion, budget Budget) (Value, error) {
+	// The left operand is hashed first, because CPython builds the set from
+	// the view before it so much as looks at the other one: `d.items() - []`
+	// on items holding a dict is "unhashable type: 'dict'", not a complaint
+	// about the empty list, and `d.keys() - 1.5` on hashable keys is about
+	// the 1.5. Doing it the other way round reports whichever operand is
+	// wrong second.
+	elements, _ := left.SetElements()
+	kept, err := NewSet(elements, py, budget)
+	if err != nil {
+		return Undefined, err
+	}
 	seq, err := Iterate(other)
 	if err != nil {
 		return Undefined, err
@@ -146,14 +157,13 @@ func setDifference(left SetOperand, other Value, py PythonVersion, budget Budget
 		}
 		remove.SetKnown(v, None)
 	}
-	elements, _ := left.SetElements()
-	var kept []Value
-	for _, v := range elements {
+	var out []Value
+	for _, v := range kept.items {
 		if _, drop := remove.GetKnown(v); !drop {
-			kept = append(kept, v)
+			out = append(out, v)
 		}
 	}
-	set, err := NewSet(kept, py, budget)
+	set, err := NewSet(out, py, budget)
 	if err != nil {
 		return Undefined, err
 	}
