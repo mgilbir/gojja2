@@ -1,0 +1,3 @@
+{}
+---
+{% set ns = namespace() %}{% set ns.v %}x{% endset %}[{{ ns.v }}]

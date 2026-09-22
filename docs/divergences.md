@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-three divergences below, **one** is worth going looking for:
+Of the twenty-four divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -47,6 +47,7 @@ are safety controls rather than behavioural choices, and they live in
 | [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there | Only for a literal-vs-literal `sameas`, which is a tautology |
 | [Comparison order inside a long sort](#comparison-order-inside-a-long-sort) | which pair a failing sort names | Only inside an error message, above 64 elements |
 | [Identifier characters](#identifier-characters) | exotic code points in names | No |
+| [A `{% set %}` block writing to a name that was never set](#a--set--block-writing-to-a-name-that-was-never-set) | both raise `TypeError`; jinja2 names a sentinel of its own | No -- only the type in the message |
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
 | [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | a template cannot write to your objects | Changes what the *host* sees after the render, not what renders |
@@ -434,6 +435,49 @@ Above that, CPython splits the list into runs and merges them, and gojja2 uses
 a stable sort of its own. The result is identical; only which pair a failing
 comparison names can differ.
 
+### A `{% set %}` block writing to a name that was never set
+
+```jinja
+{% set nosuch.v %}x{% endset %}
+```
+
+The two `{% set %}` forms are different operations, and this is the only place
+they part company from jinja2.
+
+`{% set ns.v = value %}` requires a namespace: jinja2's `visit_Assign` emits an
+`isinstance` check for every `ns.attr` in the target *before* the code that
+evaluates the value, and gojja2 does the same, so both raise
+`cannot assign attribute on non-namespace object` -- and both raise it in
+preference to whatever the value would have raised.
+
+`{% set ns.v %}...{% endset %}` emits no such check. `visit_AssignBlock` writes a
+bare `ref[attr] = ...`, so it is a plain item assignment: it **succeeds** on a
+dict, and otherwise fails the way Python's `__setitem__` fails. gojja2 matches
+that, naming the same type in the same words:
+
+| the name holds | both engines say |
+|---|---|
+| a dict | nothing -- the key is set and the template renders |
+| a namespace | nothing -- likewise |
+| a list | `TypeError: list indices must be integers or slices, not str` |
+| a tuple, int, float, bool, str, Markup, range, or None | `TypeError: '<type>' object does not support item assignment` |
+
+The exception is a name **that was never set at all**. jinja2's generated code
+holds the sentinel its resolver returns for an unknown name rather than an
+`Undefined`, because nothing has read the name, and that sentinel's class is an
+internal one:
+
+```
+jinja2: TypeError: '_MissingType' object does not support item assignment
+gojja2: TypeError: 'Undefined' object does not support item assignment
+```
+
+Same error, same class, at the same point in the render. Matching the wording
+exactly would mean naming a private class of jinja2's implementation that has no
+counterpart here, so gojja2 names what it actually holds.
+`testdata/corpus/errors/nsref_block_undefined.jj2` is listed in
+`testdata/known_failures.txt` to keep it that way.
+
 ### Identifier characters
 
 jinja2 matches names against a table generated from Python's `str.isidentifier`.
@@ -558,6 +602,16 @@ Two things are still shared, on purpose:
 | a slice, map or nested container | no, converted | a template cannot corrupt the caller |
 | a global registered on the Environment | **yes** | it lives on the Environment, as in jinja2 |
 | a host object exposed by pointer | **yes** | its methods are the point; copying it would break every stateful object |
+
+This holds for `Render` and `RenderString`, which convert what they are given.
+It does **not** hold for `RenderValues`, whose whole purpose is to skip that
+conversion: the values handed to it are used as they are, so
+`{% set _ = lst.append(9) %}`, `{% set _ = d.update(x) %}` and
+`{% set d.v %}...{% endset %}` write through to the caller's value and stay
+written -- after the render, and for every later render given the same values.
+That is the documented trade for skipping the conversion, and it is why a
+`vars` map prepared once and reused across requests should be built per render
+instead if the templates are not trusted.
 
 A list written *in the template* is rebuilt per render for the same reason: it
 is part of the compiled tree, which every render of that template shares --

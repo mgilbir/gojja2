@@ -25,12 +25,27 @@ import (
 // output, exception class, message, line -- is compared, so a divergence is a
 // finding whether the template works or fails.
 
-// harness holds the live oracle and the decoded shared context.
+// harness holds the live oracle and the context every generated case renders
+// against.
+//
+// The context is kept as JSON and decoded per render rather than decoded once
+// and shared, because a render can *mutate* what it is given: `lst.append(9)`,
+// `d.update(...)` and `{% set d.v %}...{% endset %}` all write through to the
+// caller's value, and [gojja2.Template.RenderValues] skips the conversion that
+// would otherwise protect it. Sharing one decoded context let a template poison
+// every comparison after it -- a template with no `{% set %}` in it at all
+// reported a divergence because an earlier one had added a key to `d`. The
+// oracle does json.loads per request, so this is also what makes the two sides
+// start from the same place.
 type harness struct {
 	oracle    *conformance.Oracle
-	context   map[string]value.Value
 	rawCtx    json.RawMessage
 	templates map[string]string
+}
+
+// context decodes a fresh copy of the shared context. See the type comment.
+func (h *harness) context() (map[string]value.Value, error) {
+	return conformance.DecodeContext(h.rawCtx)
 }
 
 // newHarness starts the oracle, or skips when there is none to ask.
@@ -46,13 +61,11 @@ func newHarness(t testing.TB) *harness {
 	if err != nil {
 		t.Fatalf("fuzz context: %v", err)
 	}
-	ctx, err := conformance.DecodeContext(raw)
-	if err != nil {
+	if _, err := conformance.DecodeContext(raw); err != nil {
 		t.Fatalf("decode fuzz context: %v", err)
 	}
 	return &harness{
 		oracle:    oracle,
-		context:   ctx,
 		rawCtx:    raw,
 		templates: conformance.FuzzTemplates(),
 	}
@@ -90,7 +103,11 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var buf strings.Builder
-	err = tmpl.RenderValues(ctx, &buf, h.context)
+	vars, err := h.context()
+	if err != nil {
+		return "", "", err
+	}
+	err = tmpl.RenderValues(ctx, &buf, vars)
 	return buf.String(), "", err
 }
 

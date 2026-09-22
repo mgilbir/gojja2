@@ -1,0 +1,5 @@
+{
+  "d": {}
+}
+---
+{% set ns = namespace() %}{% set ns.a, d.b %}xy{% endset %}[{{ ns.a }}{{ d }}]

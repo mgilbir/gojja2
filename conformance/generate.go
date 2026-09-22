@@ -469,7 +469,7 @@ func (g *generator) setStmt(depth int) {
 // that builds one from a mapping was reached by none. Those are the shapes where
 // the analysis has to stop being precise, so they are the ones worth generating.
 func (g *generator) namespaceStmt() {
-	switch g.c.intn(6) {
+	switch g.c.intn(7) {
 	case 0:
 		// Two names for one object: a write through either reaches the other.
 		g.b.WriteString("{% set ns = namespace(v=0) %}{% set other = ns %}" +
@@ -491,10 +491,27 @@ func (g *generator) namespaceStmt() {
 		// Fields that are never read, and one that is.
 		g.b.WriteString("{% set ns = namespace(a=" + g.expr(2) + ", b=" +
 			g.expr(2) + ") %}{{ ns.a }}")
-	default:
+	case 5:
 		// A field written on something that is not a namespace at all.
 		g.b.WriteString("{% set " + g.c.pick([]string{"d", "given"}) +
 			".v = " + g.expr(2) + " %}")
+	default:
+		// The same target with a body, which is a different operation:
+		// an item assignment, so it lands in a dict and raises the way
+		// Python's __setitem__ does on everything else.
+		//
+		// Only names the context defines. An undefined one is the single
+		// case where jinja2's message has no counterpart here -- it names
+		// the sentinel its resolver returns -- and docs/divergences.md
+		// records that rather than matching it.
+		if g.c.intn(3) == 0 {
+			g.b.WriteString("{% set ns = namespace() %}{% set ns.v %}" +
+				g.expr(2) + "{% endset %}{{ ns.v }}")
+			break
+		}
+		g.b.WriteString("{% set " +
+			g.c.pick([]string{"d", "ed", "lst", "s", "n", "nil"}) +
+			".v %}" + g.expr(2) + "{% endset %}")
 	}
 }
 

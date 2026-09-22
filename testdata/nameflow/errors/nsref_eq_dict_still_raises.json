@@ -1,0 +1,6 @@
+{
+  "case": "errors/nsref_eq_dict_still_raises.jj2",
+  "variables": {
+    "d": "r?"
+  }
+}

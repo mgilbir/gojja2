@@ -1,0 +1,6 @@
+{
+  "case": "errors/nsref_block_filtered.jj2",
+  "variables": {
+    "d": "or?"
+  }
+}

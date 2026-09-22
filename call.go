@@ -512,6 +512,24 @@ func (ex *exec) checkNamespaceTargets(target ast.Expr) error {
 
 // assign binds a value to a target, unpacking tuples.
 func (ex *exec) assign(target ast.Expr, v value.Value) error {
+	return ex.assignWith(target, v, nsAttr)
+}
+
+// nsMode is how an `ns.attr` target is written, which is the one thing the two
+// `{% set %}` forms do differently -- and unpacking has to carry the difference
+// into the tuple, because either form can assign into one.
+type nsMode bool
+
+const (
+	// nsAttr requires a namespace and sets an attribute, which is what
+	// `{% set ns.v = value %}` does.
+	nsAttr nsMode = false
+	// nsItem sets an item on whatever the name holds, which is what
+	// `{% set ns.v %}body{% endset %}` does. See assignItem.
+	nsItem nsMode = true
+)
+
+func (ex *exec) assignWith(target ast.Expr, v value.Value, mode nsMode) error {
 	switch t := target.(type) {
 	case *ast.Name:
 		ex.sc.set(t.Name, v)
@@ -524,6 +542,9 @@ func (ex *exec) assign(target ast.Expr, v value.Value) error {
 		return nil
 
 	case *ast.NSRef:
+		if mode == nsItem {
+			return ex.assignItem(t, v)
+		}
 		ns, err := ex.namespaceTarget(t.Name)
 		if err != nil {
 			return err
@@ -532,12 +553,50 @@ func (ex *exec) assign(target ast.Expr, v value.Value) error {
 		return nil
 
 	case *ast.Tuple:
-		return ex.unpack(t, v)
+		return ex.unpack(t, v, mode)
 	}
 	return errs.New(errs.TemplateRuntimeError, "cannot assign to %s", target.TypeName())
 }
 
-func (ex *exec) unpack(t *ast.Tuple, v value.Value) error {
+// assignItem writes `name[attr] = v`, which is what a `{% set %}` with a body
+// does to an `ns.attr` target.
+//
+// The two forms really are different operations in jinja2, rather than one
+// operation reached two ways. visit_Assign emits an isinstance check for every
+// NSRef in the target before it emits the assignment; visit_AssignBlock emits
+// no check at all, and visit_NSRef writes a bare `ref[attr]`. So the block form
+// is a plain item assignment, and it fails the way Python's __setitem__ fails
+// -- which means it does not fail at all on a dict.
+func (ex *exec) assignItem(ref *ast.NSRef, v value.Value) error {
+	base, _, err := ex.sc.lookup(ref.Name)
+	if err != nil {
+		return err
+	}
+	if d, ok := base.Dict(); ok {
+		d.SetString(ref.Attr, v)
+		return nil
+	}
+	if ns, ok := base.Interface().(*namespaceObject); ok {
+		// A namespace is a mapping too, and this is the spelling that
+		// reaches it: `{% set ns.v %}...{% endset %}`.
+		ns.SetAttr(ref.Attr, v)
+		return nil
+	}
+	if base.Kind() == value.KindList {
+		// Subscriptable, but not by name, and Python says so in its own
+		// words rather than the message below.
+		return errs.New(errs.TypeError,
+			"list indices must be integers or slices, not str")
+	}
+	// Everything else, undefined included. jinja2 reports `_MissingType`
+	// for a name that was never set -- the sentinel its resolver returns,
+	// which has no counterpart here -- so that one message differs. See
+	// docs/divergences.md.
+	return errs.New(errs.TypeError,
+		"'%s' object does not support item assignment", base.TypeName())
+}
+
+func (ex *exec) unpack(t *ast.Tuple, v value.Value, mode nsMode) error {
 	seq, err := value.Iterate(v)
 	if err != nil {
 		return errs.New(errs.TypeError, "cannot unpack non-iterable %s object", v.TypeName())
@@ -566,7 +625,7 @@ func (ex *exec) unpack(t *ast.Tuple, v value.Value) error {
 			"too many values to unpack (expected %d)", len(t.Items))
 	}
 	for i, target := range t.Items {
-		if err := ex.assign(target, items[i]); err != nil {
+		if err := ex.assignWith(target, items[i], mode); err != nil {
 			return err
 		}
 	}

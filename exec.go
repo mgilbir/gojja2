@@ -598,7 +598,9 @@ func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 			return err
 		}
 	}
-	return ex.assign(n.Target, v)
+	// nsItem, not nsAttr: a `{% set %}` with a body assigns an *item*, and
+	// does not check for a namespace first. See assignItem.
+	return ex.assignWith(n.Target, v, nsItem)
 }
 
 func (ex *exec) execWith(n *ast.With) error {

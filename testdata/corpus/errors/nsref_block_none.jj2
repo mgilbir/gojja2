@@ -1,0 +1,5 @@
+{
+  "d": null
+}
+---
+{% set d.v %}x{% endset %}
