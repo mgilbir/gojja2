@@ -46,6 +46,59 @@ func (s sliceSource) at(i int) value.Value { return s[i] }
 func (s sliceSource) length() int          { return len(s) }
 func (s sliceSource) err() error           { return nil }
 
+// sizeGuard reports a function that fails once v has changed size, or nil for
+// a container that may be resized while it is walked.
+//
+// Python raises RuntimeError when a dict changes size during iteration, and it
+// raises it on every step including the one that would have ended the loop --
+// so a single-key dict mutated in the body raises too. Lists are deliberately
+// not guarded: CPython does not guard them either, and `{% for i in l %}` with
+// an append in the body is an infinite loop there. Here the iteration budget
+// stops it, which is the documented bound rather than this error.
+func sizeGuard(v value.Value) func() error {
+	size, what := func() int { return 0 }, ""
+	switch o := v.Interface().(type) {
+	case *dictView:
+		size, what = o.Len, "dictionary"
+	default:
+		if d, ok := v.Dict(); ok {
+			size, what = d.Len, "dictionary"
+		}
+	}
+	if what == "" {
+		return nil
+	}
+	start := size()
+	return func() error {
+		if size() != start {
+			return errs.New(errs.RuntimeError, "%s changed size during iteration", what)
+		}
+		return nil
+	}
+}
+
+// guardedSource is a snapshot of a container that must not be resized while the
+// loop walks it. See sizeGuard.
+type guardedSource struct {
+	items []value.Value
+	guard func() error
+	bad   error
+}
+
+func (s *guardedSource) has(i int) bool {
+	if s.bad != nil {
+		return false
+	}
+	if s.bad = s.guard(); s.bad != nil {
+		return false
+	}
+	return i >= 0 && i < len(s.items)
+}
+
+func (s *guardedSource) at(i int) value.Value { return s.items[i] }
+func (s *guardedSource) length() int          { return len(s.items) }
+func (s *guardedSource) err() error           { return s.bad }
+
 // filteredSource applies a loop's `if` as the loop walks it.
 //
 // Filtering up front is the same answer whenever the test is pure, and a
@@ -122,11 +175,28 @@ func makeLoopSource(st *State, v value.Value) (loopSource, error) {
 		return sliceSource(s.Items()), nil
 	case value.KindDict:
 		d, _ := v.Dict()
-		return sliceSource(d.Keys()), nil
+		return &guardedSource{items: d.Keys(), guard: sizeGuard(v)}, nil
 	case value.KindObject:
+		if _, ok := v.Interface().(*dictView); ok {
+			break // a view is guarded too; fall through to Iterate
+		}
 		if seq, ok := v.Interface().(value.Sequence); ok {
 			return objectSource{seq}, nil
 		}
+	}
+	if g := sizeGuard(v); g != nil {
+		seq, err := value.Iterate(v)
+		if err != nil {
+			return nil, err
+		}
+		var items []value.Value
+		for item := range seq {
+			if err := st.Step(1); err != nil {
+				return nil, err
+			}
+			items = append(items, item)
+		}
+		return &guardedSource{items: items, guard: g}, nil
 	}
 	seq, err := value.Iterate(v)
 	if err != nil {

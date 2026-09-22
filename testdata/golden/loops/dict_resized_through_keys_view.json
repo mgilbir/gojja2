@@ -1,0 +1,14 @@
+{
+  "case": "loops/dict_resized_through_keys_view.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "RuntimeError",
+    "message": "dictionary changed size during iteration"
+  }
+}

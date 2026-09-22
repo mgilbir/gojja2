@@ -1,0 +1,6 @@
+{
+  "case": "loops/dict_resized_through_keys_view.jj2",
+  "variables": {
+    "d": "fr"
+  }
+}
