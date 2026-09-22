@@ -101,6 +101,14 @@ func (v PythonVersion) SliceKeysAreHashable() bool { return v.AtLeast(Python312)
 // as an integer". Corpus: errors/sort_reverse_none, errors/method_none_keepends.
 func (v PythonVersion) BoolArgsAreTruthy() bool { return v.AtLeast(Python312) }
 
+// IntHasIsInteger reports whether int carries is_integer().
+//
+// 3.12 added it, answering True for every int, so that a caller can ask the
+// question of a number without first knowing which kind it is. Before that it
+// is a float method only, and `{{ (0).is_integer() }}` raises the ordinary
+// missing-attribute error. Corpus: methods/int_is_integer.
+func (v PythonVersion) IntHasIsInteger() bool { return v.AtLeast(Python312) }
+
 // IndexAcceptsWideInt reports whether an index too large for a C int is taken
 // rather than refused.
 //

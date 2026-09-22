@@ -2877,6 +2877,14 @@ case("errors/z_out_of_position_before", "{{ '{:0z.2f}'.format(1.5) }}")
 case("errors/z_after_hash_is_a_type", "{{ '{:#z}'.format(1.5) }}")
 case("errors/z_int_code_on_a_float", "{{ '{:zd}'.format(1.5) }}")
 
+# --- int.is_integer, which 3.12 added -----------------------------------------
+# It answers True for every int, so that a caller can ask the question of a
+# number without first knowing which kind it is. gojja2 had it on float only, so
+# `{{ (0).is_integer() }}` was a missing attribute on every version -- right for
+# 3.11 and wrong for the three after it. The version override records 3.11.
+case("methods/int_is_integer", "{{ (0).is_integer() }}|{{ (-1).is_integer() }}|{{ n.is_integer() }}", n=7)
+case("methods/float_is_integer_unchanged", "{{ (2.5).is_integer() }}|{{ (2.0).is_integer() }}|{{ (-0.0).is_integer() }}")
+
 # --- the bytes methods --------------------------------------------------------
 # bytes had one method, decode, so the other forty-one were attribute errors on
 # a type the engine otherwise supports fully. They are not the str methods:

@@ -1,0 +1,14 @@
+{
+  "case": "methods/int_is_integer.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11"
+  },
+  "ok": false,
+  "error": {
+    "type": "UndefinedError",
+    "message": "'int object' has no attribute 'is_integer'"
+  }
+}
