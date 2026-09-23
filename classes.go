@@ -99,12 +99,23 @@ func init() {
 		"jinja2.utils.Cycler":    globalCycler,
 		"jinja2.utils.Joiner":    globalJoiner,
 	}
-	// An undefined's class builds another undefined, whatever it is handed
-	// -- Undefined.__init__ takes hint, obj, name and accepts anything --
-	// and every undefined class behaves the same way here.
-	for _, name := range []string{"Undefined", "ChainableUndefined",
-		"DebugUndefined", "StrictUndefined"} {
-		classConstructors["jinja2.runtime."+name] = constructUndefined
+	// An undefined's class builds another undefined. Which class it was
+	// decides how the result behaves, and the class name is the only thing
+	// that reaches the constructor, so the behaviour is bound here.
+	for _, u := range []struct {
+		name     string
+		behavior value.UndefinedBehavior
+	}{
+		{"Undefined", value.UndefinedDefault},
+		{"ChainableUndefined", value.UndefinedChainable},
+		{"DebugUndefined", value.UndefinedDebug},
+		{"StrictUndefined", value.UndefinedStrict},
+	} {
+		behavior := u.behavior
+		classConstructors["jinja2.runtime."+u.name] =
+			func(_ *State, args *value.CallArgs) (value.Value, error) {
+				return constructUndefined(behavior, args)
+			}
 	}
 }
 
@@ -303,28 +314,47 @@ func constructNone(_ *State, args *value.CallArgs) (value.Value, error) {
 	return value.None, nil
 }
 
-// constructUndefined builds another undefined.
+// constructUndefined builds another undefined, binding jinja2's
+// Undefined(hint, obj, name, exc) as jinja2 binds it.
 //
-// jinja2's Undefined.__init__ takes (hint, obj, name, exc) and none of them
-// changes what this answers -- an undefined built here is a plain one, because
-// the template has no way to observe the hint it was given. The signature is
-// still enforced, because refusing a misspelt keyword is observable and every
-// undefined class shares this one __init__, so the message names Undefined
-// whichever subclass was called.
-func constructUndefined(_ *State, args *value.CallArgs) (value.Value, error) {
+// None of the four changes what the value *is* -- it is undefined either way --
+// but all but the last change what it says when something uses it, and the
+// class it is built from decides how it behaves: `{{ nope.__class__() }}` under
+// StrictUndefined is a StrictUndefined.
+func constructUndefined(behavior value.UndefinedBehavior, args *value.CallArgs) (value.Value, error) {
 	if len(args.Pos) > 4 {
 		return value.Undefined, errs.New(errs.TypeError,
 			"Undefined.__init__() takes from 1 to 5 positional arguments "+
 				"but %d were given", len(args.Pos)+1)
 	}
+	params := []string{"hint", "obj", "name", "exc"}
+	// jinja2's defaults are None for all but obj, whose default is the
+	// `missing` sentinel -- tracked by have rather than by a value, since
+	// None is a legitimate obj. A zero Value here is not None but an
+	// undefined, which reprs as "Undefined" and put that in the message.
+	bound := []value.Value{value.None, value.None, value.None, value.None}
+	have := make([]bool, 4)
+	for i, v := range args.Pos {
+		bound[i], have[i] = v, true
+	}
 	for _, kw := range args.Kwargs {
-		if !slices.Contains([]string{"hint", "obj", "name", "exc"}, kw.Name) {
+		i := slices.Index(params, kw.Name)
+		if i < 0 {
 			return value.Undefined, errs.New(errs.TypeError,
 				"Undefined.__init__() got an unexpected keyword argument '%s'",
 				kw.Name)
 		}
+		if have[i] {
+			return value.Undefined, errs.New(errs.TypeError,
+				"Undefined.__init__() got multiple values for argument '%s'",
+				kw.Name)
+		}
+		bound[i], have[i] = kw.Value, true
 	}
-	return value.Undefined, nil
+	// The class is the one that was called, so a StrictUndefined builds one
+	// that refuses just as it does.
+	built := value.UndefinedConstructed(bound[0], bound[1], have[1], bound[2])
+	return built.WithBehavior(behavior), nil
 }
 
 func constructSeq(s *State, name string, args *value.CallArgs) ([]value.Value, error) {

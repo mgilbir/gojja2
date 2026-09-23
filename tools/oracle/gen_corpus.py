@@ -2815,6 +2815,57 @@ for _n, _src in [
 ]:
     case(f"filters/seqarg_{_n}", _src, lst=[1, 0], pairs=[{"x": 1}])
 
+# `{{ nope.__class__(...) }}` builds another undefined, and jinja2's
+# Undefined(hint, obj, name, exc) is observable in three ways: a *truthy* hint is
+# the whole message, with no obj the name stands alone, and with an obj a string
+# name is an attribute while anything else is an element. The name is written
+# with !r in the error and raw in DebugUndefined's __str__, so the same value is
+# "'zz' is undefined" and "{{ zz }}".
+#
+# gojja2 ignored all four arguments and produced a nameless undefined that said
+# "'' is undefined" where jinja2 says "None is undefined". The render
+# differential found it within twenty thousand templates of the generator
+# learning to call a class object.
+_U = [
+    ("default_is_none", "{{ nope.__class__() + 1 }}"),
+    ("prints_empty", "[{{ nope.__class__() }}]"),
+    ("name", "{{ nope.__class__(name='zz') + 1 }}"),
+    ("name_prints_raw", "[{{ nope.__class__(name='zz') }}]"),
+    ("name_is_not_a_string", "{{ nope.__class__(name=3) + 1 }}"),
+    ("name_is_none", "{{ nope.__class__(name=none) + 1 }}"),
+    ("hint", "{{ nope.__class__(hint='h') + 1 }}"),
+    ("hint_prints", "[{{ nope.__class__(hint='h') }}]"),
+    ("hint_is_not_a_string", "{{ nope.__class__(hint=1) + 1 }}"),
+    # jinja2 tests the hint for *truth*, not for presence, so every falsy one
+    # falls through to the name form. A plant that checked presence instead was
+    # caught by nothing until these were written: the four classes of hint above
+    # are all either absent or truthy.
+    ("falsy_hint_is_ignored", "{{ nope.__class__(hint=none) + 1 }}"),
+    ("empty_hint_is_ignored", "{{ nope.__class__(hint='') + 1 }}"),
+    ("zero_hint_is_ignored", "{{ nope.__class__(hint=0) + 1 }}"),
+    ("empty_list_hint_is_ignored", "{{ nope.__class__(hint=[]) + 1 }}"),
+    ("empty_hint_falls_to_the_name",
+     "{{ nope.__class__(hint='', name='zz') + 1 }}"),
+    ("zero_hint_falls_to_the_attribute",
+     "{{ nope.__class__(hint=0, obj=1, name='k') + 1 }}"),
+    ("positional", "{{ nope.__class__(1, 2, 3) + 1 }}"),
+    ("obj_and_string_name", "{{ nope.__class__(obj=1, name='k') + 1 }}"),
+    ("obj_and_other_name", "{{ nope.__class__(obj=1, name=3) + 1 }}"),
+    ("obj_without_a_name", "{{ nope.__class__(obj=1) + 1 }}"),
+    ("none_obj", "{{ nope.__class__(obj=none, name='k') + 1 }}"),
+    ("is_still_undefined", "{{ nope.__class__() is defined }}"),
+    ("walks_as_empty", "{{ nope.__class__()|list }}"),
+    ("arity", "{{ nope.__class__(1, 2, 3, 4, 5) }}"),
+    ("unexpected_keyword", "{{ nope.__class__(zz=1) }}"),
+    ("duplicate_argument", "{{ nope.__class__(1, hint=2) }}"),
+]
+# Under every setting, because the class that was called decides how the result
+# behaves: one built from a StrictUndefined refuses just as it does.
+for _kind in ("default", "strict", "debug", "chainable"):
+    for _n, _src in _U:
+        case(f"undefined/construct_{_kind}_{_n}", _src,
+             __settings__={"undefined": _kind})
+
 # Neither format_map nor translate converts the argument it is handed.
 # translate is `table[ord(c)]` per character, catching LookupError, so an empty
 # string never touches the table and anything subscriptable by an integer will

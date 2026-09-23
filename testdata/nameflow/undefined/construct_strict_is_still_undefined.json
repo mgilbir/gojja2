@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_strict_is_still_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

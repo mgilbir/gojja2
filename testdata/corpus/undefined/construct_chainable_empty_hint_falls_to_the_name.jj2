@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{{ nope.__class__(hint='', name='zz') + 1 }}
