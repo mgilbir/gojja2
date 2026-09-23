@@ -958,14 +958,16 @@ func (g *generator) classObject() string {
 	// compares against the class *global* it is -- which is a second thing
 	// nothing generated reached.
 	if g.c.chance(4) {
-		return chain + g.c.pick([]string{
+		// Parenthesised, because a filter binds tighter than `==`: an
+		// outer `|dictsort` would land on the right operand alone and
+		// call a method on a bare class object, which is the unbound
+		// method divergence rather than anything about comparing. That
+		// escaped a 60,000-template soak once already.
+		return "(" + chain + g.c.pick([]string{
 			" == " + g.c.pick([]string{"n", "s", "lst", "d"}) + ".__class__",
 			" != n.__class__", " == dict", " == range", " == namespace",
 			" in [n.__class__, s.__class__]",
-			// Hashing a class object, which is a third thing
-			// nothing generated reached.
-			"|string", "|string",
-		})
+		}) + ")"
 	}
 	if g.c.chance(6) {
 		return g.c.pick([]string{
@@ -978,13 +980,16 @@ func (g *generator) classObject() string {
 			"[" + chain + ", " + chain + "]|unique|list",
 		})
 	}
-	tail := []string{".__name__", ".__name__|upper", "|string", "|length"}
-	if !generic {
-		// A bare class object is safe to hand on for everything but the
-		// two above.
-		tail = append(tail, "", "")
-	}
-	return chain + g.c.pick(tail)
+	// A *bare* class object is never handed onwards, for two reasons that
+	// both end in a documented divergence: `list` and `dict` are generic
+	// aliases under a subscript, and every class carries its own methods
+	// unbound, so a filter that calls one -- |dictsort, |xmlattr -- gets an
+	// unbound-method error CPython words differently. Printing one is
+	// covered by the corpus instead, where the shape is pinned rather than
+	// left to an outer arm to choose.
+	return chain + g.c.pick([]string{
+		".__name__", ".__name__|upper", "|string", "|length",
+	})
 }
 
 // methodCall writes a call to one of Python's own methods on a receiver of the

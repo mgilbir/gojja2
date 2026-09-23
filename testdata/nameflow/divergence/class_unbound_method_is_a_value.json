@@ -1,0 +1,6 @@
+{
+  "case": "divergence/class_unbound_method_is_a_value.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

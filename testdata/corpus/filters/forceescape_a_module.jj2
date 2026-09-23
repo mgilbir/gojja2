@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "body.html": "<b>x</b>"
+  }
+}
+---
+{% import 'body.html' as m %}{{ m|forceescape }}|{{ m|e }}|{{ m|string }}

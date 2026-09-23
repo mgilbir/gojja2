@@ -585,10 +585,29 @@ Construction is the one thing a type object does that leads nowhere further into
 the interpreter -- an int, a str or a list is an ordinary value -- so refusing it
 bought no safety and cost conformance.
 
-Everything else a type object answers matches too: `__name__`, `__qualname__`,
+A type object also carries its class's methods, unbound, and that is not
+implemented:
+
+```jinja
+{{ d.__class__.items() }}   "unbound method dict.items() needs an argument" on CPython
+{{ s.__class__.upper('a') }}   "A" on CPython
+{{ d.__class__|dictsort }}  the same unbound-method error; gojja2 says no attribute
+```
+
+This is the line `__mro__` and `__subclasses__` sit on rather than the one
+construction sits on. An unbound method is a route back into the object model --
+`str.upper` is a value that carries a callable bound to no instance -- where an
+int or a list built by calling a class is an ordinary value that leads nowhere.
+gojja2's type object answers the attributes a class has *as a class* and refuses
+the rest, so `{{ n.__class__|dictsort }}` says `type object 'int' has no
+attribute 'items'`, which is right for every class that genuinely lacks the
+method and wrong for the ones that have it.
+
+Everything else a type object answers matches: `__name__`, `__qualname__`,
 `__module__`, its repr, equality with another type object *and with the class
-global it is* (`{{ d.__class__ == dict }}` is true), and its behaviour as a dict
-key or in `unique`. Ordering two of them is a `TypeError` on both sides.
+global it is* (`{{ d.__class__ == dict }}` is true), calling it, and its
+behaviour as a dict key or in `unique`. Ordering two of them is a `TypeError` on
+both sides.
 
 Two of Jinja's sandbox-escape tests go further, and those are not implemented:
 

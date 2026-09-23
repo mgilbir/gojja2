@@ -252,6 +252,9 @@ func (ex *exec) renderValue(v value.Value) (string, error) {
 		// a value that carries its own escaped form hands that over
 		// here and only here -- `{{ m }}` is the module's body where
 		// `{{ m ~ "" }}` is str(m), escaped as a whole.
+		if err := value.HTMLRefusal(v); err != nil {
+			return "", err
+		}
 		if html, ok := value.HTML(v); ok {
 			text = html
 		} else {

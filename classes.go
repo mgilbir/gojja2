@@ -502,6 +502,24 @@ func classNameOf(v value.Value) (string, bool) {
 	return "", false
 }
 
+// HTMLRefusal reports that this type object carries __html__ and cannot answer
+// it, which is true of exactly one class: markupsafe's Markup.
+//
+// markupsafe defines __html__ as an ordinary method, so the class object holds
+// it unbound. `hasattr` says yes -- which is what `is escaped` asks, and it
+// answers True -- and calling it with no self raises. So printing the Markup
+// class under autoescape fails, where printing it without autoescape is its
+// repr, and `|string` is its repr either way.
+//
+// Found by the render differential: `{% autoescape yes %}{{ ('x'|safe).__class__ }}`.
+func (c *classObject) HTMLRefusal() error {
+	if c.qualified != "markupsafe.Markup" {
+		return nil
+	}
+	return errs.New(errs.TypeError,
+		"Markup.__html__() missing 1 required positional argument: 'self'")
+}
+
 func (c *classObject) Repr() string { return "<class '" + c.qualified + "'>" }
 
 func (c *classObject) TypeName() string { return "type" }

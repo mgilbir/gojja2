@@ -53,7 +53,21 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			}
 			text := value.Str(v)
 			if escaping && !v.IsSafe() {
-				text = escapeHTML(text)
+				// A value whose own __html__ cannot be called
+				// stays a run-time failure, for the same reason
+				// a StrictUndefined does: folding it would
+				// swallow the error. The Markup *class* is the
+				// one value like that, and the render
+				// differential found it folded here while the
+				// unfolded path already raised.
+				if value.HTMLRefusal(v) != nil {
+					continue
+				}
+				if html, ok := value.HTML(v); ok {
+					text = html
+				} else {
+					text = escapeHTML(text)
+				}
 			}
 			// The text becomes part of the compiled template and is
 			// kept for as long as it is cached, so it obeys the same

@@ -1,0 +1,11 @@
+{
+  "case": "filters/forceescape_a_module.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "&lt;b&gt;x&lt;/b&gt;|<b>x</b>|<b>x</b>"
+}
