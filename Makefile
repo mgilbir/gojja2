@@ -306,7 +306,7 @@ test: ## Run the Go test suite
 
 .PHONY: mutate
 mutate: venv ## Break the analysis on purpose and report what nothing notices
-	python3 tools/mutate.py
+	python3 tools/mutate.py $(ARGS)
 
 .PHONY: ungraded
 ungraded: venv ## Count the error messages no corpus case has ever produced

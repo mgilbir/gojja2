@@ -198,7 +198,8 @@ records a Def, a Use, a Scope or a context name. Those are further upstream than
 anything in `dataflow/`: a binding that goes unrecorded is a name the analysis
 cannot see, which is indistinguishable to it from a name that does nothing.
 
-51 mutations, all 51 *exercised*, one surviving. The count of exercised ones is
+89 mutations, all 89 *exercised*, seven surviving: one in the analysis, six
+in the budget below. The count of exercised ones is
 reported separately because it used to be smaller than the total without saying
 so: some sites are the only reader of a loop variable, so commenting the line
 out left something declared and not used, the build failed, and the tool called
@@ -233,6 +234,47 @@ branch makes are applied separately, after the sorted loop, so the store there
 adds only an ownership claim that nothing reads. It has been left alone rather
 than simplified on that hypothesis: a line that cannot be shown to matter is not
 the same as one shown not to.
+
+### And the budget, for the same reason
+
+The allocation bound is mutated too, and it is the one part of the engine that
+belongs here. Everything a template *renders* is graded against CPython by five
+thousand corpus cases and sixty thousand generated templates a run, which is a
+far stronger check than mutating it would be. The budget has no counterpart in
+CPython at all -- it is gojja2's invention -- so nothing outside this repository
+can say whether it holds. That is the line: **mutate what has no oracle.**
+
+Thirty-eight places reserve memory or iterations before taking them. The
+mutation removes the *charge*, not just its refusal, and the difference matters:
+leaving the debit in place lets a later charge refuse instead, so sixteen sites
+read as constrained under the weaker mutation and were not. A bound that only
+ever fires after another one has already refused is not measured by anything.
+
+Twenty-two survived when this was first run. Each is now driven by a template in
+`TestEachBudgetChargeRefusesOnItsOwn` that **binds its result to a name instead
+of printing it**: nothing downstream can charge it, so the site under test is the
+only thing between the template and the allocation. Writing those found two
+traps worth repeating -- `{{ "x" * 2097152 }}` and `{{ 1.5|round(1000) }}` are
+constant-folded and never reach the code at all, and a context list is charged
+as it is converted, so a per-item step has to be driven by a lazy `range()`
+rather than by a list a test passes in.
+
+**Six survive.** Every one is a second charge on bytes or items that something
+upstream has already charged: `|batch` after `materialize`, `|urlencode` and
+`str.join` over a sequence the conversion paid for, `pad` beside the
+`repeatString` inside it, and the two walks that materialise a loop's source.
+They are belt-and-braces rather than gaps, and they are left alone on the same
+principle as the open `frames.go` survivor above: a line that cannot be shown to
+matter is not the same as one shown not to.
+
+Two things about running it. A mutation that removes a bound is *meant* to let
+the render allocate without one, so each measuring run gets a cap of its own --
+otherwise the first such mutation takes the runner down and reports nothing.
+And because the tool edits the working tree, it now writes the untouched copy to
+`tools/.mutate-restore/` before each edit and restores whatever it finds there
+on the next run: an `atexit` hook alone cannot answer the kernel's own killer,
+and twice it left a mutated file behind. `make mutate ARGS=--budget` runs this
+half alone, `ARGS=--analysis` the other.
 
 ## Messages nothing has ever compared
 

@@ -16,3 +16,4 @@ __pycache__/
 *.test
 *.out
 coverage.txt
+tools/.mutate-restore/
