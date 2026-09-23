@@ -234,6 +234,43 @@ adds only an ownership claim that nothing reads. It has been left alone rather
 than simplified on that hypothesis: a line that cannot be shown to matter is not
 the same as one shown not to.
 
+## Messages nothing has ever compared
+
+`make mutate` asks what the suite fails to constrain. `make ungraded` asks a
+narrower question with the same shape: **which error messages has no corpus case
+ever produced?**
+
+It runs the corpus under coverage on every interpreter, intersects the blocks
+that never executed with the lines that build an error, and counts what is left.
+Today that is **163 of 397**.
+
+A message nothing produces is not evidence of anything -- it has never been
+compared to CPython. It is worse than untested: it reads as *agreement in every
+column of the version matrix*, because the matrix compares the cases the corpus
+holds and nothing else. A message that is wrong on one interpreter and right on
+another looks exactly like one that is right on all four.
+
+The first run found six bugs in the first seventy-eight shapes probed:
+`bytes.hex` accepted a separator of any length and rejected a bytes one,
+`|xmlattr` had its message inside out, nine numeric methods had no arity check at
+all, `bytes.fromhex` skipped one whitespace character instead of six and reported
+the wrong position, a dict-update element message had changed in 3.14 unnoticed,
+and `selectattr` named itself in `rejectattr`'s error. The next hundred and
+eighty-seven shapes found nothing, which is the other half of the result and is
+why the number is recorded rather than chased to zero.
+
+A site on the list is one of three things, and telling them apart is the work:
+
+- **not reachable from a template** -- a configuration error, a budget refusal, a
+  Go bridge complaint. Graded by Go tests, and not a claim about CPython.
+- **an internal invariant** -- "unknown operator", "cannot execute". gojja2's own
+  parser cannot build the node; `syntax.Node` is public, so a caller can.
+- **reachable, and never probed.** The interesting kind. The only way to tell is
+  to read the message and write the template that reaches it.
+
+The count moving *up* is not automatically bad -- a new refusal starts ungraded
+-- but it should move back down before the change lands.
+
 `make soak-syntax` asks the same three questions of templates nobody chose, and
 then asks the engine whether the answers are true. Where the analysis says a
 variable is never printed, the render gets a marker and the output must not hold
