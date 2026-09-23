@@ -83,6 +83,22 @@ func newHarness(t testing.TB) *harness {
 	}
 }
 
+// caseOptions is the environment a generated case renders under, on gojja2's
+// side. The oracle is handed the same settings; they have to be applied to both
+// or the comparison is between two environments rather than two engines.
+func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
+	opts := []gojja2.Option{gojja2.WithAutoescape(c.Autoescape)}
+	switch c.Undefined {
+	case "strict":
+		opts = append(opts, gojja2.WithUndefined(value.UndefinedStrict))
+	case "chainable":
+		opts = append(opts, gojja2.WithUndefined(value.UndefinedChainable))
+	case "debug":
+		opts = append(opts, gojja2.WithUndefined(value.UndefinedDebug))
+	}
+	return opts
+}
+
 const fuzzTemplateName = "fuzz.txt"
 
 // renderGojja2 renders with gojja2, turning a panic into a reportable result
@@ -100,11 +116,9 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 		}
 	}()
 
-	env := mustEnv(
+	env := mustEnv(append(caseOptions(c),
 		gojja2.WithLoader(gojja2.DictLoader(sources)),
-		gojja2.WithAutoescape(c.Autoescape),
-		gojja2.WithPythonVersion(h.py),
-	)
+		gojja2.WithPythonVersion(h.py))...)
 	tmpl, err := env.GetTemplate(fuzzTemplateName)
 	if err != nil {
 		return "", "", err
@@ -127,9 +141,15 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 // check compares one template, returning nil when the two agree or when the
 // case cannot be graded.
 func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.Divergence {
-	var settings map[string]any
+	settings := map[string]any{}
 	if c.Autoescape {
-		settings = map[string]any{"autoescape": true}
+		settings["autoescape"] = true
+	}
+	if c.Undefined != "" {
+		settings["undefined"] = c.Undefined
+	}
+	if len(settings) == 0 {
+		settings = nil
 	}
 	want, err := h.oracle.Render(conformance.OracleRequest{
 		Name:      fuzzTemplateName,
@@ -190,9 +210,14 @@ func report(t testing.TB, c conformance.GeneratedCase, d *conformance.Divergence
 	if d == nil {
 		return
 	}
+	// Every setting the case renders under has to be in the report, or the
+	// template alone does not reproduce it.
 	env := ""
 	if c.Autoescape {
 		env = ", autoescape"
+	}
+	if c.Undefined != "" {
+		env += ", " + c.Undefined + " undefined"
 	}
 	t.Errorf("[%s] %s\n%s\n  (context: conformance.FuzzContextJSON%s)",
 		d.Kind, strconv.Quote(c.Source), indent(d.Detail), env)
@@ -244,6 +269,7 @@ func TestDifferential(t *testing.T) {
 
 	var checked, skipped, escaping int
 	var failures int
+	undefinedRuns := map[string]int{}
 	for range count {
 		input := make([]byte, 1+rng.IntN(96))
 		for i := range input {
@@ -258,6 +284,9 @@ func TestDifferential(t *testing.T) {
 		if c.Autoescape {
 			escaping++
 		}
+		if c.Undefined != "" {
+			undefinedRuns[c.Undefined]++
+		}
 
 		d := h.check(t, c)
 		if d == nil {
@@ -271,8 +300,14 @@ func TestDifferential(t *testing.T) {
 		min, minD := h.minimize(t, c, 200)
 		report(t, min, minD)
 	}
+	// The per-setting counts are reported because a run that silently stopped
+	// varying them would otherwise look exactly like a clean one: the axis
+	// was added after sixty thousand templates a run had all used the
+	// default Undefined without anything saying so.
 	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), "+
-		"%d autoescaping, %d empty", checked, seed, escaping, skipped)
+		"%d autoescaping, %d empty; undefined %d strict, %d chainable, %d debug",
+		checked, seed, escaping, skipped,
+		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"])
 }
 
 func envInt(t testing.TB, name string, def int) int {

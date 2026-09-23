@@ -35,6 +35,7 @@ are safety controls rather than behavioural choices, and they live in
 |---|---|---|
 | [Lazy sequence filters](#lazy-sequence-filters) | sequence filters return lists, not generators | **Yes** -- and toward what the author meant |
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
+| [A constant folded under StrictUndefined](#a-constant-folded-under-strictundefined) | `{{ (0.0).a ~ 1 }}` raises at render, not at compile | No -- same error, different moment |
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
@@ -798,6 +799,36 @@ Five filters reach the second of those -- `dictsort`, `xmlattr`, `wordwrap`,
 `wordwrap(wrapstring=...)` and `urlize(rel=...)`. A 161-shape sweep over every
 subject the template generator writes and every accessor it can follow one with
 found the generic alias above and nothing else.
+
+### A constant folded under StrictUndefined
+
+jinja2's constant folder reads an attribute and a subscript through the lookup
+that swallows the failure into an `Undefined`, where its own runtime raises. Under
+`StrictUndefined` that `Undefined` raises *while folding* -- at compile time,
+before any of the template has run:
+
+```jinja
+{{ (0.0).a ~ 1 }}
+```
+
+raises `'float object' has no attribute 'a'` from `from_string` on CPython, and
+at render here. Under every other Undefined class the folded value is falsey and
+the expression simply continues, so only strict is affected.
+
+Most shapes of this raise the same error on both sides -- `{{ (2.5).denominator
+or 0 }}` and `{{ (1e3)|attr('nope') and 1 }}` do, and so does every unfolded form.
+What differs is *when*.
+
+There are no corpus cases for it, and that is structural rather than an omission:
+the suite requires jinja2 and gojja2 to agree about whether a template compiles at
+all, and every shape here is one CPython refuses and gojja2 accepts.
+`TestSyntaxMatchesTheReference` says so directly -- "compiles here but has no
+reference tree" -- which is how the two shapes that *looked* like they agreed on
+the message were caught. The render comparison sees only the message; the syntax
+invariant sees the phase.
+
+Found by giving the render differential an undefined axis, and it is why that axis
+does not draw StrictUndefined: see `conformance/generate.go`.
 
 ### Which line an error inside a multi-line tag names
 

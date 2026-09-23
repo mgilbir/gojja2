@@ -236,7 +236,37 @@ type generator struct {
 type GeneratedCase struct {
 	Source     string
 	Autoescape bool
+	// Undefined names the Undefined class the case renders under: "" for
+	// jinja2's default, or "strict", "chainable" or "debug".
+	//
+	// The differential varied autoescape and nothing else for a long time,
+	// so sixty thousand templates a run all rendered under the default
+	// Undefined -- and the generator writes undefined names constantly.
+	// Which class is in force decides whether printing one raises, whether
+	// reaching through one chains, and what it prints, so three quarters of
+	// that dimension went unasked.
+	Undefined string
 }
+
+// undefinedKinds are drawn against, default-weighted: the others shift the whole
+// run toward error paths, which is where the interesting answers are but not
+// where every template should end up.
+//
+// StrictUndefined is deliberately absent, and that is a narrowing rather than an
+// oversight. Under it, a *folded* constant subscript or attribute becomes a
+// strict undefined, and jinja2 lets the error out of the fold at compile time
+// where gojja2 abandons the fold and leaves the expression for the render --
+// which then raises the error the unswallowed lookup gives instead. That is the
+// divergence docs/divergences.md records as "A constant folded under
+// StrictUndefined", and it fires often enough to drown anything else the axis
+// would find.
+//
+// Fixing it means giving the const evaluator an error channel: constBinOp
+// abandons the fold when IsTrue returns one, and every level of constEvalNode
+// answers (Value, bool) with nowhere to put it. That is its own change with its
+// own soak, not a line in this table. Strict is covered by the corpus meanwhile
+// -- undefined/strict_* and undefined/loop_strict_* are graded every run.
+var undefinedKinds = []string{"", "", "", "", "chainable", "debug"}
 
 // GenerateCase builds a template and the environment it renders under.
 func GenerateCase(input []byte) GeneratedCase {
@@ -245,8 +275,13 @@ func GenerateCase(input []byte) GeneratedCase {
 	// the same bytes after it generate the same template either way --
 	// which is what makes shrinking a diverging case keep its setting.
 	autoescape := g.c.chance(3)
+	undefined := g.c.pick(undefinedKinds)
 	g.template()
-	return GeneratedCase{Source: g.b.String(), Autoescape: autoescape}
+	return GeneratedCase{
+		Source:     g.b.String(),
+		Autoescape: autoescape,
+		Undefined:  undefined,
+	}
 }
 
 // GenerateTemplate builds a template from fuzzer input, for callers that do
