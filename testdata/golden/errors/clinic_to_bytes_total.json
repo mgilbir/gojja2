@@ -1,0 +1,14 @@
+{
+  "case": "errors/clinic_to_bytes_total.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "to_bytes() takes at most 3 arguments (4 given)"
+  }
+}

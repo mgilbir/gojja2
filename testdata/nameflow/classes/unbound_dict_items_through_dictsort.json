@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_dict_items_through_dictsort.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

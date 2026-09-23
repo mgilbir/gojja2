@@ -599,23 +599,51 @@ Construction is the one thing a type object does that leads nowhere further into
 the interpreter -- an int, a str or a list is an ordinary value -- so refusing it
 bought no safety and cost conformance.
 
-A type object also carries its class's methods, unbound, and that is not
-implemented:
+A type object also carries its class's methods, unbound, and that is implemented
+too, for the same reason: a method descriptor leads back to the value it is
+called on and no further.
 
 ```jinja
-{{ d.__class__.items() }}   "unbound method dict.items() needs an argument" on CPython
-{{ s.__class__.upper('a') }}   "A" on CPython
-{{ d.__class__|dictsort }}  the same unbound-method error; gojja2 says no attribute
+{{ d.__class__.items }}        "<method 'items' of 'dict' objects>"
+{{ d.__class__.items(d) }}     "dict_items([('a', 1)])"
+{{ s.__class__.upper('a') }}   "A"
+{{ d.__class__.items() }}      TypeError: unbound method dict.items() needs an argument
+{{ s.__class__.upper(1) }}     TypeError: descriptor 'upper' for 'str' objects doesn't
+                               apply to a 'int' object
+{{ s.__class__.upper('a','b') }}  TypeError: str.upper() takes no arguments (1 given)
 ```
 
-This is the line `__mro__` and `__subclasses__` sit on rather than the one
-construction sits on. An unbound method is a route back into the object model --
-`str.upper` is a value that carries a callable bound to no instance -- where an
-int or a list built by calling a class is an ordinary value that leads nowhere.
-gojja2's type object answers the attributes a class has *as a class* and refuses
-the rest, so `{{ n.__class__|dictsort }}` says `type object 'int' has no
-attribute 'items'`, which is right for every class that genuinely lacks the
-method and wrong for the ones that have it.
+The first argument is the instance and everything after it is the method's own,
+so an arity error is reported by the method rather than by the descriptor -- and
+a descriptor from the wrong class refuses before the method runs. A name the
+class does not have is undefined rather than an error, which is what makes
+`{{ n.__class__|dictsort }}` say `type object 'int' has no attribute 'items'`
+while `{{ d.__class__|dictsort }}` reaches the descriptor and reports the
+unbound-method call, matching CPython in both directions.
+
+Three corners of it are not implemented, and each is in
+`testdata/known_failures.txt`:
+
+```jinja
+{{ s.__class__.__len__ }}          a slot wrapper on CPython, undefined here
+{{ n.__class__.__abs__(lst) }}     a slot wrapper words its refusal differently:
+                                   "requires a 'int' object but received a 'list'"
+{{ lst.__class__.nope }}           the generic alias list['nope'] on CPython
+{{ yes.__class__.conjugate(yes, 1) }}  "int.conjugate()" there, "bool" here
+```
+
+The first two are dunders, which gojja2 does not expose on a value either, so
+the type object has none to hand out. The third is the generic-alias divergence
+recorded above for `list[...]`, reached through jinja2's attribute fallback
+instead of through a subscript -- and the reason a name a class does not have is
+undefined here. The fourth is an arity message: bool defines no methods of its
+own, so CPython's descriptor is int's and says so, where gojja2's delegates to
+the receiver's own bound method and words it after the receiver.
+
+A markupsafe `Markup` is left out of the same feature for a different reason:
+the methods it inherits from str are str's descriptors, but the ones it
+overrides are plain Python functions whose repr carries a memory address, which
+no corpus and no differential can grade.
 
 Everything else a type object answers matches: `__name__`, `__qualname__`,
 `__module__`, its repr, equality with another type object *and with the class

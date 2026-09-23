@@ -1,0 +1,11 @@
+{
+  "case": "divergence/class_unbound_dunder_len_is_a_value.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "<slot wrapper '__len__' of 'str' objects>"
+}

@@ -415,23 +415,31 @@ class Analysis:
             # the result derives from data and "can data reach the output" is a
             # plain yes. Which *part* is read is a different question, and
             # answering it with unknown used to weaken one that was never in
-            # doubt. The key chooses among the values rather than being one of
-            # them, which is steering.
+            # doubt. The key chooses among the values, which is steering --
+            # and it joins them, because a lookup that misses answers an
+            # undefined carrying the key: under a DebugUndefined `{{ d[n] }}`
+            # prints "{{ no such element: dict object['<n>'] }}". Steering
+            # alone said the key could not reach the output, which is the one
+            # thing this analysis promises never to say wrongly.
             base = self.expr(n.node)
             # The key can stop the render too: unhashable, or a type the
             # container cannot take.
-            self.apply(self.expr(n.arg), FLOW | REQUIRED)
+            key = self.expr(n.arg)
+            self.apply(key, FLOW | REQUIRED)
             self.apply(base, REQUIRED)
-            return base
+            return base | key
 
         if isinstance(n, nodes.Filter):
             if n.name == "attr":
                 # `obj|attr(name)` is a computed lookup like `obj[name]`: the
-                # result comes out of obj, and name picks which part.
+                # result comes out of obj, and name picks which part -- and
+                # joins it, for the reason the subscript above gives.
                 out = self.expr(n.node)
                 for a in n.args or ():
                     # A name that is not a string stops the render.
-                    self.apply(self.expr(a), FLOW | REQUIRED)
+                    name = self.expr(a)
+                    self.apply(name, FLOW | REQUIRED)
+                    out = out | name
                 self.apply(out, REQUIRED)
                 return out
             out = self.expr(n.node) | self.args_of(n)

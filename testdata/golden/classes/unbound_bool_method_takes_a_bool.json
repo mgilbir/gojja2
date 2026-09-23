@@ -1,0 +1,14 @@
+{
+  "case": "classes/unbound_bool_method_takes_a_bool.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "UndefinedError",
+    "message": "'type object' has no attribute 'bit_length'"
+  }
+}

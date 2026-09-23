@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{{ ((2.5).nope)[0] }}

@@ -15,6 +15,7 @@ import (
 	"math"
 	"math/big"
 	"strconv"
+	"strings"
 )
 
 // Kind is the Python type of a Value.
@@ -146,7 +147,17 @@ const maxInt64AsFloat = 9223372036854775808.0
 // transform: Python source takes ASCII digits only, whatever a string passed to
 // float() may contain.
 func ParseFloat(text string, py PythonVersion) (float64, bool) {
-	f, err := strconv.ParseFloat(DecimalASCII(text, py), 64)
+	s := DecimalASCII(text, py)
+	// Go reads a hexadecimal float as well -- "0x1.8p+0", which is exactly
+	// what float.hex() writes -- and Python's float() does not: only
+	// float.fromhex() takes that form. So `{{ (1.5).hex()|float }}`
+	// answered 1.5 where CPython raises, and |filesizeformat rendered a
+	// size for a string CPython refuses to convert.
+	if t := strings.TrimLeft(s, "+-"); len(t) > 1 && t[0] == '0' &&
+		(t[1] == 'x' || t[1] == 'X') {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(s, 64)
 	if err != nil && !errors.Is(err, strconv.ErrRange) {
 		return 0, false
 	}

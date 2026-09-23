@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_with_extra_arguments.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

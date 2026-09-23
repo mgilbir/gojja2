@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_method_is_defined.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

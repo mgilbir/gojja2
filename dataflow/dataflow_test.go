@@ -67,10 +67,16 @@ func TestAnalyze(t *testing.T) {
 		{`{% macro m() %}{{ caller() }}{% endmacro %}`, ""},
 
 		// A computed lookup reads out of the container whatever the key
-		// turns out to be, so the container is printed and the key steers
-		// -- it chooses among the values rather than being one of them.
-		{`{{ data[key] }}`, "data:or key:fr"},
-		{`{{ o|attr(n) }}`, "n:fr o:or"},
+		// turns out to be, so the container is printed and the key
+		// steers -- it chooses among the values rather than being one
+		// of them. It is printed too, because a lookup that misses
+		// answers an undefined carrying the key, and a DebugUndefined
+		// prints that: `{{ data[key] }}` renders
+		// "{{ no such element: dict object['<key>'] }}".
+		{`{{ data[key] }}`, "data:or key:ofr"},
+		{`{{ o|attr(n) }}`, "n:ofr o:or"},
+		// Nothing prints there, so the key only steers.
+		{`{% if data[key] %}x{% endif %}`, "data:fr key:fr"},
 
 		// Where it cannot see, it says so.
 		{`{% set ns = namespace(v=0) %}{% for i in xs %}{% set ns.v = i %}{% endfor %}{{ ns.v }}`, "xs:ofr"},

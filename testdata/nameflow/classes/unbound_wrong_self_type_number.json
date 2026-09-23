@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_wrong_self_type_number.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

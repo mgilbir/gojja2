@@ -1,0 +1,7 @@
+{
+  "case": "divergence/class_unbound_dunder_abs_wrong_self.jj2",
+  "variables": {
+    "lst": "or",
+    "n": "or"
+  }
+}

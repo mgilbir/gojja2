@@ -1015,16 +1015,61 @@ func (g *generator) classObject() string {
 			"[" + chain + ", " + chain + "]|unique|list",
 		})
 	}
-	// A *bare* class object is never handed onwards, for two reasons that
-	// both end in a documented divergence: `list` and `dict` are generic
-	// aliases under a subscript, and every class carries its own methods
-	// unbound, so a filter that calls one -- |dictsort, |xmlattr -- gets an
-	// unbound-method error CPython words differently. Printing one is
-	// covered by the corpus instead, where the shape is pinned rather than
-	// left to an outer arm to choose.
+	if g.c.chance(4) {
+		return g.unboundMethod()
+	}
+	// A *bare* class object is never handed onwards: `list` and `dict` are
+	// generic aliases under a subscript, which is a documented divergence,
+	// and jinja2's attribute fallback puts a plain `.a` in the same
+	// position. Printing one is covered by the corpus instead, where the
+	// shape is pinned rather than left to an outer arm to choose.
 	return chain + g.c.pick([]string{
 		".__name__", ".__name__|upper", "|string", "|length",
 	})
+}
+
+// unboundMethod builds a call on a type object's method with no instance --
+// `dict.items(d)`, which is `d.items()`, and `str.upper('a')`, which is `'A'`.
+//
+// The class and the method are drawn together so the method always exists.
+// A name a class does *not* have is two documented divergences rather than
+// anything about descriptors: jinja2's attribute fallback answers a generic
+// alias for `list` and `dict` (`list['nope']`, whose call is the constructor),
+// and markupsafe overrides str's methods with plain functions whose repr
+// carries a memory address. The corpus pins both; a soak cannot grade an
+// address. Dunders are left out for the same reason the corpus records them as
+// a divergence: CPython answers a slot wrapper and gojja2 answers undefined.
+//
+// The receiver is drawn independently of the class, so the descriptor's
+// refusal -- a receiver of the wrong class, or none at all -- is generated
+// alongside the call that works, and with it the arity error that comes from
+// the method rather than from the descriptor. Only methods that leave their
+// receiver alone are drawn: `list.append(lst, 1)` would edit the context a
+// later arm in the same template still reads, which is a difference about how
+// each side copies a context and not about the descriptor.
+func (g *generator) unboundMethod() string {
+	classes := []struct {
+		subject string
+		methods []string
+	}{
+		{"s", []string{"upper", "lower", "strip", "split", "count", "index",
+			"find", "startswith", "encode", "replace", "title", "maketrans"}},
+		{"lst", []string{"count", "index", "copy"}},
+		{"d", []string{"items", "keys", "values", "get", "copy", "fromkeys"}},
+		{"((1, 2))", []string{"count", "index"}},
+		{"('ab'.encode())", []string{"hex", "decode", "upper", "count", "fromhex"}},
+		{"n", []string{"bit_length", "to_bytes", "conjugate", "from_bytes"}},
+		{"f", []string{"is_integer", "hex", "conjugate", "fromhex"}},
+		{"yes", []string{"bit_length", "conjugate"}},
+	}
+	class := classes[g.c.intn(len(classes))]
+	recv := g.c.pick([]string{
+		"", "d", "s", "lst", "n", "f", "'x'", "[1]", "{}", "((1, 2))",
+		"('ab'.encode())", "d, 'a'", "s, 'x'", "lst, 1", "s, 1, 2",
+		"d, 'a', 0", "n, 2",
+	})
+	return class.subject + ".__class__." +
+		class.methods[g.c.intn(len(class.methods))] + "(" + recv + ")"
 }
 
 // methodCall writes a call to one of Python's own methods on a receiver of the

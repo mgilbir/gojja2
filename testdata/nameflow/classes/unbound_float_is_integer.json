@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_float_is_integer.jj2",
+  "variables": {
+    "f": "or"
+  }
+}

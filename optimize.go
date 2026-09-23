@@ -439,6 +439,24 @@ func (c *constEvaluator) constEval(e ast.Expr) (value.Value, bool) {
 	return v, ok
 }
 
+// chainOrDefer answers an attribute or item lookup whose receiver this fold has
+// already reduced to an undefined.
+//
+// Environment.getattr and Environment.getitem swallow a missing name, but not
+// an Undefined receiver: that raises, so the fold is normally abandoned and the
+// lookup happens for real at run time. A ChainableUndefined answers itself
+// instead of raising, and there the run time cannot always stand in: a *slice*
+// of a value that has none -- `((2.5)[1:2])[0]` -- is a hard TypeError at run
+// time, so the undefined the fold produced would never exist there to chain
+// from, and gojja2 raised where jinja2 prints nothing. An attribute route to
+// the same shape worked, which is why this only ever showed through a slice.
+func (c *constEvaluator) chainOrDefer(base value.Value) (value.Value, bool) {
+	if c.env.undefined == value.UndefinedChainable {
+		return base, true
+	}
+	return value.Undefined, false
+}
+
 func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 	switch n := e.(type) {
 	case *ast.Const:
@@ -478,18 +496,21 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 
 	case *ast.Getattr:
 		base, ok := c.constEval(n.Node)
-		// Environment.getattr swallows a missing attribute, but not an
-		// Undefined receiver: that raises, so the fold is abandoned and
-		// the lookup happens for real at run time.
-		if !ok || base.IsUndefined() {
+		if !ok {
 			return value.Undefined, false
+		}
+		if base.IsUndefined() {
+			return c.chainOrDefer(base)
 		}
 		return constGetAttr(base, n.Attr, c.pyVersion()), true
 
 	case *ast.Getitem:
 		base, ok := c.constEval(n.Node)
-		if !ok || base.IsUndefined() {
+		if !ok {
 			return value.Undefined, false
+		}
+		if base.IsUndefined() {
+			return c.chainOrDefer(base)
 		}
 		if slice, isSlice := n.Arg.(*ast.Slice); isSlice {
 			return c.constGetSlice(base, slice)

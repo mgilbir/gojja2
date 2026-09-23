@@ -551,6 +551,13 @@ func hashScalar(v, outer Value, py PythonVersion, use HashUse) (hashKey, error) 
 	case KindBytes:
 		return hashKey{kind: KindBytes, str: v.str}, nil
 	case KindObject:
+		// A set-like view defines __eq__ without __hash__, which leaves
+		// it unhashable although it has no failure of its own to
+		// report. It has to say so before the identity fallback below,
+		// which would otherwise make `d.keys() in d` a miss.
+		if o, ok := v.obj.(interface{ Unhashable() bool }); ok && o.Unhashable() {
+			return hashKey{}, errUnhashable(outer, v, py, use)
+		}
 		if o, ok := v.obj.(interface{ HashKey() (string, bool) }); ok {
 			if s, ok := o.HashKey(); ok {
 				return hashKey{kind: KindObject, str: s}, nil

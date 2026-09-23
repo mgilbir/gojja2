@@ -285,10 +285,15 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		// Autoescaping is the environment's, not the template's, so two
-		// templates that encode the same under different settings are not a
-		// collision.
-		key := string(raw)
+		// Autoescaping and the Undefined class are the environment's,
+		// not the template's, so two templates that encode the same
+		// under different settings are not a collision. The Undefined
+		// class was missed when it became a generated setting, and the
+		// pair it invented looked exactly like a missing distinction in
+		// the vocabulary: `{{+ (n)[0] -}}` printed nothing and
+		// `{{ (n)[0] -}}` printed a debug hint, for no reason in the
+		// syntax at all.
+		key := c.Undefined + "\x00" + string(raw)
 		if c.Autoescape {
 			key = "escaped\x00" + key
 		}
