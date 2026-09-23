@@ -94,8 +94,17 @@ def drop_the_call(line: str):
     The traversal a site's arguments perform is not the thing being mutated --
     the recording is -- and for a site that is the only reader of a loop
     variable, commenting the whole line out removes both and does not compile.
+
+    The frames.go sites are the same shape and were missing from this, so
+    `v.store(entry.Alias)` inside `for _, entry := range n.Names` could not be
+    mutated at all: removing it left entry declared-and-not-used, the build
+    failed, and the site was recorded as un-makeable rather than measured. A
+    site nothing could break and a site never broken print the same, which is
+    the reason this function exists.
     """
-    if m := re.match(r"^(\s*)a\.(?:apply|taint|emit|depend)\((.*)\)$", line):
+    if m := re.match(
+            r"^(\s*)\w+\.(?:apply|taint|emit|depend|load|store|settle)\((.*)\)$",
+            line):
         indent, args = m.group(1), split_args(m.group(2))
         if not args:
             return None

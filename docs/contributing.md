@@ -198,15 +198,23 @@ records a Def, a Use, a Scope or a context name. Those are further upstream than
 anything in `dataflow/`: a binding that goes unrecorded is a name the analysis
 cannot see, which is indistinguishable to it from a name that does nothing.
 
-42 mutations, all 42 *exercised*, none surviving. The count of exercised ones is
+51 mutations, all 51 *exercised*, one surviving. The count of exercised ones is
 reported separately because it used to be smaller than the total without saying
-so: three sites are the only reader of a loop variable, so commenting the line
+so: some sites are the only reader of a loop variable, so commenting the line
 out left something declared and not used, the build failed, and the tool called
 that "uncompilable" and counted it with the ones nothing survived. A site that
-was never mutated is not a site nothing could break. Those three now drop the
+was never mutated is not a site nothing could break. Those sites now drop the
 *recording* and keep the arguments -- `a.emit(a.expr(c))` becomes
 `_ = a.expr(c)` -- which is both compilable and the more precise mutation, since
 it removes what the site records without removing the traversal underneath it.
+
+That rewrite has had to be widened once since, which is the same lesson a second
+time. It matched `a.apply|taint|emit|depend` and not the `frames.go` family, so
+`v.store(entry.Alias)` inside `for _, entry := range n.Names` still fell back to
+removing the line, still did not compile, and was still reported as un-makeable
+rather than measured -- for as long as the separate count existed to say so. It
+is caught once it can be made. **When a tool reports a denominator, the thing to
+check is how much of it was actually attempted.**
 
 Four survivors have been found this way, each a line no test constrained: no
 test covered a template named by an expression rather than a constant; none
