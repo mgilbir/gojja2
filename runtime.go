@@ -265,6 +265,12 @@ type loopObject struct {
 	// cycleState tracks loop.cycle across iterations.
 	lastChanged  value.Value
 	hasLastValue bool
+	// undefined is the environment's Undefined class, which previtem and
+	// nextitem have to build their answer under: those two are the only
+	// undefineds a loop hands out, and without this they were always the
+	// default one. Under DebugUndefined `{{ loop.previtem }}` prints the
+	// hint, and under StrictUndefined it raises; both rendered as nothing.
+	undefined value.UndefinedBehavior
 }
 
 func (l *loopObject) GetAttr(name string) (value.Value, bool) {
@@ -294,12 +300,14 @@ func (l *loopObject) GetAttr(name string) (value.Value, bool) {
 		return value.Int(int64(l.depth - 1)), true
 	case "previtem":
 		if l.index == 0 {
-			return value.UndefinedHint("there is no previous item"), true
+			return value.UndefinedHint("there is no previous item").
+				WithBehavior(l.undefined), true
 		}
 		return l.src.at(l.index - 1), true
 	case "nextitem":
 		if !l.src.has(l.index + 1) {
-			return value.UndefinedHint("there is no next item"), true
+			return value.UndefinedHint("there is no next item").
+				WithBehavior(l.undefined), true
 		}
 		return l.src.at(l.index + 1), true
 	case "cycle":

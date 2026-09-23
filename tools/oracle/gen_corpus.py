@@ -2994,6 +2994,37 @@ for _n, _src in [
 ]:
     case(f"divergence/undefined_exc_callable_{_n}", _src)
 
+# previtem and nextitem are the only undefineds a loop hands out, and they were
+# built under the *default* Undefined whatever the environment was set to -- so
+# `{{ loop.previtem }}` rendered nothing under DebugUndefined where jinja2 prints
+# the hint, and nothing under StrictUndefined where jinja2 raises.
+#
+# Found by giving the render differential an undefined axis: it varied autoescape
+# and nothing else, so sixty thousand templates a run all used the default class.
+for _kind in ("default", "strict", "debug", "chainable"):
+    for _n, _src in [
+        ("previtem", "{% for i in [1,2] %}[{{ loop.previtem }}]{% endfor %}"),
+        ("nextitem", "{% for i in [1,2] %}[{{ loop.nextitem }}]{% endfor %}"),
+        ("previtem_used", "{% for i in [1,2] %}{{ loop.previtem + 1 }}{% endfor %}"),
+        ("nextitem_used", "{% for i in [1,2] %}{{ loop.nextitem + 1 }}{% endfor %}"),
+        ("changed_is_not_undefined",
+         "{% for i in [1,2] %}[{{ loop.changed(i) }}]{% endfor %}"),
+    ]:
+        case(f"undefined/loop_{_kind}_{_n}", _src,
+             __settings__={"undefined": _kind})
+
+# A constant folded under StrictUndefined has no cases here, and that is
+# structural. jinja2's folder reads a subscript and an attribute through the
+# lookup that swallows into an Undefined, so under strict the fold *raises* -- at
+# compile time, before the template runs -- where gojja2 abandons the fold and
+# lets the render raise the unswallowed error instead.
+#
+# Every shape of it is a template CPython refuses to compile and gojja2 accepts,
+# and the suite requires the two to agree about that: TestSyntaxMatchesTheReference
+# says "compiles here but has no reference tree". That is how two shapes which
+# looked like they agreed on the message were caught -- the render comparison sees
+# only the message, the syntax invariant sees the phase. See docs/divergences.md.
+
 # Neither format_map nor translate converts the argument it is handed.
 # translate is `table[ord(c)]` per character, catching LookupError, so an empty
 # string never touches the table and anything subscriptable by an integer will

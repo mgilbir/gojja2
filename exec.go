@@ -421,7 +421,7 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		return err
 	}
 
-	loop := &loopObject{src: src, depth: depth}
+	loop := &loopObject{src: src, depth: depth, undefined: ex.st.env.undefined}
 	if n.Recursive {
 		loop.recurse = func(items value.Value, depth int) (value.Value, error) {
 			// A recursive loop can descend forever on cyclic data,

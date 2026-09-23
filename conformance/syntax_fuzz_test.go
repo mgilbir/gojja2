@@ -80,10 +80,8 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claim
 	}
 	sources[fuzzTemplateName] = c.Source
 
-	opts := []gojja2.Option{
-		gojja2.WithLoader(gojja2.DictLoader(sources)),
-		gojja2.WithAutoescape(c.Autoescape),
-	}
+	opts := append(caseOptions(c),
+		gojja2.WithLoader(gojja2.DictLoader(sources)))
 	env, err := gojja2.New(opts...)
 	if err != nil {
 		return ""
@@ -274,9 +272,8 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 			sources[name] = text
 		}
 		sources[fuzzTemplateName] = c.Source
-		env, err := gojja2.New(
-			gojja2.WithLoader(gojja2.DictLoader(sources)),
-			gojja2.WithAutoescape(c.Autoescape))
+		env, err := gojja2.New(append(caseOptions(c),
+			gojja2.WithLoader(gojja2.DictLoader(sources)))...)
 		if err != nil {
 			continue
 		}

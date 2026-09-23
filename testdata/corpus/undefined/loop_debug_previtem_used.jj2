@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{% for i in [1,2] %}{{ loop.previtem + 1 }}{% endfor %}
