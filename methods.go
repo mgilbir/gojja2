@@ -384,11 +384,11 @@ func init() {
 		"isdigit":   classifyMethod(pyIsDigit),
 		"isnumeric": classifyMethod(pyIsNumeric),
 		"isalpha": classifyMethod(func(r rune, u *value.UnicodeOverrides) bool {
-			return u.IsAlpha(r, value.AlphaDefault(r, unicode.IsLetter(r)))
+			return u.IsAlpha(r, value.AlphaDefault(r))
 		}),
 		// str.isalnum is the union of the four, not letters and Nd.
 		"isalnum": classifyMethod(func(r rune, u *value.UnicodeOverrides) bool {
-			return u.IsAlpha(r, value.AlphaDefault(r, unicode.IsLetter(r))) || pyIsNumeric(r, u)
+			return u.IsAlpha(r, value.AlphaDefault(r)) || pyIsNumeric(r, u)
 		}),
 		"isspace": classifyMethod(func(r rune, _ *value.UnicodeOverrides) bool { return unicode.IsSpace(r) }),
 		"isupper": stringPredicate(isUpperString),
@@ -620,16 +620,19 @@ func methodIsASCII(_ *State, r value.Value, _ *value.CallArgs) (value.Value, err
 	return value.True, nil
 }
 
-// methodIsPrintable is str.isprintable: nothing in Cc, Cf, Cs, Co, Cn, Zl, Zp
-// or Zs -- except U+0020, which is the one separator Python calls printable.
+// methodIsPrintable is str.isprintable, read from the same table repr escapes by.
 // Empty is True, for the same reason isascii is.
-func methodIsPrintable(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+//
+// It used to ask Go's categories directly -- Cc, Cf, Cs, Co, Zl, Zp, Zs and
+// IsGraphic -- which is the rule CPython implements but against Go's Unicode
+// release rather than CPython's. That disagreed with repr for 9,988 code points:
+// the same question answered two ways inside one engine, so `{{ c.isprintable()
+// }}` said true for a character `{{ [c] }}` escaped. It also ignored
+// WithPythonVersion, where repr honoured it.
+func methodIsPrintable(s *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+	u := value.UnicodeFor(s.PythonVersion())
 	for _, c := range r.AsString() {
-		if c == ' ' {
-			continue
-		}
-		if unicode.In(c, unicode.Cc, unicode.Cf, unicode.Cs, unicode.Co,
-			unicode.Zl, unicode.Zp, unicode.Zs) || !unicode.IsGraphic(c) {
+		if !u.PrintableWith(c) {
 			return value.False, nil
 		}
 	}

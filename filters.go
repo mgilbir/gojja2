@@ -157,10 +157,17 @@ func definedFilter(f Filter) Filter {
 // raises in jinja2 and quietly produced "" here, which is the strictness
 // setting not applying.
 func strictStr(v value.Value) (string, error) {
+	return strictStrFor(v, value.DefaultPythonVersion)
+}
+
+// strictStrFor is strictStr reproducing one interpreter, which matters wherever
+// the value may be a container: str() of one is its repr, and a repr escapes by
+// printability. See value.StrFor.
+func strictStrFor(v value.Value, py value.PythonVersion) (string, error) {
 	if err := value.StrictRefusal(v); err != nil {
 		return "", err
 	}
-	return value.Str(v), nil
+	return value.StrFor(v, py), nil
 }
 
 func runeFilter(f func(i int, r rune, u *value.UnicodeOverrides) string) Filter {
@@ -659,11 +666,11 @@ func filterTrim(_ *State, v value.Value, args *value.CallArgs) (value.Value, err
 }
 
 // filterString converts to str, leaving a Markup value safe.
-func filterString(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+func filterString(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	if v.IsString() {
 		return v, nil
 	}
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}

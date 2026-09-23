@@ -16,12 +16,13 @@ Other_Lowercase and Other_Uppercase -- the modifier letters, the Roman
 numerals, the circled letters. Go's unicode.IsLower and IsUpper are the general
 categories alone, so 370 code points answered the wrong way.
 
-Only the exceptions are written down. Where Python's answer is a single rune,
-Go's simple mapping already agrees -- that was checked across every code point,
-and CPython 3.11's Unicode 14.0.0 and Go's 15.0.0 do not differ on any of them.
-The digest at the end is what keeps that true: it covers every code point's
-answer, and the Go test recomputes it, so a Go release that moves the tables
-fails loudly rather than quietly.
+Everything is written down, not just the exceptions. It used to be only the
+differences from Go's simple mappings, on the grounds that Go already agreed
+everywhere else -- true, but only against the Unicode release the delta was
+generated from, so a Go upgrade moved the baseline out from under it. The digest
+caught that loudly, which is why it was there; it still meant a tracked file
+changing under whoever upgraded first. The answer a template gets should not
+depend on which compiler built the binary.
 """
 
 from __future__ import annotations
@@ -81,6 +82,31 @@ def gostr(s: str) -> str:
                          else "\\U%08x" % ord(c) for c in s) + '"'
 
 
+def case_runs(runs: list) -> str:
+    """Emit the single-rune case mappings as runs sharing one delta."""
+    lines = [
+        "// caseRun is a run of code points whose upper, lower and title mappings",
+        "// are all one rune away by the same offsets. Case mappings arrive in",
+        "// alternating and offset blocks, so a hundred thousand of them store as",
+        "// about thirteen hundred runs -- which is the shape Go's own",
+        "// unicode.CaseRanges takes, for the same reason.",
+        "//",
+        "// A code point not in any run maps to itself, unless one of the Special",
+        "// tables above says otherwise: those are the mappings that are not one rune.",
+        "type caseRun struct {",
+        "\tlo, hi                 rune",
+        "\tupper, lower, title    int32",
+        "}",
+        "",
+        "// caseRuns is sorted by lo, and searched by bisection. %d runs." % len(runs),
+        "var caseRuns = [...]caseRun{",
+    ]
+    for lo, hi, (du, dl, dt) in runs:
+        lines.append("\t{0x%04x, 0x%04x, %d, %d, %d}," % (lo, hi, du, dl, dt))
+    lines.append("}")
+    return "\n".join(lines)
+
+
 def simple_lower(cp: int, go: dict[int, tuple[int, int, int]]) -> str:
     """The single-rune lowercase gojja2 falls back to when folding.
 
@@ -122,18 +148,48 @@ def main() -> int:
     # pinned interpreter is free to move ahead: Unicode 16 gave 54 code points
     # a simple mapping Go 1.26 does not have, and every one of them was wrong
     # here until this read Go's tables instead of guessing at them.
-    go = go_simple_mappings()
-
-    def differs(cp: int, py: str, which: int) -> bool:
-        if len(py) > 1:
-            return True
-        return ord(py) != go[cp][which]
-
-    upper = {cp: chr(cp).upper() for cp in points if differs(cp, chr(cp).upper(), 0)}
-    lower = {cp: chr(cp).lower() for cp in points if differs(cp, chr(cp).lower(), 1)}
-    title = {cp: chr(cp).title() for cp in points if differs(cp, chr(cp).title(), 2)}
+    # Everything below is CPython's own answer. It used to be the difference
+    # from Go's simple mappings, which was smaller and correct only against the
+    # tables it was generated from: a Go release that moved a mapping left the
+    # difference describing one that was no longer there. caseMapDigest caught
+    # that loudly, which is why it existed -- but "loudly" still meant a tracked
+    # file changing under whoever upgraded Go first, and the answer a template
+    # gets should not depend on which compiler built the binary.
+    #
+    # Whole, it is 1,335 ranges for the single-rune mappings plus a few hundred
+    # exceptions, against ~200KB of tables Go's unicode package already carries.
+    upper = {cp: chr(cp).upper() for cp in points if len(chr(cp).upper()) > 1}
+    lower = {cp: chr(cp).lower() for cp in points if len(chr(cp).lower()) > 1}
+    title = {cp: chr(cp).title() for cp in points if len(chr(cp).title()) > 1}
     fold = {cp: chr(cp).casefold() for cp in points
-            if chr(cp).casefold() != simple_lower(cp, go)}
+            if chr(cp).casefold() != chr(cp).lower()}
+
+    # The single-rune mappings, as runs sharing one (upper, lower, title) delta.
+    # This is the shape Go's own unicode.CaseRanges takes, for the same reason:
+    # case mappings come in alternating and offset blocks, so the deltas repeat.
+    def column(cp: int, mapped: str) -> int:
+        # A mapping that is not one rune is in the Special map above, which is
+        # consulted first, so the run's delta for that column is never read --
+        # and the code point still needs its *other* columns. Dropping the whole
+        # code point lost the titlecase of the 54 Greek letters with iota
+        # subscript, whose uppercase is two runes and whose titlecase is one.
+        if len(mapped) > 1:
+            return 0
+        return ord(mapped) - cp
+
+    deltas = []
+    for cp in points:
+        ch = chr(cp)
+        d = (column(cp, ch.upper()), column(cp, ch.lower()), column(cp, ch.title()))
+        deltas.append((cp, None if d == (0, 0, 0) else d))
+    runs = []
+    for cp, d in deltas:
+        if d is None:
+            continue
+        if runs and runs[-1][1] == cp - 1 and runs[-1][2] == d:
+            runs[-1][1] = cp
+            continue
+        runs.append([cp, cp, d])
 
     is_lower = [cp for cp in points if chr(cp).islower()]
     is_upper = [cp for cp in points if chr(cp).isupper()]
@@ -182,6 +238,8 @@ def main() -> int:
                 "// rune. It differs from upperSpecial: the sharp s titlecases to \"Ss\" and\n"
                 "// uppercases to \"SS\"."),
         "",
+        case_runs(runs),
+        "",
         mapping("foldSpecial", fold,
                 "// foldSpecial is str.casefold where it differs from the simple lowercase\n"
                 "// mapping. casefold is not lowercase: it folds for caseless *comparison*,\n"
@@ -206,11 +264,10 @@ def main() -> int:
         "// caseMapDigest is a sha256 over every code point's upper, lower, title,\n"
         "// casefold, islower, isupper and istitle, as CPython answers them.\n"
         "//\n"
-        "// The tables above record only the differences from Go's own, which is only\n"
-        "// safe while Go and CPython still agree everywhere else. They track different\n"
-        "// Unicode versions and are free to diverge at any release, so the test\n"
-        "// recomputes this digest from gojja2's own functions across every code point.\n"
-        "// A Go upgrade that moves a mapping breaks it, which is the point.",
+        "// The tables above are CPython's answers whole, so nothing here depends on\n"
+        "// the Unicode release Go carries. The digest is kept anyway: it is the only\n"
+        "// check that covers every code point rather than the ones a case happens to\n"
+        "// mention, and it is what proves a regeneration changed nothing it should not.",
         'const caseMapDigest = "%s"' % digest,
         "",
     ]
