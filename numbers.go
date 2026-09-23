@@ -6,6 +6,7 @@ package gojja2
 import (
 	"math"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -89,12 +90,20 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 		}), true
 	case "to_bytes":
 		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+			if err := clinicCall(st.PythonVersion(), "to_bytes", args,
+				[]string{"length", "byteorder", "signed"}, 2, 3); err != nil {
+				return value.Undefined, err
+			}
 			return intToBytes(st, asBig(base), args)
 		}), true
 	case "from_bytes":
 		// A classmethod, so the receiver contributes nothing but the
 		// route to it: a template cannot name int, only an int.
 		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+			if err := clinicCall(st.PythonVersion(), "from_bytes", args,
+				[]string{"bytes", "byteorder", "signed"}, 2, 3); err != nil {
+				return value.Undefined, err
+			}
 			return bigFromBytes(st, value.Undefined, args)
 		}), true
 	}
@@ -133,6 +142,14 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 		// A classmethod, reached through a float for the same reason
 		// from_bytes is reached through an int.
 		return boundNumeric(s, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+			if len(args.Kwargs) > 0 {
+				return value.Undefined, errs.New(errs.TypeError,
+					"float.fromhex() takes no keyword arguments")
+			}
+			if n := len(args.Pos); n != 1 {
+				return value.Undefined, errs.New(errs.TypeError,
+					"float.fromhex() takes exactly one argument (%d given)", n)
+			}
 			v, _ := args.Arg(0)
 			if !v.IsString() {
 				return value.Undefined, errs.New(errs.TypeError,
@@ -172,6 +189,39 @@ func boundNoArgs(s *State, base value.Value, name string,
 		}
 		return fn()
 	})
+}
+
+// clinicCall is the call shape int.to_bytes and int.from_bytes share: two
+// parameters that may be given positionally or by name, a third that is
+// keyword-only, and two counts to complain about. Neither was checked at all,
+// so `n.to_bytes(1, 2, 3)` reported the type of the argument that landed on
+// `byteorder` and `n.from_bytes(b, 'big', true)` simply ignored the third.
+//
+// CPython checks the total first -- `n.to_bytes(2, 'big', true, nope=1)` is
+// "takes at most 3 arguments (4 given)" and not a word about the keyword --
+// then the keyword names, then the positional count.
+//
+// These are written out rather than generated because tools/oracle/gen_methods.py
+// probes str, list, dict, tuple and bytes only; the numeric methods have always
+// carried their own wordings, as boundNoArgs does just above.
+func clinicCall(py value.PythonVersion, name string, args *value.CallArgs,
+	kwNames []string, maxPos, maxTotal int,
+) error {
+	if n := len(args.Pos) + len(args.Kwargs); n > maxTotal {
+		return errs.New(errs.TypeError,
+			"%s() takes at most %d arguments (%d given)", name, maxTotal, n)
+	}
+	for _, kw := range args.Kwargs {
+		if !slices.Contains(kwNames, kw.Name) {
+			// 3.13 reworded this one; clinicKeyword carries the split.
+			return clinicKeyword(py, name, kw.Name)
+		}
+	}
+	if n := len(args.Pos); n > maxPos {
+		return errs.New(errs.TypeError,
+			"%s() takes at most %d positional arguments (%d given)", name, maxPos, n)
+	}
+	return nil
 }
 
 func boundNumeric(s *State, name string, fn func(*State, *value.CallArgs) (value.Value, error)) value.Value {

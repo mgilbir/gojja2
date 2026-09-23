@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_staticmethod_str_maketrans.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

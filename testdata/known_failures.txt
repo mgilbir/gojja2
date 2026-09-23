@@ -122,22 +122,16 @@ own/divergence/class_generic_alias_item.jj2    # list['a'] is a generic alias
 own/divergence/class_generic_alias_slice.jj2   # so is list[slice(...)]
 own/divergence/class_generic_alias_attr.jj2    # .a falls back to ['a']
 
-# --- a type object's unbound methods --------------------------------------------
-# A class carries its own methods, and calling one without an instance is a
-# TypeError that names the method: "unbound method dict.items() needs an
-# argument". gojja2's type object answers the attributes a class has *as a class*
-# and refuses the rest, so it says there is no such attribute. That is the line
-# __mro__ sits on -- an unbound method is a route back into the object model,
-# where an int built by calling a class is an ordinary value. See
-# docs/divergences.md.
-own/divergence/class_unbound_dict_items.jj2                 # dict.items() unbound
-own/divergence/class_unbound_dict_items_through_dictsort.jj2  # and through a filter
-own/divergence/class_unbound_dict_items_through_xmlattr.jj2   # and another
-own/divergence/class_unbound_str_upper_with_self.jj2        # str.upper('a') is 'A'
-own/divergence/class_unbound_str_upper_without_self.jj2     # without one it names the method
-own/divergence/class_unbound_list_append_with_self.jj2      # list.append([], 1) works
-own/divergence/class_unbound_method_is_a_value.jj2          # and the method itself has a repr
-own/divergence/class_unbound_method_is_defined.jj2          # so `is defined` is true
+# --- a type object's dunders ---
+# A class's methods are implemented; its dunders are not, because gojja2 exposes
+# no `__len__` or `__abs__` on a value for the type object to hand out. CPython
+# answers a slot wrapper, and a slot wrapper's refusal is worded differently
+# from a method descriptor's.
+own/divergence/class_unbound_dunder_len_is_a_value.jj2
+own/divergence/class_unbound_dunder_len_with_self.jj2
+own/divergence/class_unbound_dunder_abs_with_self.jj2
+own/divergence/class_unbound_dunder_abs_wrong_self.jj2
+own/divergence/class_unbound_bool_arity_names_int.jj2
 
 # --- an unpack count over a lazy filter's result ---------------------------------
 # The @3.14 suffix means "agrees with the pin, diverges on that one". 3.14 names

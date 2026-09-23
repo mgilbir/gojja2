@@ -242,7 +242,7 @@ ever produced?**
 
 It runs the corpus under coverage on every interpreter, intersects the blocks
 that never executed with the lines that build an error, and counts what is left.
-Today that is **163 of 397**.
+Today that is **156 of 410**.
 
 A message nothing produces is not evidence of anything -- it has never been
 compared to CPython. It is worse than untested: it reads as *agreement in every

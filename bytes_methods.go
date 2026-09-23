@@ -1121,17 +1121,48 @@ func bytesTranslate(st *State, r value.Value, args *value.CallArgs) (value.Value
 	return value.Bytes(out), nil
 }
 
-// bigFromBytes is int.from_bytes, reached through an integer receiver because
-// a template has no way to name the class.
-func bigFromBytes(_ *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
-	v, _ := args.Arg(0)
-	if v.Kind() != value.KindBytes {
+// fromBytesSource converts int.from_bytes's first argument the way CPython's
+// PyBytes_FromObject does: a bytes is taken as it is, any other iterable is
+// walked and its elements must be integers in range(0, 256), and a str or an
+// int -- both of which bytes() itself accepts, one with an encoding and one as
+// a count -- are refused outright.
+//
+// This only ever read a bytes, so `int.from_bytes([1, 2])` said it could not
+// convert a list where CPython answers 258.
+func fromBytesSource(st *State, v value.Value) (string, error) {
+	if v.Kind() == value.KindBytes {
+		return v.AsString(), nil
+	}
+	notBytes := errs.New(errs.TypeError,
 		// int.from_bytes words this as a conversion rather than as a
 		// bytes-like requirement, unlike every bytes method.
-		return value.Undefined, errs.New(errs.TypeError,
-			"cannot convert '%s' object to bytes", v.TypeName())
+		"cannot convert '%s' object to bytes", v.TypeName())
+	if v.IsString() || v.IsInteger() {
+		return "", notBytes
 	}
-	raw := v.AsString()
+	// The walk is charged, because its length is the template's to choose.
+	items, err := materializeOr(st, v, notBytes)
+	if err != nil {
+		return "", err
+	}
+	b, err := value.BytesFromItems(items)
+	if err != nil {
+		return "", err
+	}
+	return b.AsString(), nil
+}
+
+// bigFromBytes is int.from_bytes, reached through an integer receiver because
+// a template has no way to name the class.
+func bigFromBytes(st *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
+	v, ok := arg(args, 0, "bytes")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError,
+			"from_bytes() missing required argument 'bytes' (pos 1)")
+	}
+	// byteorder is bound and checked, type then value, before the first
+	// argument is converted at all: `from_bytes(lst, 1)` complains about
+	// the 1 and `from_bytes(1.5, 'nope')` about the 'nope'.
 	order := "big"
 	if o, ok := arg(args, 1, "byteorder"); ok {
 		if !o.IsString() {
@@ -1145,6 +1176,10 @@ func bigFromBytes(_ *State, _ value.Value, args *value.CallArgs) (value.Value, e
 	default:
 		return value.Undefined, errs.New(errs.ValueError,
 			"byteorder must be either 'little' or 'big'")
+	}
+	raw, err := fromBytesSource(st, v)
+	if err != nil {
+		return value.Undefined, err
 	}
 	signed := false
 	if s, ok := arg(args, 2, "signed"); ok {

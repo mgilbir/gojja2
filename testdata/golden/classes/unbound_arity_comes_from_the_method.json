@@ -1,0 +1,14 @@
+{
+  "case": "classes/unbound_arity_comes_from_the_method.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "str.upper() takes no arguments (1 given)"
+  }
+}

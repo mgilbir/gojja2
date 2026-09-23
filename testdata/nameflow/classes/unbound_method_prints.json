@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_method_prints.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

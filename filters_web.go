@@ -824,11 +824,21 @@ const jsonChargeBlock = 1 << 12
 // itemsAttributeError reports what `d.items()` does to a value that is not a
 // mapping.
 //
-// Usually the attribute is simply missing. A Cycler is the exception: jinja2's
-// keeps its rotation in an attribute named `items`, so the call finds a tuple
-// and fails trying to call it -- which is the error a template author sees.
+// Usually the attribute is simply missing. Two values carry one anyway, and for
+// those the error comes from the call rather than from the lookup. A Cycler is
+// one: jinja2's keeps its rotation in an attribute named `items`, so the call
+// finds a tuple and fails trying to call it. A type object is the other: the
+// attribute is `dict.items` unbound, and calling it without an instance is what
+// the template author sees.
 func itemsAttributeError(v value.Value) error {
 	if attr, ok := lookupAttr(nil, v, "items"); ok {
+		if m, unbound := attr.Interface().(*unboundMethodObject); unbound {
+			// No positional arguments, so the descriptor refuses
+			// before it would need a state to call through.
+			if _, err := m.callWith(nil, &value.CallArgs{}); err != nil {
+				return err
+			}
+		}
 		if _, callable := attr.Interface().(value.Caller); !callable {
 			return errs.New(errs.TypeError, "'%s' object is not callable", attr.TypeName())
 		}

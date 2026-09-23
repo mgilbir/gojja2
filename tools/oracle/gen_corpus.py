@@ -1886,6 +1886,112 @@ case("methods/float_hex",
 case("errors/to_bytes_negative", "{{ (-1).to_bytes(2,'big') }}")
 case("errors/to_bytes_too_big", "{{ (300).to_bytes(1,'big') }}")
 
+# The argument clinic's shape for int.to_bytes, int.from_bytes and
+# float.fromhex, none of which was checked at all: to_bytes reported the type of
+# whatever landed on `byteorder`, from_bytes ignored a third argument and every
+# unknown keyword, and fromhex took any number of arguments and read the first.
+# CPython checks the total before the keyword names and the keyword names before
+# the positional count, so all three thresholds are graded, in that order.
+for _n, _src in [
+    ("to_bytes_total", "{{ (3).to_bytes(2,'big',true,1) }}"),
+    ("to_bytes_total_over_keyword", "{{ (3).to_bytes(2,'big',true,nope=1) }}"),
+    ("to_bytes_unknown_keyword", "{{ (3).to_bytes(nope=1) }}"),
+    ("to_bytes_positional", "{{ (3).to_bytes(2,'big',true) }}"),
+    ("from_bytes_missing", "{{ (3).from_bytes() }}"),
+    ("from_bytes_total", "{{ (3).from_bytes('ab'.encode(),'big',true,1) }}"),
+    ("from_bytes_unknown_keyword", "{{ (3).from_bytes('ab'.encode(), nope=1) }}"),
+    ("from_bytes_positional", "{{ (3).from_bytes('ab'.encode(),'big',true) }}"),
+    ("float_fromhex_many", "{{ (1.5).fromhex('0x1.8p+0', 1) }}"),
+    ("float_fromhex_none", "{{ (1.5).fromhex() }}"),
+    ("float_fromhex_keyword", "{{ (1.5).fromhex(nope='a') }}"),
+]:
+    case(f"errors/clinic_{_n}", _src)
+
+# The shapes these still accept, so a check added above cannot quietly narrow
+# them: `signed` is keyword-only, and both parameters can be named.
+# Go's float parser reads a hexadecimal float and Python's float() does not --
+# only float.fromhex() takes that form, which is exactly what float.hex()
+# writes. So `{{ (1.5).hex()|float }}` answered 1.5 where CPython answers the
+# filter's default, and |filesizeformat sized a string CPython refuses.
+for _n, _src in [
+    ("hex_through_float", "{{ (1.5).hex()|float }}"),
+    ("hex_upper_through_float", "{{ '0X1.8P+0'|float }}"),
+    ("hex_signed_through_float", "{{ '-0x1.8p+0'|float }}"),
+    ("hex_through_filesizeformat", "{{ (0.0).hex()|filesizeformat }}"),
+    ("hex_through_int", "{{ '0x10'|int }}"),
+    ("plain_still_reads", "{{ '1.5'|float }}|{{ '1_0'|float }}|{{ '1e5'|float }}|"
+     "{{ ' 1.5 '|float }}|{{ 'inf'|float }}|{{ '-0.0'|float }}"),
+]:
+    case(f"filters/float_{_n}", _src)
+
+# dict_keys and dict_items compare as sets, and defining __eq__ without __hash__
+# leaves them unhashable; dict_values defines neither and hashes by identity.
+# All three hashed by identity here, so a membership test that CPython refuses
+# quietly answered False instead.
+for _n, _src in [
+    ("keys_in_dict", "{{ d.keys() in d }}"),
+    ("items_in_dict", "{{ d.items() in d }}"),
+    ("values_in_dict", "{{ d.values() in d }}"),
+    ("keys_in_list", "{{ d.keys() in [1] }}"),
+    ("keys_as_a_key", "{{ {d.keys(): 1} }}"),
+    ("keys_through_unique", "{{ [d.keys(), d.keys()]|unique|list }}"),
+    ("values_through_unique", "{{ [d.values()]|unique|list }}"),
+]:
+    case(f"methods/dictview_hash_{_n}", _src, d={"a": 1})
+
+# A ChainableUndefined answers a further lookup with itself, and the fold has to
+# as well: a *slice* of a value that has none is a hard TypeError at run time, so
+# the undefined the fold produced never existed there to chain from and
+# `((2.5)[1:2])[0]` raised where jinja2 prints nothing. An attribute route to the
+# same shape worked, which is why it only ever showed through a slice.
+for _n, _src in [
+    ("slice_then_attr", "{{ ((2.5)[1:2]).nope }}"),
+    ("slice_then_item", "{{ ((2.5)[1:2])[0] }}"),
+    ("slice_then_item_twice", "{{ ((2.5)[1:2])[0][1] }}"),
+    ("attr_then_item", "{{ ((2.5).nope)[0] }}"),
+    ("slice_printed", "{{ (2.5)[1:2]|string }}"),
+    ("slice_is_defined", "{{ ((2.5)[1:2]) is defined }}"),
+]:
+    case(f"undefined/fold_chain_{_n}", _src)
+    for _u in ("chainable", "debug", "strict"):
+        case(f"undefined/fold_chain_{_n}_{_u}", _src,
+             __settings__={"undefined": _u})
+
+# int.from_bytes takes anything bytes() would take from an iterable, which it
+# only ever read as a bytes: `int.from_bytes([1, 2])` said it could not convert
+# a list where CPython answers 258. A str and an int are refused outright, since
+# bytes() reads one as text needing an encoding and the other as a count, and
+# byteorder is bound and checked -- type, then value -- before the first
+# argument is converted at all.
+for _n, _src in [
+    ("list", "{{ (3).from_bytes([1,2]) }}"),
+    ("tuple", "{{ (3).from_bytes((1,2)) }}"),
+    ("range", "{{ (3).from_bytes(range(3)) }}"),
+    ("empty", "{{ (3).from_bytes([]) }}"),
+    ("bools", "{{ (3).from_bytes([true, false]) }}"),
+    ("little", "{{ (3).from_bytes([1,2], 'little') }}"),
+    ("dict_yields_keys", "{{ (3).from_bytes({'a': 1}) }}"),
+    ("element_not_an_integer", "{{ (3).from_bytes([1.5]) }}"),
+    ("element_over_255", "{{ (3).from_bytes([300]) }}"),
+    ("element_negative", "{{ (3).from_bytes([-1]) }}"),
+    ("str_refused", "{{ (3).from_bytes('ab') }}"),
+    ("int_refused", "{{ (3).from_bytes(3) }}"),
+    ("none_refused", "{{ (3).from_bytes(none) }}"),
+    ("float_refused", "{{ (3).from_bytes(1.5) }}"),
+    ("byteorder_type_before_source", "{{ (3).from_bytes(1.5, 2) }}"),
+    ("byteorder_value_before_source", "{{ (3).from_bytes(1.5, 'nope') }}"),
+    ("byteorder_type_before_elements", "{{ (3).from_bytes([1.5], 2) }}"),
+]:
+    case(f"methods/from_bytes_{_n}", _src)
+
+case("methods/int_clinic_keywords",
+     "{{ (3).to_bytes(length=2, byteorder='big') }}|"
+     "{{ (3).to_bytes(2, 'big', signed=true) }}|"
+     "{{ (3).from_bytes(bytes='ab'.encode()) }}|"
+     "{{ (3).from_bytes('ab'.encode(), byteorder='little') }}|"
+     "{{ (3).from_bytes('ab'.encode(), 'big', signed=true) }}|"
+     "{{ (1.5).fromhex('0x1.8p+0') }}")
+
 # json.dumps splits "no indent" from "an indent of zero": only None gives the
 # one-line form, while 0 -- and any negative, which clamps to 0 -- still puts
 # every element on its own line.
@@ -2922,21 +3028,80 @@ case("filters/forceescape_a_module",
      "{% import 'body.html' as m %}{{ m|forceescape }}|{{ m|e }}|{{ m|string }}",
      __templates__={"body.html": "<b>x</b>"})
 
-# A type object carries its class's methods unbound, which is not implemented:
-# that is the line __mro__ sits on rather than the one construction sits on.
-# Listed in known_failures.txt. Pinned so the wording gojja2 does give is graded
-# rather than drifting, and so the day it *is* implemented these say what to.
+# A type object carries its class's methods unbound: `dict.items` is a value,
+# `dict.items(d)` is `d.items()`, and everything past the first argument is the
+# method's own -- so an arity error comes from the method rather than from the
+# descriptor. These were a documented divergence until the descriptor was
+# implemented; the line now sits at __mro__ and __subclasses__ alone, which lead
+# back into the interpreter where a method call on a value does not.
 for _n, _src in [
     ("dict_items", "{{ d.__class__.items() }}"),
     ("dict_items_through_dictsort", "{{ d.__class__|dictsort }}"),
     ("dict_items_through_xmlattr", "{{ d.__class__|xmlattr }}"),
+    ("no_items_through_dictsort", "{{ s.__class__|dictsort }}"),
+    ("no_items_through_xmlattr", "{{ lst.__class__|xmlattr }}"),
     ("str_upper_with_self", "{{ s.__class__.upper('a') }}"),
     ("str_upper_without_self", "{{ s.__class__.upper() }}"),
     ("list_append_with_self", "{{ lst.__class__.append([], 1) }}"),
     ("method_is_a_value", "{{ d.__class__.items }}"),
     ("method_is_defined", "{{ s.__class__.upper is defined }}"),
+    ("method_prints", "{{ s.__class__.upper|string }}"),
+    ("wrong_self_type", "{{ d.__class__.items(lst) }}"),
+    ("wrong_self_type_number", "{{ n.__class__.bit_length('x') }}"),
+    ("arity_comes_from_the_method", "{{ s.__class__.upper('a','b') }}"),
+    ("with_extra_arguments", "{{ s.__class__.replace('abc', 'a', 'z') }}"),
+    ("dict_get", "{{ d.__class__.get({'a': 1}, 'a') }}"),
+    ("dict_keys", "{{ d.__class__.keys(d) }}"),
+    ("list_count", "{{ lst.__class__.count([1,1], 1) }}"),
+    ("float_is_integer", "{{ f.__class__.is_integer(1.5) }}"),
+    ("unknown_name_is_undefined", "{{ s.__class__.nosuchmethod }}"),
+    ("shared_method_wrong_self", "{{ lst.__class__.count((1,2), 1) }}"),
+    ("shared_method_wrong_self_index", "{{ lst.__class__.index((1,2), 1) }}"),
+    ("shared_method_wrong_self_reversed",
+     "{% set t = (1,2) %}{{ t.__class__.count(lst, 1) }}"),
+    # bool defines no methods of its own, so every one it answers is int's and
+    # names int -- and an int is then an acceptable receiver, and a bool for a
+    # descriptor reached through int.
+    ("bool_method_belongs_to_int", "{{ yes.__class__.conjugate }}"),
+    ("bool_method_takes_a_bool", "{{ yes.__class__.bit_length(yes) }}"),
+    ("bool_method_takes_an_int", "{{ yes.__class__.bit_length(n) }}"),
+    ("int_method_takes_a_bool", "{{ n.__class__.bit_length(yes) }}"),
+    ("bool_method_refuses_a_float", "{{ yes.__class__.bit_length(f) }}"),
+    # classmethod and staticmethod take no instance, so these are the same
+    # callable an instance answers rather than a descriptor: read as one,
+    # str.maketrans ate its source string and complained about what was left.
+    ("classmethod_bytes_fromhex", "{{ ('ab'.encode()).__class__.fromhex('0102') }}"),
+    ("classmethod_float_fromhex", "{{ f.__class__.fromhex('0x1.8p+0') }}"),
+    ("classmethod_dict_fromkeys", "{{ d.__class__.fromkeys(lst) }}"),
+    ("classmethod_int_from_bytes", "{{ n.__class__.from_bytes('ab'.encode()) }}"),
+    ("staticmethod_str_maketrans", "{{ s.__class__.maketrans('a','b') }}"),
+    ("classmethod_arity", "{{ d.__class__.fromkeys() }}"),
 ]:
-    case(f"divergence/class_unbound_{_n}", _src, d={"a": 1}, s="x", lst=[1], n=1)
+    case(f"classes/unbound_{_n}", _src, d={"a": 1}, s="x", lst=[1], n=1, f=1.5)
+
+# A class's *dunders* are reached the same way and are not implemented: gojja2
+# exposes no `__len__` or `__abs__` on a value, so the type object has none to
+# hand out either and the name is undefined. CPython answers a slot wrapper,
+# whose refusal is worded differently from a method descriptor's ("requires a
+# 'int' object but received a 'list'", not "doesn't apply to"). Listed in
+# known_failures.txt. Pinned so the wording gojja2 does give is graded rather
+# than drifting, and so the day it is implemented these say what to.
+for _n, _src in [
+    ("len_is_a_value", "{{ s.__class__.__len__ }}"),
+    ("len_with_self", "{{ s.__class__.__len__(s) }}"),
+    ("abs_with_self", "{{ n.__class__.__abs__(n) }}"),
+    ("abs_wrong_self", "{{ n.__class__.__abs__(lst) }}"),
+]:
+    case(f"divergence/class_unbound_dunder_{_n}", _src,
+         d={"a": 1}, s="x", lst=[1], n=1, f=1.5)
+
+# bool's descriptors are int's, and so are their arity messages: CPython says
+# "int.conjugate()" where the same method reached through the *value* says
+# "bool.conjugate()". gojja2's descriptor delegates to the receiver's own bound
+# method, which words it after the receiver either way. Listed in
+# known_failures.txt; pinned so the wording it does give is graded.
+case("divergence/class_unbound_bool_arity_names_int",
+     "{{ yes.__class__.conjugate(yes, 1) }}", yes=True)
 
 # The classes that genuinely lack the method agree exactly, which is what makes
 # the above a gap rather than a wholly separate model.

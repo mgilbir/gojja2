@@ -97,12 +97,20 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		// it with Opaque used to weaken an answer that was never in doubt.
 		out.add(a.expr(n.Child(syntax.RoleSubject)))
 		if idx := n.Child(syntax.RoleIndex); idx != nil {
-			// The key chooses among the container's values; it is not
-			// one of them. That is steering, the same thing a
-			// condition does, so it does not join the result. It can
-			// also stop the render -- an unhashable key, or one of a
-			// type the container cannot take.
-			a.apply(a.expr(idx), Steers|Required)
+			// The key chooses among the container's values, which is
+			// steering, and it can stop the render -- an unhashable
+			// key, or one of a type the container cannot take.
+			key := a.expr(idx)
+			a.apply(key, Steers|Required)
+			// It joins the result as well, because a lookup that
+			// misses answers an undefined carrying the key: under a
+			// DebugUndefined `{{ d[n] }}` prints
+			// "{{ no such element: dict object['<n>'] }}". Steering
+			// alone said the key could not reach the output, which
+			// is the one thing this package promises never to say
+			// wrongly. `{% if lst[n] %}` still reports Steers and
+			// not Printed, because nothing prints there.
+			out.add(key)
 		}
 		return out
 
@@ -111,10 +119,14 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		out.add(a.expr(n.Child(syntax.RoleSubject)))
 		if n.Attr("name") == "attr" {
 			// `obj|attr(name)` is a computed lookup like `obj[name]`:
-			// the result comes out of obj, and name picks which part.
+			// the result comes out of obj, and name picks which
+			// part -- and joins it, for the reason the subscript
+			// above gives.
 			for _, arg := range n.Children(syntax.RoleArg) {
 				// A name that is not a string stops the render.
-				a.apply(a.expr(arg), Steers|Required)
+				name := a.expr(arg)
+				a.apply(name, Steers|Required)
+				out.add(name)
 			}
 			return out
 		}

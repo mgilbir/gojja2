@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_arity_comes_from_the_method.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

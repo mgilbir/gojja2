@@ -43,6 +43,133 @@ func (c *classObject) name() string {
 	return c.qualified
 }
 
+// classProbes is one value of each class a type object can name, used to ask
+// whether the class has a method without having an instance of it.
+//
+// Python's class attributes are the methods themselves, unbound: dict.items is
+// a value, and dict.items(d) is d.items(). There is no table of "the methods of
+// dict" here to read -- builtinMethod picks one from the receiver's kind and
+// numericAttr answers for numbers -- so the way to ask is to look the name up
+// on a value that *is* one, and then require the caller's self to be one too.
+var classProbes = map[string]value.Value{
+	"str":   value.String(""),
+	"bytes": value.Bytes(nil),
+	"dict":  value.NewDict(),
+	"list":  value.NewList(),
+	"tuple": value.NewTuple(),
+	"int":   value.Int(0),
+	"float": value.Float(0),
+	"bool":  value.Bool(false),
+}
+
+// unboundMethod is `T.m`: the method with self supplied at the call.
+//
+//	{{ d.__class__.items }}      <method 'items' of 'dict' objects>
+//	{{ d.__class__.items(d) }}   dict_items([('a', 1)])
+//	{{ d.__class__.items() }}    unbound method dict.items() needs an argument
+//	{{ d.__class__.items(lst) }} descriptor 'items' for 'dict' objects does not
+//	                             apply to a 'list' object
+//
+// Everything past the first argument is the method's own, so an arity error
+// comes from the method rather than from here.
+func (c *classObject) unboundMethod(name string) (value.Value, bool) {
+	probe, ok := classProbes[c.qualified]
+	if !ok {
+		return value.Undefined, false
+	}
+	bound, ok := lookupAttr(nil, probe, name)
+	if !ok {
+		return value.Undefined, false
+	}
+	if classLevelNames[name] {
+		// Not a descriptor: the probe supplied a receiver the callable
+		// ignores, so this is the same callable an instance answers.
+		return bound, true
+	}
+	return value.FromObject(&unboundMethodObject{
+		class: methodOwner(c.qualified), name: name,
+	}), true
+}
+
+// classLevelNames are the names CPython declares classmethod or staticmethod on
+// the classes probed above. They take no instance -- `bytes.fromhex('01')` is
+// exactly `b”.fromhex('01')` -- so reaching one through a type object must not
+// make it eat its first argument as a receiver. `str.maketrans` showed why:
+// treated as a descriptor it consumed the source string and then complained
+// about the argument that was left.
+//
+// Consulted only after the probe found the name on that class, so a name here
+// cannot shadow another class's instance method of the same spelling.
+var classLevelNames = map[string]bool{
+	"fromhex":    true, // bytes, float
+	"fromkeys":   true, // dict
+	"from_bytes": true, // int
+	"maketrans":  true, // str
+}
+
+// methodOwner names the class a descriptor belongs to, which is not always the
+// class it was reached through. bool defines no methods of its own, so
+// `bool.bit_length` *is* `int.bit_length` and says `'int' objects`. That is the
+// only inheritance among the probed classes, and it is also why an int is an
+// acceptable receiver for a descriptor reached through bool, and a bool for one
+// reached through int.
+func methodOwner(class string) string {
+	if class == "bool" {
+		return "int"
+	}
+	return class
+}
+
+// selfMatches reports whether a receiver is an instance of the descriptor's
+// class, which for int includes bool.
+func selfMatches(self value.Value, class string) bool {
+	name := value.QualifiedTypeName(self)
+	return name == class || (class == "int" && name == "bool")
+}
+
+// unboundMethodObject is what `T.m` evaluates to, and it is a value in its own
+// right: it prints, it is defined, and it is callable.
+type unboundMethodObject struct{ class, name string }
+
+func (m *unboundMethodObject) GetAttr(string) (value.Value, bool) {
+	return value.Undefined, false
+}
+
+func (m *unboundMethodObject) TypeName() string { return "method_descriptor" }
+
+func (m *unboundMethodObject) Repr() string {
+	return "<method '" + m.name + "' of '" + m.class + "' objects>"
+}
+
+func (m *unboundMethodObject) callWith(s *State, args *value.CallArgs) (value.Value, error) {
+	if len(args.Pos) == 0 {
+		return value.Undefined, errs.New(errs.TypeError,
+			"unbound method %s.%s() needs an argument", m.class, m.name)
+	}
+	// The descriptor belongs to one class, so a receiver of any other is
+	// refused before the method runs -- which matters where the other class
+	// has a method of the same name, as list and tuple both do for `count`.
+	// The lookup cannot then fail, since the probe that built this
+	// descriptor found the name on that very class; the one branch covers
+	// both rather than carrying a second, unreachable copy of the message.
+	self := args.Pos[0]
+	bound, ok := lookupAttr(s, self, m.name)
+	if !ok || !selfMatches(self, m.class) {
+		return value.Undefined, errs.New(errs.TypeError,
+			"descriptor '%s' for '%s' objects doesn't apply to a '%s' object",
+			m.name, m.class, self.TypeName())
+	}
+	rest := &value.CallArgs{Pos: args.Pos[1:], Kwargs: args.Kwargs}
+	if fn, ok := bound.Interface().(statefulCaller); ok {
+		return fn.callWith(s, rest)
+	}
+	if fn, ok := bound.Interface().(value.Caller); ok {
+		return fn.Call(rest)
+	}
+	return value.Undefined, errs.New(errs.TypeError,
+		"'%s' object is not callable", bound.TypeName())
+}
+
 func (c *classObject) GetAttr(name string) (value.Value, bool) {
 	switch name {
 	case "__name__", "__qualname__":
@@ -53,7 +180,8 @@ func (c *classObject) GetAttr(name string) (value.Value, bool) {
 		}
 		return value.String("builtins"), true
 	}
-	return value.Undefined, false
+	// A class carries its own methods, unbound.
+	return c.unboundMethod(name)
 }
 
 // callWith constructs a value from its type object, as calling a class does in

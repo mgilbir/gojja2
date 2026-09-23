@@ -56,6 +56,15 @@ func (k dictViewKind) name() string {
 	return "dict_keys"
 }
 
+// Unhashable reports that this view cannot be a dict key or a set element.
+//
+// dict_keys and dict_items compare as sets, and defining __eq__ without
+// __hash__ leaves them unhashable. dict_values defines neither and so hashes by
+// identity like any other object: `{{ d.values() in d }}` is a miss that
+// answers False, where `{{ d.keys() in d }}` is a TypeError. Without this every
+// view hashed by identity and all three answered False.
+func (v *dictView) Unhashable() bool { return v.kind != viewValues }
+
 // entries is the view's current contents, read afresh each time.
 func (v *dictView) entries() []value.Value {
 	d, ok := v.d.Dict()

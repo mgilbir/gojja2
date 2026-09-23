@@ -1,0 +1,7 @@
+{
+  "case": "classes/unbound_bool_method_refuses_a_float.jj2",
+  "variables": {
+    "f": "or",
+    "yes": "or"
+  }
+}

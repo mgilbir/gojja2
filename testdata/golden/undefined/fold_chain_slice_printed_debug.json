@@ -1,0 +1,11 @@
+{
+  "case": "undefined/fold_chain_slice_printed_debug.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "{{ no such element: float object[slice(1, 2, None)] }}"
+}
