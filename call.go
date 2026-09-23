@@ -615,6 +615,29 @@ func (ex *exec) assignItem(ref *ast.NSRef, v value.Value) error {
 		"'%s' object does not support item assignment", base.TypeName())
 }
 
+// unpackCount is the number CPython 3.14 puts in "too many values to unpack",
+// and whether the value carries one at all.
+//
+// Only a list, a tuple or a dict does. Everything else -- a str, a bytes, a
+// range, a dict view, a Markup, a reversed -- is unpacked through the iterator
+// path, which does not count, so the message has no number however long it is.
+// `{% for a, b in ['abc'] %}` is "(expected 2)" on 3.14 and `[[1,2,3]]` is
+// "(expected 2, got 3)".
+//
+// That is also what makes the number safe to report: it is the length of a
+// value that has one, never the result of walking an iterable to find out.
+// Nothing here may count by walking, because the thing being counted is exactly
+// the case where the walk is too long.
+func unpackCount(v value.Value) (int, bool) {
+	if seq, ok := v.Seq(); ok {
+		return seq.Len(), true
+	}
+	if d, ok := v.Dict(); ok {
+		return d.Len(), true
+	}
+	return 0, false
+}
+
 func (ex *exec) unpack(t *ast.Tuple, v value.Value, mode nsMode) error {
 	seq, err := value.Iterate(v)
 	if err != nil {
@@ -635,10 +658,13 @@ func (ex *exec) unpack(t *ast.Tuple, v value.Value, mode nsMode) error {
 		return errs.New(errs.ValueError,
 			"not enough values to unpack (expected %d, got %d)", len(t.Items), len(items))
 	case len(items) > len(t.Items):
-		if ex.pyVersion().UnpackErrorNamesTheCount() {
+		// The count is the *value's* length, not the number of items
+		// walked: the two agree for a list, and only a list, a tuple or
+		// a dict reports one at all.
+		if n, ok := unpackCount(v); ok && ex.pyVersion().UnpackErrorNamesTheCount() {
 			return errs.New(errs.ValueError,
 				"too many values to unpack (expected %d, got %d)",
-				len(t.Items), len(items))
+				len(t.Items), n)
 		}
 		return errs.New(errs.ValueError,
 			"too many values to unpack (expected %d)", len(t.Items))

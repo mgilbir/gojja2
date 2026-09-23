@@ -105,6 +105,19 @@ A knock-on: a filter that raises does so at the point gojja2 applies it, where
 jinja2 defers until the generator is consumed. The exception is the same; where
 it surfaces can differ by a tag or two.
 
+A second knock-on, visible only on CPython 3.14: that version names the count in
+`too many values to unpack`, and only for a list, a tuple or a dict -- everything
+else goes through the iterator path, which does not count. So a lazy filter's
+result carries no count there and gojja2's list does:
+
+```jinja
+{% for a, b in [[1,2,3]|reverse] %}{% endfor %}
+```
+
+is `(expected 2)` on CPython 3.14 and `(expected 2, got 3)` here. `|sort` agrees,
+because jinja2's sort returns a real list too. Faking it would mean pretending
+the value is something other than what gojja2 holds.
+
 ## Where jinja2 raises and gojja2 renders
 
 Each of these is a template that is already broken under CPython jinja2. gojja2 answers the question the template asked instead, or refuses for a reason of its own. If you are porting, none of these changes a template that works today.

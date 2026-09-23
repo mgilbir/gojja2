@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_default_exc_alone.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_debug_exc_is_not_reached_by_list.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

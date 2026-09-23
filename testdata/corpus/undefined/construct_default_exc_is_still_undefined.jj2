@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "default"
+  }
+}
+---
+{{ nope.__class__(1, 2, 3, 4) is defined }}

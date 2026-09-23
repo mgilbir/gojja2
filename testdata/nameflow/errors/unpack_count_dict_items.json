@@ -1,0 +1,6 @@
+{
+  "case": "errors/unpack_count_dict_items.jj2",
+  "variables": {
+    "d": "fr"
+  }
+}

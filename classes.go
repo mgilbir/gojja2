@@ -351,9 +351,19 @@ func constructUndefined(behavior value.UndefinedBehavior, args *value.CallArgs) 
 		}
 		bound[i], have[i] = kw.Value, true
 	}
+	// jinja2 raises with `exc(message)`, so a fourth argument that cannot be
+	// called fails before the message is used. A callable one is not
+	// reproduced: jinja2 calls it at the raise, and calling it here instead
+	// would run it for an undefined that is never used. Recorded in
+	// docs/divergences.md.
+	var excRefusal error
+	if have[3] && !isCallableValue(bound[3]) {
+		excRefusal = errs.New(errs.TypeError, "'%s' object is not callable",
+			bound[3].TypeName())
+	}
 	// The class is the one that was called, so a StrictUndefined builds one
 	// that refuses just as it does.
-	built := value.UndefinedConstructed(bound[0], bound[1], have[1], bound[2])
+	built := value.UndefinedConstructed(bound[0], bound[1], have[1], bound[2], excRefusal)
 	return built.WithBehavior(behavior), nil
 }
 

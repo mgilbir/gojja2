@@ -125,6 +125,29 @@ func loadKnownFailures(t *testing.T, root string) map[string]string {
 	return known
 }
 
+// knownFor narrows the known failures to one interpreter.
+//
+// A row may name a version -- `own/x.jj2@3.14` -- for a case that agrees with
+// the pin and diverges on one other. The corpus could not say that until the
+// render differential learned to run against every interpreter and started
+// finding them: an unqualified row would have to claim the case fails at the
+// pin too, which TestConformance rightly refuses when it passes there.
+//
+// pv is empty for the pin's own run, which sees unqualified rows only.
+func knownFor(known map[string]string, pv string) map[string]string {
+	out := make(map[string]string, len(known))
+	for row, reason := range known {
+		name, version, qualified := strings.Cut(row, "@")
+		switch {
+		case !qualified:
+			out[name] = reason
+		case version == pv:
+			out[name] = reason
+		}
+	}
+	return out
+}
+
 // result describes how one case compared against the oracle.
 type result struct {
 	id      string
@@ -134,7 +157,9 @@ type result struct {
 
 func TestConformance(t *testing.T) {
 	root := repoRoot(t)
-	known := loadKnownFailures(t, root)
+	// The pin's own run sees unqualified rows only: a row naming another
+	// interpreter is not a claim about this one.
+	known := knownFor(loadKnownFailures(t, root), "")
 
 	var all []result
 	usedKnown := map[string]bool{}
