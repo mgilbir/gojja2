@@ -140,18 +140,18 @@ func (u *UnicodeOverrides) IsAlpha(r rune, def bool) bool {
 	return flipIn(u.isAlpha, r, def)
 }
 
-// PrintableDefault is str.isprintable for the pinned interpreter.
+// PrintableDefault is str.isprintable for the pinned interpreter, read from
+// gojja2's own table.
 //
-// Go's own tables are a different Unicode release, so asking IsGraphic alone
-// answers for characters CPython has not been told about and misses ones it
-// has -- 5,812 code points at the moment. printableFixDefault is where the two
-// disagree.
+// It used to be a correction to unicode.IsGraphic, which made the answer depend
+// on the Unicode release of whichever Go compiled the binary: the correction is
+// only true against the tables it was generated from. The whole table costs
+// about nine times the ranges and owes nothing to the toolchain.
 func PrintableDefault(r rune) bool {
-	return flipIn(printableFixDefault, r, printable(r))
+	return unicode.Is(printableDefault, r)
 }
 
-// AlphaDefault is str.isalpha for the pinned interpreter, corrected against
-// Go's tables for the same reason.
-func AlphaDefault(r rune, goSays bool) bool {
-	return flipIn(alphaFixDefault, r, goSays)
+// AlphaDefault is str.isalpha for the pinned interpreter, read the same way.
+func AlphaDefault(r rune) bool {
+	return unicode.Is(alphaDefault, r)
 }

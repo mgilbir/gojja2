@@ -154,26 +154,29 @@ import "unicode"
 // Regenerate with `make unicode-matrix`, which asks each interpreter directly.
 ''']
 
-    go = go_answers()
-    GO_ALPHA, GO_PRINTABLE, GO_DIGIT = range(3)
-    # Where the *pinned* CPython disagrees with Go's tables. gojja2 reads
-    # isalpha and isprintable straight off Go, so without these the pin
-    # itself is wrong -- and another version's overrides, which record a
-    # difference from the pin, would then correct a wrong baseline.
-    alphaFix = {cp for cp in base
-                if (base[cp][FLAGS][ISALPHA] == "1") != go[cp][GO_ALPHA]}
-    printableFix = {cp for cp in base
-                    if (base[cp][FLAGS][ISPRINTABLE] == "1") != go[cp][GO_PRINTABLE]}
+    # The pinned interpreter's own answers, not the difference from Go's.
+    #
+    # These were a delta over unicode.IsLetter and unicode.IsGraphic, which made
+    # every answer depend on the Unicode release of the toolchain that generated
+    # them: a Go upgrade moved the baseline and left the delta describing a
+    # difference that was no longer there. It failed loudly rather than quietly
+    # -- the corpus catches it -- but "loudly" still meant two tracked files
+    # changing under whoever happened to upgrade first, and a table that is only
+    # true for one compiler is not a table.
+    #
+    # Written whole, they cost about nine times the ranges and owe nothing to Go.
+    alpha = {cp for cp in base if base[cp][FLAGS][ISALPHA] == "1"}
+    printable = {cp for cp in base if base[cp][FLAGS][ISPRINTABLE] == "1"}
     parts.append(range_table(
-        "alphaFixDefault", alphaFix,
-        "// alphaFixDefault is where the pinned CPython and Go disagree about\n"
-        "// str.isalpha. gojja2 asks unicode.IsLetter, which is a different\n"
-        f"// Unicode release. {len(alphaFix)} code points."))
+        "alphaDefault", alpha,
+        "// alphaDefault is str.isalpha for the pinned interpreter, whole rather\n"
+        "// than as a difference from Go's tables: the answer is CPython's and\n"
+        f"// owes nothing to the Unicode release Go carries. {len(alpha)} code points."))
     parts.append(range_table(
-        "printableFixDefault", printableFix,
-        "// printableFixDefault is where the pinned CPython and Go disagree about\n"
-        "// str.isprintable, which is what repr escapes by. Almost all of it is\n"
-        f"// simply which characters exist yet. {len(printableFix)} code points."))
+        "printableDefault", printable,
+        "// printableDefault is str.isprintable for the pinned interpreter, which\n"
+        "// is what repr escapes by -- and, like alphaDefault, CPython's own answer\n"
+        f"// rather than a correction to Go's. {len(printable)} code points."))
 
     counts = []
     for v in VERSIONS:
@@ -243,7 +246,8 @@ import "unicode"
 
     body = "\n\n".join(parts) + "\n"
     DST.write_text(body, encoding="utf-8")
-    sys.stderr.write(f"pin vs Go: {len(alphaFix)} isalpha, {len(printableFix)} isprintable\n")
+    sys.stderr.write(f"pin: {len(alpha)} isalpha, {len(printable)} isprintable "
+                     "(absolute, not a delta over Go)\n")
     for v, p, n, c in counts:
         sys.stderr.write(f"CPython {v}: {p} printable, {n} numeric, {c} casing\n")
     sys.stderr.write(f"wrote {DST.relative_to(ROOT)}\n")

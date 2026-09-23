@@ -8,7 +8,6 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -17,6 +16,29 @@ import (
 // It differs from Repr only for strings, which print bare, and for the
 // undefined value, which prints as nothing. Containers print their elements
 // with Repr, which is why `{{ ["a"] }}` renders `['a']` and not `[a]`.
+// StrFor is [Str] reproducing one interpreter.
+//
+// It matters for a *container*: str() of a list is its repr, and a repr escapes
+// by printability, which moves between releases. Str alone reaches Repr, which
+// is the pinned interpreter's -- so `{{ [c] }}` under WithPythonVersion(3.14)
+// printed 3.13's answer while `{{ c.isprintable() }}` beside it printed 3.14's.
+func StrFor(v Value, py PythonVersion) string {
+	switch v.kind {
+	case KindString:
+		return v.str
+	case KindUndefined:
+		if v.undef().behavior == UndefinedDebug {
+			return v.DebugText()
+		}
+		return ""
+	case KindObject:
+		if s, ok := v.obj.(Strer); ok {
+			return s.Str()
+		}
+	}
+	return ReprFor(v, py)
+}
+
 func Str(v Value) string {
 	switch v.kind {
 	case KindString:
@@ -575,13 +597,6 @@ func AsciiFor(v Value, py PythonVersion) string {
 // printable implements Python's str.isprintable for a single rune: graphic
 // characters plus ASCII space, but no other whitespace separator -- a
 // non-breaking space is escaped by repr, unlike in Go's notion of printable.
-func printable(r rune) bool {
-	if r == ' ' {
-		return true
-	}
-	return unicode.IsGraphic(r) && !unicode.Is(unicode.Zs, r)
-}
-
 // htmlEscaper matches markupsafe's escape(), which uses numeric references for
 // the quotes rather than the named entities.
 var htmlEscaper = strings.NewReplacer(

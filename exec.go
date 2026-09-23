@@ -246,7 +246,7 @@ func (ex *exec) renderValue(v value.Value) (string, error) {
 	if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
 		return "", v.UndefinedError()
 	}
-	text := value.Str(v)
+	text := value.StrFor(v, ex.pyVersion())
 	if ex.autoescape && !v.IsSafe() {
 		// Output is str(x) plainly and escape(x) when autoescaping, so
 		// a value that carries its own escaped form hands that over

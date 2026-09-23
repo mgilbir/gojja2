@@ -3013,6 +3013,40 @@ for _kind in ("default", "strict", "debug", "chainable"):
         case(f"undefined/loop_{_kind}_{_n}", _src,
              __settings__={"undefined": _kind})
 
+# str.isprintable and repr's escaping answer the same question, and they used to
+# answer it two ways: isprintable asked Go's categories directly, repr read the
+# table generated from CPython. They disagreed for 9,988 code points -- every one
+# a character Go's Unicode release knows about and the pinned CPython does not,
+# so `{{ c.isprintable() }}` said true for a character `{{ [c] }}` escaped.
+#
+# These are drawn from that set. Each pairs the predicate with the repr, because
+# the bug was the two disagreeing rather than either one alone.
+for _n, _cp in [
+    ("arabic_088f", "\u088f"),
+    ("arabic_0897", "\u0897"),
+    ("telugu_0c5c", "\u0c5c"),
+    ("kannada_0cdc", "\u0cdc"),
+    ("combining_1acf", "\u1acf"),
+    ("assigned_0041", "A"),
+    ("space", " "),
+    ("control_0000", "\u0000"),
+]:
+    case(f"unicode/isprintable_agrees_with_repr_{_n}",
+         "{{ c.isprintable() }}|{{ [c] }}", c=_cp)
+
+# str() of a container is its repr, and a repr escapes by printability -- which
+# moves between releases. The print path reached Repr, which is the pinned
+# interpreter's, so `{{ [c] }}` under WithPythonVersion(3.14) printed 3.13's
+# answer while `{{ c.isprintable() }}` beside it printed 3.14's. These are
+# graded on every interpreter, which is where that shows.
+for _n, _cp in [
+    ("newly_assigned", "\u0897"),
+    ("arabic_088f", "\u088f"),
+    ("ascii", "A"),
+]:
+    case(f"unicode/repr_follows_the_version_{_n}",
+         "{{ [c] }}|{{ {1: c} }}|{{ [c]|string }}|{{ c }}", c=_cp)
+
 # A constant folded under StrictUndefined has no cases here, and that is
 # structural. jinja2's folder reads a subscript and an attribute through the
 # lookup that swallows into an Undefined, so under strict the fold *raises* -- at

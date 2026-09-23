@@ -1,0 +1,6 @@
+{
+  "case": "unicode/isprintable_agrees_with_repr_assigned_0041.jj2",
+  "variables": {
+    "c": "or"
+  }
+}

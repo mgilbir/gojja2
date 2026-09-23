@@ -27,6 +27,32 @@ import (
 
 // pyUpperRune, pyLowerRune, pyTitleRune and pyFoldRune are the per-character
 // full mappings. Where Python's answer is a single rune, Go's table already
+// caseMapped is the single-rune mapping for r, from gojja2's own runs.
+//
+// which selects the column: 0 upper, 1 lower, 2 title. A code point in no run
+// maps to itself, which is most of them.
+func caseMapped(r rune, which int) rune {
+	i, j := 0, len(caseRuns)
+	for i < j {
+		h := (i + j) / 2
+		switch {
+		case r < caseRuns[h].lo:
+			j = h
+		case r > caseRuns[h].hi:
+			i = h + 1
+		default:
+			switch which {
+			case 0:
+				return r + rune(caseRuns[h].upper)
+			case 1:
+				return r + rune(caseRuns[h].lower)
+			}
+			return r + rune(caseRuns[h].title)
+		}
+	}
+	return r
+}
+
 // holds it.
 func pyUpperRune(r rune, u *value.UnicodeOverrides) string {
 	if u != nil {
@@ -37,7 +63,7 @@ func pyUpperRune(r rune, u *value.UnicodeOverrides) string {
 	if m, ok := upperSpecial[r]; ok {
 		return m
 	}
-	return string(unicode.ToUpper(r))
+	return string(caseMapped(r, 0))
 }
 
 func pyLowerRune(r rune, u *value.UnicodeOverrides) string {
@@ -49,7 +75,7 @@ func pyLowerRune(r rune, u *value.UnicodeOverrides) string {
 	if m, ok := lowerSpecial[r]; ok {
 		return m
 	}
-	return string(unicode.ToLower(r))
+	return string(caseMapped(r, 1))
 }
 
 func pyTitleRune(r rune, u *value.UnicodeOverrides) string {
@@ -61,7 +87,7 @@ func pyTitleRune(r rune, u *value.UnicodeOverrides) string {
 	if m, ok := titleSpecial[r]; ok {
 		return m
 	}
-	return string(unicode.ToTitle(r))
+	return string(caseMapped(r, 2))
 }
 
 // pyFoldRune is casefold, which is not lowercase: it folds for caseless

@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**5165 of 5194 gradable cases (99.4%)** match CPython jinja2, across eight
+**5176 of 5205 gradable cases (99.4%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The five that do not are listed with reasons
 in `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["5165 / 5194 gradable  (99.4%)"]
+    TC --> RATE["5176 / 5205 gradable  (99.4%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 2874 | 2849 |
+| gojja2's own (committed, with goldens) | 2885 | 2860 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **5194** | **5165 (99.4%)** |
+| **total** | **5205** | **5176 (99.4%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -192,6 +192,31 @@ the release that moved it and the corpus case that grades it, and
 passed as an argument to every function whose answer can depend on it rather
 than read from a package variable, so a signature carrying it declares "this
 differs by interpreter", and one that does not cannot quietly start differing.
+
+That rule has to be followed all the way out, and was not. `str()` of a
+container is its repr, and a repr escapes by printability, which moves between
+releases -- but `value.Str` reached `Repr`, which is the pin's. So `{{ [c] }}`
+under `WithPythonVersion(3.14)` printed 3.13's answer while
+`{{ c.isprintable() }}` beside it printed 3.14's. `StrFor` carries the version
+the rest of the way.
+
+### The tables are gojja2's own
+
+CPython's Unicode and Go's are different releases, and gojja2 used to store only
+the *difference* between them: `isalpha` was a correction to
+`unicode.IsLetter`, `isprintable` to `unicode.IsGraphic`, and the case mappings
+to `unicode.ToUpper` and its neighbours. That is smaller -- 192 ranges against
+1,560 -- and it was guarded, by a sha256 over every code point that a Go upgrade
+breaks loudly.
+
+It is still the wrong shape. A difference is only true against the tables it was
+measured from, so the answer a template got depended on which compiler built the
+binary, and a Go upgrade rewrote two tracked files under whoever ran `make
+oracle` first. The tables are now CPython's answers whole: 1,560 ranges for the
+predicates, and 1,347 runs plus about 450 exceptions for the mappings, in the
+shape Go's own `unicode.CaseRanges` takes. The digest stayed: it is the only
+check that covers every code point rather than the ones a case happens to
+mention, and it is what proves a regeneration changed nothing it should not.
 
 Only the differences are stored. `testdata/golden` is the pinned version's full
 set; `testdata/golden-3.11`, `-3.12` and `-3.14` hold the cases that answer
