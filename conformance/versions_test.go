@@ -58,10 +58,12 @@ func TestEveryPythonVersion(t *testing.T) {
 	if len(paths) == 0 {
 		t.Fatal("the committed corpus is empty")
 	}
-	known := loadKnownFailures(t, root)
+	allKnown := loadKnownFailures(t, root)
 
 	for _, pv := range pythonVersions {
 		t.Run(pv.String(), func(t *testing.T) {
+			// Unqualified rows, plus the ones naming this version.
+			known := knownFor(allKnown, pv.String())
 			overrideRoot := ""
 			if o := overrideDir(pv); o != "" {
 				overrideRoot = filepath.Join(root, o)

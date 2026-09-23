@@ -61,7 +61,7 @@ func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 			// jinja2 writes `for k, v in items`, so each element is
 			// unpacked and fails with Python's unpacking errors --
 			// a string of six characters is iterable but too long.
-			k, val, err := unpackPair(item)
+			k, val, err := unpackPair(item, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -841,7 +841,7 @@ func itemsAttributeError(v value.Value) error {
 
 // unpackPair destructures one element into a key and a value, reporting the
 // failure the way `k, v = item` does in Python.
-func unpackPair(item value.Value) (value.Value, value.Value, error) {
+func unpackPair(item value.Value, py value.PythonVersion) (value.Value, value.Value, error) {
 	seq, err := value.Iterate(item)
 	if err != nil {
 		return value.Undefined, value.Undefined, errs.New(errs.TypeError,
@@ -851,6 +851,14 @@ func unpackPair(item value.Value) (value.Value, value.Value, error) {
 	for v := range seq {
 		items = append(items, v)
 		if len(items) > 2 {
+			// 3.14 names the count, for the kinds that carry one.
+			// The walk stops here either way: the number comes from
+			// the value's own length, never from finishing the walk,
+			// which is what keeps a long iterable cheap to refuse.
+			if n, ok := unpackCount(item); ok && py.UnpackErrorNamesTheCount() {
+				return value.Undefined, value.Undefined, errs.New(errs.ValueError,
+					"too many values to unpack (expected 2, got %d)", n)
+			}
 			return value.Undefined, value.Undefined, errs.New(errs.ValueError,
 				"too many values to unpack (expected 2)")
 		}

@@ -1,0 +1,14 @@
+{
+  "case": "errors/unpack_count_too_few_names_the_count_always.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "not enough values to unpack (expected 2, got 1)"
+  }
+}

@@ -138,3 +138,22 @@ own/divergence/class_unbound_str_upper_without_self.jj2     # without one it nam
 own/divergence/class_unbound_list_append_with_self.jj2      # list.append([], 1) works
 own/divergence/class_unbound_method_is_a_value.jj2          # and the method itself has a repr
 own/divergence/class_unbound_method_is_defined.jj2          # so `is defined` is true
+
+# --- an unpack count over a lazy filter's result ---------------------------------
+# The @3.14 suffix means "agrees with the pin, diverges on that one". 3.14 names
+# the count in "too many values to unpack" for a list, a tuple or a
+# dict, and gojja2's sequence filters answer lists where jinja2's answer
+# iterators -- so the count appears here and not there. It is the divergence
+# above showing through a new surface rather than a separate one; faking it would
+# mean pretending the value is something other than what gojja2 holds.
+own/divergence/unpack_count_lazy_filter.jj2@3.14   # |reverse is a list here
+
+# --- a callable fourth argument to Undefined ------------------------------------
+# jinja2 raises with `exc(message)`, calling it at the raise. gojja2 has no
+# evaluator at the point an undefined reports itself, and calling it at
+# construction instead would run it for an undefined that is never used -- a
+# worse wrong answer than not calling it. A *non-callable* exc is reproduced,
+# because that one fails before the message is used and needs no call.
+own/divergence/undefined_exc_callable_class_global.jj2      # raise range(msg)
+own/divergence/undefined_exc_callable_class_that_refuses.jj2  # raise dict(msg)
+own/divergence/undefined_exc_callable_macro.jj2             # raise macro(msg)

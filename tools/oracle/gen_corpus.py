@@ -2858,6 +2858,23 @@ _U = [
     ("arity", "{{ nope.__class__(1, 2, 3, 4, 5) }}"),
     ("unexpected_keyword", "{{ nope.__class__(zz=1) }}"),
     ("duplicate_argument", "{{ nope.__class__(1, hint=2) }}"),
+    # The fourth argument is the class the undefined *raises* with: jinja2 does
+    # `raise exc(message)`, so a non-callable one fails before the message is
+    # ever used. Found by the render differential on a fresh seed, after this
+    # was implemented and its commit message claimed the fourth argument
+    # changed nothing.
+    ("exc_not_callable", "{{ -nope.__class__(1, 2, 3, 4) }}"),
+    ("exc_by_keyword", "{{ -nope.__class__(exc=1) }}"),
+    ("exc_none", "{{ -nope.__class__(1, 2, 3, none) }}"),
+    ("exc_str", "{{ -nope.__class__(1, 2, 3, 's') }}"),
+    ("exc_list", "{{ -nope.__class__(1, 2, 3, [1]) }}"),
+    ("exc_with_a_name", "{{ -nope.__class__(name='zz', exc=4) }}"),
+    ("exc_alone", "{{ -nope.__class__(exc=4) }}"),
+    # It is only reached when the undefined is *used*: printing one is still
+    # the empty string, and it is still undefined.
+    ("exc_is_not_reached_by_printing", "[{{ nope.__class__(1, 2, 3, 4) }}]"),
+    ("exc_is_not_reached_by_list", "{{ nope.__class__(1, 2, 3, 4)|list }}"),
+    ("exc_is_still_undefined", "{{ nope.__class__(1, 2, 3, 4) is defined }}"),
 ]
 # Under every setting, because the class that was called decides how the result
 # behaves: one built from a StrictUndefined refuses just as it does.
@@ -2929,6 +2946,53 @@ for _n, _src in [
     ("float_has_no_items", "{{ f.__class__|dictsort }}"),
 ]:
     case(f"classes/unbound_{_n}", _src, n=1, f=1.5)
+
+# CPython 3.14 names the count in "too many values to unpack", and only for a
+# list, a tuple or a dict: everything else is unpacked through the iterator path,
+# which does not count, so the message carries no number however long the value
+# is. gojja2 applied the version rule to every kind at one site and to none at
+# the other -- found by running the render differential against 3.14, which until
+# now asked one interpreter only.
+for _n, _src in [
+    ("list", "{% for a, b in [[1,2,3]] %}{% endfor %}"),
+    ("tuple", "{% for a, b in [(1,2,3)] %}{% endfor %}"),
+    ("dict", "{% for a, b in [d] %}{% endfor %}"),
+    ("str", "{% for a, b in ['abc'] %}{% endfor %}"),
+    ("bytes", "{% for a, b in ['abc'.encode()] %}{% endfor %}"),
+    ("range", "{% for a, b in [range(3)] %}{% endfor %}"),
+    ("dict_keys", "{% for a, b in [d.keys()] %}{% endfor %}"),
+    ("dict_items", "{% for a, b in [d.items()] %}{% endfor %}"),
+    ("markup", "{% for a, b in ['abc'|safe] %}{% endfor %}"),
+    ("sorted_is_a_list", "{% for a, b in [[3,1,2]|sort] %}{% endfor %}"),
+    ("split_is_a_list", "{% for a, b in ['a,b,c'.split(',')] %}{% endfor %}"),
+    ("through_set", "{% set x, y = [1,2,3] %}"),
+    ("through_set_str", "{% set x, y = 'abc' %}"),
+    ("too_few_names_the_count_always", "{% for a, b in [[1]] %}{% endfor %}"),
+    # The other site: |urlencode unpacks each element itself, and had the rule
+    # applied nowhere.
+    ("urlencode_list", "{{ [[1,2,3]]|urlencode }}"),
+    ("urlencode_dict", "{{ [d]|urlencode }}"),
+    ("urlencode_str", "{{ ['abc']|urlencode }}"),
+]:
+    case(f"errors/unpack_count_{_n}", _src, d={"a": 1, "b": 2, "c": 3})
+
+# A lazy filter's result is a list here and an iterator there, so on 3.14 the
+# count follows the type. Listed in known_failures.txt: it is the sequence-filter
+# divergence showing through a new surface, not a separate decision.
+case("divergence/unpack_count_lazy_filter",
+     "{% for a, b in [[1,2,3]|reverse] %}{% endfor %}")
+
+# A *callable* fourth argument to Undefined is not reproduced. jinja2 calls it at
+# the raise -- `raise exc(message)` -- with whatever side effects it has, and
+# gojja2 has no evaluator at the point an undefined reports itself. Calling it at
+# construction instead would run it for an undefined that is never used, which is
+# a worse wrong answer than not calling it. Listed in known_failures.txt.
+for _n, _src in [
+    ("class_global", "{{ -nope.__class__(1, 2, 3, range) }}"),
+    ("class_that_refuses", "{{ -nope.__class__(1, 2, 3, dict) }}"),
+    ("macro", "{% macro m(x) %}{% endmacro %}{{ -nope.__class__(1, 2, 3, m) }}"),
+]:
+    case(f"divergence/undefined_exc_callable_{_n}", _src)
 
 # Neither format_map nor translate converts the argument it is handed.
 # translate is `table[ord(c)]` per character, catching LookupError, so an empty

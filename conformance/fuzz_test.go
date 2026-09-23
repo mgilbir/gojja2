@@ -41,6 +41,12 @@ type harness struct {
 	oracle    *conformance.Oracle
 	rawCtx    json.RawMessage
 	templates map[string]string
+	// py is the interpreter both sides reproduce. GOJJA2_FUZZ_PYTHON moves
+	// it, and moves *both* sides together: the oracle runs under that
+	// CPython and gojja2 is configured to reproduce it. Setting one without
+	// the other would compare two specifications and call the difference a
+	// bug.
+	py value.PythonVersion
 }
 
 // context decodes a fresh copy of the shared context. See the type comment.
@@ -51,7 +57,12 @@ func (h *harness) context() (map[string]value.Value, error) {
 // newHarness starts the oracle, or skips when there is none to ask.
 func newHarness(t testing.TB) *harness {
 	t.Helper()
-	oracle, err := conformance.StartOracle()
+	version := os.Getenv("GOJJA2_FUZZ_PYTHON")
+	py, err := conformance.PythonVersionFor(version)
+	if err != nil {
+		t.Fatalf("GOJJA2_FUZZ_PYTHON: %v", err)
+	}
+	oracle, err := conformance.StartOracleFor(version)
 	if err != nil {
 		t.Skipf("%v", err)
 	}
@@ -68,6 +79,7 @@ func newHarness(t testing.TB) *harness {
 		oracle:    oracle,
 		rawCtx:    raw,
 		templates: conformance.FuzzTemplates(),
+		py:        py,
 	}
 }
 
@@ -91,6 +103,7 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 	env := mustEnv(
 		gojja2.WithLoader(gojja2.DictLoader(sources)),
 		gojja2.WithAutoescape(c.Autoescape),
+		gojja2.WithPythonVersion(h.py),
 	)
 	tmpl, err := env.GetTemplate(fuzzTemplateName)
 	if err != nil {

@@ -58,6 +58,14 @@ type undefinedInfo struct {
 	// for those the quoting is the same either way -- which is why this
 	// stayed unnoticed until a template could call the class.
 	nameRepr string
+	// excRefusal is the error that replaces this undefined's own, set only
+	// when a template constructed the Undefined with a fourth argument that
+	// cannot be called. jinja2 raises with `exc(message)`, so a non-callable
+	// one fails before the message is ever used.
+	//
+	// It arrives already built, because what counts as callable is a
+	// question about macros and globals that this package cannot answer.
+	excRefusal error
 }
 
 // UndefinedConstructed returns the undefined jinja2's Undefined(hint, obj,
@@ -73,8 +81,9 @@ type undefinedInfo struct {
 // undefined" an empty name would give. Nothing the engine builds for itself is
 // nameless, which is why that only mattered once a template could call the
 // class.
-func UndefinedConstructed(hint Value, obj Value, hasObj bool, name Value) Value {
-	info := &undefinedInfo{}
+func UndefinedConstructed(hint Value, obj Value, hasObj bool, name Value,
+	excRefusal error) Value {
+	info := &undefinedInfo{excRefusal: excRefusal}
 	switch {
 	case isTruthyHint(hint):
 		info.hint = Str(hint)
@@ -177,6 +186,19 @@ func (v Value) undef() *undefinedInfo {
 // element form does not.
 func (v Value) UndefinedError() error {
 	info := v.undef()
+	// jinja2 raises with `self._undefined_exception(message)`, and a
+	// template can replace that class through the fourth argument of
+	// Undefined(...). Calling something that is not callable fails before
+	// the message is ever used, so this comes first.
+	//
+	// A *callable* exc is not reproduced: jinja2 calls it at the raise, with
+	// side effects and all, and this has no evaluator here to call it with.
+	// Calling it at construction instead would run it for an undefined that
+	// is never used, which is worse than not calling it. Recorded in
+	// docs/divergences.md.
+	if info.excRefusal != nil {
+		return info.excRefusal
+	}
 	switch {
 	case info.hint != "":
 		return errs.New(errs.UndefinedError, "%s", info.hint)
