@@ -50,6 +50,54 @@ type undefinedInfo struct {
 	// and because a slice has no Value here to hold.
 	keyRepr string
 	hasKey  bool
+	// nameRepr overrides how the name is written, and is set only by an
+	// Undefined a *template* constructed through `__class__`. jinja2
+	// formats the name with !r, so one built with no name at all says
+	// "None is undefined" and prints as "{{ None }}" under DebugUndefined.
+	// Every undefined the engine builds for itself has a real name, and
+	// for those the quoting is the same either way -- which is why this
+	// stayed unnoticed until a template could call the class.
+	nameRepr string
+}
+
+// UndefinedConstructed returns the undefined jinja2's Undefined(hint, obj,
+// name) builds, which is what a template gets from `{{ nope.__class__(...) }}`.
+//
+// It picks between the same three messages every other undefined here uses, so
+// this is a binding rather than a fourth form. jinja2's rule, in order: a
+// *truthy* hint is the whole message; with no obj the name stands alone; with an
+// obj, a string name is an attribute and anything else is an element.
+//
+// What is new is that every argument may be absent, and jinja2 writes the name
+// with !r -- so a nameless one is "None is undefined" rather than the "” is
+// undefined" an empty name would give. Nothing the engine builds for itself is
+// nameless, which is why that only mattered once a template could call the
+// class.
+func UndefinedConstructed(hint Value, obj Value, hasObj bool, name Value) Value {
+	info := &undefinedInfo{}
+	switch {
+	case isTruthyHint(hint):
+		info.hint = Str(hint)
+	case !hasObj:
+		// Two forms of the same name, because jinja2 writes it two
+		// ways: the error quotes it with !r and DebugUndefined's
+		// __str__ prints it raw, so `Undefined(name='zz')` is "'zz' is
+		// undefined" and "{{ zz }}".
+		info.name, info.nameRepr = Str(name), Repr(name)
+	case name.IsString():
+		info.owner, info.name = ObjectTypeRepr(obj), Str(name)
+	default:
+		info.owner, info.keyRepr, info.hasKey = ObjectTypeRepr(obj), Repr(name), true
+	}
+	return Value{kind: KindUndefined, obj: info}
+}
+
+// isTruthyHint reports whether a hint replaces the message. jinja2 tests the
+// hint for truth rather than for presence, so Undefined(hint=None) falls
+// through to the name form and says "None is undefined".
+func isTruthyHint(hint Value) bool {
+	ok, err := IsTrue(hint)
+	return err == nil && ok
 }
 
 // NewUndefined returns the undefined produced by a bare name that resolved to
@@ -133,6 +181,9 @@ func (v Value) UndefinedError() error {
 	case info.hint != "":
 		return errs.New(errs.UndefinedError, "%s", info.hint)
 	case info.owner == "":
+		if info.nameRepr != "" {
+			return errs.New(errs.UndefinedError, "%s is undefined", info.nameRepr)
+		}
 		return errs.New(errs.UndefinedError, "'%s' is undefined", info.name)
 	case info.hasKey:
 		return errs.New(errs.UndefinedError, "%s has no element %s", info.owner, info.keyRepr)
@@ -152,6 +203,9 @@ func (v Value) DebugText() string {
 	case info.hint != "":
 		return "{{ undefined value printed: " + info.hint + " }}"
 	case info.owner == "":
+		// The name raw, never the repr: jinja2's __str__ interpolates
+		// it while the error message writes it with !r, so the same
+		// undefined is "{{ zz }}" here and "'zz' is undefined" there.
 		return "{{ " + info.name + " }}"
 	case info.hasKey:
 		return "{{ no such element: " + info.owner + "[" + info.keyRepr + "] }}"

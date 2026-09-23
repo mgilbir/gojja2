@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_debug_zero_hint_is_ignored.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

@@ -925,24 +925,66 @@ func (g *generator) classObject() string {
 	// generic alias `list['a']` on CPython and undefined here -- the
 	// divergence docs/divergences.md records for the `dict` global,
 	// reached a second way. jinja2's attribute fallback puts `.a` in the
-	// same position. Those two subjects therefore always carry an
-	// accessor that leaves the class object behind, so the generator
-	// cannot hand one to a subscript further out.
-	if g.c.chance(4) {
-		return g.c.pick([]string{"lst", "d", "[1]", "{}", "dict(a=1)"}) +
-			".__class__" + g.c.pick([]string{
-			".__name__", ".__name__|upper", "|string", "|length",
-		})
-	}
+	// same position. So a class object from one of those subjects is never
+	// handed onwards bare; it is either called or reduced to a string.
+	generic := g.c.chance(3)
 	subject := g.c.pick([]string{
 		"n", "s", "yes", "nil", "f", "uni", "html", "nope",
 		"(1.5)", "(1)", "'x'", "none", "true",
 		"namespace()", "cycler('a','b')", "joiner('-')", "range(3)",
-		"'x'|safe",
+		// Parenthesised: `'x'|safe.__class__` is the dotted filter name
+		// `safe.__class__`, not the class of a Markup, and the arm that
+		// was meant to reach markupsafe.Markup reached nothing at all.
+		"('x'|safe)", "('ab'.encode())", "((1, 2))",
 	})
-	return subject + ".__class__" + g.c.pick([]string{
-		"", "", ".__name__", ".__name__|upper", "|string", "|length",
-	})
+	if generic {
+		subject = g.c.pick([]string{"lst", "d", "[1]", "{}", "dict(a=1)"})
+	}
+	chain := subject + ".__class__"
+
+	// Calling a class object is the rest of what a type object does, and the
+	// render differential reached none of it: every constructor in classes.go
+	// sat at 0% under a soak while the corpus graded it. Arguments are kept
+	// small on purpose -- `bytes(n)` allocates what it is told, and a soak is
+	// not the place to find that out.
+	if g.c.chance(2) {
+		return chain + g.c.pick([]string{
+			"()", "()", "(5)", "('42')", "(s)", "(f)", "(n)", "(yes)",
+			"(nil)", "([1])", "('ab')", "(lst)", "(d)", "('x', 2)",
+			"('10', 2)", "(zz=1)", "(1, 2, 3, 4)",
+		})
+	}
+	// Two class objects compare by the class they name, and a class object
+	// compares against the class *global* it is -- which is a second thing
+	// nothing generated reached.
+	if g.c.chance(4) {
+		return chain + g.c.pick([]string{
+			" == " + g.c.pick([]string{"n", "s", "lst", "d"}) + ".__class__",
+			" != n.__class__", " == dict", " == range", " == namespace",
+			" in [n.__class__, s.__class__]",
+			// Hashing a class object, which is a third thing
+			// nothing generated reached.
+			"|string", "|string",
+		})
+	}
+	if g.c.chance(6) {
+		return g.c.pick([]string{
+			"{" + chain + ": 1}",
+			"[" + chain + ", n.__class__]|unique|list",
+			// |list, never |length: a lazy filter answers a
+			// generator in jinja2, and asking one for a length is
+			// the divergence docs/divergences.md records rather
+			// than anything about hashing a class object.
+			"[" + chain + ", " + chain + "]|unique|list",
+		})
+	}
+	tail := []string{".__name__", ".__name__|upper", "|string", "|length"}
+	if !generic {
+		// A bare class object is safe to hand on for everything but the
+		// two above.
+		tail = append(tail, "", "")
+	}
+	return chain + g.c.pick(tail)
 }
 
 // methodCall writes a call to one of Python's own methods on a receiver of the

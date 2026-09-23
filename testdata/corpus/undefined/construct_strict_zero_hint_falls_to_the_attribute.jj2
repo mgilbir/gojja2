@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{{ nope.__class__(hint=0, obj=1, name='k') + 1 }}
