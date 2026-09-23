@@ -2866,6 +2866,70 @@ for _kind in ("default", "strict", "debug", "chainable"):
         case(f"undefined/construct_{_kind}_{_n}", _src,
              __settings__={"undefined": _kind})
 
+# markupsafe defines __html__ as an ordinary method, so the Markup *class object*
+# holds it unbound: hasattr says yes -- which is what `is escaped` asks -- and
+# calling it with no self raises. Every place that would escape the value fails
+# rather than escaping it, and every place that only stringifies it is its repr.
+#
+# Found by the render differential once the generator could write a class object
+# under autoescape. No other class carries __html__, which is why the int class
+# beside each of these escapes normally.
+_MK = "{% set M = ('x'|safe).__class__ %}"
+for _n, _src in [
+    ("is_escaped", "{{ M is escaped }}"),
+    ("safe", "{{ M|safe }}"),
+    ("escape", "{{ M|e }}"),
+    ("printed", "{{ M }}"),
+    ("string", "{{ M|string }}"),
+    ("through_a_set", "{% set x = M %}{{ x }}"),
+    ("forceescape", "{{ M|forceescape }}"),
+    ("inside_a_list", "{{ [M] }}"),
+    ("concatenated", "{{ M ~ 'a' }}"),
+    ("name", "{{ M.__name__ }}"),
+]:
+    for _ae, _wrap in [("", "%s"), ("_autoescape",
+                                    "{%% autoescape true %%}%s{%% endautoescape %%}")]:
+        case(f"classes/markup_html_{_n}{_ae}", _wrap % (_MK + _src))
+for _n, _src in [
+    ("int_class_is_not_escaped", "{{ n.__class__ is escaped }}"),
+    ("int_class_escapes", "{% autoescape true %}{{ n.__class__ }}{% endautoescape %}"),
+    ("int_class_through_e", "{{ n.__class__|e }}"),
+    ("int_class_forceescape", "{{ n.__class__|forceescape }}"),
+]:
+    case(f"classes/markup_html_{_n}", _src, n=1)
+
+# |forceescape asks for __html__ and escapes str() of the answer, so a value
+# carrying its own escaped form has that form escaped again -- which is what
+# makes it differ from |e for a module.
+case("filters/forceescape_a_module",
+     "{% import 'body.html' as m %}{{ m|forceescape }}|{{ m|e }}|{{ m|string }}",
+     __templates__={"body.html": "<b>x</b>"})
+
+# A type object carries its class's methods unbound, which is not implemented:
+# that is the line __mro__ sits on rather than the one construction sits on.
+# Listed in known_failures.txt. Pinned so the wording gojja2 does give is graded
+# rather than drifting, and so the day it *is* implemented these say what to.
+for _n, _src in [
+    ("dict_items", "{{ d.__class__.items() }}"),
+    ("dict_items_through_dictsort", "{{ d.__class__|dictsort }}"),
+    ("dict_items_through_xmlattr", "{{ d.__class__|xmlattr }}"),
+    ("str_upper_with_self", "{{ s.__class__.upper('a') }}"),
+    ("str_upper_without_self", "{{ s.__class__.upper() }}"),
+    ("list_append_with_self", "{{ lst.__class__.append([], 1) }}"),
+    ("method_is_a_value", "{{ d.__class__.items }}"),
+    ("method_is_defined", "{{ s.__class__.upper is defined }}"),
+]:
+    case(f"divergence/class_unbound_{_n}", _src, d={"a": 1}, s="x", lst=[1], n=1)
+
+# The classes that genuinely lack the method agree exactly, which is what makes
+# the above a gap rather than a wholly separate model.
+for _n, _src in [
+    ("int_has_no_items", "{{ n.__class__|dictsort }}"),
+    ("int_has_no_items_xmlattr", "{{ n.__class__|xmlattr }}"),
+    ("float_has_no_items", "{{ f.__class__|dictsort }}"),
+]:
+    case(f"classes/unbound_{_n}", _src, n=1, f=1.5)
+
 # Neither format_map nor translate converts the argument it is handed.
 # translate is `table[ord(c)]` per character, catching LookupError, so an empty
 # string never touches the table and anything subscriptable by an integer will

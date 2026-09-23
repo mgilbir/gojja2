@@ -38,10 +38,39 @@ func Str(v Value) string {
 // ok is false when it has none, which is every value but an Object that
 // implements HTMLer. A Markup string answers through IsSafe instead, because
 // markupsafe returns it unchanged rather than asking it for anything.
+// HTMLRefuser is an Object that carries __html__ but cannot answer it.
+//
+// There is exactly one: the Markup *class*. markupsafe defines __html__ as an
+// ordinary method, so the class object holds it unbound -- hasattr says yes,
+// which is what `is escaped` asks, and calling it with no self raises. Every
+// place that would escape the value therefore fails rather than escaping it.
+type HTMLRefuser interface {
+	HTMLRefusal() error
+}
+
+// HTMLRefusal returns that error, and nil for every other value. It is asked
+// before HTML at each of the five places escaping happens, because the answer
+// is an error rather than a string.
+func HTMLRefusal(v Value) error {
+	if v.kind == KindObject {
+		if r, ok := v.obj.(HTMLRefuser); ok {
+			return r.HTMLRefusal()
+		}
+	}
+	return nil
+}
+
 func HTML(v Value) (string, bool) {
 	if v.kind == KindObject {
 		if h, ok := v.obj.(HTMLer); ok {
 			return h.HTML(), true
+		}
+		// It has one; it just cannot be called. `is escaped` asks only
+		// whether the attribute is there, so it must say yes -- and
+		// every caller that would *use* the answer asks HTMLRefusal
+		// first and stops there.
+		if r, ok := v.obj.(HTMLRefuser); ok && r.HTMLRefusal() != nil {
+			return "", true
 		}
 	}
 	// ChainableUndefined is the one Undefined class that defines __html__,

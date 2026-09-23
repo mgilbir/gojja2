@@ -1,0 +1,6 @@
+{
+  "case": "divergence/class_unbound_list_append_with_self.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

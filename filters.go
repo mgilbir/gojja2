@@ -2217,7 +2217,11 @@ func markSeen(seen map[any]bool, key any) map[any]bool {
 
 func filterSafe(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	// Markup(x) asks x for its own escaped form when it has one, which is
-	// how `{{ module|safe }}` is the module's body and not its repr.
+	// how `{{ module|safe }}` is the module's body and not its repr -- and
+	// why the one value whose __html__ cannot be called fails here too.
+	if err := value.HTMLRefusal(v); err != nil {
+		return value.Undefined, err
+	}
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html), nil
 	}
@@ -2231,6 +2235,9 @@ func filterSafe(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 func filterEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	if v.IsSafe() {
 		return v, nil
+	}
+	if err := value.HTMLRefusal(v); err != nil {
+		return value.Undefined, err
 	}
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html), nil
@@ -2289,6 +2296,18 @@ func inChunks(s *State, in string, f func(string) string) (string, error) {
 // filterForceEscape escapes even an already-safe value, which is how a
 // template un-trusts something it was handed as Markup.
 func filterForceEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	// do_forceescape asks for __html__ first and escapes str() of the
+	// answer, so a value carrying its own escaped form has that form
+	// escaped *again* -- which is what makes |forceescape differ from |e
+	// for a module. This went straight to str(), which agrees for every
+	// value here because str(x.__html__()) is str(x) for all of them, and
+	// would stop agreeing for a Go object whose HTML differs from its Str.
+	if err := value.HTMLRefusal(v); err != nil {
+		return value.Undefined, err
+	}
+	if html, ok := value.HTML(v); ok {
+		v = value.String(html)
+	}
 	text, err := strictStr(v)
 	if err != nil {
 		return value.Undefined, err

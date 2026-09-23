@@ -1,0 +1,6 @@
+{
+  "case": "divergence/class_unbound_dict_items.jj2",
+  "variables": {
+    "d": "or"
+  }
+}
