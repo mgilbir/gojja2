@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{{ (1e3)|attr('nope') and 1 }}

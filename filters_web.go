@@ -854,6 +854,11 @@ func itemsAttributeError(v value.Value) error {
 func unpackPair(item value.Value, py value.PythonVersion) (value.Value, value.Value, error) {
 	seq, err := value.Iterate(item)
 	if err != nil {
+		// As in exec.unpack: a StrictUndefined's own refusal names the
+		// undefined, and that is what `k, v = item` reports.
+		if strict := value.StrictRefusal(item); strict != nil {
+			return value.Undefined, value.Undefined, strict
+		}
 		return value.Undefined, value.Undefined, errs.New(errs.TypeError,
 			"cannot unpack non-iterable %s object", item.TypeName())
 	}

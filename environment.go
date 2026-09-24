@@ -884,6 +884,13 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	folder := newConstEvaluator(e, name, fromString)
 	foldConstantExpressions(folder, tree.Body)
 	foldConstantPrints(folder, tree.Body)
+	// A fold that asked a StrictUndefined for its truthiness or its text
+	// got an error, and jinja2 lets that error out of from_string rather
+	// than leaving the expression for the render. So does this: the
+	// template does not compile.
+	if folder.refusal != nil {
+		return nil, folder.refusal
+	}
 	if derr := e.checkDependencies(tree.Body, name, source); derr != nil {
 		return nil, derr
 	}

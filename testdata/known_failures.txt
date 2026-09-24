@@ -122,6 +122,12 @@ own/divergence/class_generic_alias_item.jj2    # list['a'] is a generic alias
 own/divergence/class_generic_alias_slice.jj2   # so is list[slice(...)]
 own/divergence/class_generic_alias_attr.jj2    # .a falls back to ['a']
 
+# --- which of two folded refusals is named ---
+# jinja2's optimizer folds bottom-up, so a refusal inside a conditional's branch
+# raises before its test is asked; this folds top-down. Both refuse the template
+# at compile time and name the same kind of error, over a different expression.
+own/divergence/strict_fold_which_refusal_is_named.jj2
+
 # --- a type object's dunders ---
 # A class's methods are implemented; its dunders are not, because gojja2 exposes
 # no `__len__` or `__abs__` on a value for the type object to hand out. CPython

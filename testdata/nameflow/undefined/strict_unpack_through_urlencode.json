@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_unpack_through_urlencode.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

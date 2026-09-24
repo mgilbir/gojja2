@@ -723,6 +723,153 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# str.__contains__ and bytes.__contains__ type-check their left operand before
+# they look at it, so an undefined there is a TypeError naming its class rather
+# than the undefined's own refusal. Every other container reaches the item
+# through a comparison, which is where the refusal comes from -- so this is two
+# cases and not a rule about undefineds.
+for _n, _src in [
+    ("in_string", "{{ nope in 'abc' }}"),
+    ("not_in_string", "{{ nope not in 'abc' }}"),
+    ("in_bytes", "{{ nope in 'ab'.encode() }}"),
+    ("in_list", "{{ nope in [1] }}"),
+    ("in_tuple", "{{ nope in (1,) }}"),
+    ("in_dict", "{{ nope in {'a':1} }}"),
+    ("in_range", "{{ nope in range(3) }}"),
+    ("container_is_undefined", "{{ 'a' in nope }}"),
+]:
+    case(f"undefined/strict_membership_{_n}", _src, __settings__={"undefined": "strict"})
+# The same shapes with a defined left operand, so the type check above cannot
+# start answering for values that were never undefined.
+case("membership/wrong_left_operand",
+     "{{ 1 in 'abc' }}|{{ none in 'abc' }}|{{ 1.5 in 'ab'.encode() }}")
+
+# Two foldable refusals in one expression, and the engines name different ones:
+# jinja2's optimizer folds bottom-up, so the `or` inside the branch raises before
+# the conditional's test is ever asked, where this folds top-down and asks the
+# test first. Listed in known_failures.txt. Matching it would take jinja2's
+# traversal *and* its refusal to fold a slice, and a slice is folded here on
+# purpose -- gojja2's run-time slice raises where jinja2's getitem swallows, so
+# the fold is what makes `((2.5)[1:2])[0]` chain under a ChainableUndefined.
+# Both refuse the template; only which expression is named differs.
+case("divergence/strict_fold_which_refusal_is_named",
+     "{{ (3)[1] or True if (True)|attr('name') else 1.5 }}",
+     __settings__={"undefined": "strict"})
+# The other shape -- where the refusal sits in a branch the chain never takes --
+# cannot be a case at all: gojja2 compiles it and CPython does not, and the
+# suite requires both sides to agree about whether a template compiles.
+# TestSyntaxMatchesTheReference says so directly. Only the half that *does*
+# compile on both is gradable.
+case("undefined/strict_fold_untaken_branch_in_print",
+     "{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}",
+     __settings__={"undefined": "strict"})
+
+# Unpacking asks the value to iterate, and a StrictUndefined's refusal names the
+# undefined. Both unpack sites answered "cannot unpack non-iterable
+# StrictUndefined object" instead, which describes a type the value does not
+# have and hides which name was missing -- the rule materializeOr already
+# followed and these two did not.
+for _n, _src in [
+    ("set_target", "{% set a, b = nope %}"),
+    ("loop_target", "{% for a, b in [nope] %}{% endfor %}"),
+    ("loop_source", "{% for a, b in nope %}{% endfor %}"),
+    ("through_urlencode", "{{ [nope]|urlencode }}"),
+]:
+    case(f"undefined/strict_unpack_{_n}", _src, __settings__={"undefined": "strict"})
+# ...and the shapes that are still a plain unpacking failure, so the rule above
+# cannot quietly swallow them.
+case("errors/unpack_non_iterable_int", "{% set a, b = 1 %}")
+case("errors/unpack_non_iterable_in_loop", "{% for a, b in [1] %}{% endfor %}")
+
+# markupsafe's Markup.__add__ takes a str or anything answering __html__, and
+# ChainableUndefined is the one Undefined class that defines __html__ -- as its
+# own str, which is "". So a Markup absorbs one and every other class refuses.
+# Only a Markup on the left reaches that method.
+for _n, _src, _u in [
+    ("markup_plus_chainable", "{{ 'x'|safe + nope }}", "chainable"),
+    ("markup_plus_default", "{{ 'x'|safe + nope }}", ""),
+    ("markup_plus_debug", "{{ 'x'|safe + nope }}", "debug"),
+    ("markup_plus_strict", "{{ 'x'|safe + nope }}", "strict"),
+    ("chainable_plus_markup", "{{ nope + 'x'|safe }}", "chainable"),
+    ("str_plus_chainable", "{{ 'x' + nope }}", "chainable"),
+    ("markup_plus_chainable_subscript", "{{ 'x'|safe + (false)[0] }}", "chainable"),
+]:
+    case(f"markup/{_n}", _src,
+         __settings__={"undefined": _u} if _u else {})
+
+# |join asks each item for its text, and a StrictUndefined refuses. It asked
+# through strictStr on the plain path and through value.Str -- which answers ""
+# for every undefined -- on the autoescaping one, so the same template raised
+# without autoescaping and joined the undefined away with it. Only the escaping
+# differs between those branches; what a value does when asked for its text does
+# not.
+for _n, _src, _esc in [
+    ("attribute_missing", "{{ 'a'|join(attribute='name') }}", False),
+    ("attribute_missing_escaped", "{{ 'a'|join(attribute='name') }}", True),
+    ("attribute_missing_sep", "{{ ['a','b']|join('-', attribute='name') }}", False),
+    ("attribute_missing_sep_escaped", "{{ ['a','b']|join('-', attribute='name') }}", True),
+    ("markup_item_escaped", "{{ ['a'|safe, 'b']|join('-', attribute='name') }}", True),
+    ("markup_sep_escaped", "{{ ['a','b']|join('-'|safe, attribute='name') }}", True),
+]:
+    _settings = {"undefined": "strict"}
+    if _esc:
+        _settings["autoescape"] = True
+    case(f"undefined/strict_join_{_n}", _src, __settings__=_settings)
+
+# Under StrictUndefined a folded lookup becomes a strict undefined, and asking
+# one for its truthiness or its text raises *while folding* -- at compile time,
+# before any of the template has run. jinja2 lets that error out of from_string
+# because Concat, And, Or and CondExpr have no `except Exception: Impossible`
+# around them, where BinExpr, Compare, Filter and Test do. So `~`, `and`, `or`
+# and a conditional's test refuse the template, and everything else compiles and
+# fails at render.
+#
+# These were impossible to grade until gojja2 agreed about the phase: the suite
+# requires both sides to agree on whether a template compiles at all, and every
+# shape here was one CPython refused and gojja2 accepted.
+for _n, _src in [
+    # Refused at compile time.
+    ("concat", "{{ (0.0).a ~ 1 }}"),
+    ("concat_right", "{{ 'x' ~ (0.0).a }}"),
+    ("concat_empty", "{{ (0.0).a ~ '' }}"),
+    ("concat_both", "{{ (0.0).a ~ (0.0).b }}"),
+    ("concat_in_set", "{% set v = (0.0).a ~ 1 %}"),
+    ("concat_missing_element", "{{ [1][5] ~ 'x' }}"),
+    ("concat_missing_key", "{{ {'a':1}['b'] ~ 'x' }}"),
+    ("or", "{{ (0.0).a or 0 }}"),
+    ("and", "{{ (0.0).a and 1 }}"),
+    ("or_through_attr_filter", "{{ (1e3)|attr('nope') and 1 }}"),
+    ("or_in_if", "{% if (0.0).a or 1 %}x{% endif %}"),
+    ("condexpr_test", "{{ 1 if (0.0).a else 2 }}"),
+    ("condexpr_test_no_else", "{{ 1 if (0.0).a }}"),
+    ("nested_or_in_concat", "{{ ((0.0).a or 1) ~ 2 }}"),
+    # Compiled, and refused at render: the fold is wrapped in these.
+    ("print_alone", "{{ (0.0).a }}"),
+    ("add", "{{ (0.0).a + 1 }}"),
+    ("compare", "{{ (0.0).a == 1 }}"),
+    ("membership", "{{ (0.0).a in [1] }}"),
+    ("through_string_filter", "{{ (0.0).a|string }}"),
+    ("condexpr_branch", "{{ (0.0).a if 1 else 2 }}"),
+    ("statement_test", "{% if (0.0).a %}x{% endif %}"),
+    ("unary", "{{ -((0.0).a) }}"),
+    ("subscripted", "{{ (0.0).a[0] }}"),
+    ("attribute_of", "{{ (0.0).a.b }}"),
+    ("not", "{{ not (0.0).a }}"),
+    ("loop_over", "{% for i in (0.0).a %}{% endfor %}"),
+    ("as_a_key", "{{ [1,2][(0.0).a] }}"),
+    # The right operand of a short-circuit is carried as a value, never asked
+    # for its truthiness, so these reach the render like any other undefined.
+    ("and_right", "{{ true and (0.0).a }}"),
+    ("or_right", "{{ false or (0.0).a }}"),
+    # Neither compiles nor renders as an error: nothing asks.
+    ("bound_only", "{% set v = (0.0).a %}"),
+    ("in_a_list", "{{ [(0.0).a] }}"),
+    ("in_a_tuple", "{{ ((0.0).a,) }}"),
+    ("is_defined", "{{ (0.0).a is defined }}"),
+    ("through_default", "{{ (0.0).a|default('d') }}"),
+]:
+    case(f"undefined/strict_fold_{_n}", _src, __settings__={"undefined": "strict"})
+
 case("undefined/messages", "{{ d.missing + 1 }}", d={"a": 1})
 case("undefined/index_message", "{{ seq[42] + 1 }}", **SEQ)
 case("undefined/arith", "{{ nope + 1 }}")

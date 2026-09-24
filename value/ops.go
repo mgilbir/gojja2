@@ -185,6 +185,18 @@ func mulInt64(a, b int64) (int64, bool) {
 // Add implements `+`: numeric addition, string concatenation, and sequence
 // concatenation between two lists or two tuples.
 func Add(a, b Value, budget Budget) (Value, error) {
+	// markupsafe's Markup.__add__ takes anything that is a str or answers
+	// __html__, escapes it and concatenates; anything else is
+	// NotImplemented and falls through to the right operand, which for an
+	// Undefined is its own refusal. ChainableUndefined is the one class
+	// that defines __html__ -- as its own str, which is "" -- so
+	// `{{ 'x'|safe + nope }}` is "x" there and an error under every other
+	// class. Only a Markup on the *left* reaches that method: the reverse
+	// asks the undefined first and raises.
+	if a.kind == KindString && a.safe && b.kind == KindUndefined &&
+		b.undef().behavior == UndefinedChainable {
+		return Safe(a.str), nil
+	}
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}

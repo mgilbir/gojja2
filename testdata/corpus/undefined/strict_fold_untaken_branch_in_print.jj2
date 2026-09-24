@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}

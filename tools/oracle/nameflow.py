@@ -517,7 +517,10 @@ class Analysis:
             s.roles |= REQUIRED
         elif isinstance(target, (nodes.Tuple, nodes.List)):
             # Unpacking: which element lands where is not tracked, so every
-            # target derives from the whole right-hand side.
+            # target derives from the whole right-hand side -- and the
+            # unpacking itself can stop the render whatever is done with the
+            # names, for a value that is not iterable or is the wrong length.
+            self.apply(srcs, REQUIRED)
             for item in target.items:
                 self.bind(item, srcs)
         else:

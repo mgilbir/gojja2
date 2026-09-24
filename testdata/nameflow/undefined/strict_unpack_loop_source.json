@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_unpack_loop_source.jj2",
+  "variables": {
+    "nope": "fr"
+  }
+}

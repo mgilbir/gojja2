@@ -641,6 +641,13 @@ func unpackCount(v value.Value) (int, bool) {
 func (ex *exec) unpack(t *ast.Tuple, v value.Value, mode nsMode) error {
 	seq, err := value.Iterate(v)
 	if err != nil {
+		// A StrictUndefined refuses iteration, and that refusal is what
+		// the template should see -- the same rule materializeOr
+		// follows. Substituting "cannot unpack" describes a type the
+		// value does not have and hides which name was undefined.
+		if strict := value.StrictRefusal(v); strict != nil {
+			return strict
+		}
 		return errs.New(errs.TypeError, "cannot unpack non-iterable %s object", v.TypeName())
 	}
 	var items []value.Value

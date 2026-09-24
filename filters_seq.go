@@ -262,13 +262,29 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	}
 	if !markup {
 		for i, item := range items {
-			parts[i] = value.Str(item)
+			// str() again, and it refuses again: the branch above
+			// asks through strictStr and this one did not, so
+			// `{{ 'a'|join(attribute='name') }}` raised without
+			// autoescaping and joined a StrictUndefined as "" with
+			// it. Only the escaping differs between the two
+			// branches; what a value does when asked for its text
+			// does not.
+			text, err := strictStr(item)
+			if err != nil {
+				return value.Undefined, err
+			}
+			parts[i] = text
 		}
 		return value.String(strings.Join(parts, sep)), nil
 	}
 	// With markup involved the delimiter is escaped too, and every item
-	// that is not already safe -- which is Markup.join's own rule.
+	// that is not already safe -- which is Markup.join's own rule. The
+	// refusal comes first either way: escaping a value asks it for its
+	// text, so a StrictUndefined raises before anything is escaped.
 	for i, item := range items {
+		if _, err := strictStr(item); err != nil {
+			return value.Undefined, err
+		}
 		parts[i] = value.Str(escapeIfNeeded(item))
 	}
 	return value.Safe(strings.Join(parts, value.Str(escapeIfNeeded(sepValue)))), nil

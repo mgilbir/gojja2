@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_membership_in_dict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

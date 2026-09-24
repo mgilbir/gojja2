@@ -412,6 +412,20 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 	if err := StrictRefusal(container); err != nil {
 		return false, err
 	}
+	// str.__contains__ and bytes.__contains__ type-check their left operand
+	// before they look at it at all, so an undefined there is a TypeError
+	// naming its class and not the undefined's own refusal. Every other
+	// container reaches the item through a comparison, and that is where
+	// the refusal comes from -- which is why this is two cases and not a
+	// rule about undefineds.
+	switch {
+	case container.kind == KindString && item.kind != KindString:
+		return false, errs.New(errs.TypeError,
+			"'in <string>' requires string as left operand, not %s", item.TypeName())
+	case container.kind == KindBytes && !item.IsInteger() && item.kind != KindBytes:
+		return false, errs.New(errs.TypeError,
+			"a bytes-like object is required, not '%s'", item.TypeName())
+	}
 	if err := StrictRefusal(item); err != nil {
 		return false, err
 	}

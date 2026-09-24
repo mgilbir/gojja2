@@ -35,7 +35,7 @@ are safety controls rather than behavioural choices, and they live in
 |---|---|---|
 | [Lazy sequence filters](#lazy-sequence-filters) | sequence filters return lists, not generators | **Yes** -- and toward what the author meant |
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
-| [A constant folded under StrictUndefined](#a-constant-folded-under-strictundefined) | `{{ (0.0).a ~ 1 }}` raises at render, not at compile | No -- same error, different moment |
+| [Which of two folded refusals is named](#which-of-two-folded-refusals-is-named) | both refuse the template; they name different expressions | No -- same error, different expression named |
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
@@ -828,35 +828,59 @@ Five filters reach the second of those -- `dictsort`, `xmlattr`, `wordwrap`,
 subject the template generator writes and every accessor it can follow one with
 found the generic alias above and nothing else.
 
-### A constant folded under StrictUndefined
+### Which of two folded refusals is named
 
-jinja2's constant folder reads an attribute and a subscript through the lookup
-that swallows the failure into an `Undefined`, where its own runtime raises. Under
-`StrictUndefined` that `Undefined` raises *while folding* -- at compile time,
-before any of the template has run:
+Under `StrictUndefined` a folded lookup becomes a strict undefined, and asking
+one for its truthiness or its text raises *while folding*. Both engines let that
+error out of compilation rather than leaving the expression for the render, so
+neither template compiles. When an expression holds two such refusals they can
+name different ones:
 
 ```jinja
-{{ (0.0).a ~ 1 }}
+{{ (3)[1] or True if (True)|attr('name') else 1.5 }}
 ```
 
-raises `'float object' has no attribute 'a'` from `from_string` on CPython, and
-at render here. Under every other Undefined class the folded value is falsey and
-the expression simply continues, so only strict is affected.
+jinja2 names `int object has no element 1` -- the `or` inside the branch -- and
+gojja2 names `'bool object' has no attribute 'name'`, the conditional's test.
 
-Most shapes of this raise the same error on both sides -- `{{ (2.5).denominator
-or 0 }}` and `{{ (1e3)|attr('nope') and 1 }}` do, and so does every unfolded form.
-What differs is *when*.
+jinja2's optimizer folds bottom-up: it transforms a node's children before it
+tries the node, so the `or` is folded, and raises, before the conditional above
+it is ever asked. This folds top-down, tries the whole expression first and only
+descends when it will not fold, so the conditional's test is asked first.
 
-There are no corpus cases for it, and that is structural rather than an omission:
-the suite requires jinja2 and gojja2 to agree about whether a template compiles at
-all, and every shape here is one CPython refuses and gojja2 accepts.
-`TestSyntaxMatchesTheReference` says so directly -- "compiles here but has no
-reference tree" -- which is how the two shapes that *looked* like they agreed on
-the message were caught. The render comparison sees only the message; the syntax
-invariant sees the phase.
+Matching it would take jinja2's traversal *and* its refusal to fold a slice,
+because bottom-up alone changes `{{ 1 if 1 else (2 if (0b101)[::2] else 3) }}`
+from "1" to a refusal: jinja2 leaves that slice for the render, so its inner
+test is not constant and nothing raises. A slice *is* folded here, on purpose --
+gojja2's run-time slice raises where jinja2's `getitem` swallows, and the fold
+is what makes `{{ ((2.5)[1:2])[0] }}` chain under a `ChainableUndefined` rather
+than fail. The two differences cancel in every shape but this one.
 
-Found by giving the render differential an undefined axis, and it is why that axis
-does not draw StrictUndefined: see `conformance/generate.go`.
+The same disagreement has a second shape, and there it decides whether the
+template compiles at all rather than which expression is named:
+
+```jinja
+{% set v = 1 if [1] else (3 if (0b101)[::2] else 4) %}{{ v }}
+```
+
+jinja2 refuses it; gojja2 renders `1`. The refusal sits in a branch the chain
+never takes, and only one side folds its way into it. A *print* of the identical
+expression agrees -- `{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}` renders `1`
+on both -- so what differs is where the expression sits, not the expression.
+
+The first is recorded in `testdata/known_failures.txt`. The second cannot be a
+corpus case at all, and that is structural rather than an omission: gojja2
+compiles it and CPython does not, and the suite requires both sides to agree
+about whether a template compiles -- `TestSyntaxMatchesTheReference` says so
+directly, which is how this one was caught. Only the printed form, which both
+sides accept, is graded.
+
+Both are the same thing:
+the two optimizers reach a conditional chain's branches at different depths and
+in a different order. `make soak` can surface either; between them they came up
+twice in 45,000 generated templates. Fixing them properly means reproducing
+jinja2's traversal, which is a change to how this optimizer walks rather than to
+what it folds -- its own change, with its own soak.
 
 ### Which line an error inside a multi-line tag names
 

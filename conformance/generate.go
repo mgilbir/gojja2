@@ -267,21 +267,16 @@ type GeneratedCase struct {
 // run toward error paths, which is where the interesting answers are but not
 // where every template should end up.
 //
-// StrictUndefined is deliberately absent, and that is a narrowing rather than an
-// oversight. Under it, a *folded* constant subscript or attribute becomes a
-// strict undefined, and jinja2 lets the error out of the fold at compile time
-// where gojja2 abandons the fold and leaves the expression for the render --
-// which then raises the error the unswallowed lookup gives instead. That is the
-// divergence docs/divergences.md records as "A constant folded under
-// StrictUndefined", and it fires often enough to drown anything else the axis
-// would find.
-//
-// Fixing it means giving the const evaluator an error channel: constBinOp
-// abandons the fold when IsTrue returns one, and every level of constEvalNode
-// answers (Value, bool) with nowhere to put it. That is its own change with its
-// own soak, not a line in this table. Strict is covered by the corpus meanwhile
-// -- undefined/strict_* and undefined/loop_strict_* are graded every run.
-var undefinedKinds = []string{"", "", "", "", "chainable", "debug"}
+// StrictUndefined was absent from this list for as long as a folded constant
+// disagreed about *when* it raises. Under strict a folded lookup becomes a
+// strict undefined, and asking one for its truthiness or its text raises while
+// folding -- which jinja2 lets out of from_string, so the template does not
+// compile. gojja2 abandoned the fold instead and left the expression for the
+// render, and for `~` it did worse: value.Str answers "" for every undefined,
+// so `{{ (0.0).a ~ 1 }}` folded to "1" and the operand was not merely folded at
+// the wrong moment but folded away. With the fold agreeing about the phase, the
+// axis draws it like any other.
+var undefinedKinds = []string{"", "", "", "strict", "chainable", "debug"}
 
 // GenerateCase builds a template and the environment it renders under.
 func GenerateCase(input []byte) GeneratedCase {
