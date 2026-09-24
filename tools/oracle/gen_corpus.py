@@ -723,6 +723,21 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# do_items checks `isinstance(value, Undefined)` and returns before it yields
+# anything, with no class distinction -- the filter is documented as answering
+# an empty iterable for an undefined, and a StrictUndefined is one. Raising for
+# strict alone looked like the rule every other filter follows and is not this
+# filter's.
+for _u in ("strict", "chainable", "debug", ""):
+    _n = _u or "default"
+    case(f"undefined/items_of_undefined_{_n}",
+         "{{ nope|items|list }}|{{ 'x'.a|items|list }}|"
+         "{% for k, v in nope|items %}x{% endfor %}",
+         __settings__={"undefined": _u} if _u else {})
+# ...and the shapes it must still refuse, so the rule above cannot spread.
+case("errors/items_of_a_non_mapping", "{{ [1]|items|list }}")
+case("errors/items_of_a_string", "{{ 'ab'|items|list }}")
+
 # str.__contains__ and bytes.__contains__ type-check their left operand before
 # they look at it, so an undefined there is a TypeError naming its class rather
 # than the undefined's own refusal. Every other container reaches the item

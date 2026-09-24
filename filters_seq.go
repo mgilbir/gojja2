@@ -30,9 +30,13 @@ func filterList(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 // `{% for k, v in missing|items %}` renders nothing rather than failing.
 func filterItems(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	if v.IsUndefined() {
-		if v.UndefinedBehavior() == value.UndefinedStrict {
-			return value.Undefined, v.UndefinedError()
-		}
+		// do_items checks `isinstance(value, Undefined)` and returns
+		// before it yields anything, with no class distinction: the
+		// filter is documented as answering an empty iterable for an
+		// undefined, and a StrictUndefined is one. Raising for strict
+		// alone looked like the rule every other filter follows and is
+		// not this filter's -- `{{ 'x'.a|items|list }}` is `[]` under
+		// all four classes.
 		return value.NewList(), nil
 	}
 	if d, ok := v.Dict(); ok {
