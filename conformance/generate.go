@@ -246,6 +246,21 @@ type GeneratedCase struct {
 	// reaching through one chains, and what it prints, so three quarters of
 	// that dimension went unasked.
 	Undefined string
+	// Trim, Lstrip and KeepTrailingNewline are the lexer's whitespace
+	// settings, and they change what the template *means* rather than what
+	// it prints: trim_blocks eats the newline after a block tag,
+	// lstrip_blocks eats the indentation before one, and
+	// keep_trailing_newline decides whether the file's last one survives.
+	//
+	// They were the last dimension the differential left fixed. Sixty
+	// thousand templates a run all lexed under jinja2's defaults, while the
+	// generator writes `{%- ... -%}` and bare tags constantly and the
+	// interaction between an explicit marker and an implicit setting is
+	// exactly where a whitespace rule goes wrong. The corpus varies them on
+	// a handful of hand-written cases and nothing else did.
+	Trim                bool
+	Lstrip              bool
+	KeepTrailingNewline bool
 }
 
 // undefinedKinds are drawn against, default-weighted: the others shift the whole
@@ -276,11 +291,20 @@ func GenerateCase(input []byte) GeneratedCase {
 	// which is what makes shrinking a diverging case keep its setting.
 	autoescape := g.c.chance(3)
 	undefined := g.c.pick(undefinedKinds)
+	// Each is drawn on its own rather than as one of eight combinations, so
+	// that a run holds every pair of them and not just the pairs a table
+	// happened to list.
+	trim := g.c.chance(3)
+	lstrip := g.c.chance(3)
+	keepNewline := g.c.chance(3)
 	g.template()
 	return GeneratedCase{
-		Source:     g.b.String(),
-		Autoescape: autoescape,
-		Undefined:  undefined,
+		Source:              g.b.String(),
+		Autoescape:          autoescape,
+		Undefined:           undefined,
+		Trim:                trim,
+		Lstrip:              lstrip,
+		KeepTrailingNewline: keepNewline,
 	}
 }
 

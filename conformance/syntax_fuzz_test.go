@@ -44,6 +44,7 @@ func TestSyntaxDifferential(t *testing.T) {
 	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
 
 	var checked, skipped, failures, claims int
+	lexRuns := map[string]int{}
 	for range count {
 		input := make([]byte, 1+rng.IntN(96))
 		for i := range input {
@@ -54,6 +55,7 @@ func TestSyntaxDifferential(t *testing.T) {
 			skipped++
 			continue
 		}
+		countLexSettings(c, lexRuns)
 		if d := h.compareSyntax(t, c, &claims); d != "" {
 			failures++
 			t.Errorf("%s\n  template: %q", d, c.Source)
@@ -67,7 +69,9 @@ func TestSyntaxDifferential(t *testing.T) {
 	}
 	t.Logf("syntax differential: %d generated templates compared against "+
 		"CPython jinja2 (seed %d), %d empty; %d of the analysis's negatives "+
-		"checked by rendering", checked, seed, skipped, claims)
+		"checked by rendering; lexer %d trim, %d lstrip, %d keep-newline",
+		checked, seed, skipped, claims,
+		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"])
 }
 
 // compareSyntax returns a description of the first divergence, or "".
@@ -80,8 +84,14 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claim
 	}
 	sources[fuzzTemplateName] = c.Source
 
+	// The version goes on both sides or the run compares two
+	// configurations rather than two engines. The tree and the scope facts
+	// do not move between interpreters -- jinja2 brings its own parser --
+	// but the *rendering* half below does, and it rendered at the default
+	// whatever the oracle was told to be.
 	opts := append(caseOptions(c),
-		gojja2.WithLoader(gojja2.DictLoader(sources)))
+		gojja2.WithLoader(gojja2.DictLoader(sources)),
+		gojja2.WithPythonVersion(h.py))
 	env, err := gojja2.New(opts...)
 	if err != nil {
 		return ""
@@ -93,14 +103,10 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claim
 		return ""
 	}
 
-	settings := map[string]any{}
-	if c.Autoescape {
-		settings["autoescape"] = true
-	}
 	ref, err := h.oracle.Analyze(conformance.AnalyzeRequest{
 		Name:      fuzzTemplateName,
 		Source:    c.Source,
-		Settings:  settings,
+		Settings:  caseSettings(c),
 		Templates: h.templates,
 	})
 	if err != nil {
@@ -273,7 +279,8 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 		}
 		sources[fuzzTemplateName] = c.Source
 		env, err := gojja2.New(append(caseOptions(c),
-			gojja2.WithLoader(gojja2.DictLoader(sources)))...)
+			gojja2.WithLoader(gojja2.DictLoader(sources)),
+			gojja2.WithPythonVersion(h.py))...)
 		if err != nil {
 			continue
 		}

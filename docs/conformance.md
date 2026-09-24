@@ -266,6 +266,24 @@ error, and a mutation changes one choice rather than corrupting a tag. A
 divergence is shrunk against the same check before it is reported, so findings
 arrive minimal.
 
+A case is an *environment* as well as a template, and the settings are drawn
+alongside it: autoescaping, the Undefined class, and the lexer's `trim_blocks`,
+`lstrip_blocks` and `keep_trailing_newline`. Those last three change what a
+template means rather than what it prints, and they were the last dimension the
+run left fixed -- sixty thousand templates a run all lexed under jinja2's
+defaults while the generator wrote `{%- ... -%}` constantly, and the interaction
+between an explicit marker and an implicit setting is exactly where a whitespace
+rule goes wrong. `GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as a
+sixth axis, configuring both sides to match.
+
+Both engines are handed the same settings from one function, because there were
+two built by hand and they had drifted: the syntax soak sent autoescaping and
+not the Undefined class, so an axis reached one engine and not the other. **A
+setting applied to one side only is a comparison between two environments rather
+than between two engines, and it looks exactly like a divergence.** Every run
+prints a count per axis, because a dimension that silently stopped varying would
+otherwise look exactly like a clean run.
+
 The oracle runs as a warm subprocess. That is what makes a soak practical at
 all: starting an interpreter and importing jinja2 per case costs tens of
 milliseconds, which caps a cold run at a few tens of templates a second, where

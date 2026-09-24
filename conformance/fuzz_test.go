@@ -87,7 +87,12 @@ func newHarness(t testing.TB) *harness {
 // side. The oracle is handed the same settings; they have to be applied to both
 // or the comparison is between two environments rather than two engines.
 func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
-	opts := []gojja2.Option{gojja2.WithAutoescape(c.Autoescape)}
+	opts := []gojja2.Option{
+		gojja2.WithAutoescape(c.Autoescape),
+		gojja2.WithTrimBlocks(c.Trim),
+		gojja2.WithLstripBlocks(c.Lstrip),
+		gojja2.WithKeepTrailingNewline(c.KeepTrailingNewline),
+	}
 	switch c.Undefined {
 	case "strict":
 		opts = append(opts, gojja2.WithUndefined(value.UndefinedStrict))
@@ -97,6 +102,38 @@ func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
 		opts = append(opts, gojja2.WithUndefined(value.UndefinedDebug))
 	}
 	return opts
+}
+
+// caseSettings is caseOptions for the other side: the same environment, in the
+// oracle's vocabulary.
+//
+// One function rather than one per harness. There were two, built by hand a
+// hundred lines apart, and they had already drifted -- the syntax soak passed
+// autoescape and not the Undefined class, so a whole axis reached one engine
+// and not the other. A setting added to caseOptions and forgotten here is a
+// comparison between two environments rather than between two engines, and it
+// looks exactly like a divergence.
+func caseSettings(c conformance.GeneratedCase) map[string]any {
+	settings := map[string]any{}
+	if c.Autoescape {
+		settings["autoescape"] = true
+	}
+	if c.Undefined != "" {
+		settings["undefined"] = c.Undefined
+	}
+	if c.Trim {
+		settings["trim_blocks"] = true
+	}
+	if c.Lstrip {
+		settings["lstrip_blocks"] = true
+	}
+	if c.KeepTrailingNewline {
+		settings["keep_trailing_newline"] = true
+	}
+	if len(settings) == 0 {
+		return nil
+	}
+	return settings
 }
 
 const fuzzTemplateName = "fuzz.txt"
@@ -141,21 +178,11 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 // check compares one template, returning nil when the two agree or when the
 // case cannot be graded.
 func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.Divergence {
-	settings := map[string]any{}
-	if c.Autoescape {
-		settings["autoescape"] = true
-	}
-	if c.Undefined != "" {
-		settings["undefined"] = c.Undefined
-	}
-	if len(settings) == 0 {
-		settings = nil
-	}
 	want, err := h.oracle.Render(conformance.OracleRequest{
 		Name:      fuzzTemplateName,
 		Source:    c.Source,
 		Context:   h.rawCtx,
-		Settings:  settings,
+		Settings:  caseSettings(c),
 		Templates: h.templates,
 	})
 	if err != nil {
@@ -270,6 +297,7 @@ func TestDifferential(t *testing.T) {
 	var checked, skipped, escaping int
 	var failures int
 	undefinedRuns := map[string]int{}
+	lexRuns := map[string]int{}
 	for range count {
 		input := make([]byte, 1+rng.IntN(96))
 		for i := range input {
@@ -287,6 +315,7 @@ func TestDifferential(t *testing.T) {
 		if c.Undefined != "" {
 			undefinedRuns[c.Undefined]++
 		}
+		countLexSettings(c, lexRuns)
 
 		d := h.check(t, c)
 		if d == nil {
@@ -305,9 +334,25 @@ func TestDifferential(t *testing.T) {
 	// was added after sixty thousand templates a run had all used the
 	// default Undefined without anything saying so.
 	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), "+
-		"%d autoescaping, %d empty; undefined %d strict, %d chainable, %d debug",
+		"%d autoescaping, %d empty; undefined %d strict, %d chainable, %d debug; "+
+		"lexer %d trim, %d lstrip, %d keep-newline",
 		checked, seed, escaping, skipped,
-		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"])
+		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"],
+		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"])
+}
+
+// countLexSettings tallies the lexer axis for the summary line, which is the
+// only thing that would say an axis had stopped varying.
+func countLexSettings(c conformance.GeneratedCase, into map[string]int) {
+	if c.Trim {
+		into["trim"]++
+	}
+	if c.Lstrip {
+		into["lstrip"]++
+	}
+	if c.KeepTrailingNewline {
+		into["keep"]++
+	}
 }
 
 func envInt(t testing.TB, name string, def int) int {
