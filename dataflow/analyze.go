@@ -206,6 +206,15 @@ func (a *analyzer) bind(target *syntax.Node, srcs symset) {
 	case syntax.KindTuple, syntax.KindList:
 		// Unpacking: which element lands where is not tracked, so every
 		// target derives from the whole right-hand side.
+		//
+		// The unpacking itself can stop the render, whatever is done
+		// with the names afterwards: `{% set a, b = x %}` fails for an
+		// x that is not iterable and for one of the wrong length, so
+		// the value decides whether the render finishes even when
+		// nothing reads a or b. That is what Required claims, and
+		// without it `{% set a, b = x %}` reported no effect at all --
+		// which this package promises never to do.
+		a.apply(srcs, Required)
 		for _, item := range target.Children(syntax.RoleItem) {
 			a.bind(item, srcs)
 		}

@@ -723,6 +723,334 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# The second batch from the same audit, and the same story: all of them already
+# agreed. Each goes through a name rather than a literal, because an all-constant
+# expression is folded by both engines and the message then comes from the fold
+# rather than from the site being graded.
+for _n, _src in [
+    ("range_step_zero", "{% set z = 0 %}{{ range(1, 5, z) }}"),
+    ("dict_two_positionals", "{% set a = 1 %}{{ dict(a, a) }}"),
+    ("cycler_with_no_items", "{{ cycler() }}"),
+    ("divisibleby_without_argument", "{% set n = 1 %}{{ n is divisibleby }}"),
+    ("sameas_without_argument", "{% set n = 1 %}{{ n is sameas }}"),
+    ("in_without_argument", "{% set n = 1 %}{{ n is in }}"),
+    ("eq_without_argument", "{% set n = 1 %}{{ n is eq }}"),
+]:
+    case(f"errors/{_n}", _src)
+for _n, _spec in [
+    ("space", "{: }"), ("sign", "{:+}"), ("alternate", "{:#}"),
+    ("equals_align", "{:=5}"), ("grouping", "{:,}"),
+]:
+    case(f"format/string_spec_rejects_{_n}",
+         "{% set s = 'x' %}{{ '" + _spec + "'.format(s) }}")
+case("format/object_format_rejects_a_spec",
+     "{% set d = {'a': 1} %}{{ '{:5}'.format(d) }}")
+
+# Messages `make ungraded` reported that no case produced. These all already
+# agreed with CPython; what was missing was a case saying so, which is the whole
+# point of that audit -- a message nothing produces reads as agreement in every
+# column of the version matrix.
+for _n, _src in [
+    ("float_fromhex_bad_type", "{{ (1.5).fromhex([1]) }}"),
+    ("float_fromhex_empty", "{{ (1.5).fromhex('') }}"),
+    ("float_fromhex_prefix_only", "{{ (1.5).fromhex('0x') }}"),
+    ("float_fromhex_too_large", "{{ (1.5).fromhex('0x1p+99999') }}"),
+    ("to_bytes_byteorder_type", "{{ (3).to_bytes(2, 1) }}"),
+    ("to_bytes_byteorder_value", "{{ (3).to_bytes(2, 'nope') }}"),
+    ("to_bytes_negative_length", "{{ (3).to_bytes(-1, 'big') }}"),
+    ("to_bytes_length_over_ssize", "{{ (3).to_bytes(9999999999999999999, 'big') }}"),
+    ("float_mod_string", "{{ 1.5 % 'x' }}"),
+    ("unary_plus_string", "{{ +'x' }}"),
+    ("unary_plus_list", "{{ +[1] }}"),
+    ("unary_minus_string", "{{ -'x' }}"),
+]:
+    case(f"errors/{_n}", _src)
+
+# Two sites cannot be graded at all, and the reason is the entry below rather
+# than anything about them: float.as_integer_ratio() on an infinity or a NaN.
+# Every route to one goes through a folded constant, and CPython cannot run a
+# template that holds one in a method-call position -- `{{ (1e400).as_integer_ratio() }}`
+# raises NameError before the method is reached. gojja2's "cannot convert
+# Infinity to integer ratio" has no counterpart to compare against.
+
+# jinja2 writes a folded constant into the generated Python as its repr, and a
+# float infinity's repr is `inf` -- which is not a Python name. So a template
+# that folds one into a position the code generator writes out cannot run there:
+# it raises NameError at render. Not every position does; a plain print puts the
+# value in the module's constant table instead. gojja2 answers the number.
+# Listed in known_failures.txt -- it accepts what CPython cannot run.
+for _n, _src in [
+    ("in_a_set", "{% set v = 'inf'|float %}{{ v }}"),
+    ("in_a_filter_default", "{{ x|default('inf'|float) }}"),
+    ("nan_in_a_set", "{% set v = 'nan'|float %}{{ v }}"),
+]:
+    case(f"divergence/folded_infinity_{_n}", _src)
+# The positions that do work on both, so the entry above stays about where the
+# constant lands and not about infinities.
+case("numbers/folded_infinity_prints",
+     "{{ 'inf'|float }}|{{ 'nan'|float }}|{{ '-inf'|float }}|"
+     "{{ ('inf'|float) + 1 }}|{{ ('inf'|float)|string }}|{{ 1e400 }}|"
+     "{{ 'inf'|float|abs }}")
+
+# An integer too wide for a float64 is an OverflowError in Python, not an
+# infinity -- and every site that converts one has to say so. `//`, `%` and `**`
+# went through the checked coercion and were right, which is what made `+`, `-`,
+# `*`, `/`, |float, |filesizeformat, |sum and the two format paths look
+# deliberate: they answered "inf". True division of two ints words it after the
+# division rather than after the operand, because the quotient is what does not
+# fit.
+_BIG = "(10 ** 400)"
+for _n, _src in [
+    ("float_filter", "{{ %s|float }}"),
+    ("float_filter_with_default", "{{ %s|float(1.0) }}"),
+    ("plus_float", "{{ %s + 1.5 }}"),
+    ("float_plus", "{{ 1.5 + %s }}"),
+    ("minus_float", "{{ %s - 1.5 }}"),
+    ("float_minus", "{{ 1.5 - %s }}"),
+    ("times_float", "{{ %s * 1.5 }}"),
+    ("divided", "{{ %s / 2 }}"),
+    ("divided_by_float", "{{ %s / 1.5 }}"),
+    ("floordiv_float", "{{ %s // 1.5 }}"),
+    ("mod_float", "{{ %s %% 1.5 }}"),
+    ("power_float", "{{ %s ** 0.5 }}"),
+    ("filesizeformat", "{{ %s|filesizeformat }}"),
+    ("negated_through_float", "{{ -%s|float }}"),
+    ("through_abs", "{{ %s|abs|float }}"),
+    ("summed_with_a_float", "{{ [%s, 1.5]|sum }}"),
+    ("printf_f", "{{ '%%f' %% %s }}"),
+    ("format_f", "{{ '{:f}'.format(%s) }}"),
+    ("format_e", "{{ '{:e}'.format(%s) }}"),
+]:
+    case(f"numbers/wide_int_to_float_{_n}", _src % _BIG)
+# The boundary, and the shapes that must keep working: 2**1023 fits and 2**1024
+# does not, a comparison never converts, and float() of a *string* overflows to
+# inf as Python's does.
+case("numbers/wide_int_to_float_boundary",
+     "{{ (2 ** 1023)|float }}|{{ (2 ** 1024)|float is defined }}")
+case("numbers/wide_int_no_conversion",
+     "{{ (10 ** 400) < 1.5 }}|{{ (10 ** 400) == 1.5 }}|{{ (10 ** 400)|round }}|"
+     "{{ (10 ** 400)|int }}|{{ (10 ** 400)|string|length }}|{{ '1e400'|float }}")
+
+# do_items checks `isinstance(value, Undefined)` and returns before it yields
+# anything, with no class distinction -- the filter is documented as answering
+# an empty iterable for an undefined, and a StrictUndefined is one. Raising for
+# strict alone looked like the rule every other filter follows and is not this
+# filter's.
+for _u in ("strict", "chainable", "debug", ""):
+    _n = _u or "default"
+    case(f"undefined/items_of_undefined_{_n}",
+         "{{ nope|items|list }}|{{ 'x'.a|items|list }}|"
+         "{% for k, v in nope|items %}x{% endfor %}",
+         __settings__={"undefined": _u} if _u else {})
+# ...and the shapes it must still refuse, so the rule above cannot spread.
+case("errors/items_of_a_non_mapping", "{{ [1]|items|list }}")
+case("errors/items_of_a_string", "{{ 'ab'|items|list }}")
+
+# `x in y` asks y for a __contains__ before it looks at x at all, so a y that
+# cannot be searched is a TypeError naming *its* type whatever x is -- including
+# a StrictUndefined, whose refusal would otherwise come first.
+for _n, _src in [
+    ("float", "{% set f = 1.5 %}{{ 1 in f }}"),
+    ("none", "{% set n = none %}{{ 1 in n }}"),
+    ("bool", "{% set b = true %}{{ 1 in b }}"),
+]:
+    case(f"membership/not_a_container_{_n}", _src)
+for _n, _src in [
+    ("float", "{{ nope in 1.5 }}"),
+    ("none", "{{ nope in none }}"),
+]:
+    case(f"undefined/strict_membership_not_a_container_{_n}", _src,
+         __settings__={"undefined": "strict"})
+
+# A keys view answers by looking its item up, so it hashes it and an unhashable
+# item is a TypeError rather than a miss -- `{{ [1] in d.keys() }}` answered
+# False. An items or values view compares element by element and does answer
+# False, which is why this is the keys view alone.
+case("methods/dictview_membership_unhashable",
+     "{% set d = {'a': 1} %}{{ [1] in d.items() }}|{{ [1] in d.values() }}|"
+     "{{ 'a' in d.keys() }}")
+for _n, _src in [
+    ("dict_in_keys", "{% set d = {'a': 1} %}{{ {1: 'a'} in d.keys() }}"),
+    ("list_in_keys", "{% set d = {'a': 1} %}{{ [1] in d.keys() }}"),
+]:
+    case(f"errors/dictview_{_n}", _src)
+
+# str.__contains__ and bytes.__contains__ type-check their left operand before
+# they look at it, so an undefined there is a TypeError naming its class rather
+# than the undefined's own refusal. Every other container reaches the item
+# through a comparison, which is where the refusal comes from -- so this is two
+# cases and not a rule about undefineds.
+for _n, _src in [
+    ("in_string", "{{ nope in 'abc' }}"),
+    ("not_in_string", "{{ nope not in 'abc' }}"),
+    ("in_bytes", "{{ nope in 'ab'.encode() }}"),
+    ("in_list", "{{ nope in [1] }}"),
+    ("in_tuple", "{{ nope in (1,) }}"),
+    ("in_dict", "{{ nope in {'a':1} }}"),
+    ("in_range", "{{ nope in range(3) }}"),
+    ("container_is_undefined", "{{ 'a' in nope }}"),
+]:
+    case(f"undefined/strict_membership_{_n}", _src, __settings__={"undefined": "strict"})
+# The same shapes with a defined left operand, so the type check above cannot
+# start answering for values that were never undefined.
+# Written through a name on purpose: all-constant operands are folded by both
+# engines and the message never comes from the membership check at all.
+case("membership/wrong_left_operand",
+     "{% set s = 'abc' %}{{ 1 in s }}|{{ none in s }}|{{ 1.5 in s.encode() }}")
+
+# Two foldable refusals in one expression, and the engines name different ones:
+# jinja2's optimizer folds bottom-up, so the `or` inside the branch raises before
+# the conditional's test is ever asked, where this folds top-down and asks the
+# test first. Listed in known_failures.txt. Matching it would take jinja2's
+# traversal *and* its refusal to fold a slice, and a slice is folded here on
+# purpose -- gojja2's run-time slice raises where jinja2's getitem swallows, so
+# the fold is what makes `((2.5)[1:2])[0]` chain under a ChainableUndefined.
+# Both refuse the template; only which expression is named differs.
+# Which of two refusals in one expression is named, and whether a refusal in a
+# branch the chain never takes is reached at all. Both were divergences until the
+# fold walked the way jinja2's optimizer does -- children before the node, with a
+# printed expression tried top-down first and any refusal there discarded. A
+# print and a {% set %} of the *same* expression differ on purpose, which is the
+# pair below.
+for _n, _src in [
+    ("which_refusal_is_named", "{{ (3)[1] or True if (True)|attr('name') else 1.5 }}"),
+    ("untaken_branch_in_set",
+     "{% set v = 1 if [1] else (3 if (0b101)[::2] else 4) %}{{ v }}"),
+    ("untaken_branch_in_with",
+     "{% with w = 1 if [1] else (3 if (0b101)[::2] else 4) %}{% endwith %}"),
+    ("untaken_branch_in_print", "{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}"),
+]:
+    case(f"undefined/strict_fold_{_n}", _src, __settings__={"undefined": "strict"})
+
+# Unpacking asks the value to iterate, and a StrictUndefined's refusal names the
+# undefined. Both unpack sites answered "cannot unpack non-iterable
+# StrictUndefined object" instead, which describes a type the value does not
+# have and hides which name was missing -- the rule materializeOr already
+# followed and these two did not.
+for _n, _src in [
+    ("set_target", "{% set a, b = nope %}"),
+    ("loop_target", "{% for a, b in [nope] %}{% endfor %}"),
+    ("loop_source", "{% for a, b in nope %}{% endfor %}"),
+    ("through_urlencode", "{{ [nope]|urlencode }}"),
+]:
+    case(f"undefined/strict_unpack_{_n}", _src, __settings__={"undefined": "strict"})
+# ...and the shapes that are still a plain unpacking failure, so the rule above
+# cannot quietly swallow them.
+case("errors/unpack_non_iterable_int", "{% set a, b = 1 %}")
+case("errors/unpack_non_iterable_in_loop", "{% for a, b in [1] %}{% endfor %}")
+
+# markupsafe's Markup.__add__ takes a str or anything answering __html__, and
+# ChainableUndefined is the one Undefined class that defines __html__ -- as its
+# own str, which is "". So a Markup absorbs one and every other class refuses.
+# Only a Markup on the left reaches that method.
+for _n, _src, _u in [
+    ("markup_plus_chainable", "{{ 'x'|safe + nope }}", "chainable"),
+    ("markup_plus_default", "{{ 'x'|safe + nope }}", ""),
+    ("markup_plus_debug", "{{ 'x'|safe + nope }}", "debug"),
+    ("markup_plus_strict", "{{ 'x'|safe + nope }}", "strict"),
+    ("chainable_plus_markup", "{{ nope + 'x'|safe }}", "chainable"),
+    ("str_plus_chainable", "{{ 'x' + nope }}", "chainable"),
+    ("markup_plus_chainable_subscript", "{{ 'x'|safe + (false)[0] }}", "chainable"),
+]:
+    case(f"markup/{_n}", _src,
+         __settings__={"undefined": _u} if _u else {})
+
+# |join asks each item for its text, and a StrictUndefined refuses. It asked
+# through strictStr on the plain path and through value.Str -- which answers ""
+# for every undefined -- on the autoescaping one, so the same template raised
+# without autoescaping and joined the undefined away with it. Only the escaping
+# differs between those branches; what a value does when asked for its text does
+# not.
+for _n, _src, _esc in [
+    ("attribute_missing", "{{ 'a'|join(attribute='name') }}", False),
+    ("attribute_missing_escaped", "{{ 'a'|join(attribute='name') }}", True),
+    ("attribute_missing_sep", "{{ ['a','b']|join('-', attribute='name') }}", False),
+    ("attribute_missing_sep_escaped", "{{ ['a','b']|join('-', attribute='name') }}", True),
+    ("markup_item_escaped", "{{ ['a'|safe, 'b']|join('-', attribute='name') }}", True),
+    ("markup_sep_escaped", "{{ ['a','b']|join('-'|safe, attribute='name') }}", True),
+]:
+    _settings = {"undefined": "strict"}
+    if _esc:
+        _settings["autoescape"] = True
+    case(f"undefined/strict_join_{_n}", _src, __settings__=_settings)
+
+# ...and none of those refusals escapes where the escaping is not yet known.
+# `{% autoescape nil %}` makes the context volatile, and there the template fails
+# at render on the undefined name in the tag rather than at compile time on the
+# expression inside it. jinja2's Concat.as_const checks the flag itself, because
+# whether its result is Markup depends on the answer; the other three are not
+# reached there at all. Ordinary folding continues -- escape/volatile_folds_
+# constant grades that -- so this is about the refusal and not about folding.
+for _n, _src in [
+    ("concat", "{% autoescape nil %}{{ (0.0).a ~ 1 }}{% endautoescape %}"),
+    ("or", "{% autoescape nil %}{{ (0.0).a or 0 }}{% endautoescape %}"),
+    ("and", "{% autoescape nil %}{{ (0.0).a and 1 }}{% endautoescape %}"),
+    ("condexpr", "{% autoescape nil %}{{ 1 if (0.0).a else 2 }}{% endautoescape %}"),
+    ("slice_through_concat",
+     "{% autoescape nil %}{{ ({'a': 1})[1:2] ~ 'x' }}{% endautoescape %}"),
+]:
+    case(f"undefined/strict_fold_volatile_{_n}", _src,
+         __settings__={"undefined": "strict"})
+# A *constant* autoescape argument is not volatile, so the refusal escapes there
+# exactly as it does outside a block.
+case("undefined/strict_fold_constant_autoescape",
+     "{% autoescape true %}{{ (0.0).a ~ 1 }}{% endautoescape %}",
+     __settings__={"undefined": "strict"})
+
+# Under StrictUndefined a folded lookup becomes a strict undefined, and asking
+# one for its truthiness or its text raises *while folding* -- at compile time,
+# before any of the template has run. jinja2 lets that error out of from_string
+# because Concat, And, Or and CondExpr have no `except Exception: Impossible`
+# around them, where BinExpr, Compare, Filter and Test do. So `~`, `and`, `or`
+# and a conditional's test refuse the template, and everything else compiles and
+# fails at render.
+#
+# These were impossible to grade until gojja2 agreed about the phase: the suite
+# requires both sides to agree on whether a template compiles at all, and every
+# shape here was one CPython refused and gojja2 accepted.
+for _n, _src in [
+    # Refused at compile time.
+    ("concat", "{{ (0.0).a ~ 1 }}"),
+    ("concat_right", "{{ 'x' ~ (0.0).a }}"),
+    ("concat_empty", "{{ (0.0).a ~ '' }}"),
+    ("concat_both", "{{ (0.0).a ~ (0.0).b }}"),
+    ("concat_in_set", "{% set v = (0.0).a ~ 1 %}"),
+    ("concat_missing_element", "{{ [1][5] ~ 'x' }}"),
+    ("concat_missing_key", "{{ {'a':1}['b'] ~ 'x' }}"),
+    ("or", "{{ (0.0).a or 0 }}"),
+    ("and", "{{ (0.0).a and 1 }}"),
+    ("or_through_attr_filter", "{{ (1e3)|attr('nope') and 1 }}"),
+    ("or_in_if", "{% if (0.0).a or 1 %}x{% endif %}"),
+    ("condexpr_test", "{{ 1 if (0.0).a else 2 }}"),
+    ("condexpr_test_no_else", "{{ 1 if (0.0).a }}"),
+    ("nested_or_in_concat", "{{ ((0.0).a or 1) ~ 2 }}"),
+    # Compiled, and refused at render: the fold is wrapped in these.
+    ("print_alone", "{{ (0.0).a }}"),
+    ("add", "{{ (0.0).a + 1 }}"),
+    ("compare", "{{ (0.0).a == 1 }}"),
+    ("membership", "{{ (0.0).a in [1] }}"),
+    ("through_string_filter", "{{ (0.0).a|string }}"),
+    ("condexpr_branch", "{{ (0.0).a if 1 else 2 }}"),
+    ("statement_test", "{% if (0.0).a %}x{% endif %}"),
+    ("unary", "{{ -((0.0).a) }}"),
+    ("subscripted", "{{ (0.0).a[0] }}"),
+    ("attribute_of", "{{ (0.0).a.b }}"),
+    ("not", "{{ not (0.0).a }}"),
+    ("loop_over", "{% for i in (0.0).a %}{% endfor %}"),
+    ("as_a_key", "{{ [1,2][(0.0).a] }}"),
+    # The right operand of a short-circuit is carried as a value, never asked
+    # for its truthiness, so these reach the render like any other undefined.
+    ("and_right", "{{ true and (0.0).a }}"),
+    ("or_right", "{{ false or (0.0).a }}"),
+    # Neither compiles nor renders as an error: nothing asks.
+    ("bound_only", "{% set v = (0.0).a %}"),
+    ("in_a_list", "{{ [(0.0).a] }}"),
+    ("in_a_tuple", "{{ ((0.0).a,) }}"),
+    ("is_defined", "{{ (0.0).a is defined }}"),
+    ("through_default", "{{ (0.0).a|default('d') }}"),
+]:
+    case(f"undefined/strict_fold_{_n}", _src, __settings__={"undefined": "strict"})
+
 case("undefined/messages", "{{ d.missing + 1 }}", d={"a": 1})
 case("undefined/index_message", "{{ seq[42] + 1 }}", **SEQ)
 case("undefined/arith", "{{ nope + 1 }}")

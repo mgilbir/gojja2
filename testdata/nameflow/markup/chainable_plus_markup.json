@@ -1,0 +1,6 @@
+{
+  "case": "markup/chainable_plus_markup.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

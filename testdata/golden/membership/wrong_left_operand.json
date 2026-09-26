@@ -1,0 +1,14 @@
+{
+  "case": "membership/wrong_left_operand.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "'in <string>' requires string as left operand, not int"
+  }
+}

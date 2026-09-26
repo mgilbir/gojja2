@@ -1,0 +1,3 @@
+{}
+---
+{% set s = 'abc' %}{{ 1 in s }}|{{ none in s }}|{{ 1.5 in s.encode() }}

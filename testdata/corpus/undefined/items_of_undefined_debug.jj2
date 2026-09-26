@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{{ nope|items|list }}|{{ 'x'.a|items|list }}|{% for k, v in nope|items %}x{% endfor %}

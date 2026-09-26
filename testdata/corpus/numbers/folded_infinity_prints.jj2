@@ -1,0 +1,3 @@
+{}
+---
+{{ 'inf'|float }}|{{ 'nan'|float }}|{{ '-inf'|float }}|{{ ('inf'|float) + 1 }}|{{ ('inf'|float)|string }}|{{ 1e400 }}|{{ 'inf'|float|abs }}

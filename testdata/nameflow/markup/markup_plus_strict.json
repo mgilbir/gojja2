@@ -1,0 +1,6 @@
+{
+  "case": "markup/markup_plus_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "case": "undefined/strict_join_markup_sep_escaped.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "UndefinedError",
+    "message": "'str object' has no attribute 'name'"
+  }
+}

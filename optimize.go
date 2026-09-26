@@ -42,7 +42,19 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			if _, isData := node.(*ast.TemplateData); isData {
 				continue
 			}
+			// jinja2's _output_child_to_const says it in its own
+			// docstring: "Any other exception will also be
+			// evaluated at runtime for easier debugging." Only
+			// Impossible means "not constant" there; anything else
+			// defers the child. So a refusal recorded here is
+			// discarded, and the general fold below -- which walks
+			// bottom-up, as the optimizer does -- is what decides
+			// whether the template compiles. Without this the print
+			// pass named the outer test where CPython names the
+			// operand inside the branch.
+			refusalBefore := c.refusal
 			v, ok := c.tryConstEval(node)
+			c.refusal = refusalBefore
 			if !ok {
 				continue
 			}
@@ -202,12 +214,19 @@ func (f *constFolder) fold(e ast.Expr) ast.Expr {
 		// exactly as jinja2 skips its optimizer there.
 		return e
 	}
+	// Children first, which is what jinja2's optimizer does -- its
+	// generic_visit calls NodeTransformer.generic_visit before it tries
+	// as_const on the node itself. The folded *result* is the same either
+	// way, because folding is deterministic; what differs is which refusal
+	// is reached. Top-down, an untaken branch is never evaluated, so
+	// `{% set v = 1 if [1] else (3 if (0b101)[::2] else 4) %}` folded to 1
+	// here and did not compile there.
+	f.descend(e)
 	if _, isConst := e.(*ast.Const); !isConst {
 		if v, ok := f.c.tryConstEval(e); ok && foldable(v) && constSizeOK(v) {
 			return &ast.Const{Pos: ast.At(e.Line()), Value: v}
 		}
 	}
-	f.descend(e)
 	return liftNegativePowerBase(e)
 }
 
@@ -528,7 +547,7 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		return c.constUnaryOp(n)
 
 	case *ast.Concat:
-		items, ok := c.constEvalAll(n.Nodes)
+		items, ok := c.constConcatItems(n.Nodes)
 		if !ok {
 			return value.Undefined, false
 		}
@@ -570,7 +589,7 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		}
 		truth, err := value.IsTrue(test)
 		if err != nil {
-			return value.Undefined, false
+			return c.refuse(err)
 		}
 		if truth {
 			return c.constEval(n.True)
@@ -581,6 +600,33 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		return c.constEval(n.False)
 	}
 	return value.Undefined, false
+}
+
+// constConcatItems folds `~`'s operands, refusing at the first one that cannot
+// give its text.
+//
+// jinja2 writes this as `"".join(str(x.as_const(...)) for x in self.nodes)`,
+// and the generator is what makes it observable: each operand is converted
+// *before* the next one is folded, so a StrictUndefined in the first position
+// raises even when a later operand is not constant at all. Folding them all
+// first and converting afterwards loses that --
+// `{{ (2147483648)[-2:] ~ 'x'.__class__(1, 2, 3, 4) }}` abandoned the whole
+// fold over the unfoldable right side and let the render report a TypeError,
+// where CPython refuses the template over the left one.
+func (c *constEvaluator) constConcatItems(nodes []ast.Expr) ([]value.Value, bool) {
+	out := make([]value.Value, 0, len(nodes))
+	for _, n := range nodes {
+		v, ok := c.constEval(n)
+		if !ok {
+			return nil, false
+		}
+		if err := value.StrictRefusal(v); err != nil {
+			c.refuse(err)
+			return nil, false
+		}
+		out = append(out, v)
+	}
+	return out, true
 }
 
 // constBinOp folds an operator over constants. An operation that raises is not
@@ -595,7 +641,7 @@ func (c *constEvaluator) constBinOp(n *ast.BinOp) (value.Value, bool) {
 		}
 		truth, err := value.IsTrue(left)
 		if err != nil {
-			return value.Undefined, false
+			return c.refuse(err)
 		}
 		if truth == (n.Op == ast.OpAnd) {
 			return c.constEval(n.Right)
@@ -744,6 +790,46 @@ type constEvaluator struct {
 	// refuses to fold a filter or a test in such a context -- see
 	// constFilter -- and skips its optimizer there entirely.
 	volatile bool
+	// refusal is a StrictUndefined that the fold asked a question only it
+	// can answer with an error: its truthiness, or its text. jinja2 lets
+	// that error out of `from_string`, so the template does not compile at
+	// all, and this is how it gets from the fold to the caller.
+	//
+	// The first one wins and folding stops, because the template is not
+	// going to be returned either way and a second refusal would only
+	// change which of two broken expressions is named.
+	refusal error
+}
+
+// refuse records a refusal that must end the compile, and reports the
+// expression as unfoldable so every caller unwinds the way it already does.
+//
+// Only three folds may call it, and the set is jinja2's rather than a choice:
+// its `BinExpr.as_const`, `Compare.as_const`, `Filter.as_const` and the rest
+// wrap themselves in `except Exception: raise Impossible()`, so an error there
+// means "not constant" and the expression is left for the render. `Concat`,
+// `And`, `Or` and `CondExpr` have no such guard, so an error raised inside them
+// travels straight out of the optimizer. That is why `{{ (0.0).a ~ 1 }}` does
+// not compile under StrictUndefined while `{{ (0.0).a + 1 }}` compiles and
+// fails at render.
+func (c *constEvaluator) refuse(err error) (value.Value, bool) {
+	if c.volatile {
+		// Where the escaping is not yet known, a refusal does not
+		// escape: `{% autoescape nil %}{{ (0.0).a ~ 1 }}` fails at
+		// render on the undefined name in the tag, not at compile time
+		// on the concatenation. All four refusing folds behave that way
+		// -- jinja2's Concat.as_const checks the flag itself, because
+		// whether its result is Markup depends on the answer, and the
+		// other three are not reached there at all. Ordinary folding
+		// continues: `{% autoescape x %}{{ {'a': 1} }}` is still baked
+		// with the environment's setting, which escape/volatile_folds_
+		// constant grades.
+		return value.Undefined, false
+	}
+	if c.refusal == nil {
+		c.refusal = err
+	}
+	return value.Undefined, false
 }
 
 // Folding runs at compile time, where there is no render and therefore nothing
@@ -794,6 +880,11 @@ func newConstEvaluator(env *Environment, name string, fromString bool) *constEva
 // FromString down with it, before any render existed to bound -- now the
 // expression is simply left for runtime, where the render's budget applies.
 func (c *constEvaluator) tryConstEval(e ast.Expr) (v value.Value, ok bool) {
+	if c.refusal != nil {
+		// The compile is already going to fail. Folding on would only
+		// spend time and could record a second refusal over the first.
+		return value.Undefined, false
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			v, ok = value.Undefined, false
@@ -1135,7 +1226,17 @@ func walkOutputs(c *constEvaluator, body []ast.Stmt, fn func(*ast.Output, bool))
 		for _, stmt := range body {
 			switch n := stmt.(type) {
 			case *ast.Output:
+				// The escaping in force is not only what the
+				// folded text is escaped *with* -- it is what
+				// the fold itself runs under, because five
+				// filters read it. The general fold sets it from
+				// its own walk; this one has to as well, and did
+				// not need to while it ran second over a tree
+				// that pass had already folded.
+				saved := c.st.autoescape
+				c.st.autoescape = escaping
 				fn(n, escaping)
+				c.st.autoescape = saved
 			case *ast.For:
 				walk(n.Body, escaping)
 				walk(n.Else, escaping)

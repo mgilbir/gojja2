@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_membership_in_range.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}
