@@ -723,6 +723,31 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# A `[` in a replacement field's *name* opens an index that runs to the next `]`
+# and may hold anything: `{0[a}b]}` is the key "a}b". Scanning for `}` alone made
+# that a parse error and made `{0[x}` a *lookup* of "x" instead of the
+# unterminated field it is. Only while reading the name -- once that ends at a
+# `:` or a `!`, a `[` is an ordinary character and `{0:[^5}` fills with one.
+for _n, _src, _ctx in [
+    ("brace_in_a_key", "{0[a}b]}", "{% set d = {'a}b': 1} %}"),
+    ("open_brace_in_a_key", "{0[a{b]}", "{% set d = {'a{b': 1} %}"),
+    ("colon_in_a_key", "{0[a:b]}", "{% set d = {'a:b': 1} %}"),
+    ("unterminated_index", "{0[x}", "{% set d = {'x': 1} %}"),
+    ("unterminated_empty_index", "{0[}", "{% set d = {'x': 1} %}"),
+    ("unterminated_numeric_index", "{0[0}", "{% set d = {'x': 1} %}"),
+    ("unterminated_index_with_spec", "{0[x}:5}", "{% set d = {'x': 1} %}"),
+    ("index_without_closing_brace", "{0[0]", "{% set d = {'x': 1} %}"),
+]:
+    case(f"format/field_name_{_n}", _ctx + "{% set s = '" + _src + "' %}{{ s.format(d) }}")
+# ...and the shapes a bracket must *not* capture, so the rule cannot spread into
+# the format spec.
+case("format/spec_fill_is_a_bracket",
+     "{% set n = 1 %}{{ '{0:[^5}'.format(n) }}|{{ '{0:]^5}'.format(n) }}|"
+     "{{ '{0!r:[^7}'.format(n) }}|{{ '{0:{1}}'.format(n, 5) }}")
+case("format/nested_index_and_spec",
+     "{% set l = [[1],[2]] %}{% set d = {'b': 'x'} %}{{ '{0[1][0]}'.format(l) }}|"
+     "{{ '{a[b]!r:>{w}}'.format(a=d, w=6) }}")
+
 # list.sort's call shape was not checked at all, and the reason is mechanical:
 # gen_methods.py reads the method maps as *text*, and sort is registered in
 # init() because naming it in the literal is an initialisation cycle. So the

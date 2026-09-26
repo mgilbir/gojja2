@@ -1313,15 +1313,44 @@ func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 // Python, which is what the depth counter here allows.
 func splitReplacement(s string, start int) (field, conv, spec string, next int, err error) {
 	depth, i, nested := 0, start, false
+	// While the *field name* is being read, a `[` opens an index that runs
+	// to the next `]` and may hold anything at all: `{0[a}b]}` is the key
+	// "a}b", and `{0[x}` never closes the field, so it is "expected '}'
+	// before end of string" rather than a lookup of "x". Scanning for `}`
+	// alone made the first a parse error and the second a type error.
+	//
+	// Only while reading the name. Once that ends at a `:` or a `!`, a `[`
+	// is an ordinary character -- `{0:[^5}` fills with one -- and the spec
+	// counts braces like any other.
+	bracket, inName := 0, true
 	for ; i < len(s); i++ {
-		if s[i] == '{' {
+		c := s[i]
+		if inName && bracket == 0 && (c == ':' || c == '!') {
+			inName = false
+		}
+		if inName {
+			if c == '[' {
+				bracket++
+				continue
+			}
+			if c == ']' {
+				if bracket > 0 {
+					bracket--
+				}
+				continue
+			}
+			if bracket > 0 {
+				continue
+			}
+		}
+		if c == '{' {
 			depth++
 			if depth > 1 {
 				nested = true
 			}
 			continue
 		}
-		if s[i] == '}' {
+		if c == '}' {
 			depth--
 			if depth == 0 {
 				break
@@ -1349,7 +1378,7 @@ func splitReplacement(s string, start int) (field, conv, spec string, next int, 
 
 	// The spec starts at the first ':' that is not inside the [] of a field
 	// name -- `{a[1:2]}` indexes, it does not format.
-	bracket := 0
+	bracket = 0
 	for j := 0; j < len(body); j++ {
 		switch body[j] {
 		case '[':
