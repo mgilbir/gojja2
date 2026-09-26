@@ -198,7 +198,7 @@ records a Def, a Use, a Scope or a context name. Those are further upstream than
 anything in `dataflow/`: a binding that goes unrecorded is a name the analysis
 cannot see, which is indistinguishable to it from a name that does nothing.
 
-89 mutations, all 89 *exercised*, seven surviving: one in the analysis, six
+90 mutations, all 90 *exercised*, seven surviving: one in the analysis, six
 in the budget below. The count of exercised ones is
 reported separately because it used to be smaller than the total without saying
 so: some sites are the only reader of a loop variable, so commenting the line

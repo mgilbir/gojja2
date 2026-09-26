@@ -723,6 +723,36 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# PyBytes_Format words a float verb's refusal after the *verb* rather than after
+# the type -- "float argument required, not str" where PyUnicode_Format says
+# "must be real number, not str" -- and says the same for an integer too wide for
+# a float64, where the str side reports the overflow. One conversion either works
+# or does not there; it does not distinguish why. The integer verbs agree on both
+# sides, which is what made the float split look like it did not exist.
+#
+# Found by teaching the render differential to write a *bytes* format at all:
+# PyBytes_Format is a different function with its own verbs and its own wording,
+# and the generator had only ever written str ones.
+for _n, _src in [
+    ("bytes_float_of_str", "{% set s = 'x' %}{{ ('[%f]'.encode()) % s }}"),
+    ("str_float_of_str", "{% set s = 'x' %}{{ '[%f]' % s }}"),
+    ("bytes_float_of_list", "{% set l = [] %}{{ ('[%f]'.encode()) % l }}"),
+    ("bytes_exp_of_list", "{% set l = [] %}{{ ('[%e]'.encode()) % l }}"),
+    ("bytes_float_of_none", "{% set n = none %}{{ ('[%f]'.encode()) % n }}"),
+    ("bytes_float_of_wide_int", "{% set n = 10 ** 400 %}{{ ('[%f]'.encode()) % n }}"),
+    ("str_float_of_wide_int", "{% set n = 10 ** 400 %}{{ '[%f]' % n }}"),
+    ("bytes_int_of_str", "{% set s = 'x' %}{{ ('[%d]'.encode()) % s }}"),
+    ("bytes_hex_of_str", "{% set s = 'x' %}{{ ('[%x]'.encode()) % s }}"),
+]:
+    case(f"format/percent_verb_{_n}", _src)
+# The bytes conversions that must keep working, including the width a float64
+# still holds and the integer verb a wide int still formats.
+case("format/percent_bytes_verbs",
+     "{% set n = 42 %}{% set w = 2 ** 70 %}{% set b = 10 ** 400 %}"
+     "{{ ('[%f]'.encode()) % n }}|{{ ('[%f]'.encode()) % w }}|"
+     "{{ ('[%d]'.encode()) % b }}|{{ ('[%b]'.encode()) % 'ab'.encode() }}|"
+     "{{ ('[%c]'.encode()) % 65 }}|{{ ('[%(k)b]'.encode()) % {'k': 'v'.encode()} }}")
+
 # jinja2's _load_template checks for a loader before it looks at the name at all,
 # so an environment with no loader reports *itself* rather than an unhashable list
 # or an undefined name. A selection is the exception: select_template refuses an
@@ -1114,9 +1144,36 @@ for _n, _src in [
 # item is a TypeError rather than a miss -- `{{ [1] in d.keys() }}` answered
 # False. An items or values view compares element by element and does answer
 # False, which is why this is the keys view alone.
-case("methods/dictview_membership_unhashable",
-     "{% set d = {'a': 1} %}{{ [1] in d.items() }}|{{ [1] in d.values() }}|"
-     "{{ 'a' in d.keys() }}")
+# What a view examines decides which of the item's own refusals apply, so a view
+# answers membership before they are consulted. A keys view hashes the item. An
+# items view *unpacks* first, so anything that is not a two-element pair simply
+# is not in it -- even a StrictUndefined, which every other container refuses --
+# while the key of a pair is hashed. A values view scans and so behaves like a
+# list. Found by teaching the differential to put a view on the right of `in`.
+# "a two-element pair" means a *tuple*: dict_items.__contains__ checks
+# PyTuple_Check before the size, so a two-element list is not a pair -- it is
+# simply not in the view, and its first element is never hashed. Reading it as
+# any two-element sequence answered False for the same pair spelled as a list
+# and raised on `[['x'], 1]`. Found by a soak seed, which drew a list of pairs
+# from the fuzz context and put it on the right of `not in`.
+case("methods/dictview_membership",
+     "{% set d = {'a': 1} %}{{ ('a', 1) in d.items() }}|{{ ('a', 2) in d.items() }}|"
+     "{{ ('b', 1) in d.items() }}|{{ [1] in d.items() }}|{{ ('a', 1, 2) in d.items() }}|"
+     "{{ 'a' in d.keys() }}|{{ 1 in d.values() }}|{{ [1] in d.values() }}")
+case("methods/dictview_membership_list_pair",
+     "{% set d = {'a': 1} %}{{ ['a', 1] in d.items() }}|{{ [['x'], 1] in d.items() }}|"
+     "{{ 'ab' in d.items() }}|{{ ('a', 1) in d.items() }}")
+case("errors/dictview_unhashable_pair_key",
+     "{% set d = {'a': 1} %}{{ ([1], 1) in d.items() }}")
+for _n, _src in [
+    ("items", "{% set d = {'a': 1} %}{{ nope in d.items() }}"),
+    ("items_pair_key", "{% set d = {'a': 1} %}{{ (nope, 1) in d.items() }}"),
+    ("keys", "{% set d = {'a': 1} %}{{ nope in d.keys() }}"),
+    ("values", "{% set d = {'a': 1} %}{{ nope in d.values() }}"),
+    ("dict", "{% set d = {'a': 1} %}{{ nope in d }}"),
+]:
+    case(f"undefined/strict_dictview_membership_{_n}", _src,
+         __settings__={"undefined": "strict"})
 for _n, _src in [
     ("dict_in_keys", "{% set d = {'a': 1} %}{{ {1: 'a'} in d.keys() }}"),
     ("list_in_keys", "{% set d = {'a': 1} %}{{ [1] in d.keys() }}"),

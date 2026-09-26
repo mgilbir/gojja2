@@ -421,13 +421,18 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 	if !searchable(container) {
 		return false, notAContainer(container, py)
 	}
-	// A set-like view looks its item up rather than scanning it, so it
-	// hashes it -- and an unhashable item is a TypeError there, not a miss.
-	// Contains has no error channel, so the question is asked here:
-	// `{{ [1] in d.keys() }}` answered False.
-	if h, ok := container.obj.(interface{ HashesItems() bool }); ok && h.HashesItems() {
-		if err := CheckHashable(item, py, AsDictKey); err != nil {
-			return false, err
+	// A container that examines its item in its own way answers before the
+	// item's refusals are consulted, because *what* it examines decides
+	// whether they apply at all: a keys view hashes the item, an items view
+	// answers False for anything that is not a pair and hashes the key of
+	// one that is, and a values view scans and so defers to the generic path
+	// below. `{{ [1] in d.keys() }}` answered False, and
+	// `{{ nope in d.items() }}` raised where CPython answers False.
+	if c, ok := container.obj.(interface {
+		ContainsErr(Value, PythonVersion) (bool, bool, error)
+	}); ok {
+		if found, known, err := c.ContainsErr(item, py); err != nil || known {
+			return found, err
 		}
 	}
 	switch {

@@ -720,7 +720,36 @@ var arityNames = []string{
 // not ask for a gigabyte of padding.
 func (g *generator) percentFormat() string {
 	spec := percentSpecs[g.c.intn(len(percentSpecs))]
+	if g.c.chance(5) {
+		// A *bytes* format is a different function in CPython --
+		// PyBytes_Format -- with its own verbs, its own mapping rule and
+		// its own wording, and the generator only ever wrote str ones.
+		// Its arguments have to be bytes too, so they are drawn from a
+		// list of their own rather than from the spec's.
+		bs := bytesPercentSpecs[g.c.intn(len(bytesPercentSpecs))]
+		return "('[" + bs.format + "]'.encode()) % " + g.c.pick(bs.args)
+	}
 	return "'[" + spec.format + "]' % " + g.c.pick(spec.args)
+}
+
+// bytesPercentSpecs is percentSpecs for a bytes format. `%s` is not a bytes
+// verb -- `%b` is -- and an argument must be a bytes for the ones that take
+// text, which is why this cannot reuse the list above.
+var bytesPercentSpecs = []struct {
+	format string
+	args   []string
+}{
+	{"%b", []string{"'ab'.encode()", "s.encode()", "''.encode()"}},
+	{"%s", []string{"'ab'.encode()", "1", "lst"}},
+	{"%a", []string{"'ab'.encode()", "1.5", "none"}},
+	{"%r", []string{"'ab'.encode()", "lst"}},
+	{"%d", []string{"42", "-42", "1.7", "true"}},
+	{"%x", []string{"255", "0"}},
+	{"%f", []string{"1.5", "-1.5"}},
+	{"%c", []string{"65", "'a'.encode()", "300", "'ab'.encode()", "lst"}},
+	{"%08.2f", []string{"1.5"}},
+	{"%%", []string{"1", "''.encode()"}},
+	{"%(k)b", []string{"{'k': 'v'.encode()}", "d", "''.encode()"}},
 }
 
 // percentSpecs pairs a format string with the arguments Python accepts for it.
@@ -771,7 +800,20 @@ var percentSpecs = []struct {
 func (g *generator) comparison(depth int) string {
 	out := g.expr(depth - 1)
 	for range 1 + g.c.intn(2) {
-		out += " " + g.c.pick(compareOps) + " " + g.expr(depth-1)
+		op := g.c.pick(compareOps)
+		if (op == "in" || op == "not in") && g.c.chance(4) {
+			// A dict *view* as the container: `k in d.keys()` looks
+			// its item up rather than scanning, so it hashes it and
+			// an unhashable one is a TypeError where an items or a
+			// values view answers False. None of that was reached by
+			// the differential at all -- the views' Contains,
+			// HashesItems and Unhashable sat at 0%.
+			return out + " " + op + " " + g.c.pick([]string{
+				"d.keys()", "d.items()", "d.values()",
+				"nested.keys()", "pairs|list", "d|list",
+			})
+		}
+		out += " " + op + " " + g.expr(depth-1)
 	}
 	return out
 }
@@ -1234,6 +1276,11 @@ var numMethods = []string{
 	"to_bytes(1, 'big')", "to_bytes(0, 'big')", "to_bytes(2, 'sideways')",
 	"to_bytes(-1, 'big')",
 	"from_bytes('ab'.encode(), 'big')", "from_bytes('ab'.encode(), 'nope')",
+	// An *iterable* of integers, which int.from_bytes takes as readily as a
+	// bytes and which nothing generated: fromBytesSource's walk sat at one
+	// branch out of six.
+	"from_bytes(lst)", "from_bytes([1, 2])", "from_bytes(range(3))",
+	"from_bytes(strs)", "from_bytes(d)", "from_bytes([300])",
 	"is_integer()", "hex()", "fromhex('0x1p3')", "fromhex('nope')",
 }
 

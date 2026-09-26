@@ -671,6 +671,20 @@ func (c *conversion) integerDigits(v Value, base int, allowFloat bool) (string, 
 
 // floatBody renders a float conversion, in Python's spelling.
 func (c *conversion) floatBody(v Value) (formatted, error) {
+	if c.bytes {
+		// PyBytes_Format words this after the verb rather than after the
+		// type: "float argument required, not str" where
+		// PyUnicode_Format says "must be real number, not str". It says
+		// the same for an integer too wide for a float64 -- "float
+		// argument required, not int" -- where the str side reports the
+		// overflow. One conversion either succeeds or does not; it does
+		// not distinguish why. The integer verbs agree on both sides;
+		// only the float ones split.
+		if _, err := FloatOrOverflow(v); !v.IsNumber() || err != nil {
+			return formatted{}, errs.New(errs.TypeError,
+				"float argument required, not %s", v.TypeName())
+		}
+	}
 	f, err := floatOperand(v)
 	if err != nil {
 		// Both halves come from floatOperand: "must be real number" for

@@ -118,31 +118,54 @@ func (v *dictView) Iterate() iter.Seq[value.Value] {
 	}
 }
 
-// HashesItems reports that a keys view answers by looking its item up, so an
-// unhashable one is a TypeError rather than a miss. Contains has no error
-// channel, which is why this is a question the caller asks first.
+// ContainsErr is Contains with an error channel, and the caller consults it
+// *before* the item's own refusals: what a view examines decides whether those
+// refusals apply at all.
 //
-// Only a keys view: `{{ [1] in d.items() }}` and `{{ [1] in d.values() }}`
-// compare element by element and answer False, as CPython does.
-func (v *dictView) HashesItems() bool { return v.kind == viewKeys }
+//   - a keys view looks the item up, which hashes it, so an unhashable one is a
+//     TypeError and a StrictUndefined refuses. That is also what makes
+//     `k in d.keys()` cost what `k in d` costs;
+//   - an items view unpacks before it looks, so anything that is not a
+//     two-element pair simply is not in it -- `nope in d.items()` is False even
+//     under StrictUndefined -- while the *key* of a pair is hashed, so
+//     `(nope, 1) in d.items()` raises;
+//   - a values view compares element by element and has nothing to say here, so
+//     it defers. known=false means "ask the generic path".
+func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found, known bool, err error) {
+	d, ok := v.d.Dict()
+	if !ok || v.kind == viewValues {
+		return false, false, nil
+	}
+	key := item
+	if v.kind == viewItems {
+		// A *tuple* of two, and nothing else: dict_items.__contains__
+		// checks PyTuple_Check before the size, so a two-element list is
+		// not a pair and is simply not in the view. Accepting any
+		// sequence made `[['x'], 1] in d.items()` hash the inner list
+		// and refuse where CPython answers False.
+		pair, ok := item.Seq()
+		if !ok || item.Kind() != value.KindTuple || pair.Len() != 2 {
+			return false, true, nil
+		}
+		key = pair.At(0)
+	}
+	if err := value.CheckHashable(key, py, value.AsDictKey); err != nil {
+		return false, true, err
+	}
+	got, ok, err := d.Get(key, py)
+	if err != nil || !ok {
+		return false, true, err
+	}
+	if v.kind == viewKeys {
+		return true, true, nil
+	}
+	pair, _ := item.Seq()
+	return value.Equal(pair.At(1), got), true, nil
+}
 
 func (v *dictView) Contains(item value.Value) (found, known bool) {
-	// A keys view answers by lookup rather than by scanning, which is what
-	// makes `k in d.keys()` cost what `k in d` costs.
-	if v.kind == viewKeys {
-		d, ok := v.d.Dict()
-		if !ok {
-			return false, true
-		}
-		if err := value.CheckHashable(item, v.py, value.AsDictKey); err != nil {
-			return false, false
-		}
-		_, got, err := d.Get(item, v.py)
-		if err != nil {
-			return false, false
-		}
-		return got, true
-	}
+	// Keys and items are answered by ContainsErr above; this is the values
+	// view's scan, and the fallback for a receiver that is no longer a dict.
 	for _, have := range v.entries() {
 		if value.Equal(item, have) {
 			return true, true
