@@ -1,0 +1,3 @@
+{}
+---
+{% set l = ['a'.encode()] %}{{ l|map(attribute=5)|list }}

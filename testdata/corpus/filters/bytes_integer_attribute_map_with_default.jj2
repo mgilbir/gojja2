@@ -1,0 +1,3 @@
+{}
+---
+{% set l = ['a'.encode(), 'b,c'.encode()] %}{{ l|map(attribute=1, default=7)|list }}

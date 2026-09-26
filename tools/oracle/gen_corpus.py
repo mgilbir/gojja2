@@ -723,6 +723,53 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# A third batch. The bug this one found: a conversion constructor counted only
+# its *positional* arguments against the maximum, so `int(s, 2, base=8)` bound
+# the keyword and answered 8 where CPython counts three arguments and refuses.
+# With a keyword present the count comes before any name -- `int(1, base=2,
+# nope=3)` reports the count, not `nope` -- while a positional-only overflow
+# keeps the per-class wording the two halves of the signature moved apart on in
+# 3.13. Three cases, three orders.
+for _n, _src in [
+    ("int_total_with_keyword", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, 2, base=8) }}"),
+    ("int_total_two_keywords", "{% set n = 1 %}{{ n.__class__(1, base=2, nope=3) }}"),
+    ("int_positional_only", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, 2, 3) }}"),
+    ("int_unexpected_keyword", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, nope=8) }}"),
+    ("int_keyword_for_the_subject", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(x=s) }}"),
+    ("str_total_with_keywords",
+     "{% set s = 'a' %}{{ s.__class__(s, 'utf-8', errors='x', encoding='y') }}"),
+    ("str_positional_only", "{% set s = 'a' %}{{ s.__class__(s, 'utf-8', 'strict', 1) }}"),
+    ("str_duplicate_binding", "{% set s = 'a' %}{{ s.__class__(s, object='b') }}"),
+    ("str_unexpected_keyword", "{% set s = 'a' %}{{ s.__class__(s, 'utf-8', nope=1) }}"),
+    ("bytes_positional_only",
+     "{% set b = 'a'.encode() %}{{ b.__class__(b, 'utf-8', 'strict', 1) }}"),
+    ("bytes_total_with_keywords",
+     "{% set b = 'a'.encode() %}{{ b.__class__(b, encoding='x', errors='y', nope=1) }}"),
+    ("int_base_still_binds", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, base=8) }}"),
+]:
+    case(f"classes/construct_arity_{_n}", _src)
+# The constructor refusals the same audit listed, which already agreed.
+for _n, _src in [
+    ("bytes_from_a_float", "{% set b = 'a'.encode() %}{% set f = 1.5 %}{{ b.__class__(f) }}"),
+    ("bytes_count_over_index",
+     "{% set b = 'a'.encode() %}{% set n = 10 ** 400 %}{{ b.__class__(n) }}"),
+    ("bytes_encoding_without_a_string",
+     "{% set b = 'a'.encode() %}{% set n = 10 ** 400 %}{{ b.__class__(n, 'utf-8') }}"),
+    ("list_from_a_float", "{% set l = [1] %}{% set f = 1.5 %}{{ l.__class__(f) }}"),
+]:
+    case(f"classes/construct_{_n}", _src)
+# ...and the %c and {:c} refusals, which are a code point's range and the C long
+# the conversion goes through before anything asks about the range.
+for _n, _src in [
+    ("printf_c_out_of_range", "{% set n = 1114112 %}{{ '%c' % n }}"),
+    ("format_c_out_of_range", "{% set n = 1114112 %}{{ '{:c}'.format(n) }}"),
+    ("format_c_negative", "{% set n = -1 %}{{ '{:c}'.format(n) }}"),
+    ("format_c_over_a_c_long", "{% set n = 10 ** 400 %}{{ '{:c}'.format(n) }}"),
+    ("format_c_rejects_a_sign", "{% set n = 65 %}{{ '{:+c}'.format(n) }}"),
+    ("format_c_rejects_alternate", "{% set n = 65 %}{{ '{:#c}'.format(n) }}"),
+]:
+    case(f"format/{_n}", _src)
+
 # The second batch from the same audit, and the same story: all of them already
 # agreed. Each goes through a name rather than a literal, because an all-constant
 # expression is folded by both engines and the message then comes from the fold
@@ -973,6 +1020,41 @@ for _n, _src, _esc in [
     if _esc:
         _settings["autoescape"] = True
     case(f"undefined/strict_join_{_n}", _src, __settings__=_settings)
+
+# An integer attribute over a bytes indexes to the byte *value* -- `b'b,c'[1]`
+# is 44 -- and the attribute-path lookup the attribute= filters share had no arm
+# for bytes at all, so every one of them was undefined. The run-time subscript
+# always said 44, which is why only a filter showed it. constIndex is shared with
+# the fold, so both paths are graded.
+_BS = "{% set l = ['a'.encode(), 'b,c'.encode()] %}"
+for _n, _src in [
+    ("subscript_folded", "{{ ('b,c'.encode())[1] }}"),
+    ("subscript_at_run_time", "{% set b = 'b,c'.encode() %}{{ b[1] }}"),
+    ("groupby", _BS + "{{ l|groupby(1, 2)|list }}"),
+    ("map", _BS + "{{ l|map(attribute=1)|list }}"),
+    ("map_with_default", _BS + "{{ l|map(attribute=1, default=7)|list }}"),
+    ("sort", _BS + "{{ l|sort(attribute=1)|list }}"),
+    ("min", "{% set l = ['b,c'.encode(), 'd,e'.encode()] %}{{ l|min(attribute=1) }}"),
+    ("selectattr", _BS + "{{ l|selectattr(1)|list }}"),
+    ("negative_index", _BS + "{{ l|map(attribute=-1)|list }}"),
+    ("out_of_range", "{% set l = ['a'.encode()] %}{{ l|map(attribute=5)|list }}"),
+]:
+    case(f"filters/bytes_integer_attribute_{_n}", _src)
+
+# `~` evaluates every operand before it converts any of them, which is what
+# jinja2's `str_join((a, b))` does: building that tuple is a name lookup, and an
+# Undefined only refuses when str() reaches it. So an operand that fails outright
+# is reported before an *earlier* StrictUndefined's refusal. The fold interleaves
+# instead -- Concat.as_const joins a generator -- and that asymmetry is upstream's.
+for _n, _src in [
+    ("undefined_then_failing", "{{ nope ~ (1|reject('none')|list) }}"),
+    ("failing_then_undefined", "{{ (1|reject('none')|list) ~ nope }}"),
+    ("undefined_then_failing_named",
+     "{% set n = 1 %}{{ nope ~ (n|reject('none')|list) }}"),
+    ("undefined_then_constant", "{{ nope ~ 'a' }}"),
+    ("three_operands", "{{ nope ~ 'a' ~ (1|reject('none')|list) }}"),
+]:
+    case(f"undefined/strict_concat_{_n}", _src, __settings__={"undefined": "strict"})
 
 # ...and none of those refusals escapes where the escaping is not yet known.
 # `{% autoescape nil %}` makes the context volatile, and there the template fails

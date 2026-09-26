@@ -1142,6 +1142,21 @@ func constIndex(base, key value.Value) (value.Value, bool) {
 			return value.Safe(s), true
 		}
 		return value.String(s), true
+	case value.KindBytes:
+		// A bytes indexes to the byte *value*, not to a one-byte bytes:
+		// `b'b,c'[1]` is 44. The run-time subscript has always said so;
+		// this path had no arm for it at all, so every integer
+		// attribute over a bytes was undefined -- which is what
+		// `|groupby(1)` over bytes grouped on.
+		raw := base.AsString()
+		idx := int(i)
+		if idx < 0 {
+			idx += len(raw)
+		}
+		if idx < 0 || idx >= len(raw) {
+			return value.Undefined, false
+		}
+		return value.Int(int64(raw[idx])), true
 	}
 	return value.Undefined, false
 }

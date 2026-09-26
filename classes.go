@@ -311,6 +311,19 @@ func constructInt(s *State, args *value.CallArgs) (value.Value, error) {
 	if len(args.Pos) > 1 {
 		base, haveBase = args.Pos[1], true
 	}
+	// The counts come before the names, as they do in bindConversionArgs:
+	// with a keyword present CPython counts every argument against the
+	// maximum, so `int(s, 2, base=8)` is "int() takes at most 2 arguments
+	// (3 given)" and not a word about `base`, and `int(1, base=2, nope=3)`
+	// names the count rather than `nope`. Only this check moved: with it in
+	// place, more than two positional arguments means either no keyword at
+	// all (and the count below answers) or a total over two (and this one
+	// does), so the order of the two checks below cannot be observed --
+	// swapping them fails nothing, which is how that was established.
+	if n := len(args.Pos) + len(args.Kwargs); len(args.Kwargs) > 0 && n > 2 {
+		return value.Undefined, errs.New(errs.TypeError,
+			"int() takes at most 2 arguments (%d given)", n)
+	}
 	for _, kw := range args.Kwargs {
 		if kw.Name != "base" {
 			return value.Undefined, clinicKeyword(s.PythonVersion(), "int", kw.Name)
@@ -590,6 +603,17 @@ func bindConversionArgs(py value.PythonVersion, name, first string, args *value.
 				"bytes() takes at most %d arguments (%d given)", most, len(pos))
 		}
 		return nil, clinicArity(py, name, most, len(pos))
+	}
+	// With a keyword present CPython counts *every* argument against the
+	// maximum and reports that before it looks at any name: `int(s, 2,
+	// base=8)` is "int() takes at most 2 arguments (3 given)" and not a word
+	// about `base`, and `bytes(b, encoding='x', errors='y', nope=1)` names
+	// the count rather than `nope`. The positional-only overflow above keeps
+	// its own wording, which is where the two halves of this signature moved
+	// apart in 3.13 -- so this is a third case and not a rewrite of that one.
+	if n := len(pos) + len(args.Kwargs); len(args.Kwargs) > 0 && n > most {
+		return nil, errs.New(errs.TypeError,
+			"%s() takes at most %d arguments (%d given)", name, most, n)
 	}
 	for _, kw := range args.Kwargs {
 		i := slices.Index(names, kw.Name)

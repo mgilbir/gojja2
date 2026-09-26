@@ -246,20 +246,32 @@ func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
 	// for every other use of the result: `{{ (sv ~ n)|length }}` counted
 	// the entities it had just introduced, `|upper` shouted them, and a
 	// type error named Markup where CPython names str.
-	parts := make([]value.Value, 0, len(n.Nodes))
+	// Every operand is evaluated before any of them is converted, which is
+	// what jinja2's `str_join((a, b))` does: building that tuple is a name
+	// lookup, and an Undefined only refuses when str() reaches it. So an
+	// operand that fails outright is reported before an *earlier*
+	// StrictUndefined's refusal -- `{{ nope ~ (1|list) }}` names the list
+	// filter's TypeError, not the undefined. Refusing inside the evaluation
+	// loop got that the wrong way round.
+	//
+	// The fold interleaves instead, and that is upstream too: Concat.as_const
+	// joins a generator, so `str()` reaches each operand before the next one
+	// is folded. See constConcatItems.
+	parts, err := ex.evalAll(n.Nodes)
+	if err != nil {
+		return value.Undefined, err
+	}
 	markup := false
-	for _, node := range n.Nodes {
-		v, err := ex.eval(node)
-		if err != nil {
+	for _, v := range parts {
+		// markup_join maps soft_str over the sequence and stops at the
+		// first operand that is already Markup, so the refusal and the
+		// scan happen together and in order.
+		if err := value.StrictRefusal(v); err != nil {
 			return value.Undefined, err
-		}
-		if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
-			return value.Undefined, v.UndefinedError()
 		}
 		if v.IsSafe() {
 			markup = true
 		}
-		parts = append(parts, v)
 	}
 	// One Markup operand escapes every other one, including those already
 	// passed -- markup_join rejoins the whole sequence when it finds one.

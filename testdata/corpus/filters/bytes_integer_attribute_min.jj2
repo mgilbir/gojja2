@@ -1,0 +1,3 @@
+{}
+---
+{% set l = ['b,c'.encode(), 'd,e'.encode()] %}{{ l|min(attribute=1) }}

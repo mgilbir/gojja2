@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 'a'.encode() %}{{ b.__class__(b, encoding='x', errors='y', nope=1) }}

@@ -448,10 +448,10 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 	}
 	switch container.kind {
 	case KindString:
-		if item.kind != KindString {
-			return false, errs.New(errs.TypeError,
-				"'in <string>' requires string as left operand, not %s", item.TypeName())
-		}
+		// A non-string item was refused above, before the item's own
+		// refusal was consulted, because str.__contains__ type-checks
+		// its left operand first. There was a second copy of that check
+		// here and nothing could reach it.
 		return strings.Contains(container.str, item.str), nil
 	case KindBytes:
 		// bytes is a sequence of integers, so an integer on the left is
@@ -467,10 +467,8 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 			}
 			return strings.IndexByte(container.str, byte(n)) >= 0, nil
 		}
-		if item.kind != KindBytes {
-			return false, errs.New(errs.TypeError,
-				"a bytes-like object is required, not '%s'", item.TypeName())
-		}
+		// Neither an integer nor a bytes was refused above, for the
+		// same reason as the string arm.
 		return strings.Contains(container.str, item.str), nil
 	case KindList, KindTuple:
 		s, _ := container.Seq()

@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 'a'.encode() %}{% set f = 1.5 %}{{ b.__class__(f) }}
