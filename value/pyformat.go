@@ -46,7 +46,7 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 	// `"" % []` is "" while `"" % 1` is a TypeError -- even though looking
 	// a name up in one can only fail. The operand is still available as the
 	// single positional argument either way, so `"%s" % {}` renders "{}".
-	mapping, hasMapping := args, isMappingArg(args)
+	mapping, hasMapping := args, isMappingArg(args, asBytes)
 
 	positional := []Value{args}
 	if s, ok := args.Seq(); ok && args.kind == KindTuple {
@@ -162,18 +162,20 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 
 // isMappingArg reports whether the right operand of % is subscriptable in
 // CPython's sense: dict and list qualify, tuple and str explicitly do not.
-func isMappingArg(v Value) bool {
+func isMappingArg(v Value, asBytes bool) bool {
 	switch v.kind {
 	case KindDict, KindList:
 		return true
 	case KindBytes:
-		// CPython's test is "supports subscripting", with tuple and str
-		// named as the two exceptions. A bytes is subscriptable and is
-		// not one of the two, so it counts -- which is why `"0" % b""`
-		// renders "0" rather than complaining that the b"" was never
-		// converted. Looking a *name* up in one still fails, as it does
-		// for a list; see lookupFormatKey.
-		return true
+		// CPython's test is "supports subscripting", and the exceptions
+		// are the format's *own* type: PyUnicode_Format names tuple and
+		// str, PyBytes_Format names tuple, bytes and bytearray. So a
+		// bytes counts when a str is being formatted -- which is why
+		// `"0" % b""` renders "0" rather than complaining that the b""
+		// was never converted -- and does not when a bytes is, where
+		// `b"0" % b""` is "not all arguments converted". Looking a
+		// *name* up in one still fails either way; see lookupFormatKey.
+		return !asBytes
 	case KindUndefined:
 		// Undefined defines __getitem__, so it passes the subscript
 		// check and `"x" % nope` formats rather than complaining about
@@ -425,6 +427,17 @@ func (c *conversion) bytesArg(v Value) (formatted, error) {
 	return formatted{body: c.truncate(v.str)}, nil
 }
 
+// errPercentCBytes is errPercentC for a bytes format, which has a message of its
+// own -- and 3.14 appended the type to both of them, not just the str one.
+func (c *conversion) errPercentCBytes(what string) error {
+	if c.py.PercentCNamesTheType() {
+		return errs.New(errs.TypeError,
+			"%%c requires an integer in range(256) or a single byte, not %s", what)
+	}
+	return errs.New(errs.TypeError,
+		"%%c requires an integer in range(256) or a single byte")
+}
+
 func (c *conversion) errPercentC(v Value, what string) error {
 	if c.py.PercentCNamesTheType() {
 		return errs.New(errs.TypeError,
@@ -532,14 +545,12 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 			// A byte, or a code point that fits in one.
 			if v.kind == KindBytes {
 				if len(v.str) != 1 {
-					return formatted{}, errs.New(errs.TypeError,
-						"%%c requires an integer in range(256) or a single byte")
+					return formatted{}, c.errPercentCBytes(v.TypeName())
 				}
 				return formatted{body: text(v.str)}, nil
 			}
 			if !v.IsInteger() {
-				return formatted{}, errs.New(errs.TypeError,
-					"%%c requires an integer in range(256) or a single byte")
+				return formatted{}, c.errPercentCBytes(v.TypeName())
 			}
 			n, ok := v.Int64()
 			if !ok || n < 0 || n > 255 {

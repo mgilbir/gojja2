@@ -723,6 +723,47 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# `%` decides between "a mapping" and "one positional argument" by asking whether
+# the right operand supports subscripting, and the exceptions are the format's
+# *own* type: PyUnicode_Format names tuple and str, PyBytes_Format names tuple,
+# bytes and bytearray. So a bytes counts as a mapping when a str is formatted --
+# `"0" % b""` renders "0" -- and does not when a bytes is, where `b"0" % b""` is
+# "not all arguments converted". Only the str half was implemented, so a leftover
+# bytes argument was silently dropped.
+for _n, _src in [
+    ("bytes_format_bytes_arg", "{% set b = 'a'.encode() %}{{ b % b }}"),
+    ("bytes_format_leftover", "{% set b = '0'.encode() %}{% set e = ''.encode() %}{{ b % e }}"),
+    ("bytes_format_str_arg", "{% set b = 'a'.encode() %}{% set s = 'a' %}{{ b % s }}"),
+    ("str_format_bytes_arg", "{% set s = 'a' %}{% set b = 'a'.encode() %}{{ s % b }}"),
+    ("str_format_bytes_arg_used", "{% set s = '0' %}{% set e = ''.encode() %}{{ s % e }}"),
+    ("bytes_format_list_arg", "{% set b = '0'.encode() %}{% set l = [] %}{{ b % l }}"),
+    ("bytes_format_consumed", "{% set b = '%s'.encode() %}{% set e = ''.encode() %}{{ b % e }}"),
+    ("bytes_format_named_key",
+     "{% set b = '%(k)s'.encode() %}{% set d = {'k': 'v'.encode()} %}{{ b % d }}"),
+    ("str_format_leftover", "{% set s = 'a' %}{% set t = 'b' %}{{ s % t }}"),
+]:
+    case(f"format/percent_{_n}", _src)
+# The printf refusals the audit listed, which already agreed.
+for _n, _src in [
+    ("mapping_required", "{% set s = '%(a)s' %}{% set n = 1 %}{{ s % n }}"),
+    ("missing_key", "{% set s = '%(a)s' %}{% set d = {'b': 1} %}{{ s % d }}"),
+    ("incomplete", "{% set s = '%' %}{% set n = 1 %}{{ s % n }}"),
+    ("incomplete_key", "{% set s = '%(a' %}{% set d = {'a': 1} %}{{ s % d }}"),
+    ("incomplete_after_key", "{% set s = '%(a)' %}{% set d = {'a': 1} %}{{ s % d }}"),
+    ("not_enough_arguments", "{% set s = '%s%s' %}{% set l = [1] %}{{ s % l }}"),
+    ("star_wants_int", "{% set s = '%*s' %}{% set l = ['a', 'b'] %}{{ s % l }}"),
+    ("star_precision_wants_int", "{% set s = '%.*f' %}{% set l = ['a', 1.5] %}{{ s % l }}"),
+    ("c_requires_int_or_char", "{% set s = '%c' %}{% set l = ['ab'] %}{{ s % l }}"),
+    ("d_requires_a_number", "{% set s = '%d' %}{% set l = [] %}{{ s % l }}"),
+    ("bytes_key_in_a_list", "{% set s = '%(0)s' %}{% set l = [1] %}{{ s % l }}"),
+    ("bytes_missing_key",
+     "{% set b = '%(a)s'.encode() %}{% set d = {'b': 1} %}{{ b % d }}"),
+    ("bytes_c_out_of_range", "{% set b = '%c'.encode() %}{% set l = [300] %}{{ b % l }}"),
+    ("bytes_c_two_bytes",
+     "{% set b = '%c'.encode() %}{% set l = ['ab'.encode()] %}{{ b % l }}"),
+]:
+    case(f"format/percent_error_{_n}", _src)
+
 # A `[` in a replacement field's *name* opens an index that runs to the next `]`
 # and may hold anything: `{0[a}b]}` is the key "a}b". Scanning for `}` alone made
 # that a parse error and made `{0[x}` a *lookup* of "x" instead of the

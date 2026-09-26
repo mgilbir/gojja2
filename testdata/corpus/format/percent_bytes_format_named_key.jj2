@@ -1,0 +1,3 @@
+{}
+---
+{% set b = '%(k)s'.encode() %}{% set d = {'k': 'v'.encode()} %}{{ b % d }}

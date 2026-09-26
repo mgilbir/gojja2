@@ -256,7 +256,10 @@ func (v PythonVersion) IndexMessageIsGeneric() bool { return v.AtLeast(Python314
 // PercentCNamesTheType reports whether %c against the wrong type names it.
 //
 // 3.14 turned "%c requires int or char" into "%c requires an int or a unicode
-// character, not float". Corpus: errors/percent_c_type, errors/markup_percent_c.
+// character, not float", and did the same to the bytes wording -- "%c requires
+// an integer in range(256) or a single byte" gains ", not list". Only the str
+// half was version-split. Corpus: errors/percent_c_type, errors/markup_percent_c,
+// format/percent_error_bytes_c_two_bytes.
 func (v PythonVersion) PercentCNamesTheType() bool { return v.AtLeast(Python314) }
 
 // UnifiedDivisionByZero reports whether every division by zero carries the same
