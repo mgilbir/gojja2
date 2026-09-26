@@ -118,6 +118,14 @@ func (v *dictView) Iterate() iter.Seq[value.Value] {
 	}
 }
 
+// HashesItems reports that a keys view answers by looking its item up, so an
+// unhashable one is a TypeError rather than a miss. Contains has no error
+// channel, which is why this is a question the caller asks first.
+//
+// Only a keys view: `{{ [1] in d.items() }}` and `{{ [1] in d.values() }}`
+// compare element by element and answer False, as CPython does.
+func (v *dictView) HashesItems() bool { return v.kind == viewKeys }
+
 func (v *dictView) Contains(item value.Value) (found, known bool) {
 	// A keys view answers by lookup rather than by scanning, which is what
 	// makes `k in d.keys()` cost what `k in d` costs.

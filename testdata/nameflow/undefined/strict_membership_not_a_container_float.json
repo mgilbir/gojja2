@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_membership_not_a_container_float.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

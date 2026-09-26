@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{{ [1] in d.items() }}|{{ [1] in d.values() }}|{{ 'a' in d.keys() }}

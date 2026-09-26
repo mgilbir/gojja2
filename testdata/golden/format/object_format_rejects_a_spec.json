@@ -1,0 +1,14 @@
+{
+  "case": "format/object_format_rejects_a_spec.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "unsupported format string passed to dict.__format__"
+  }
+}

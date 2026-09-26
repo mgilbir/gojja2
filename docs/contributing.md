@@ -284,7 +284,7 @@ ever produced?**
 
 It runs the corpus under coverage on every interpreter, intersects the blocks
 that never executed with the lines that build an error, and counts what is left.
-Today that is **156 of 410**.
+Today that is **145 of 412**.
 
 A message nothing produces is not evidence of anything -- it has never been
 compared to CPython. It is worse than untested: it reads as *agreement in every
@@ -312,6 +312,22 @@ A site on the list is one of three things, and telling them apart is the work:
 
 The count moving *up* is not automatically bad -- a new refusal starts ungraded
 -- but it should move back down before the change lands.
+
+A second pass over it (157 down to 145) found one bug and one thing worth
+recording. The bug: **an integer too wide for a float64 answered an infinity**
+where Python raises `OverflowError`. `//`, `%` and `**` went through the checked
+coercion and were right, which is exactly what made `+`, `-`, `*`, `/`, `|float`,
+`|filesizeformat`, `|sum` and both format paths look deliberate. Everything else
+on the list already agreed, and what was missing was a case saying so -- which is
+the point of the audit.
+
+The thing worth recording is a fourth category, beside the three above:
+**ungradable through CPython.** `float.as_integer_ratio()` on an infinity cannot
+be reached by any template CPython will run, because every route to an infinity
+goes through a folded constant and its code generator writes one out as `inf` --
+not a Python name. Two sites are on the list permanently for that reason, and it
+is written down in `gen_corpus.py` beside them so the next pass does not chase
+them again.
 
 `make soak-syntax` asks the same three questions of templates nobody chose, and
 then asks the engine whether the answers are true. Where the analysis says a

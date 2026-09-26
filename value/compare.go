@@ -418,6 +418,18 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 	// container reaches the item through a comparison, and that is where
 	// the refusal comes from -- which is why this is two cases and not a
 	// rule about undefineds.
+	if !searchable(container) {
+		return false, notAContainer(container, py)
+	}
+	// A set-like view looks its item up rather than scanning it, so it
+	// hashes it -- and an unhashable item is a TypeError there, not a miss.
+	// Contains has no error channel, so the question is asked here:
+	// `{{ [1] in d.keys() }}` answered False.
+	if h, ok := container.obj.(interface{ HashesItems() bool }); ok && h.HashesItems() {
+		if err := CheckHashable(item, py, AsDictKey); err != nil {
+			return false, err
+		}
+	}
 	switch {
 	case container.kind == KindString && item.kind != KindString:
 		return false, errs.New(errs.TypeError,
@@ -511,11 +523,35 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 			return false, nil
 		}
 	}
+	return false, notAContainer(container, py)
+}
+
+// notAContainer words `x in y` for a y that cannot be searched.
+func notAContainer(container Value, py PythonVersion) error {
 	if py.ContainerMessageIsLonger() {
-		return false, errs.New(errs.TypeError,
+		return errs.New(errs.TypeError,
 			"argument of type '%s' is not a container or iterable", container.TypeName())
 	}
-	return false, errs.New(errs.TypeError, "argument of type '%s' is not iterable", container.TypeName())
+	return errs.New(errs.TypeError,
+		"argument of type '%s' is not iterable", container.TypeName())
+}
+
+// searchable reports whether `x in container` has anywhere to look. It mirrors
+// the switch above, and exists because the answer is needed *before* the item is
+// examined: Python asks the container for a `__contains__` before it looks at
+// what is being searched for, so `{{ nope in 1.5 }}` is "argument of type
+// 'float' is not iterable" and not the undefined's own refusal.
+func searchable(container Value) bool {
+	switch container.kind {
+	case KindString, KindBytes, KindList, KindTuple, KindDict, KindUndefined:
+		return true
+	case KindObject:
+		switch container.obj.(type) {
+		case Container, Mapping, Sequence, Iterable:
+			return true
+		}
+	}
+	return false
 }
 
 // errTypeNotIterable is the error Python raises for `for x in <non-iterable>`.

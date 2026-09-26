@@ -660,10 +660,12 @@ func (c *conversion) integerDigits(v Value, base int, allowFloat bool) (string, 
 
 // floatBody renders a float conversion, in Python's spelling.
 func (c *conversion) floatBody(v Value) (formatted, error) {
-	f, ok := v.Float64()
-	if !ok {
-		return formatted{}, errs.New(errs.TypeError,
-			"must be real number, not %s", v.TypeName())
+	f, err := floatOperand(v)
+	if err != nil {
+		// Both halves come from floatOperand: "must be real number" for
+		// something that is not one, and the OverflowError for an
+		// integer too wide for a float64, which `%f` printed as "inf".
+		return formatted{}, err
 	}
 	negative := math.Signbit(f)
 	sign := c.sign(negative)

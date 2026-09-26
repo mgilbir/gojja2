@@ -36,6 +36,7 @@ are safety controls rather than behavioural choices, and they live in
 | [Lazy sequence filters](#lazy-sequence-filters) | sequence filters return lists, not generators | **Yes** -- and toward what the author meant |
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
 | [Which of two folded refusals is named](#which-of-two-folded-refusals-is-named) | both refuse the template; they name different expressions | No -- same error, different expression named |
+| [A folded infinity jinja2 writes out](#a-folded-infinity-jinja2-writes-out) | renders the number; jinja2 raises `NameError: name 'inf' is not defined` | No -- it renders where CPython cannot |
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
@@ -828,6 +829,31 @@ Five filters reach the second of those -- `dictsort`, `xmlattr`, `wordwrap`,
 subject the template generator writes and every accessor it can follow one with
 found the generic alias above and nothing else.
 
+### A folded infinity jinja2 writes out
+
+jinja2's optimizer folds a constant and its code generator writes the result
+into the generated Python **as its repr**. A float infinity reprs as `inf`,
+which is not a Python name, so the module raises as soon as that line runs:
+
+```jinja
+{% set v = 'inf'|float %}{{ v }}
+{{ x|default('inf'|float) }}
+```
+
+Both raise `NameError: name 'inf' is not defined` on CPython at render. gojja2
+answers `inf`.
+
+It depends on where the constant lands, not on the value: `{{ 'inf'|float }}`,
+`{{ ('inf'|float) + 1 }}` and `{{ 1e400 }}` all print `inf` on both sides,
+because a print puts the value in the module's constant table rather than
+writing it as source. A `{% set %}` and a filter's default argument are written
+out. `nan` does the same thing for the same reason.
+
+This is one of the few places gojja2 renders where CPython cannot, so it is
+listed in `testdata/known_failures.txt` rather than fixed: reproducing it would
+mean refusing a number a template legitimately computed, to match a limitation
+of the other implementation's code generator.
+
 ### Which of two folded refusals is named
 
 Under `StrictUndefined` a folded lookup becomes a strict undefined, and asking
@@ -875,9 +901,22 @@ about whether a template compiles -- `TestSyntaxMatchesTheReference` says so
 directly, which is how this one was caught. Only the printed form, which both
 sides accept, is graded.
 
-Both are the same thing:
+A third shape has the same root and a different symptom. gojja2 folds a slice
+and jinja2 does not, so an expression jinja2 leaves for the render can be
+resolved here:
+
+```jinja
+{{ ({'a': 1})[1:2] ~ x }}
+```
+
+CPython raises `KeyError: slice(1, 2, None)` -- its code generator writes a
+slice as native Python, which does not swallow -- and gojja2 answers the
+undefined its fold produced. `{{ ({'a': 1})[1:2] }}` alone agrees, because
+there jinja2 folds through the lookup that swallows.
+
+All three are the same thing:
 the two optimizers reach a conditional chain's branches at different depths and
-in a different order. `make soak` can surface either; between them they came up
+in a different order, and disagree about whether a slice folds at all. `make soak` can surface either; between them they came up
 twice in 45,000 generated templates. Fixing them properly means reproducing
 jinja2's traversal, which is a change to how this optimizer walks rather than to
 what it folds -- its own change, with its own soak.

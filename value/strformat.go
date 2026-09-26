@@ -282,7 +282,13 @@ func (f formatSpec) formatString(v Value) (string, bool, error) {
 func (f formatSpec) formatInt(b *big.Int, v Value) (string, error) {
 	switch f.typ {
 	case 'e', 'E', 'f', 'F', 'g', 'G', '%':
-		x, _ := new(big.Float).SetInt(b).Float64()
+		// A float code converts the integer first, and an integer too
+		// wide for a float64 is an OverflowError rather than an
+		// infinity -- `{{ '{:f}'.format(10 ** 400) }}` printed "inf".
+		x, err := floatOperand(v)
+		if err != nil {
+			return "", err
+		}
 		return f.formatFloat(x, v)
 	}
 	base, prefix := 10, ""

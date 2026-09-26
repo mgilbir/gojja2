@@ -209,8 +209,14 @@ func Add(a, b Value, budget Budget) (Value, error) {
 	switch {
 	case bothNumbers(a, b):
 		if eitherFloat(a, b) {
-			x, _ := a.Float64()
-			y, _ := b.Float64()
+			x, err := floatOperand(a)
+			if err != nil {
+				return Undefined, err
+			}
+			y, err := floatOperand(b)
+			if err != nil {
+				return Undefined, err
+			}
 			return Float(x + y), nil
 		}
 		x, xok := a.Int64()
@@ -315,8 +321,14 @@ func Sub(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 		return Undefined, binTypeError("-", a, b)
 	}
 	if eitherFloat(a, b) {
-		x, _ := a.Float64()
-		y, _ := b.Float64()
+		x, err := floatOperand(a)
+		if err != nil {
+			return Undefined, err
+		}
+		y, err := floatOperand(b)
+		if err != nil {
+			return Undefined, err
+		}
 		return Float(x - y), nil
 	}
 	x, xok := a.Int64()
@@ -357,8 +369,14 @@ func Mul(a, b Value, budget Budget) (Value, error) {
 	}
 	if bothNumbers(a, b) {
 		if eitherFloat(a, b) {
-			x, _ := a.Float64()
-			y, _ := b.Float64()
+			x, err := floatOperand(a)
+			if err != nil {
+				return Undefined, err
+			}
+			y, err := floatOperand(b)
+			if err != nil {
+				return Undefined, err
+			}
 			return Float(x * y), nil
 		}
 		x, xok := a.Int64()
@@ -596,9 +614,27 @@ func repeat(v Value, n int64) (Value, error) {
 // operation. A wide integer that is outside float64's range cannot be
 // converted, which is an error in Python rather than an infinity.
 func floatOperand(v Value) (float64, error) {
+	if !v.IsNumber() {
+		return 0, errs.New(errs.TypeError, "must be real number, not %s", v.TypeName())
+	}
+	return FloatOrOverflow(v)
+}
+
+// FloatOrOverflow converts a number to float64, reporting the OverflowError
+// Python raises when a wide integer does not fit rather than answering an
+// infinity.
+//
+// It is exported because the sites that convert are not all operators: `|float`
+// answered inf for `{{ (10 ** 400)|float }}`, and so did `+`, `-`, `*`,
+// `|filesizeformat`, `|sum` over a mixed list and a `%f` format. `//`, `%` and
+// `**` went through floatOperand and were right, which is what made the rest
+// look deliberate. A value that is not a number answers (0, nil), since what to
+// say about that is the caller's: a filter has a default where an operator has
+// a message.
+func FloatOrOverflow(v Value) (float64, error) {
 	f, ok := v.Float64()
 	if !ok {
-		return 0, errs.New(errs.TypeError, "must be real number, not %s", v.TypeName())
+		return 0, nil
 	}
 	if math.IsInf(f, 0) && v.IsInteger() {
 		return 0, errs.New(errs.OverflowError, "int too large to convert to float")
@@ -679,6 +715,12 @@ func Div(a, b Value, py PythonVersion) (Value, error) {
 			return Float(math.Copysign(0, float64(by.Sign()))), nil
 		}
 		q, _ := new(big.Rat).SetFrac(bx, by).Float64()
+		if math.IsInf(q, 0) {
+			// Python words this one after the division rather than
+			// after the operand: the quotient is what does not fit.
+			return Undefined, errs.New(errs.OverflowError,
+				"integer division result too large for a float")
+		}
 		return Float(q), nil
 	}
 	x, err := floatOperand(a)

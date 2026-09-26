@@ -2541,7 +2541,15 @@ func filterFloat(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 	if !hasDef {
 		def = value.Float(0)
 	}
-	if f, ok := v.Float64(); ok {
+	if v.IsNumber() {
+		// do_float catches TypeError and ValueError and answers the
+		// default; float() of a wide integer raises OverflowError,
+		// which it does not catch. This answered an infinity instead,
+		// and the default made it look deliberate.
+		f, err := value.FloatOrOverflow(v)
+		if err != nil {
+			return value.Undefined, err
+		}
 		return value.Float(f), nil
 	}
 	if text, ok := numericText(v); ok {
@@ -2854,8 +2862,13 @@ func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.
 	if err != nil {
 		return value.Undefined, err
 	}
-	bytes, ok := v.Float64()
-	if !ok {
+	bytes, ferr := value.FloatOrOverflow(v)
+	if ferr != nil {
+		// jinja2 calls float(value), and float() of a wide integer is
+		// an OverflowError it does not catch.
+		return value.Undefined, ferr
+	}
+	if ok := v.IsNumber(); !ok {
 		// jinja2 calls float(value), so the failure is float()'s -- and
 		// float() takes a bytes as readily as a str.
 		text, textual := numericText(v)
