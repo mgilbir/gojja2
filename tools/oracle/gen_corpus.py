@@ -906,17 +906,21 @@ case("membership/wrong_left_operand",
 # purpose -- gojja2's run-time slice raises where jinja2's getitem swallows, so
 # the fold is what makes `((2.5)[1:2])[0]` chain under a ChainableUndefined.
 # Both refuse the template; only which expression is named differs.
-case("divergence/strict_fold_which_refusal_is_named",
-     "{{ (3)[1] or True if (True)|attr('name') else 1.5 }}",
-     __settings__={"undefined": "strict"})
-# The other shape -- where the refusal sits in a branch the chain never takes --
-# cannot be a case at all: gojja2 compiles it and CPython does not, and the
-# suite requires both sides to agree about whether a template compiles.
-# TestSyntaxMatchesTheReference says so directly. Only the half that *does*
-# compile on both is gradable.
-case("undefined/strict_fold_untaken_branch_in_print",
-     "{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}",
-     __settings__={"undefined": "strict"})
+# Which of two refusals in one expression is named, and whether a refusal in a
+# branch the chain never takes is reached at all. Both were divergences until the
+# fold walked the way jinja2's optimizer does -- children before the node, with a
+# printed expression tried top-down first and any refusal there discarded. A
+# print and a {% set %} of the *same* expression differ on purpose, which is the
+# pair below.
+for _n, _src in [
+    ("which_refusal_is_named", "{{ (3)[1] or True if (True)|attr('name') else 1.5 }}"),
+    ("untaken_branch_in_set",
+     "{% set v = 1 if [1] else (3 if (0b101)[::2] else 4) %}{{ v }}"),
+    ("untaken_branch_in_with",
+     "{% with w = 1 if [1] else (3 if (0b101)[::2] else 4) %}{% endwith %}"),
+    ("untaken_branch_in_print", "{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}"),
+]:
+    case(f"undefined/strict_fold_{_n}", _src, __settings__={"undefined": "strict"})
 
 # Unpacking asks the value to iterate, and a StrictUndefined's refusal names the
 # undefined. Both unpack sites answered "cannot unpack non-iterable

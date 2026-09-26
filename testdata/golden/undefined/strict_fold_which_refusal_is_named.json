@@ -1,5 +1,5 @@
 {
-  "case": "divergence/strict_fold_which_refusal_is_named.jj2",
+  "case": "undefined/strict_fold_which_refusal_is_named.jj2",
   "oracle": {
     "impl": "cpython-jinja2",
     "version": "3.1.6",

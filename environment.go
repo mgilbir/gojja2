@@ -878,12 +878,18 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	if terr != nil {
 		return nil, terr
 	}
-	// Order matters: the general fold runs first, as jinja2's optimizer
-	// does, and the print-specific one then catches the undefined results
-	// the optimizer refuses to turn into constants.
+	// Order matters, and it is jinja2's: a printed expression is tried as a
+	// constant *first*, with any failure deferring it to the render, and the
+	// general fold only ever sees what that left behind. jinja2 spells it as
+	// two different things -- `_output_child_to_const` catches every
+	// exception, while the optimizer is re-run from each decorated visit_
+	// method and catches only Impossible -- so a print that folds cleanly is
+	// never handed to the optimizer at all. That is why
+	// `{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}` prints 1 while the same
+	// expression in a {% set %} does not compile.
 	folder := newConstEvaluator(e, name, fromString)
-	foldConstantExpressions(folder, tree.Body)
 	foldConstantPrints(folder, tree.Body)
+	foldConstantExpressions(folder, tree.Body)
 	// A fold that asked a StrictUndefined for its truthiness or its text
 	// got an error, and jinja2 lets that error out of from_string rather
 	// than leaving the expression for the render. So does this: the

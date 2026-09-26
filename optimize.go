@@ -42,7 +42,19 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			if _, isData := node.(*ast.TemplateData); isData {
 				continue
 			}
+			// jinja2's _output_child_to_const says it in its own
+			// docstring: "Any other exception will also be
+			// evaluated at runtime for easier debugging." Only
+			// Impossible means "not constant" there; anything else
+			// defers the child. So a refusal recorded here is
+			// discarded, and the general fold below -- which walks
+			// bottom-up, as the optimizer does -- is what decides
+			// whether the template compiles. Without this the print
+			// pass named the outer test where CPython names the
+			// operand inside the branch.
+			refusalBefore := c.refusal
 			v, ok := c.tryConstEval(node)
+			c.refusal = refusalBefore
 			if !ok {
 				continue
 			}
@@ -202,12 +214,19 @@ func (f *constFolder) fold(e ast.Expr) ast.Expr {
 		// exactly as jinja2 skips its optimizer there.
 		return e
 	}
+	// Children first, which is what jinja2's optimizer does -- its
+	// generic_visit calls NodeTransformer.generic_visit before it tries
+	// as_const on the node itself. The folded *result* is the same either
+	// way, because folding is deterministic; what differs is which refusal
+	// is reached. Top-down, an untaken branch is never evaluated, so
+	// `{% set v = 1 if [1] else (3 if (0b101)[::2] else 4) %}` folded to 1
+	// here and did not compile there.
+	f.descend(e)
 	if _, isConst := e.(*ast.Const); !isConst {
 		if v, ok := f.c.tryConstEval(e); ok && foldable(v) && constSizeOK(v) {
 			return &ast.Const{Pos: ast.At(e.Line()), Value: v}
 		}
 	}
-	f.descend(e)
 	return liftNegativePowerBase(e)
 }
 
@@ -1207,7 +1226,17 @@ func walkOutputs(c *constEvaluator, body []ast.Stmt, fn func(*ast.Output, bool))
 		for _, stmt := range body {
 			switch n := stmt.(type) {
 			case *ast.Output:
+				// The escaping in force is not only what the
+				// folded text is escaped *with* -- it is what
+				// the fold itself runs under, because five
+				// filters read it. The general fold sets it from
+				// its own walk; this one has to as well, and did
+				// not need to while it ran second over a tree
+				// that pass had already folded.
+				saved := c.st.autoescape
+				c.st.autoescape = escaping
 				fn(n, escaping)
+				c.st.autoescape = saved
 			case *ast.For:
 				walk(n.Body, escaping)
 				walk(n.Else, escaping)

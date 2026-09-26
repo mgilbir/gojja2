@@ -35,7 +35,6 @@ are safety controls rather than behavioural choices, and they live in
 |---|---|---|
 | [Lazy sequence filters](#lazy-sequence-filters) | sequence filters return lists, not generators | **Yes** -- and toward what the author meant |
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
-| [Which of two folded refusals is named](#which-of-two-folded-refusals-is-named) | both refuse the template; they name different expressions | No -- same error, different expression named |
 | [A folded infinity jinja2 writes out](#a-folded-infinity-jinja2-writes-out) | renders the number; jinja2 raises `NameError: name 'inf' is not defined` | No -- it renders where CPython cannot |
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
@@ -854,60 +853,30 @@ listed in `testdata/known_failures.txt` rather than fixed: reproducing it would
 mean refusing a number a template legitimately computed, to match a limitation
 of the other implementation's code generator.
 
-### Which of two folded refusals is named
+### A folded infinity jinja2 writes out
 
-Under `StrictUndefined` a folded lookup becomes a strict undefined, and asking
-one for its truthiness or its text raises *while folding*. Both engines let that
-error out of compilation rather than leaving the expression for the render, so
-neither template compiles. When an expression holds two such refusals they can
-name different ones:
+jinja2's optimizer folds a constant and its code generator writes the result
+into the generated Python **as its repr**. A float infinity reprs as `inf`,
+which is not a Python name, so the module raises as soon as that line runs:
 
 ```jinja
-{{ (3)[1] or True if (True)|attr('name') else 1.5 }}
+{% set v = 'inf'|float %}{{ v }}
+{{ x|default('inf'|float) }}
 ```
 
-jinja2 names `int object has no element 1` -- the `or` inside the branch -- and
-gojja2 names `'bool object' has no attribute 'name'`, the conditional's test.
+Both raise `NameError: name 'inf' is not defined` on CPython at render. gojja2
+answers `inf`.
 
-jinja2's optimizer folds bottom-up: it transforms a node's children before it
-tries the node, so the `or` is folded, and raises, before the conditional above
-it is ever asked. This folds top-down, tries the whole expression first and only
-descends when it will not fold, so the conditional's test is asked first.
+It depends on where the constant lands, not on the value: `{{ 'inf'|float }}`,
+`{{ ('inf'|float) + 1 }}` and `{{ 1e400 }}` all print `inf` on both sides,
+because a print puts the value in the module's constant table rather than
+writing it as source. A `{% set %}` and a filter's default argument are written
+out. `nan` does the same thing for the same reason.
 
-Matching it means reproducing where jinja2's optimizer reaches, which is a
-change to how this one walks rather than to what it folds. Both engines fold a
-slice, and both swallow the failure into an undefined when they do -- which is
-why `{{ ({'a': 1})[1:2] }}` renders nothing on both sides while
-`{% set x = 'y' %}{{ ({'a': 1})[1:2] ~ x }}` raises `KeyError` on both: there
-the enclosing expression does not fold, and jinja2's code generator writes a
-slice as native Python, which does not swallow. gojja2's run-time slice matches
-that.
-
-The same disagreement has a second shape, and there it decides whether the
-template compiles at all rather than which expression is named:
-
-```jinja
-{% set v = 1 if [1] else (3 if (0b101)[::2] else 4) %}{{ v }}
-```
-
-jinja2 refuses it; gojja2 renders `1`. The refusal sits in a branch the chain
-never takes, and only one side folds its way into it. A *print* of the identical
-expression agrees -- `{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}` renders `1`
-on both -- so what differs is where the expression sits, not the expression.
-
-The first is recorded in `testdata/known_failures.txt`. The second cannot be a
-corpus case at all, and that is structural rather than an omission: gojja2
-compiles it and CPython does not, and the suite requires both sides to agree
-about whether a template compiles -- `TestSyntaxMatchesTheReference` says so
-directly, which is how this one was caught. Only the printed form, which both
-sides accept, is graded.
-
-Both are the same thing:
-the two optimizers reach a conditional chain's branches at different depths and
-in a different order. `make soak` can surface either; between them they came up
-twice in 45,000 generated templates. Fixing them properly means reproducing
-jinja2's traversal, which is a change to how this optimizer walks rather than to
-what it folds -- its own change, with its own soak.
+This is one of the few places gojja2 renders where CPython cannot, so it is
+listed in `testdata/known_failures.txt` rather than fixed: reproducing it would
+mean refusing a number a template legitimately computed, to match a limitation
+of the other implementation's code generator.
 
 ### Which line an error inside a multi-line tag names
 

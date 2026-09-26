@@ -130,11 +130,18 @@ own/divergence/folded_infinity_in_a_set.jj2
 own/divergence/folded_infinity_in_a_filter_default.jj2
 own/divergence/folded_infinity_nan_in_a_set.jj2
 
+# --- a folded infinity in a position jinja2 writes out ---
+# jinja2 writes a folded constant into the generated Python as its repr, and a
+# float infinity reprs as `inf`, which is not a Python name. gojja2 answers the
+# number; CPython raises NameError at render. It accepts what CPython cannot run.
+own/divergence/folded_infinity_in_a_set.jj2
+own/divergence/folded_infinity_in_a_filter_default.jj2
+own/divergence/folded_infinity_nan_in_a_set.jj2
+
 # --- which of two folded refusals is named ---
 # jinja2's optimizer folds bottom-up, so a refusal inside a conditional's branch
 # raises before its test is asked; this folds top-down. Both refuse the template
 # at compile time and name the same kind of error, over a different expression.
-own/divergence/strict_fold_which_refusal_is_named.jj2
 
 # --- a type object's dunders ---
 # A class's methods are implemented; its dunders are not, because gojja2 exposes
