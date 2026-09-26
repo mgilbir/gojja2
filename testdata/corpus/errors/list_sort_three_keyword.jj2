@@ -1,0 +1,3 @@
+{}
+---
+{% set l = [2,1] %}{{ l.sort(nope=1, nope2=2, nope3=3) }}

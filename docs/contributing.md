@@ -276,6 +276,34 @@ on the next run: an `atexit` hook alone cannot answer the kernel's own killer,
 and twice it left a mutated file behind. `make mutate ARGS=--budget` runs this
 half alone, `ARGS=--analysis` the other.
 
+### A generated table needs a guard that it is still complete
+
+`method_arity.go` is generated from CPython, and it is the only thing that
+refuses a method call of the wrong shape -- the bodies do not duplicate that
+check. So a method missing from the table has no arity check at all, and nothing
+said so, because the tool that writes the table reads the method maps as *text*.
+
+`list.sort` is registered in `init()` rather than in the map literal (naming it
+there is an initialisation cycle: it calls back into the evaluator), so the
+generator has never seen it and `[2,1].sort(1, 2, 3)` was unchecked.
+`TestEveryMethodHasASignature` iterates the maps at *run time* and asserts each
+method has a signature, which is exactly the gap a text-parsing generator cannot
+see. It found that one immediately.
+
+Its wording could not have been generated either: CPython counts every argument
+first, says "arguments" when any was positional and "keyword arguments" when none
+was, and none of those messages carries a count where the generator looks for
+one. So sort is checked by hand and listed in the test's allowlist with that
+reason.
+
+A related finding was recorded rather than acted on. Seventeen arity refusals in
+`methods.go` are unreachable -- `checkMethodArity` runs first, and neutering all
+seventeen produced nothing across the suite and a 12,000-template soak. They are
+*not* dead code to delete: each guards a `arg(args, 0, ...)` lookup that would
+otherwise leave a value unset, so removing one replaces an error with undefined
+behaviour. They stay, as belt-and-braces over a rule enforced elsewhere -- the
+same call as the open `frames.go` survivor above.
+
 ## Messages nothing has ever compared
 
 `make mutate` asks what the suite fails to constrain. `make ungraded` asks a
@@ -284,7 +312,7 @@ ever produced?**
 
 It runs the corpus under coverage on every interpreter, intersects the blocks
 that never executed with the lines that build an error, and counts what is left.
-Today that is **125 of 414**.
+Today that is **124 of 416**.
 
 A message nothing produces is not evidence of anything -- it has never been
 compared to CPython. It is worse than untested: it reads as *agreement in every

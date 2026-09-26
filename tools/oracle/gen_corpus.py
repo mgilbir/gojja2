@@ -723,6 +723,31 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# list.sort's call shape was not checked at all, and the reason is mechanical:
+# gen_methods.py reads the method maps as *text*, and sort is registered in
+# init() because naming it in the literal is an initialisation cycle. So the
+# generated table has never had an entry for it. CPython counts every argument
+# first, saying "arguments" when any was positional and "keyword arguments" when
+# none was, then refuses a positional at all, then an unknown name -- and none of
+# those messages carries a count where the generator looks for one, so it is
+# checked by hand. TestEveryMethodHasASignature is what found this and what will
+# find the next one.
+for _n, _src in [
+    ("one_positional", "{% set l = [2,1] %}{{ l.sort(1) }}"),
+    ("two_positional", "{% set l = [2,1] %}{{ l.sort(1, 2) }}"),
+    ("three_positional", "{% set l = [2,1] %}{{ l.sort(1, 2, 3) }}"),
+    ("three_keyword", "{% set l = [2,1] %}{{ l.sort(nope=1, nope2=2, nope3=3) }}"),
+    ("mixed_over_the_count", "{% set l = [2,1] %}{{ l.sort(1, key=none, reverse=true) }}"),
+    ("positional_with_keyword", "{% set l = [2,1] %}{{ l.sort(1, nope=2) }}"),
+    ("unknown_keyword", "{% set l = [2,1] %}{{ l.sort(nope=1) }}"),
+    ("known_keywords_still_sort",
+     "{% set l = [2,1] %}{{ l.sort(key=none, reverse=true) }}{{ l }}"),
+]:
+    case(f"errors/list_sort_{_n}", _src)
+# The IndexError beside it, which the same audit listed and which is real rather
+# than shadowed.
+case("errors/list_pop_out_of_range", "{% set l = [1] %}{{ l.pop(9) }}")
+
 # A fourth batch from the same audit, and every one of them already agreed: what
 # was missing was a case saying so. Written through names, for the reason the
 # batch above gives.

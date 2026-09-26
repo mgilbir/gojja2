@@ -2245,6 +2245,26 @@ func methodTupleIndex(s *State, r value.Value, args *value.CallArgs) (value.Valu
 // methodListSort is list.sort: in place, returning None. Its arguments are
 // keyword-only, so a positional one is refused rather than taken for `key`.
 func methodListSort(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	// list.sort is the one method whose call shape is checked here rather
+	// than by the generated table, and the reason is mechanical:
+	// gen_methods.py reads the method maps as *text*, and sort is registered
+	// in init() because naming it in the literal is an initialisation cycle
+	// -- it calls back into the evaluator. So the generator has never seen
+	// it, and nothing checked the shape of a call to it at all.
+	//
+	// The wording could not be generated either. CPython counts every
+	// argument first, and says "arguments" when any of them was positional
+	// and "keyword arguments" when none was; only then does it refuse a
+	// positional at all, and only then an unknown name. None of those
+	// messages carries a count in the place the generator reads one.
+	if n := len(args.Pos) + len(args.Kwargs); n > 2 {
+		if len(args.Pos) > 0 {
+			return value.Undefined, errs.New(errs.TypeError,
+				"sort() takes at most 2 arguments (%d given)", n)
+		}
+		return value.Undefined, errs.New(errs.TypeError,
+			"sort() takes at most 2 keyword arguments (%d given)", n)
+	}
 	if len(args.Pos) > 0 {
 		return value.Undefined, errs.New(errs.TypeError,
 			"sort() takes no positional arguments")
