@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_fold_volatile_condexpr.jj2",
+  "variables": {
+    "nil": "f"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% autoescape nil %}{{ ({'a': 1})[1:2] ~ 'x' }}{% endautoescape %}

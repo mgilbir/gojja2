@@ -794,6 +794,19 @@ type constEvaluator struct {
 // not compile under StrictUndefined while `{{ (0.0).a + 1 }}` compiles and
 // fails at render.
 func (c *constEvaluator) refuse(err error) (value.Value, bool) {
+	if c.volatile {
+		// Where the escaping is not yet known, a refusal does not
+		// escape: `{% autoescape nil %}{{ (0.0).a ~ 1 }}` fails at
+		// render on the undefined name in the tag, not at compile time
+		// on the concatenation. All four refusing folds behave that way
+		// -- jinja2's Concat.as_const checks the flag itself, because
+		// whether its result is Markup depends on the answer, and the
+		// other three are not reached there at all. Ordinary folding
+		// continues: `{% autoescape x %}{{ {'a': 1} }}` is still baked
+		// with the environment's setting, which escape/volatile_folds_
+		// constant grades.
+		return value.Undefined, false
+	}
 	if c.refusal == nil {
 		c.refusal = err
 	}

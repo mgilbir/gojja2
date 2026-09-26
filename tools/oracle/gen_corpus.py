@@ -970,6 +970,29 @@ for _n, _src, _esc in [
         _settings["autoescape"] = True
     case(f"undefined/strict_join_{_n}", _src, __settings__=_settings)
 
+# ...and none of those refusals escapes where the escaping is not yet known.
+# `{% autoescape nil %}` makes the context volatile, and there the template fails
+# at render on the undefined name in the tag rather than at compile time on the
+# expression inside it. jinja2's Concat.as_const checks the flag itself, because
+# whether its result is Markup depends on the answer; the other three are not
+# reached there at all. Ordinary folding continues -- escape/volatile_folds_
+# constant grades that -- so this is about the refusal and not about folding.
+for _n, _src in [
+    ("concat", "{% autoescape nil %}{{ (0.0).a ~ 1 }}{% endautoescape %}"),
+    ("or", "{% autoescape nil %}{{ (0.0).a or 0 }}{% endautoescape %}"),
+    ("and", "{% autoescape nil %}{{ (0.0).a and 1 }}{% endautoescape %}"),
+    ("condexpr", "{% autoescape nil %}{{ 1 if (0.0).a else 2 }}{% endautoescape %}"),
+    ("slice_through_concat",
+     "{% autoescape nil %}{{ ({'a': 1})[1:2] ~ 'x' }}{% endautoescape %}"),
+]:
+    case(f"undefined/strict_fold_volatile_{_n}", _src,
+         __settings__={"undefined": "strict"})
+# A *constant* autoescape argument is not volatile, so the refusal escapes there
+# exactly as it does outside a block.
+case("undefined/strict_fold_constant_autoescape",
+     "{% autoescape true %}{{ (0.0).a ~ 1 }}{% endautoescape %}",
+     __settings__={"undefined": "strict"})
+
 # Under StrictUndefined a folded lookup becomes a strict undefined, and asking
 # one for its truthiness or its text raises *while folding* -- at compile time,
 # before any of the template has run. jinja2 lets that error out of from_string

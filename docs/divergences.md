@@ -874,13 +874,14 @@ tries the node, so the `or` is folded, and raises, before the conditional above
 it is ever asked. This folds top-down, tries the whole expression first and only
 descends when it will not fold, so the conditional's test is asked first.
 
-Matching it would take jinja2's traversal *and* its refusal to fold a slice,
-because bottom-up alone changes `{{ 1 if 1 else (2 if (0b101)[::2] else 3) }}`
-from "1" to a refusal: jinja2 leaves that slice for the render, so its inner
-test is not constant and nothing raises. A slice *is* folded here, on purpose --
-gojja2's run-time slice raises where jinja2's `getitem` swallows, and the fold
-is what makes `{{ ((2.5)[1:2])[0] }}` chain under a `ChainableUndefined` rather
-than fail. The two differences cancel in every shape but this one.
+Matching it means reproducing where jinja2's optimizer reaches, which is a
+change to how this one walks rather than to what it folds. Both engines fold a
+slice, and both swallow the failure into an undefined when they do -- which is
+why `{{ ({'a': 1})[1:2] }}` renders nothing on both sides while
+`{% set x = 'y' %}{{ ({'a': 1})[1:2] ~ x }}` raises `KeyError` on both: there
+the enclosing expression does not fold, and jinja2's code generator writes a
+slice as native Python, which does not swallow. gojja2's run-time slice matches
+that.
 
 The same disagreement has a second shape, and there it decides whether the
 template compiles at all rather than which expression is named:
@@ -901,22 +902,9 @@ about whether a template compiles -- `TestSyntaxMatchesTheReference` says so
 directly, which is how this one was caught. Only the printed form, which both
 sides accept, is graded.
 
-A third shape has the same root and a different symptom. gojja2 folds a slice
-and jinja2 does not, so an expression jinja2 leaves for the render can be
-resolved here:
-
-```jinja
-{{ ({'a': 1})[1:2] ~ x }}
-```
-
-CPython raises `KeyError: slice(1, 2, None)` -- its code generator writes a
-slice as native Python, which does not swallow -- and gojja2 answers the
-undefined its fold produced. `{{ ({'a': 1})[1:2] }}` alone agrees, because
-there jinja2 folds through the lookup that swallows.
-
-All three are the same thing:
+Both are the same thing:
 the two optimizers reach a conditional chain's branches at different depths and
-in a different order, and disagree about whether a slice folds at all. `make soak` can surface either; between them they came up
+in a different order. `make soak` can surface either; between them they came up
 twice in 45,000 generated templates. Fixing them properly means reproducing
 jinja2's traversal, which is a change to how this optimizer walks rather than to
 what it folds -- its own change, with its own soak.
