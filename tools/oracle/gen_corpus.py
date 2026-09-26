@@ -723,6 +723,54 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# jinja2's _load_template checks for a loader before it looks at the name at all,
+# so an environment with no loader reports *itself* rather than an unhashable list
+# or an undefined name. A selection is the exception: select_template refuses an
+# empty list before it looks up any name, so `{% include [] %}` says so even with
+# no loader. gojja2 reported the name ahead of the loader in three of those.
+#
+# These cases have no __settings__, so they compile in the corpus environment,
+# which has a loader -- the no-loader half is in loader_test.go, since a corpus
+# case cannot ask for an environment without one.
+for _n, _src in [
+    ("extends_a_list", "{% set e = [1] %}{% extends e %}"),
+    ("extends_an_empty_list", "{% set e = [] %}{% extends e %}"),
+    ("extends_a_dict", "{% set d = {'a': 1} %}{% extends d %}"),
+    ("include_an_empty_list", "{% set e = [] %}{% include e %}"),
+    ("extends_an_undefined", "{% extends nope %}"),
+    ("include_an_undefined", "{% include nope %}"),
+    ("extends_a_number", "{% set n = 1 %}{% extends n %}"),
+]:
+    case(f"errors/template_name_{_n}", _src)
+
+# The last reachable cluster from the audit, all of it already in agreement. The
+# four filter-arity ones go through the *generated* filter table rather than the
+# hand-written refusal beneath it, which is the same shadowing the method table
+# does -- so those sites stay on the list and the cases grade jinja2's wording.
+for _n, _src in [
+    ("replace_missing_old", "{% set s = 'a' %}{{ s|replace(new='b') }}"),
+    ("replace_missing_new", "{% set s = 'a' %}{{ s|replace(old='a') }}"),
+    ("attr_missing_name_splatted", "{% set d = {'a': 1} %}{{ d|attr(**{}) }}"),
+    ("groupby_missing_attribute", "{% set l = [1] %}{{ l|groupby() }}"),
+    # A Cycler keeps its rotation in an attribute named `items`, so a filter
+    # that calls one finds a tuple and fails trying to call it.
+    ("cycler_through_dictsort", "{% set c = cycler('a','b') %}{{ c|dictsort }}"),
+    ("cycler_through_xmlattr", "{% set c = cycler('a','b') %}{{ c|xmlattr }}"),
+    # |random over a mapping indexes it by number.
+    ("random_over_a_mapping", "{% set d = {'a': 1} %}{{ d|random }}"),
+    # json.dumps takes str, int, float, bool and None as keys and nothing else.
+    ("tojson_tuple_key", "{% set t = (1, 2) %}{% set d = {t: 1} %}{{ d|tojson }}"),
+]:
+    case(f"errors/{_n}", _src)
+# |round's two methods convert through an integer, so an infinity refuses there
+# while the default method answers one. A NaN never reaches |filesizeformat's
+# int(bytes) branch -- `bytes < base` is false for it -- so it formats as "nan".
+case("filters/round_of_nonfinite",
+     "{% set a = 1e308 %}{% set b = a * 10 %}{{ b|round }}|{{ (b - b)|round }}")
+for _n, _m in [("ceil", "ceil"), ("floor", "floor")]:
+    case(f"errors/round_{_n}_of_infinity",
+         "{% set a = 1e308 %}{% set b = a * 10 %}{{ b|round(0, '" + _m + "') }}")
+
 # `%` decides between "a mapping" and "one positional argument" by asking whether
 # the right operand supports subscripting, and the exceptions are the format's
 # *own* type: PyUnicode_Format names tuple and str, PyBytes_Format names tuple,

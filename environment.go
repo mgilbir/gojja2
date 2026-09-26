@@ -735,6 +735,16 @@ func (e *Environment) FromNamedString(name, source string) (*Template, error) {
 	return e.compile(source, name, false)
 }
 
+// requireLoader is the check jinja2's _load_template makes before it looks at
+// the name at all, which is why an environment with no loader reports *itself*
+// rather than an unhashable name or an undefined one.
+func (e *Environment) requireLoader() error {
+	if e.loader == nil {
+		return errs.New(errs.TypeError, "no loader for this environment specified")
+	}
+	return nil
+}
+
 // GetTemplate loads and compiles a template by name, caching the result.
 func (e *Environment) GetTemplate(name string) (*Template, error) {
 	if tmpl, ok := e.cache.get(name); ok {
@@ -747,9 +757,8 @@ func (e *Environment) GetTemplate(name string) (*Template, error) {
 	// does not swallow -- an environment with no loader rendered
 	// `{% include "x" ignore missing %}` as nothing at all here, quietly,
 	// where CPython reports the environment.
-	if e.loader == nil {
-		return nil, errs.New(errs.TypeError,
-			"no loader for this environment specified")
+	if err := e.requireLoader(); err != nil {
+		return nil, err
 	}
 	source, err := e.loader.Load(name)
 	if err != nil {

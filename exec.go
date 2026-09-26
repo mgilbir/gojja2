@@ -855,6 +855,13 @@ func (ex *exec) loadTemplateName(e ast.Expr) (*Template, error) {
 	if err != nil {
 		return nil, err
 	}
+	// jinja2's _load_template checks for a loader before it looks at the
+	// name at all, so an environment with no loader reports itself and not
+	// the unhashable list or the undefined below it. Both of those were
+	// reported ahead of it here.
+	if err := ex.st.env.requireLoader(); err != nil {
+		return nil, err
+	}
 	switch v.Kind() {
 	case value.KindList, value.KindDict:
 		// jinja2 puts the name into its template cache key, which is a
@@ -884,6 +891,14 @@ func (ex *exec) loadTemplateExpr(e ast.Expr) (*Template, error) {
 	case v.IsString():
 		return ex.st.env.GetTemplate(v.AsString())
 	case v.IsUndefined():
+		// get_or_select_template treats an undefined as a single name,
+		// so this goes through get_template -- and its loader check
+		// comes first. A *selection* does not: an empty list is refused
+		// by select_template before any name is looked up, which is why
+		// only this branch asks.
+		if err := ex.st.env.requireLoader(); err != nil {
+			return nil, err
+		}
 		return nil, v.UndefinedError()
 	}
 	return ex.st.env.selectTemplateValue(v)

@@ -2904,10 +2904,11 @@ func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.
 		if math.IsInf(bytes, 0) {
 			return value.Undefined, overflowToInt(bytes)
 		}
-		if math.IsNaN(bytes) {
-			return value.Undefined, errs.New(errs.ValueError,
-				"cannot convert float NaN to integer")
-		}
+		// Only an infinity needs saying: a NaN never reaches here,
+		// because every comparison with one is false and `bytes < base`
+		// above is what lets a value in. It falls through to the scaling
+		// loop instead, which formats it as "nan". A check for it here
+		// was unreachable.
 		return value.String(fmt.Sprintf("%d Bytes", int64(bytes))), nil
 	}
 	// Python's `f"{x:.1f}"` writes a non-finite in words -- "nan", "inf",

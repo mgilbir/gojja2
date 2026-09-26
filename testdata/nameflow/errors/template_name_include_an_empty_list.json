@@ -1,0 +1,4 @@
+{
+  "case": "errors/template_name_include_an_empty_list.jj2",
+  "variables": {}
+}
