@@ -1,0 +1,14 @@
+{
+  "case": "errors/wordwrap_zero_width.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "invalid width 0 (must be > 0)"
+  }
+}

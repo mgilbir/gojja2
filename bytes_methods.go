@@ -138,15 +138,28 @@ func bytesBounds(s string, args *value.CallArgs, first int) (from, to int, ok bo
 
 // fillByte reads the optional fill character of center, ljust and rjust, which
 // must be exactly one byte.
-func fillByte(method string, args *value.CallArgs) (byte, error) {
+func fillByte(method string, args *value.CallArgs, py value.PythonVersion) (byte, error) {
 	v, ok := args.Arg(1)
 	if !ok {
 		return ' ', nil
 	}
-	if v.Kind() != value.KindBytes || len(v.AsString()) != 1 {
-		return 0, errs.New(errs.TypeError,
-			"%s() argument 2 must be a byte string of length 1, not %s",
-			method, v.TypeName())
+	wrongType := errs.New(errs.TypeError,
+		"%s() argument 2 must be a byte string of length 1, not %s",
+		method, v.TypeName())
+	if v.Kind() != value.KindBytes {
+		// 3.14 left this half exactly as it was, colon and all:
+		// `b.rjust(10, 1)` is "rjust() argument 2 must be ... not int"
+		// on every version. Only a bytes of the wrong length moved.
+		return 0, wrongType
+	}
+	if len(v.AsString()) != 1 {
+		if py.FillCharMessageNamesTheLength() {
+			return 0, errs.New(errs.TypeError,
+				"%s(): argument 2 must be a byte string of length 1, "+
+					"not a bytes object of length %d",
+				method, len(v.AsString()))
+		}
+		return 0, wrongType
 	}
 	return v.AsString()[0], nil
 }
@@ -774,7 +787,7 @@ func bytesPad(align padAlign) func(*State, value.Value, *value.CallArgs) (value.
 		if err != nil {
 			return value.Undefined, err
 		}
-		fill, err := fillByte(names[align], args)
+		fill, err := fillByte(names[align], args, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}

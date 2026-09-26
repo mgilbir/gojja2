@@ -1,0 +1,3 @@
+{}
+---
+{% set l = ['a'.encode()] %}{% set e = ''.encode() %}{{ l|sum(start=e) }}

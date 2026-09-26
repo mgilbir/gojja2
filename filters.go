@@ -2897,16 +2897,41 @@ func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.
 	}
 	if bytes < base {
 		// jinja2 writes int(bytes) here, which truncates: 1.5 bytes is
-		// "1 Bytes", not the "2 Bytes" a rounding format would give.
+		// "1 Bytes", not the "2 Bytes" a rounding format would give --
+		// and refuses a value that is not a number at all. A negative
+		// infinity lands here (it *is* less than the base) and an
+		// int64 conversion wrapped it to -9223372036854775808.
+		if math.IsInf(bytes, 0) {
+			return value.Undefined, overflowToInt(bytes)
+		}
+		if math.IsNaN(bytes) {
+			return value.Undefined, errs.New(errs.ValueError,
+				"cannot convert float NaN to integer")
+		}
 		return value.String(fmt.Sprintf("%d Bytes", int64(bytes))), nil
+	}
+	// Python's `f"{x:.1f}"` writes a non-finite in words -- "nan", "inf",
+	// "-inf" -- where Go's %.1f writes "NaN" and "+Inf". Only this filter
+	// formats a scaled float directly; everywhere else goes through the
+	// format machinery, which already knows.
+	oneDecimal := func(x float64) string {
+		switch {
+		case math.IsNaN(x):
+			return "nan"
+		case math.IsInf(x, 1):
+			return "inf"
+		case math.IsInf(x, -1):
+			return "-inf"
+		}
+		return fmt.Sprintf("%.1f", x)
 	}
 	for i, prefix := range prefixes {
 		unit := math.Pow(base, float64(i+2))
 		if bytes < unit || i == len(prefixes)-1 {
-			return value.String(fmt.Sprintf("%.1f %s", base*bytes/unit, prefix)), nil
+			return value.String(oneDecimal(base*bytes/unit) + " " + prefix), nil
 		}
 	}
-	return value.String(fmt.Sprintf("%.1f %s", bytes, prefixes[len(prefixes)-1])), nil
+	return value.String(oneDecimal(bytes) + " " + prefixes[len(prefixes)-1]), nil
 }
 
 // --- misc --------------------------------------------------------------------

@@ -182,6 +182,21 @@ func (v PythonVersion) WordwrapDropsTheSpaceBeforeABreak() bool { return v.AtLea
 // symmetrical. Corpus: minijinja/loop_bad_unpacking_wrong_len_txt.
 func (v PythonVersion) UnpackErrorNamesTheCount() bool { return v.AtLeast(Python314) }
 
+// FillCharMessageNamesTheLength reports whether a bytes padding method says how
+// long the fill it was given actually was.
+//
+// Through 3.13: "center() argument 2 must be a byte string of length 1, not
+// bytes". 3.14 adds a colon after the name and the length it got: "center():
+// argument 2 must be a byte string of length 1, not a bytes object of length 2".
+//
+// Only for a bytes of the wrong length. A fill that is not a bytes at all keeps
+// the older wording on every version -- `b.rjust(10, 1)` is "rjust() argument 2
+// must be a byte string of length 1, not int" in 3.14 too -- and the str
+// methods say "The fill character must be exactly one character long"
+// throughout. Corpus: errors/bytes_center_fill_length,
+// errors/bytes_ljust_fill_length, errors/bytes_rjust_fill_not_bytes.
+func (v PythonVersion) FillCharMessageNamesTheLength() bool { return v.AtLeast(Python314) }
+
 // FromhexTakesBytesLike reports whether bytes.fromhex accepts a bytes argument
 // as well as a str, and says so when it refuses one.
 //

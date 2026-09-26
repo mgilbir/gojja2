@@ -284,7 +284,7 @@ ever produced?**
 
 It runs the corpus under coverage on every interpreter, intersects the blocks
 that never executed with the lines that build an error, and counts what is left.
-Today that is **139 of 412**.
+Today that is **125 of 414**.
 
 A message nothing produces is not evidence of anything -- it has never been
 compared to CPython. It is worse than untested: it reads as *agreement in every
@@ -321,13 +321,16 @@ coercion and were right, which is exactly what made `+`, `-`, `*`, `/`, `|float`
 on the list already agreed, and what was missing was a case saying so -- which is
 the point of the audit.
 
-The thing worth recording is a fourth category, beside the three above:
-**ungradable through CPython.** `float.as_integer_ratio()` on an infinity cannot
-be reached by any template CPython will run, because every route to an infinity
-goes through a folded constant and its code generator writes one out as `inf` --
-not a Python name. Two sites are on the list permanently for that reason, and it
-is written down in `gen_corpus.py` beside them so the next pass does not chase
-them again.
+The thing that looked like a fourth category was a mistake, and the mistake is
+the more useful record. I wrote that `float.as_integer_ratio()` on an infinity
+was **ungradable through CPython**, because every route to an infinity seemed to
+go through a folded constant and jinja2's code generator writes one out as `inf`,
+which is not a Python name. That is true of `1e400`. It is not true of `1e308`,
+which writes out as `1e+308` -- so multiplying it through a *name* overflows
+during the render and nothing is ever written as `inf`. Both sites are graded
+now, and so are five more conversions behind them. **"No template can reach
+this" is a claim about the templates tried so far**, and it belongs in a comment
+next to the ones that were tried, not in a category.
 
 `make soak-syntax` asks the same three questions of templates nobody chose, and
 then asks the engine whether the answers are true. Where the analysis says a

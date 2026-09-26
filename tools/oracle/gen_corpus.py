@@ -723,6 +723,43 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
     case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# A fourth batch from the same audit, and every one of them already agreed: what
+# was missing was a case saying so. Written through names, for the reason the
+# batch above gives.
+for _n, _src in [
+    ("bytes_from_an_out_of_range_int",
+     "{% set b = 'a'.encode() %}{% set l = [300] %}{{ b.__class__(l) }}"),
+    ("bytes_from_a_string_element",
+     "{% set b = 'a'.encode() %}{% set l = ['a'] %}{{ b.__class__(l) }}"),
+    ("bytes_center_fill_length",
+     "{% set b = 'ab'.encode() %}{{ b.center(10, b) }}"),
+    ("bytes_ljust_fill_length",
+     "{% set b = 'ab'.encode() %}{{ b.ljust(10, b) }}"),
+    ("bytes_rjust_fill_not_bytes",
+     "{% set b = 'ab'.encode() %}{% set n = 1 %}{{ b.rjust(10, n) }}"),
+    ("str_center_fill_length", "{% set s = 'ab' %}{{ s.center(10, s) }}"),
+    ("bytes_index_missing", "{% set b = 'ab'.encode() %}{{ b.index('z'.encode()) }}"),
+    ("bytes_count_wrong_type", "{% set b = 'ab'.encode() %}{% set f = 1.5 %}{{ b.count(f) }}"),
+    ("bytes_split_empty_separator",
+     "{% set b = 'ab'.encode() %}{% set e = ''.encode() %}{{ b.split(e) }}"),
+    ("bytes_rsplit_empty_separator",
+     "{% set b = 'ab'.encode() %}{% set e = ''.encode() %}{{ b.rsplit(e) }}"),
+    ("bytes_join_a_non_iterable",
+     "{% set b = 'ab'.encode() %}{% set n = 1 %}{{ b.join(n) }}"),
+    ("bytes_translate_short_table", "{% set b = 'ab'.encode() %}{{ b.translate(b) }}"),
+    ("int_base_not_an_integer", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, s) }}"),
+    ("replace_missing_both", "{{ 'a'|replace() }}"),
+    ("replace_missing_one", "{{ 'a'|replace('a') }}"),
+    ("wordwrap_zero_width", "{% set n = 0 %}{{ 'a b'|wordwrap(n) }}"),
+    ("sum_of_bytes",
+     "{% set l = ['a'.encode()] %}{% set e = ''.encode() %}{{ l|sum(start=e) }}"),
+    ("sum_of_strings", "{% set l = ['a'] %}{% set e = '' %}{{ l|sum(start=e) }}"),
+    ("filesizeformat_of_a_list", "{% set l = [] %}{{ l|filesizeformat }}"),
+    ("attr_missing_name", "{% set d = {'a': 1} %}{{ d|attr() }}"),
+    ("cycler_with_no_items_splatted", "{% set e = [] %}{{ cycler(*e) }}"),
+]:
+    case(f"errors/{_n}", _src)
+
 # A third batch. The bug this one found: a conversion constructor counted only
 # its *positional* arguments against the maximum, so `int(s, 2, base=8)` bound
 # the keyword and answered 8 where CPython counts three arguments and refuses.
@@ -813,12 +850,37 @@ for _n, _src in [
 ]:
     case(f"errors/{_n}", _src)
 
-# Two sites cannot be graded at all, and the reason is the entry below rather
-# than anything about them: float.as_integer_ratio() on an infinity or a NaN.
-# Every route to one goes through a folded constant, and CPython cannot run a
-# template that holds one in a method-call position -- `{{ (1e400).as_integer_ratio() }}`
-# raises NameError before the method is reached. gojja2's "cannot convert
-# Infinity to integer ratio" has no counterpart to compare against.
+# A non-finite float built at *run time* is reachable, and that took two tries to
+# see. `{{ (1e400).as_integer_ratio() }}` cannot run on CPython -- 1e400 folds to
+# an infinity and the code generator writes it out as `inf`, which is not a
+# Python name -- so I recorded those sites as ungradable. But `1e308` writes out
+# as `1e+308`, so multiplying it through a *name* overflows during the render and
+# nothing is ever written as `inf`. That is how the conversions below are
+# reached, and the lesson is that "no template can reach this" is a claim about
+# the templates tried so far.
+for _n, _src in [
+    ("int_of_infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{% set n = 1 %}{{ n.__class__(b) }}"),
+    ("int_of_nan",
+     "{% set a = 1e308 %}{% set b = a * 10 %}{% set n = 1 %}{{ n.__class__(b - b) }}"),
+    ("round_of_nan", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|round(0, 'ceil')|int }}"),
+    ("ratio_of_infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{{ b.as_integer_ratio() }}"),
+    ("ratio_of_nan", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b).as_integer_ratio() }}"),
+    # |int catches ValueError and answers its default, so a NaN through it is 0
+    # on both sides -- which is why the constructor is what reaches the message.
+    ("int_filter_of_nan", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|int }}"),
+]:
+    case(f"numbers/nonfinite_{_n}", _src)
+# |filesizeformat formats a scaled float directly, and Python writes a non-finite
+# in words where Go writes "NaN" and "+Inf". A *negative* infinity lands in the
+# int(bytes) branch -- it is less than the base -- where an int64 conversion
+# wrapped it to -9223372036854775808 instead of refusing.
+for _n, _src in [
+    ("nan", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|filesizeformat }}"),
+    ("nan_binary", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|filesizeformat(true) }}"),
+    ("infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{{ b|filesizeformat }}"),
+    ("negative_infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (-b)|filesizeformat }}"),
+]:
+    case(f"filters/filesizeformat_{_n}", _src)
 
 # jinja2 writes a folded constant into the generated Python as its repr, and a
 # float infinity's repr is `inf` -- which is not a Python name. So a template
