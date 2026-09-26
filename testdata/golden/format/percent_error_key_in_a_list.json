@@ -1,5 +1,5 @@
 {
-  "case": "format/percent_error_bytes_key_in_a_list.jj2",
+  "case": "format/percent_error_key_in_a_list.jj2",
   "oracle": {
     "impl": "cpython-jinja2",
     "version": "3.1.6",

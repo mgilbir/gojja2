@@ -1,0 +1,4 @@
+{
+  "case": "errors/format_separators_underscore_then_comma.jj2",
+  "variables": {}
+}

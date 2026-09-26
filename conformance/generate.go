@@ -1037,13 +1037,23 @@ func (g *generator) classObject() string {
 		subject = g.c.pick([]string{"lst", "d", "[1]", "{}", "dict(a=1)"})
 	}
 	chain := subject + ".__class__"
+	// Calling one of these classes gives an instance whose repr embeds a
+	// memory address -- jinja2 prints `<jinja2.utils.Joiner object at 0x...>`
+	// -- so for them the class is compared, subscripted or reduced and never
+	// called. Printing the class itself is fine; it is the instance that has
+	// no gradable answer. A soak drew
+	// `joiner('-').__class__('42')|upper|map(attribute='nope', default='?')|list`
+	// and compared one address's worth of characters against another's.
+	opaque := map[string]bool{
+		"namespace()": true, "cycler('a','b')": true, "joiner('-')": true,
+	}
 
 	// Calling a class object is the rest of what a type object does, and the
 	// render differential reached none of it: every constructor in classes.go
 	// sat at 0% under a soak while the corpus graded it. Arguments are kept
 	// small on purpose -- `bytes(n)` allocates what it is told, and a soak is
 	// not the place to find that out.
-	if g.c.chance(2) {
+	if !opaque[subject] && g.c.chance(2) {
 		return chain + g.c.pick([]string{
 			"()", "()", "(5)", "('42')", "(s)", "(f)", "(n)", "(yes)",
 			"(nil)", "([1])", "('ab')", "(lst)", "(d)", "('x', 2)",
@@ -1181,7 +1191,59 @@ func (g *generator) formatCall() string {
 			`'{}'.format_map(d)`,
 		})
 	}
+	if g.c.chance(3) {
+		return g.formatSpecCall()
+	}
 	return g.c.pick(formatCalls)
+}
+
+// formatSpecCall composes a spec out of its parts rather than drawing a whole
+// one from a table, because what the mini-language gets wrong is the
+// *combinations*: a separator's legality depends on the presentation type, a
+// width has to be counted with the separators in it, and two of the parts
+// complain about each other while the spec is still being read. A table of
+// finished specs reached none of that -- the grouped width, the grouped
+// mantissa and 'g' choosing a shape were all unvisited until this arm existed.
+func (g *generator) formatSpecCall() string {
+	var spec strings.Builder
+	if g.c.chance(4) {
+		spec.WriteString(g.c.pick([]string{"_>", ".>", "0<", "*^", "=", ">", "<", "^"}))
+	}
+	if g.c.chance(3) {
+		spec.WriteString(g.c.pick([]string{"+", "-", " "}))
+	}
+	if g.c.chance(6) {
+		spec.WriteString("z")
+	}
+	if g.c.chance(4) {
+		spec.WriteString("#")
+	}
+	if g.c.chance(3) {
+		spec.WriteString("0")
+	}
+	if g.c.chance(2) {
+		spec.WriteString(g.c.pick([]string{"5", "15", "0", "1"}))
+	}
+	if g.c.chance(2) {
+		// Both separators and both orders: the pair is refused, and which
+		// message it gets depends on whether they differ.
+		spec.WriteString(g.c.pick([]string{",", "_", ",_", "_,", ",,", "__"}))
+	}
+	if g.c.chance(2) {
+		// A bare dot is "Format specifier missing precision", and a signed
+		// or spaced one is too -- so the dot is drawn apart from its digits.
+		spec.WriteString("." + g.c.pick([]string{"0", "2", "30", "", "-5", " 5"}))
+	}
+	if g.c.chance(2) {
+		spec.WriteString(g.c.pick([]string{
+			"d", "f", "F", "e", "E", "g", "G", "%", "n", "s", "c",
+			"b", "o", "x", "X", "q",
+		}))
+	}
+	return "'{:" + spec.String() + "}'.format(" + g.c.pick([]string{
+		"1", "0", "1234567890", "-1234567", "1.5", "0.0001", "1e20", "1e-20",
+		"-0.0", "123456.789", "'a'", "true", "none", "lst",
+	}) + ")"
 }
 
 // The receivers are context names of the matching type, so the call is about

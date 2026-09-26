@@ -89,17 +89,11 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 	if i < len(r) && r[i] == 'z' {
 		f.zcoerce = true
 		i++
-		// Which values may ask for it is decided here rather than at the
-		// render, because CPython decides it here too: `{:zx}` on an int
-		// is about the z and not about the x.
-		switch {
-		case v.Kind() == KindInt || v.Kind() == KindBool:
-			return f, errs.New(errs.ValueError,
-				"Negative zero coercion (z) not allowed in integer format specifier")
-		case v.Kind() == KindString:
-			return f, errs.New(errs.ValueError,
-				"Negative zero coercion (z) not allowed in string format specifier")
-		}
+		// Who may ask for it is settled by the *presentation type*, not by
+		// the value's own, so the complaint waits for the formatter that
+		// the type dispatches to. An int with a float code converts before
+		// it is rendered, and the z rides along: `{:zG}` on -1234567 is
+		// "-1.23457E+06", where `{:zd}` on the same int is refused.
 	}
 	if i < len(r) && r[i] == '#' {
 		f.alt = true
@@ -136,9 +130,25 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 		}
 		f.width, f.hasWidth = n, true
 	}
-	if i < len(r) && (r[i] == ',' || r[i] == '_') {
-		f.grouping = byte(r[i])
+	if i < len(r) && r[i] == ',' {
+		f.grouping = ','
 		i++
+	}
+	if i < len(r) && r[i] == '_' {
+		// The two separators are read one after the other, so a spec
+		// carrying both says so -- in either order -- rather than letting
+		// the second fall through to the presentation type. Two of the
+		// *same* separator is a different complaint: there the second one
+		// is read as the type, which is why `{:,,}` says "Cannot specify
+		// ',' with ','." and `{:,_}` does not.
+		if f.grouping != 0 {
+			return f, commaAndUnderscore()
+		}
+		f.grouping = '_'
+		i++
+		if i < len(r) && r[i] == ',' {
+			return f, commaAndUnderscore()
+		}
 	}
 	if i < len(r) && r[i] == '.' {
 		i++
@@ -147,7 +157,14 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 			i++
 		}
 		if i == start {
-			return f, invalidSpec(spec, v)
+			// A dot with no digits after it is settled while the spec
+			// is being read, so the complaint names neither the
+			// presentation type nor the value's own -- `{:.f}` and
+			// `{:.>5.}` both report it, on an int as on a str. The
+			// digits must be bare: a sign or a space after the dot is
+			// this and not a width.
+			return f, errs.New(errs.ValueError,
+				"Format specifier missing precision")
 		}
 		n, err := strconv.Atoi(string(r[start:i]))
 		if err != nil {
@@ -190,6 +207,13 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 // the spec left it out -- which is how `{:,}` on a string says "with 's'".
 func cannotGroup(sep, typ byte) error {
 	return errs.New(errs.ValueError, "Cannot specify '%c' with '%c'.", sep, typ)
+}
+
+// commaAndUnderscore is what a spec asking for both groupings says. It names
+// neither the order they were written in nor the presentation type, so the one
+// message covers `{:,_}`, `{:_,}` and every spec that follows them.
+func commaAndUnderscore() error {
+	return errs.New(errs.ValueError, "Cannot specify both ',' and '_'.")
 }
 
 func isAlign(r rune) bool {
@@ -259,6 +283,13 @@ func (f formatSpec) formatString(v Value) (string, bool, error) {
 		return "", false, errs.New(errs.ValueError,
 			"Sign not allowed in string format specifier")
 	}
+	// After the sign, because the sign comes first in the grammar and so a
+	// string spec can carry both: `{: zs}` is about the space. Before the
+	// alternate form and the '=' alignment, which come after z there.
+	if f.zcoerce {
+		return "", false, errs.New(errs.ValueError,
+			"Negative zero coercion (z) not allowed in string format specifier")
+	}
 	if f.alt {
 		return "", false, errs.New(errs.ValueError,
 			"Alternate form (#) not allowed in string format specifier")
@@ -310,6 +341,13 @@ func (f formatSpec) formatInt(b *big.Int, v Value) (string, error) {
 	if f.hasPrec {
 		return "", errs.New(errs.ValueError,
 			"Precision not allowed in integer format specifier")
+	}
+	// After the code has been recognised and the precision refused, and
+	// before anything 'c' has to say: `{:zq}` is about the q, `{:z.2d}`
+	// about the precision, and `{:zc}` about the z.
+	if f.zcoerce {
+		return "", errs.New(errs.ValueError,
+			"Negative zero coercion (z) not allowed in integer format specifier")
 	}
 	if f.typ == 'c' {
 		if f.sign != 0 {

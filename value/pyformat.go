@@ -190,42 +190,39 @@ func isMappingArg(v Value, asBytes bool) bool {
 	return false
 }
 
-// lookupFormatKey resolves `%(name)s` against the right operand.
-// lookupFormatKeyAs is lookupFormatKey with the key's type decided by the
-// format string's: `b'%(k)s' % {'k': b'v'}` raises KeyError b'k', because the
-// name parsed out of a bytes format is itself bytes and a str key does not
-// match it.
+// lookupFormatKeyAs resolves `%(name)s` against the right operand, with the
+// key's own type decided by the format string's: the name parsed out of a bytes
+// format is itself bytes, so `b'%(k)s' % {'k': b'v'}` raises KeyError b'k' --
+// a str key does not match it -- and the complaint an operand that cannot be
+// indexed by name makes names bytes too, as in "list indices must be integers
+// or slices, not bytes".
 func lookupFormatKeyAs(mapping Value, key string, asBytes bool) (Value, error) {
-	if !asBytes {
-		return lookupFormatKey(mapping, key)
+	if asBytes {
+		return lookupFormatKey(mapping, Bytes([]byte(key)))
 	}
-	if d, ok := mapping.Dict(); ok {
-		if v, found := d.GetKnown(Bytes([]byte(key))); found {
-			return v, nil
-		}
-		return Undefined, errs.New(errs.KeyError, "%s", Repr(Bytes([]byte(key))))
-	}
-	return lookupFormatKey(mapping, key)
+	return lookupFormatKey(mapping, String(key))
 }
 
-func lookupFormatKey(mapping Value, key string) (Value, error) {
+func lookupFormatKey(mapping Value, key Value) (Value, error) {
 	switch mapping.kind {
 	case KindDict:
 		d, _ := mapping.Dict()
-		v, ok := d.GetString(key)
+		v, ok := d.GetKnown(key)
 		if !ok {
-			return Undefined, errs.New(errs.KeyError, "%s", Repr(String(key)))
+			return Undefined, errs.New(errs.KeyError, "%s", Repr(key))
 		}
 		return v, nil
 	case KindList:
 		// A list is subscriptable enough to be treated as a mapping but
 		// cannot actually be indexed by name.
 		return Undefined, errs.New(errs.TypeError,
-			"list indices must be integers or slices, not str")
+			"list indices must be integers or slices, not %s", key.TypeName())
 	case KindBytes:
 		// The same, and CPython says "byte" rather than "bytes" here.
+		// Only a str format reaches this: a bytes operand is the bytes
+		// format's own type, so isMappingArg refuses it there.
 		return Undefined, errs.New(errs.TypeError,
-			"byte indices must be integers or slices, not str")
+			"byte indices must be integers or slices, not %s", key.TypeName())
 	case KindUndefined:
 		// An undefined passes the subscript check -- it defines
 		// __getitem__ -- and then raises its own error when the key is
@@ -234,9 +231,9 @@ func lookupFormatKey(mapping Value, key string) (Value, error) {
 		return Undefined, mapping.UndefinedError()
 	case KindObject:
 		if m, ok := mapping.Interface().(Mapping); ok {
-			v, ok := m.GetItem(String(key))
+			v, ok := m.GetItem(key)
 			if !ok {
-				return Undefined, errs.New(errs.KeyError, "%s", Repr(String(key)))
+				return Undefined, errs.New(errs.KeyError, "%s", Repr(key))
 			}
 			return v, nil
 		}

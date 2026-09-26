@@ -833,7 +833,10 @@ for _n, _src in [
     ("star_precision_wants_int", "{% set s = '%.*f' %}{% set l = ['a', 1.5] %}{{ s % l }}"),
     ("c_requires_int_or_char", "{% set s = '%c' %}{% set l = ['ab'] %}{{ s % l }}"),
     ("d_requires_a_number", "{% set s = '%d' %}{% set l = [] %}{{ s % l }}"),
-    ("bytes_key_in_a_list", "{% set s = '%(0)s' %}{% set l = [1] %}{{ s % l }}"),
+    # A *str* format, so the key is a str and so is the complaint. The bytes
+    # half of this is errors/percent_key_in_a_list_under_a_bytes_format; the
+    # name used to say "bytes" and grade neither.
+    ("key_in_a_list", "{% set s = '%(0)s' %}{% set l = [1] %}{{ s % l }}"),
     ("bytes_missing_key",
      "{% set b = '%(a)s'.encode() %}{% set d = {'b': 1} %}{{ b % d }}"),
     ("bytes_c_out_of_range", "{% set b = '%c'.encode() %}{% set l = [300] %}{{ b % l }}"),
@@ -3930,6 +3933,57 @@ case("format/typeless_precision",
      "{{ '{:.3}'.format(12.0) }}|{{ '{:.2}'.format(123456.789) }}|{{ '{:.0g}'.format(1.5) }}")
 case("errors/format_group_with_code", "{{ '{:,x}'.format(1.5) }}")
 case("errors/format_group_with_n", "{{ '{:,n}'.format(5) }}")
+
+# Two complaints the mini-language makes while it is still *reading* the spec,
+# so neither names the presentation type or the value's own -- which is what
+# tells them apart from the two above.
+#
+# A comma and an underscore are read one after the other, so a spec carrying
+# both says so in one message, in either order and whatever follows. Two of the
+# *same* separator is the other complaint: the second is read as the
+# presentation type, so `{:,,}` says "Cannot specify ',' with ','." and `{:,_}`
+# does not. gojja2 reported the generic "with" form for the mixed pair and let
+# `{:,_d}` fall through to "Invalid format specifier".
+for _n, _src in [
+    ("comma_then_underscore", "{{ '{:,_}'.format(1) }}"),
+    ("underscore_then_comma", "{{ '{:_,}'.format(1) }}"),
+    ("both_before_a_code", "{{ '{:,_d}'.format(1) }}"),
+    ("both_before_a_third", "{{ '{:_,,}'.format(1.5) }}"),
+    ("both_on_a_string", "{{ '{:,_}'.format('a') }}"),
+    # The same separator twice is the *other* complaint, and it is here so
+    # that reading the pair as "both" cannot pass unnoticed.
+    ("comma_twice", "{{ '{:,,}'.format(1) }}"),
+    ("underscore_twice", "{{ '{:__}'.format(1) }}"),
+]:
+    case(f"errors/format_separators_{_n}", _src)
+# A dot with no digits after it, likewise: `{:.f}` on an int and `{:.>5.}` on a
+# str report the same thing, and the digits must be bare -- a sign or a space
+# after the dot is this and not a width.
+for _n, _src in [
+    ("bare_dot", "{{ '{:.}'.format(1) }}"),
+    ("dot_then_code", "{{ '{:.f}'.format(1.5) }}"),
+    ("dot_after_a_width", "{{ '{:5.}'.format('a') }}"),
+    ("dot_is_also_the_fill", "{{ '{:.>5.}'.format(1) }}"),
+    ("signed_precision", "{{ '{:.-5f}'.format(1.5) }}"),
+    ("spaced_precision", "{{ '{:. 5f}'.format(1.5) }}"),
+]:
+    case(f"errors/format_precision_{_n}", _src)
+# An object with no __format__ of its own never reads the spec, so neither
+# complaint reaches it: these are about the type, not the spec.
+case("errors/format_unread_spec",
+     "{{ '{:,_}'.format(none) }}")
+# The grouped and exponent forms the sweep above did not reach: a width that
+# the separators have to be counted into, a grouped mantissa, and 'g' choosing
+# between the two forms and then trimming.
+case("format/grouped_width",
+     "{{ '{:15,}'.format(1234567890) }}|{{ '{:015,}'.format(-1234567) }}|"
+     "{{ '{:_>15,d}'.format(1234567) }}|{{ '{:015_x}'.format(1234567890) }}")
+case("format/grouped_exponent",
+     "{{ '{:,e}'.format(123456.789) }}|{{ '{:012,.3e}'.format(1e20) }}|"
+     "{{ '{:,g}'.format(1e20) }}|{{ '{:015.4g}'.format(123456.789) }}")
+case("format/general_form_picks_a_shape",
+     "{{ '{:g}'.format(0.0001) }}|{{ '{:g}'.format(1e-20) }}|{{ '{:G}'.format(1e20) }}|"
+     "{{ '{:.30g}'.format(1.5) }}|{{ '{:#g}'.format(0.0) }}|{{ '{:g}'.format(-0.0) }}")
 case("errors/format_group_with_str", "{{ '{:+_s}'.format('ab') }}")
 case("errors/format_string_space", "{{ '{: s}'.format('ab') }}")
 case("errors/format_string_alternate", "{{ '{:=#s}'.format('ab') }}")
@@ -4527,6 +4581,22 @@ case("errors/percent_bytes_not_enough_args", "{{ '%s %s' % 'xy'.encode() }}")
 # rule rather than a blanket.
 case("errors/percent_str_is_not_a_mapping", "{{ '0' % 'x' }}")
 case("errors/percent_int_is_not_a_mapping", "{{ '0' % 1 }}")
+# The mapping key carries the *format string's* type, and so does the complaint
+# an operand that cannot be indexed by name makes about it: a bytes format asks
+# a list for a bytes key, so the list says "not bytes". gojja2 hardcoded "str"
+# in that message and reported it under a bytes format too. Found by a soak seed
+# that put a filtered dict -- a list by then -- on the right of a bytes `%`.
+for _n, _src in [
+    ("list_under_a_bytes_format", "{{ '%(k)s'.encode() % [1] }}"),
+    ("list_under_a_bytes_b_verb", "{{ '%(k)b'.encode() % [] }}"),
+    ("bytes_under_a_str_format", "{{ '%(k)d' % 'ab'.encode() }}"),
+]:
+    case(f"errors/percent_key_in_a_{_n}", _src)
+# And the key that is looked up: a str key does not match a bytes one, in either
+# direction, so the KeyError repr says which was asked for.
+# A matching *str* key is still a miss under a bytes format, which the
+# missing-key case above cannot show: its dict has no candidate at all.
+case("errors/percent_key_is_bytes_in_a_dict", "{{ '%(k)s'.encode() % {'k': 1} }}")
 
 # --- a dict view subtracts as a set --------------------------------------------
 # `d.keys() - xs` is the whole of the set arithmetic a template can write:
@@ -4737,9 +4807,16 @@ case("loops/filtered_tuple_and_range",
 # every spec below was "Unknown format code 'z'".
 #
 # It sits between the sign and '#' and nowhere else, which is the difference
-# between `{:z#}` (a spec) and `{:#z}` (a '#' and a type called z). And the
-# refusals go by the *value's* type rather than the presentation type, which is
-# why `{:zx}` on an int is about the z while `{:zd}` on a float is about the d.
+# between `{:z#}` (a spec) and `{:#z}` (a '#' and a type called z).
+#
+# Who may ask for it goes by the *presentation type*, not by the value's own.
+# gojja2 read it off the value and so refused `{:zG}` on an int, where CPython
+# converts the int to a float for a float code and the z rides along. The
+# refusal therefore waits for the formatter the type dispatches to, which also
+# fixes its place in the order: after the code has been recognised (`{:zq}` is
+# about the q) and after an integer precision is refused (`{:z.2d}` is about the
+# precision), but before anything 'c' has to say and before a string's '#'.
+# Found by the format-spec arm of the soak generator, on `{:-zG}`.
 #
 # 3.11 is the oldest interpreter modelled here, so this needs no version gate.
 case("format/z_coerces_negative_zero",
@@ -4766,6 +4843,34 @@ case("errors/z_out_of_position_after", "{{ '{:z+.2f}'.format(1.5) }}")
 case("errors/z_out_of_position_before", "{{ '{:0z.2f}'.format(1.5) }}")
 case("errors/z_after_hash_is_a_type", "{{ '{:#z}'.format(1.5) }}")
 case("errors/z_int_code_on_a_float", "{{ '{:zd}'.format(1.5) }}")
+# An int or a bool with a float code converts first, so the z is allowed there
+# and the sign it coerces is the converted number's.
+case("format/z_on_an_int_with_a_float_code",
+     "{{ '{:zG}'.format(-1234567) }}|{{ '{:ze}'.format(-1234567) }}|{{ '{:z%}'.format(0) }}|"
+     "{{ '{:z.2f}'.format(-1234567) }}|{{ '{:zg}'.format(true) }}|{{ '{:zn}'.format(1.5) }}")
+# The same for a wide int, which converts through the same checked coercion the
+# float codes use -- so this is an OverflowError and not an infinity.
+case("errors/z_on_a_wide_int", "{{ '{:zf}'.format(10 ** 400) }}")
+# Where the refusal sits in the order of complaints. Each of these would report
+# the z if the check ran off the value's type at parse time.
+for _n, _src in [
+    ("code_first", "{{ '{:zq}'.format(1) }}"),
+    ("code_first_on_a_str", "{{ '{:zq}'.format('a') }}"),
+    ("grouping_first", "{{ '{:z,x}'.format(1) }}"),
+    ("grouping_first_on_a_str", "{{ '{:z,}'.format('a') }}"),
+    ("precision_first", "{{ '{:z.2d}'.format(1) }}"),
+    ("z_before_c", "{{ '{:zc}'.format(1) }}"),
+    ("z_before_a_str_hash", "{{ '{:z#s}'.format('a') }}"),
+    # The sign comes before z in the grammar, so a string spec can carry
+    # both -- and the sign is the one that complains. Found by a soak seed
+    # on `{: z5.30}`.
+    ("space_before_z_on_a_str", "{{ '{: z5.30}'.format('a') }}"),
+    ("sign_before_z_on_a_str", "{{ '{:+zs}'.format('a') }}"),
+    ("z_before_a_str_equals", "{{ '{:=zs}'.format('a') }}"),
+    # ...and on an int the sign says nothing, so the z still wins.
+    ("space_then_z_on_an_int", "{{ '{: zd}'.format(1) }}"),
+]:
+    case(f"errors/z_order_{_n}", _src)
 
 # --- int.is_integer, which 3.12 added -----------------------------------------
 # It answers True for every int, so that a caller can ask the question of a
