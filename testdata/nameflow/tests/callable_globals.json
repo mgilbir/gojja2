@@ -1,0 +1,4 @@
+{
+  "case": "tests/callable_globals.jj2",
+  "variables": {}
+}

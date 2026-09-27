@@ -390,6 +390,33 @@ case("errors/include_dict_not_found", "{% include {'a':1} %}", __templates__=INC
 case("errors/include_none_ignore_missing", "[{% include none ignore missing %}]", __templates__=INC)
 case("include/select_dict_key", "{% include {'inc.html': 1} %}", __templates__=INC)
 case("include/select_tuple", "{% include ('inc.html',) %}", __templates__=INC)
+# `is callable` asks whether the value is callable, not what calling it does --
+# which is the whole of what a builtinFunc's Call method is for: its body is
+# unreachable (the evaluator hands a global the render through callWith, and the
+# folder does not fold a call to a global), but the interface it satisfies is this
+# answer. See runtime.go.
+case("tests/callable_globals",
+     "{{ lipsum is callable }}|{{ range is callable }}|{{ dict is callable }}|"
+     "{{ namespace is callable }}|{{ cycler('a','b').next is callable }}|"
+     "{{ 'x'.upper is callable }}|{{ 1 is callable }}")
+
+# |xmlattr asks its subject for `items`, and what a subject without one says is
+# the subject's own AttributeError: a Namespace raises `AttributeError(name)`, so
+# the message is the bare word "items" with no explanation around it, where every
+# other type says "'X' object has no attribute 'items'". A cycler is the third
+# shape: it *has* an items attribute -- the tuple it cycles -- so the call fails
+# instead.
+case("errors/xmlattr_of_a_namespace", "{{ namespace(v=1)|xmlattr }}")
+case("errors/xmlattr_of_a_cycler", "{{ cycler('a','b')|xmlattr }}")
+for _n, _src in [
+    ("a_joiner", "{{ joiner('-')|xmlattr }}"),
+    ("a_range", "{{ range(3)|xmlattr }}"),
+    ("an_int", "{{ 1|xmlattr }}"),
+    ("a_string", "{{ 'x'|xmlattr }}"),
+    ("a_list", "{{ [1]|xmlattr }}"),
+]:
+    case(f"errors/xmlattr_of_{_n}", _src)
+
 # A loaded template is cached under `(weakref(loader), name)`, so each candidate
 # is hashed as part of a tuple before it is looked up -- and an unhashable one
 # raises there rather than missing. gojja2 stringified it and reported

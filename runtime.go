@@ -466,10 +466,15 @@ func (f *builtinFunc) GetAttr(name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
-// Call satisfies value.Caller for a caller that has no render to offer, which
-// is what constant folding is. The budget on a nil State is nil, and State.Step
-// treats that as "nothing to charge".
-func (f *builtinFunc) Call(args *value.CallArgs) (value.Value, error) { return f.fn(nil, args) }
+// No Call here, so *builtinFunc is not a value.Caller. There used to be one,
+// "for a caller that has no render to offer, which is what constant folding is",
+// and it was dead twice over: the evaluator goes through callWith so a global is
+// handed the render it runs inside, the folder does not fold a call to a global
+// at all -- folding `{{ lipsum() }}` would bake one random paragraph into the
+// template -- and `is callable` answers through statefulCaller, which callWith
+// satisfies, one check before value.Caller. Replacing the body with a panic left
+// the whole suite green and so did deleting the method; tests/callable_globals
+// grades the half that matters.
 
 // callWith is the path the evaluator uses, so a global is handed the render it
 // is running inside.
