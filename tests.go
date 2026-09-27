@@ -159,7 +159,7 @@ func isCallableValue(v value.Value) bool {
 // refuses it rather than being tested as "".
 func stringCased(f func(string, *value.UnicodeOverrides) bool) Test {
 	return func(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
-		text, err := strictStr(v)
+		text, err := strictStrFor(v, s.PythonVersion())
 		if err != nil {
 			return false, err
 		}
@@ -300,12 +300,15 @@ func isEscaped(v value.Value) bool {
 // escapeIfNeeded is shared by the escaping filters. It is markupsafe's
 // escape(): Markup passes through, a value carrying its own escaped form hands
 // that over, and everything else is escaped.
-func escapeIfNeeded(v value.Value) value.Value {
+func escapeIfNeeded(v value.Value, py value.PythonVersion) value.Value {
 	if v.IsSafe() {
 		return v
 	}
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html)
 	}
-	return value.Safe(escapeHTML(value.Str(v)))
+	// StrFor: a container's text is its repr and repr escapes by the
+	// interpreter's isprintable, so `{{ ['\ua7da']|urlize }}` shows the
+	// character under 3.14 and the escape under the pin.
+	return value.Safe(escapeHTML(value.StrFor(v, py)))
 }

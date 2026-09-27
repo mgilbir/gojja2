@@ -31,7 +31,7 @@ func registerDefaultFilters(env *Environment) {
 	// assembles it with "".join(...), and joining on a plain str gives a
 	// plain str.
 	add("title", func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		text, err := strictStr(v)
+		text, err := strictStrFor(v, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -149,20 +149,20 @@ func definedFilter(f Filter) Filter {
 //
 // i is the byte offset of the code point, which is what tells |capitalize its
 // first one from the rest.
-// strictStr is str() on a filter's subject: the text, or the error a
-// StrictUndefined raises rather than becoming "".
+// strictStrFor is str() on a filter's subject for one interpreter: the text, or
+// the error a StrictUndefined raises rather than becoming "".
 //
-// Every filter that renders its subject as text goes through here, because
-// under that class the coercion is the operation that fails -- `{{ nope|upper }}`
-// raises in jinja2 and quietly produced "" here, which is the strictness
-// setting not applying.
-func strictStr(v value.Value) (string, error) {
-	return strictStrFor(v, value.DefaultPythonVersion)
-}
-
-// strictStrFor is strictStr reproducing one interpreter, which matters wherever
-// the value may be a container: str() of one is its repr, and a repr escapes by
-// printability. See value.StrFor.
+// Every filter that renders its subject as text goes through here, because under
+// that class the coercion is the operation that fails -- `{{ nope|upper }}`
+// raises in jinja2 and quietly produced "" here, which is the strictness setting
+// not applying.
+//
+// The version is not optional. There used to be a `strictStr` beside this that
+// passed DefaultPythonVersion, and nineteen of the twenty callers used it: str()
+// of a *container* is its repr, and a repr escapes by isprintable, so every one
+// of those filters answered the pin's escaping whatever WithPythonVersion said.
+// `{{ '\ua7da'.splitlines(true)|upper }}` under 3.14 was the shape that showed
+// it, through the list repr |upper asks for.
 func strictStrFor(v value.Value, py value.PythonVersion) (string, error) {
 	if err := value.StrictRefusal(v); err != nil {
 		return "", err
@@ -172,7 +172,7 @@ func strictStrFor(v value.Value, py value.PythonVersion) (string, error) {
 
 func runeFilter(f func(i int, r rune, u *value.UnicodeOverrides) string) Filter {
 	return func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		text, err := strictStr(v)
+		text, err := strictStrFor(v, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -650,8 +650,8 @@ func boolArg(args *value.CallArgs, i int, name string, def bool) (bool, error) {
 
 // --- text filters ------------------------------------------------------------
 
-func filterTrim(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	text, err := strictStr(v)
+func filterTrim(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -696,7 +696,7 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	}
 
 	if !s.autoescape {
-		src, err := strictStr(v)
+		src, err := strictStrFor(v, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -723,7 +723,7 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	// shape of that condition is Python operator precedence, and it is
 	// reproduced rather than tidied.
 	markup := v.IsSafe()
-	src, err := strictStr(v)
+	src, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -795,7 +795,7 @@ func filterCenter(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err != nil {
 		return value.Undefined, err
 	}
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -863,7 +863,7 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	// jinja2 writes `s += newline` and then s.splitlines(), so the append
 	// is the reason a trailing line survives -- and splitlines is the
 	// reason a carriage return breaks a line here too.
-	subject, err := strictStr(v)
+	subject, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1000,7 +1000,7 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 		return value.Undefined, err
 	}
 
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1115,7 +1115,7 @@ func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	}
 
 	var out []string
-	subject, err := strictStr(v)
+	subject, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1424,7 +1424,7 @@ func filterWordcount(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 	var n int64
 	inWord := false
 	u := value.UnicodeFor(s.PythonVersion())
-	subject, err := strictStr(v)
+	subject, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1460,7 +1460,7 @@ var stripTagsRe = regexp.MustCompile(`(?s)<!--.*?-->|<[^>]*>`)
 // ReplaceAll. Fields was also an allocation the size of the input, holding every
 // word of it separately and charged to nobody.
 func filterStriptags(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1632,7 +1632,7 @@ func resolveCharref(ref string) string {
 // where CPython emits it escaped.
 func filterFormat(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	safe := v.IsSafe()
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1643,13 +1643,13 @@ func filterFormat(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		d := value.NewDict()
 		dict, _ := d.Dict()
 		for _, kw := range args.Kwargs {
-			dict.SetString(kw.Name, escapeArg(safe, kw.Value))
+			dict.SetString(kw.Name, escapeArg(safe, kw.Value, s.PythonVersion()))
 		}
 		out, err = value.Mod(format, d, s, s.PythonVersion())
 	} else {
 		pos := make([]value.Value, len(args.Pos))
 		for i, arg := range args.Pos {
-			pos[i] = escapeArg(safe, arg)
+			pos[i] = escapeArg(safe, arg, s.PythonVersion())
 		}
 		out, err = value.Mod(format, value.NewTuple(pos...), s, s.PythonVersion())
 	}
@@ -1668,7 +1668,7 @@ func filterFormat(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 // `"%d" % 5` still sees an int; escaping it to the string "5" here would make
 // `{{ "%d"|safe|format(5) }}` fail with "a real number is required". Their
 // rendered forms contain nothing to escape either way.
-func escapeArg(safe bool, v value.Value) value.Value {
+func escapeArg(safe bool, v value.Value, py value.PythonVersion) value.Value {
 	if !safe {
 		return v
 	}
@@ -1676,7 +1676,7 @@ func escapeArg(safe bool, v value.Value) value.Value {
 	case value.KindInt, value.KindFloat, value.KindBool, value.KindNone:
 		return v
 	}
-	return escapeIfNeeded(v)
+	return escapeIfNeeded(v, py)
 }
 
 // filterPprint renders a value the way Python's pprint.pformat does: repr()
@@ -2234,7 +2234,7 @@ func markSeen(seen map[any]bool, key any) map[any]bool {
 
 // --- escaping filters --------------------------------------------------------
 
-func filterSafe(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+func filterSafe(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	// Markup(x) asks x for its own escaped form when it has one, which is
 	// how `{{ module|safe }}` is the module's body and not its repr -- and
 	// why the one value whose __html__ cannot be called fails here too.
@@ -2244,7 +2244,7 @@ func filterSafe(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html), nil
 	}
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -2261,7 +2261,7 @@ func filterEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html), nil
 	}
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -2327,7 +2327,7 @@ func filterForceEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value,
 	if html, ok := value.HTML(v); ok {
 		v = value.String(html)
 	}
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}

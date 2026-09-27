@@ -44,9 +44,11 @@ func ParseFormatInteger(digits string) (int, error) {
 //
 // An empty spec is str(v) for every type, which is why `{}` renders a list or
 // None happily while `{:>8}` on either is a TypeError.
-func FormatValue(v Value, spec string, budget Budget) (string, error) {
+func FormatValue(v Value, spec string, py PythonVersion, budget Budget) (string, error) {
 	if spec == "" {
-		return Str(v), nil
+		// StrFor: an empty spec is str(), and a container's str() is its
+		// repr, which escapes by the interpreter's isprintable.
+		return StrFor(v, py), nil
 	}
 	// A type with no __format__ of its own inherits object's, which takes
 	// the empty spec and nothing else -- and never looks at what the spec

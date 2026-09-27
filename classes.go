@@ -382,7 +382,7 @@ func constructStr(s *State, args *value.CallArgs) (value.Value, error) {
 	if len(pos) == 1 {
 		// strictStr rather than value.Str: a StrictUndefined refuses to
 		// become a string, and that refusal is what the template sees.
-		text, err := strictStr(pos[0])
+		text, err := strictStrFor(pos[0], s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}

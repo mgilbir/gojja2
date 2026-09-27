@@ -187,7 +187,7 @@ func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	sep := ""
 	if d, ok := arg(args, 0, "d"); ok {
-		sep = value.Str(d)
+		sep = value.StrFor(d, s.PythonVersion())
 	}
 	attribute, _ := arg(args, 1, "attribute")
 	keyParts := attrParts(attribute)
@@ -225,7 +225,7 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 			// str.join converts each item as it takes it, so an
 			// item that refuses str() fails here rather than
 			// joining as "".
-			text, err := strictStr(mapped)
+			text, err := strictStrFor(mapped, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -273,7 +273,7 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 			// it. Only the escaping differs between the two
 			// branches; what a value does when asked for its text
 			// does not.
-			text, err := strictStr(item)
+			text, err := strictStrFor(item, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -286,12 +286,13 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	// refusal comes first either way: escaping a value asks it for its
 	// text, so a StrictUndefined raises before anything is escaped.
 	for i, item := range items {
-		if _, err := strictStr(item); err != nil {
+		if _, err := strictStrFor(item, s.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
-		parts[i] = value.Str(escapeIfNeeded(item))
+		parts[i] = value.StrFor(escapeIfNeeded(item, s.PythonVersion()), s.PythonVersion())
 	}
-	return value.Safe(strings.Join(parts, value.Str(escapeIfNeeded(sepValue)))), nil
+	return value.Safe(strings.Join(parts,
+		value.StrFor(escapeIfNeeded(sepValue, s.PythonVersion()), s.PythonVersion()))), nil
 }
 
 func filterReverse(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {

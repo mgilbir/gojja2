@@ -639,6 +639,8 @@ func (g *generator) expr(depth int) string {
 			return g.wrongArity()
 		case g.c.chance(3):
 			return g.demandingFilter()
+		case g.c.chance(3):
+			return g.unvisited()
 		}
 		return g.percentFormat()
 	case 5:
@@ -672,6 +674,79 @@ func (g *generator) binary(depth int) string {
 	}
 	return g.expr(depth-1) + " " + op + " " + g.expr(depth-1)
 }
+
+// unvisited draws the shapes `go tool cover` says a soak has never produced.
+//
+// Each one is a function the corpus grades and the render differential had never
+// executed, which is a different gap from an untested one: the corpus pins the
+// shape somebody thought of, and the soak is what puts it next to everything
+// else. The list is meant to shrink -- an entry that stops being unvisited is
+// one the rest of the generator now reaches on its own.
+func (g *generator) unvisited() string {
+	return g.c.pick([]string{
+		// A range's three attributes, narrow and wide. rangeObject.bound
+		// was at 0%: nothing generated asked a range for its bounds.
+		"range(3).start", "range(1, 9, 2).stop", "range(1, 9, 2).step",
+		"range(2 ** 70).start", "range(2 ** 70).stop", "range(2 ** 70).step",
+		"range(2 ** 70)[1]", "range(-5, -1).start",
+		// |pprint of a string too long for one line, which is the only
+		// route to wordChunks, pformatString and splitLinesKeepingEnds --
+		// a short repr is written whole and none of them run.
+		"(t ~ t ~ t)|pprint", "(t ~ '\n' ~ t ~ '\n' ~ t)|pprint",
+		"([t, t, t])|pprint", "(s ~ '\n' ~ s)|pprint",
+		"({'k': t ~ t ~ t})|pprint",
+		// markupsafe's __mod__ wraps each argument in a helper that
+		// defines __str__, __repr__, __int__ and __float__ and nothing
+		// else, so which conversion a spec asks for decides what happens.
+		// markupConvert was at 0%.
+		"('%s'|safe) % html", "('%r'|safe) % s", "('%a'|safe) % uni",
+		"('%d'|safe) % '42'", "('%f'|safe) % '1.5'", "('%x'|safe) % 255",
+		"('%c'|safe) % 60", "('%d'|safe) % 'zz'",
+		// tuple.index, which the seq methods reach only through a list.
+		"((1, 2, 1)).index(1)", "((1, 2)).index(9)", "((1, 2, 1)).index(1, 1)",
+		// A groupby group's attributes and its tuple shape.
+		"(users|groupby('city'))[0].grouper",
+		"(users|groupby('city'))[0].list|length",
+		"(users|groupby('city'))[0][0]",
+		"(users|groupby('city'))[0]|list",
+		// Two dict views compared, which is dictView.EqualsErr.
+		"(d.keys() == d.keys())", "(d.items() == nested.items())",
+		"(d.values() == d.values())", "(d.keys() == nested.keys())",
+		// A non-ASCII decimal digit through the numeric parsers, which is
+		// the only route to runeZero.
+		"'\u0664\u0665'|int", "'\u0664.\u0665'|float",
+		"'\u0664'|int(-1)", "('\u0664\u0665' ~ '')|int",
+		// A format spec whose separators have to be counted into the
+		// width, which is groupWidth and padGrouped.
+		"'{:015,d}'.format(1234567)", "'{:015_x}'.format(1234567890)",
+		"'{:020,.2f}'.format(1234567.891)", "'{:_>20_b}'.format(255)",
+		// An `attribute=` whose part is another script's digit, which is
+		// the only route to pyDigitValue: `int(x) if x.isdigit() else x`
+		// accepts those and int() reads them, so "\u0664" is the index 4.
+		"pairs|map(attribute='\u0664')|list", "users|selectattr('\u0664')|list",
+		"pairs|map(attribute='0.\u0664')|list", "users|sort(attribute='\u0664')|list",
+		// An underscore inside a number a `%` conversion is asked to read,
+		// which has to sit between two digits. Only a *Markup* format
+		// reads a string at all -- markupsafe's helper defines __int__ and
+		// __float__, so `%d` coerces there and refuses a str everywhere
+		// else.
+		"('%d'|safe) % '1_0'", "('%d'|safe) % '_10'",
+		"('%f'|safe) % '1_0.5'", "('%d'|safe) % '1__0'",
+		"('%d'|safe) % '\u0664_\u0665'",
+		// A groupby group hashed or compared as the tuple it is, which is
+		// groupObject.AsTuple.
+		"{(users|groupby('city'))[0]: 1}",
+		"((users|groupby('city'))[0] == ((1, 2)))",
+		"[(users|groupby('city'))[0]]|unique|list",
+	})
+}
+
+// Two shapes are deliberately absent from unvisited, and stay at 0% under every
+// soak: |pprint of a container that holds itself, whose output embeds an address
+// (safeRepr and recursionID -- the corpus pins the shape, and docs/divergences.md
+// records why nothing can grade the number), and a structure nested past
+// maxPPrintDepth, which is a thousand levels and not something a generated
+// template writes. A soak cannot answer for either.
 
 // wrongArity calls a filter or test with arguments it does not take.
 //

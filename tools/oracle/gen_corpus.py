@@ -2992,6 +2992,44 @@ case("methods/decode_round_trip",
      "{{ 'abc'.encode().decode('ascii') }}|{{ '\u00e9'.encode().decode('latin-1') }}")
 # The position counts characters, not bytes.
 case("errors/encode_ascii_position", "{{ 'a\u00e9b'.encode('ascii') }}")
+# str() of a *container* is its repr, and a repr escapes by the interpreter's
+# isprintable -- so every filter, test and method that renders its subject as
+# text has to read the version.
+#
+# `strictStr` passed DefaultPythonVersion and nineteen of its twenty callers used
+# it, so |upper, |lower, |title, |trim, |replace, |center, |indent, |truncate,
+# |wordwrap, |wordcount, |striptags, |format, |safe, |escape, |forceescape,
+# |join, `is lower`/`is upper` and str() all answered the pin's escaping whatever
+# WithPythonVersion said. It is gone: there is only strictStrFor now, and the
+# version is not optional. Seven more sites went the same way -- |urlize,
+# |xmlattr, |urlencode, |join's separator, escapeIfNeeded, str.format's `!s` and
+# its empty conversion.
+#
+# Found by a soak on the version axis, on `'\ua7da'.splitlines(true)|upper` --
+# the list repr |upper asks for, uppercased afterwards, which is why the escape
+# came out as "\UA7DA".
+for _n, _src in [
+    ("upper", "{{ '\ua7da'.splitlines(true)|upper }}"),
+    ("trim", "{{ ['\ua7da']|trim }}"),
+    ("center", "{{ ['\ua7da']|center(30) }}"),
+    ("truncate", "{{ ['\ua7da']|truncate(30) }}"),
+    ("striptags", "{{ ['\ua7da']|striptags }}"),
+    ("escape", "{{ ['\ua7da']|escape }}"),
+    ("safe", "{{ ['\ua7da']|safe }}"),
+    ("title", "{{ ['\ua7da']|title }}"),
+    ("wordcount", "{{ ['\ua7da']|wordcount }}"),
+    ("replace", "{{ ['\ua7da']|replace('x', 'y') }}"),
+    ("urlize", "{{ ['\ua7da']|urlize }}"),
+    ("xmlattr", "{{ {'a': ['\ua7da']}|xmlattr }}"),
+    ("join", "{{ [['\ua7da'], 'x']|join('-') }}"),
+    ("join_separator", "{{ [['\ua7da'], 'x']|join(['\ua7da']) }}"),
+    ("is_lower", "{{ ['\ua7da'] is lower }}"),
+    ("format_conversion", "{{ '{!s}'.format(['\ua7da']) }}"),
+    ("format_empty_spec", "{{ '{}'.format(['\ua7da']) }}"),
+    ("format_filter", "{{ ('%s'|safe)|format(['\ua7da']) }}"),
+]:
+    case(f"escape/container_text_by_version_{_n}", _src)
+
 # Two more places the interpreter's tables have to reach, both found by a soak on
 # the version axis.
 #

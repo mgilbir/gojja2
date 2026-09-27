@@ -1405,7 +1405,7 @@ func expandSpec(spec string, base fieldBase, auto *int, py value.PythonVersion) 
 		if err != nil {
 			return "", err
 		}
-		b.WriteString(value.Str(v))
+		b.WriteString(value.StrFor(v, py))
 		i += end + 1
 	}
 	return b.String(), nil
@@ -1418,7 +1418,10 @@ func convertAndFormat(st *State, v value.Value, conv, spec string) (string, erro
 	switch conv {
 	case "":
 	case "s":
-		v = value.String(value.Str(v))
+		// StrFor beside ReprFor below: a container's str() *is* its
+		// repr, so `{!s}` of a list escapes by the interpreter's
+		// isprintable exactly as `{!r}` does.
+		v = value.String(value.StrFor(v, st.PythonVersion()))
 	case "r":
 		v = value.String(value.ReprFor(v, st.PythonVersion()))
 	case "a":
@@ -1427,7 +1430,7 @@ func convertAndFormat(st *State, v value.Value, conv, spec string) (string, erro
 		return "", errs.New(errs.ValueError,
 			"Unknown conversion specifier %s", conv)
 	}
-	return value.FormatValue(v, spec, st)
+	return value.FormatValue(v, spec, st.PythonVersion(), st)
 }
 
 // methodFormatMap is str.format_map: the same substitution, with the fields

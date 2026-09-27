@@ -86,7 +86,7 @@ func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 		return value.String(strings.Join(parts, "&")), nil
 	}
 	// A bare string keeps "/" unescaped, matching urllib.parse.quote.
-	quoted, err := quoteURL(s, value.Str(v), true)
+	quoted, err := quoteURL(s, value.StrFor(v, s.PythonVersion()), true)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -222,7 +222,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		rel = value.String("")
 	}
 	relParts := map[string]bool{}
-	for _, part := range strings.Fields(attrText(rel)) {
+	for _, part := range strings.Fields(attrText(rel, s.PythonVersion())) {
 		relParts[part] = true
 	}
 	if nofollow {
@@ -265,7 +265,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 				return value.Undefined, errs.New(errs.TypeError,
 					"expected string or bytes-like object, got '%s'", item.TypeName())
 			}
-			text := value.Str(item)
+			text := value.StrFor(item, s.PythonVersion())
 			if !uriSchemeRe.MatchString(text) {
 				return value.Undefined, errs.New(errs.FilterArgumentError,
 					"%s is not a valid URI scheme prefix.", value.ReprFor(item, s.PythonVersion()))
@@ -279,7 +279,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		attrs += ` rel="` + escapeHTML(strings.Join(sortedRel, " ")) + `"`
 	}
 	if targetTrue {
-		attrs += ` target="` + escapeHTML(value.Str(target)) + `"`
+		attrs += ` target="` + escapeHTML(value.StrFor(target, s.PythonVersion())) + `"`
 	}
 
 	// trim_url is jinja2's closure: the comparison happens per link, and the
@@ -305,7 +305,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err := value.StrictRefusal(v); err != nil {
 		return value.Undefined, err
 	}
-	escaped := value.Str(escapeIfNeeded(v))
+	escaped := value.StrFor(escapeIfNeeded(v, s.PythonVersion()), s.PythonVersion())
 	words := splitKeepingSpace(escaped)
 
 	for i, word := range words {
@@ -356,11 +356,17 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	return value.String(out), nil
 }
 
-func attrText(v value.Value) string {
+// attrText is str() of an attribute's value, empty for one that is not there.
+//
+// StrFor, not Str: a container's text is its repr and repr escapes by the
+// interpreter's isprintable. Every stringifying filter here reads the version
+// for that reason; see strictStrFor in filters.go, which nineteen callers got
+// wrong the same way.
+func attrText(v value.Value, py value.PythonVersion) string {
 	if v.IsUndefined() || v.IsNone() {
 		return ""
 	}
-	return value.Str(v)
+	return value.StrFor(v, py)
 }
 
 // splitKeepingSpace splits on whitespace runs but keeps them, so rejoining
@@ -454,7 +460,8 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 				"Invalid character in attribute name: %s",
 				value.ReprFor(value.String(key), s.PythonVersion()))
 		}
-		parts = append(parts, fmt.Sprintf(`%s="%s"`, escapeHTML(key), escapeHTML(value.Str(e.Value))))
+		parts = append(parts, fmt.Sprintf(`%s="%s"`, escapeHTML(key),
+			escapeHTML(value.StrFor(e.Value, s.PythonVersion()))))
 	}
 
 	out := strings.Join(parts, " ")
