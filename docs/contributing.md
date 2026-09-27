@@ -312,7 +312,7 @@ ever produced?**
 
 It runs the corpus under coverage on every interpreter, intersects the blocks
 that never executed with the lines that build an error, and counts what is left.
-Today that is **69 of 402**.
+Today that is **50 of 396**.
 
 A message nothing produces is not evidence of anything -- it has never been
 compared to CPython. It is worse than untested: it reads as *agreement in every
@@ -378,6 +378,32 @@ during the render and nothing is ever written as `inf`. Both sites are graded
 now, and so are five more conversions behind them. **"No template can reach
 this" is a claim about the templates tried so far**, and it belongs in a comment
 next to the ones that were tried, not in a category.
+
+A fourth pass (69 down to 50, and 402 sites down to 396) found two more bugs,
+both of them the same shape as the 3.14 dict-update change: a message that had
+never been produced and so had never been compared. lipsum's bounds go straight
+to `random.randrange`, and CPython changed the empty-range wording in 3.12 --
+gojja2 carried 3.11's for every interpreter, including the pinned one, and the one
+Go test that asserted it asserted the same wrong thing. And `'%(a)s' % x` against
+something that is not a dict: CPython's test is "supports subscripting", so
+anything that does gets asked and answers for itself, where gojja2 gave the
+blanket "format requires a mapping" that CPython reserves for what it cannot
+subscript at all.
+
+Nine more sites were guards behind the arity check -- the same category as the
+eighteen above, one file over: a test or a filter that takes a required argument
+is refused by `checkArity` before its body runs, on every route a test can be
+called by, so the "divisibleby requires an argument" fallbacks inside them
+answered something else and could not be reached to say it. `tests.go` no longer
+imports `errs`.
+
+Two habits came out of that pass. **Read the line, not the message**: the same
+words often appear at two or three sites, so a case that produces the message may
+leave the listed site untouched -- `"subsection not found"` is raised by the
+needle-missing branch *and* by the out-of-range window, and only the second was on
+the list. And a non-finite float has to come from the *context*: `'inf'|float` is
+a constant expression, jinja2 folds it and writes `inf` into its generated Python,
+so the template fails with a `NameError` about jinja2's own output instead.
 
 `make soak-syntax` asks the same three questions of templates nobody chose, and
 then asks the engine whether the answers are true. Where the analysis says a
