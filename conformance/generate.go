@@ -146,6 +146,10 @@ var testNames = []string{
 	"defined", "undefined", "none", "boolean", "integer", "float", "number",
 	"string", "mapping", "sequence", "iterable", "callable", "odd", "even",
 	"lower", "upper", "escaped", "true", "false",
+	// `x is filter` and `x is test` ask the environment's registries
+	// whether the *name x holds* is one, so they read a string rather than
+	// the value's shape. Nothing generated reached either.
+	"filter", "test",
 }
 
 var testWithArg = map[string][]string{
@@ -811,6 +815,15 @@ func (g *generator) comparison(depth int) string {
 			return out + " " + op + " " + g.c.pick([]string{
 				"d.keys()", "d.items()", "d.values()",
 				"nested.keys()", "pairs|list", "d|list",
+				// A *set*, which is what a view difference
+				// answers and the only way a template can hold
+				// one. value/set.go was at 0% under the
+				// differential, and a set hashes what it is
+				// asked about -- which is where the "internal
+				// error in gojja2" on `{{ {} in d.keys() - 'a' }}`
+				// was hiding.
+				"(d.keys() - 'a')", "(d.items() - pairs)",
+				"(d.keys() - [])", "(d.keys() - d)",
 			})
 		}
 		out += " " + op + " " + g.expr(depth-1)
@@ -1275,7 +1288,18 @@ func (g *generator) formatSpecCall() string {
 // The receivers are context names of the matching type, so the call is about
 // the method rather than about the lookup failing.
 var (
-	strReceivers  = []string{"s", "t", "uni", "blank", "html", "'a,b,c'", "'Ab1'", "' x\ty '"}
+	strReceivers = []string{"s", "t", "uni", "blank", "html", "'a,b,c'", "'Ab1'", "' x\ty '",
+		// Code points whose case mapping or case predicate changed
+		// between 3.11 and 3.14, so a casing method over one is a
+		// question the version axis can answer differently.
+		// value/unicode_compat.go -- the whole of the per-interpreter
+		// override path -- was at 0% under the differential, which
+		// meant the absolute tables were graded by the corpus alone.
+		// U+019B and U+A7CD gained an uppercase in 3.14, U+1C89 and
+		// U+A7CB a lowercase, U+10D50 a fold.
+		"'\u019b\u0264'", "'\u1c89\u1c8a'", "'\ua7cb\ua7cd'",
+		"'\ua7da\ua7db\ua7dc'", "'\U00010d50\U00010d70'",
+		"'\u019bA\u1c89 b'"}
 	seqReceivers  = []string{"lst", "strs", "mix", "e", "pairs", "[3,1,2]"}
 	dictReceivers = []string{"d", "ed", "nested"}
 )

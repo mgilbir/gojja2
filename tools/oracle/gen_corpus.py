@@ -1128,22 +1128,26 @@ for _u in ("strict", "chainable", "debug", ""):
 # no channel for that complaint and hashed with the form that cannot fail, whose
 # guard is a panic; the render answered "internal error in gojja2 (please report
 # this)". Found by a soak seed, on the only set arithmetic a template can write.
+# The dict is written in the template rather than passed as context, so the case
+# renders through both paths: a Go map cannot carry a dictionary's order, and
+# TestBothRenderPathsAgree skips every case whose context holds one.
+_Q = "{% set q = {'b': 2, 'a': 1, 'C': 3} %}"
 for _n, _src in [
-    ("a_dict", "{{ {} in (d.keys() - 'a') }}"),
-    ("a_list", "{{ [] in (d.keys() - 'a') }}"),
-    ("a_nonempty_dict", "{{ {'a': 1} in (d.keys() - 'a') }}"),
-    ("a_view", "{{ d.keys() in (d.keys() - 'a') }}"),
+    ("a_dict", "{{ {} in (q.keys() - 'a') }}"),
+    ("a_list", "{{ [] in (q.keys() - 'a') }}"),
+    ("a_nonempty_dict", "{{ {'a': 1} in (q.keys() - 'a') }}"),
+    ("a_view", "{{ q.keys() in (q.keys() - 'a') }}"),
 ]:
-    case(f"errors/set_membership_of_{_n}", _src, d={"b": 2, "a": 1, "C": 3})
+    case(f"errors/set_membership_of_{_n}", _Q + _src)
 # ...and the hashable ones, so the check is a check and not a refusal.
 case("methods/set_membership",
-     "{{ 'a' in (d.keys() - 'x') }}|{{ 'a' in (d.keys() - 'a') }}|"
-     "{{ ((1, 2)) in (d.items() - []) }}", d={"b": 2, "a": 1, "C": 3})
+     _Q + "{{ 'a' in (q.keys() - 'x') }}|{{ 'a' in (q.keys() - 'a') }}|"
+     "{{ ((1, 2)) in (q.items() - []) }}")
 for _u in ("strict", ""):
     _n = _u or "default"
     case(f"undefined/set_membership_of_an_undefined_{_n}",
-         "{{ nope in (d.keys() - 'a') }}",
-         __settings__={"undefined": _u} if _u else {}, d={"b": 2, "a": 1, "C": 3})
+         _Q + "{{ nope in (q.keys() - 'a') }}",
+         __settings__={"undefined": _u} if _u else {})
 
 # |urlencode puts each half of a pair through str(), so a StrictUndefined in
 # either position refuses rather than encoding as nothing -- jinja2 writes
@@ -2988,6 +2992,158 @@ case("methods/decode_round_trip",
      "{{ 'abc'.encode().decode('ascii') }}|{{ '\u00e9'.encode().decode('latin-1') }}")
 # The position counts characters, not bytes.
 case("errors/encode_ascii_position", "{{ 'a\u00e9b'.encode('ascii') }}")
+# Two more places the interpreter's tables have to reach, both found by a soak on
+# the version axis.
+#
+# str.title decides a word boundary by the *Cased* property, which is Lowercase,
+# Uppercase and the titlecase category together -- and the first two move between
+# interpreters, so one fixed table for it disagreed with 3.11 about 73 code points
+# and with 3.14 about 52. The one that mattered: a *new* uppercase letter did not
+# count as cased, which ended a word and left the character after it titlecased
+# instead of lowered. U+A7CB is that letter in 3.14.
+case("methods/title_cased_boundary_by_version",
+     "{{ '\ua7cb\ua7cc'.title() }}|{{ 'a\ua7cbb'.title() }}|"
+     "{{ '\ua7cb\ua7cc'.swapcase() }}|{{ 'a1b'.title() }}|{{ 'a\u01f3'.title() }}")
+# And a *folded* print converted its value with the pinned interpreter's tables:
+# a container's text is its repr, repr escapes by isprintable, and the unfolded
+# path was already right -- so `{{ ['\u1c89'] }}` disagreed with itself depending
+# on whether the expression was constant. The same call folds `~`.
+case("escape/folded_repr_escapes_by_version",
+     "{{ ['\u1c89'] }}|{{ {'a': '\u1c89'} }}|{{ ('\u1c89',) }}|{{ ['\ua7da'] }}|"
+     "{{ '\u1c89' ~ ['\u1c89'] }}|{{ ['\u0378'] }}")
+
+# Every repr a *message* or an object carries escapes by the interpreter's
+# isprintable too, and six of them were reading the pin's tables: the float
+# conversion error on both the filter and the `%` path, a replacement field's
+# KeyError, a dict view's repr, a namespace's, and a slice's inside a mapping's
+# KeyError. A namespace and a view carry the version on the object, because Reprer
+# takes no arguments. Found by a soak on the version axis, on
+# `'\u019bA\u1c89 b'|filesizeformat`.
+case("errors/float_conversion_repr_by_version",
+     "{{ '\u019bA\u1c89 b'|filesizeformat() }}")
+case("errors/percent_float_conversion_repr_by_version", "{{ '%f' % '\u1c89 x' }}")
+case("errors/format_field_repr_by_version", "{{ '{\u1c89}'.format(a=1) }}")
+case("methods/dict_view_repr_by_version",
+     "{% set q = {'\u1c89': 1} %}{{ q.keys() }}|{{ q.items() }}")
+case("globals/namespace_repr_by_version", "{{ namespace(v='\u1c89') }}")
+case("errors/slice_key_repr_by_version", "{% set q = {'a': 1} %}{{ q['\u1c89':] }}")
+
+# |wordcount and |wordwrap read Python's `\w` and `[^\d\W]`, which for a str
+# pattern are Py_UNICODE_ISALNUM and that minus isdecimal -- not Go's IsLetter
+# and IsDigit.
+#
+# gojja2 read them off Go's tables: 9,039 code points wrong against the pin for
+# `\w` and 10,097 for `[^\d\W]`, with the count moving under whichever Unicode
+# release the toolchain carried. Composing the classifiers gojja2 already has for
+# isalpha and isnumeric is exact on all 1,112,064 code points for every
+# interpreter, so no new table was needed -- only for these two to stop asking Go.
+#
+# The two directions: U+00B2 is `\w` and not `\d`, so it is a word *letter*
+# although unicode.IsLetter says no -- which is why `a\u00b2-\u00b2b` breaks after
+# the hyphen. U+A7DA and U+10D40 are unassigned before 3.14, so a word made of
+# them is no word at all there. Found by a soak seed on `'\ua7da\ua7db\ua7dc'|wordcount`.
+case("filters/wordcount_reads_the_interpreters_class",
+     "{{ '\ua7da\ua7db\ua7dc'|wordcount }}|{{ '\u019b\u0264'|wordcount }}|"
+     "{{ '\u00b2\u00b3'|wordcount }}|{{ 'a\u00b2b'|wordcount }}|"
+     "{{ '\u0f33'|wordcount }}|{{ '[]'|wordcount }}|{{ 'a\u0897b'|wordcount }}")
+# The width has to be one that makes the *hyphen rule* choose the break, not one
+# that hard-breaks the word anyway: at width 3 `a\u00b2-\u00b2b` comes out the same
+# whichever class U+00B2 is in, so that case graded nothing. At width 4 the
+# position moves.
+case("filters/wordwrap_word_letter_is_not_a_digit",
+     "{{ 'a\u00b2-\u00b2bcdef'|wordwrap(4) }}|{{ '\u00b2\u00b2-\u00b2bcdef'|wordwrap(4) }}|"
+     "{{ 'a\u00b2\u00b2-\u00b2bcdef'|wordwrap(5) }}|{{ 'a1-1bcdef'|wordwrap(4) }}|"
+     "{{ 'ab-cdefgh'|wordwrap(4) }}")
+case("filters/wordwrap_hyphens_and_dashes",
+     "{{ 'a-1-b'|wordwrap(3) }}|{{ '\u019b-\u019b\u019b'|wordwrap(2) }}|"
+     "{{ 'a--b'|wordwrap(2) }}")
+# The decimal *value* an interpreter reads a code point as, which the override
+# has to carry rather than flip: a version newer than the pin assigns digits the
+# pin has never heard of, and recording membership alone answered -1 for all 80
+# of 3.14's. `|int(-1)` shows it, because |int falls back rather than raising.
+case("filters/decimal_value_by_version",
+     "{{ '\U00010d40'|int(-1) }}|{{ '\U00010d41'|int(-1) }}|{{ '\u0f20'|int(-1) }}|"
+     "{{ '\U00010d40'.isdecimal() }}|{{ '\U00010d40'.isdigit() }}|"
+     "{{ '\U00010d40'.isnumeric() }}")
+
+# str.isidentifier is CPython's XID_Start/XID_Continue tables, not the rule the
+# grammar states.
+#
+# gojja2 read it as `unicode.IsLetter(c) || Nl || '_'` for the first character and
+# that plus digits and Mn/Mc/Pc for the rest, which is the rule and *not* the
+# table: it disagreed with the pin about 8,975 code points for the first half and
+# 9,168 for the second, and it followed whichever Unicode release the Go
+# toolchain carried. It is two absolute tables now, generated per interpreter
+# like isalpha and isprintable.
+#
+# U+037A may not begin an identifier although it is a letter, and U+00B7 may
+# continue one although it is punctuation -- the two directions Go's rule got
+# wrong. U+200C and U+200D became continuers in 3.13, and U+1C89, U+A7CB and
+# U+A7DA arrived in 3.14, so those are the version axis. Found by a soak seed
+# after the generator learned to draw code points whose casing changed.
+case("methods/isidentifier_against_the_table",
+     "{{ '\u037a'.isidentifier() }}|{{ 'a\u037a'.isidentifier() }}|"
+     "{{ '\u00b7'.isidentifier() }}|{{ 'a\u00b7'.isidentifier() }}|"
+     "{{ '\u0e33'.isidentifier() }}|{{ 'a\u0387'.isidentifier() }}")
+case("methods/isidentifier_by_version",
+     "{{ 'a\u200c'.isidentifier() }}|{{ 'a\u200d'.isidentifier() }}|"
+     "{{ '\u1c89'.isidentifier() }}|{{ 'a\u1c89'.isidentifier() }}|"
+     "{{ '\ua7cb'.isidentifier() }}|{{ '\ua7da'.isidentifier() }}|"
+     "{{ 'a\u0897'.isidentifier() }}")
+case("methods/isidentifier_above_the_basic_plane",
+     "{{ '\U00010d50'.isidentifier() }}|{{ '\U00010d70'.isidentifier() }}|"
+     "{{ 'a\U00010d50'.isidentifier() }}|{{ '\U0001d7ca'.isidentifier() }}")
+# ...and the shapes that decide nothing about tables: the empty string, a digit
+# first, an underscore, and a keyword.
+case("methods/isidentifier_shape",
+     "{{ ''.isidentifier() }}|{{ '_'.isidentifier() }}|{{ '_a1'.isidentifier() }}|"
+     "{{ '1a'.isidentifier() }}|{{ 'class'.isidentifier() }}|{{ 'a b'.isidentifier() }}")
+
+# A set is unhashable: Python's set defines __eq__ without __hash__, and only
+# frozenset hashes. gojja2's hashed by identity, so `{{ (d.keys() - 'a') is
+# filter }}` answered False where CPython raises -- and a set went into a dict as
+# a key and into |unique without complaint. It is the only set a template can
+# hold, so `is filter` asking the environment's registry is the shape that found
+# it: that is a dict membership test, which hashes before it looks at whether the
+# value is a name.
+for _n, _src in [
+    ("is_filter", "{{ (q.keys() - 'a') is filter }}"),
+    ("is_test", "{{ (q.keys() - 'a') is test }}"),
+    ("as_a_dict_key", "{{ {(q.keys() - 'a'): 1} }}"),
+    ("in_a_dict", "{{ (q.keys() - 'a') in q }}"),
+    ("through_unique", "{{ [(q.keys() - 'a')]|unique|list }}"),
+]:
+    case(f"errors/set_unhashable_{_n}", _Q + _src)
+# ...and tests/is_filter_and_is_test above already holds the questions that do
+# have answers, which is what keeps the hash from being the whole of the test.
+
+# A strict handler is handed the *maximal run* of characters the codec cannot
+# represent, not the first one, and the message for a run of two or more is a
+# different sentence: "can't encode characters in position 0-1" carries no
+# character at all, says "characters", and ends inclusively. gojja2 reported the
+# first character every time, so every run read as a single character. A run stops
+# at the first encodable character, which is what keeps `'\u019ba\u0264'` at
+# position 0 alone. Found by a soak seed, after the generator learned to draw
+# code points whose casing changed between interpreters.
+for _n, _src in [
+    ("run_of_two", "{{ '\u019b\u0264'.encode('ascii') }}"),
+    ("run_of_three", "{{ '\u019b\u0264\u1c89'.encode('ascii') }}"),
+    ("run_inside", "{{ 'ab\u019b\u0264\u1c89cd'.encode('ascii') }}"),
+    ("run_broken_by_an_encodable", "{{ '\u019ba\u0264'.encode('ascii') }}"),
+    ("run_of_one_inside", "{{ 'a\u019bb'.encode('ascii') }}"),
+    ("run_in_latin_1", "{{ '\u019b\u0264'.encode('latin-1') }}"),
+    ("run_latin_1_takes_e_acute", "{{ '\u00e9\u00e9x'.encode('ascii') }}"),
+]:
+    case(f"errors/encode_{_n}", _src)
+# ...and the handlers that do not raise, which walk the same run without needing
+# to describe it.
+case("methods/encode_handlers_over_a_run",
+     "{{ '\u019b\u0264x'.encode('ascii', 'replace') }}|"
+     "{{ '\u019b\u0264x'.encode('ascii', 'ignore') }}|"
+     "{{ '\u019b\u0264x'.encode('ascii', 'backslashreplace') }}|"
+     "{{ '\u019b\u0264x'.encode('ascii', 'xmlcharrefreplace') }}")
+case("errors/encode_surrogateescape_over_a_run",
+     "{{ '\u019b\u0264'.encode('ascii', 'surrogateescape') }}")
 case("errors/encode_latin1_range", "{{ '\u20ac'.encode('latin-1') }}")
 case("errors/decode_ascii_range", "{{ '\u00e9'.encode().decode('ascii') }}")
 
@@ -4827,6 +4983,21 @@ case("errors/bytes_percent_s_wants_bytes", "{{ '%s'.encode() % 'x' }}")
 case("errors/bytes_percent_s_wants_bytes_not_int", "{{ '%s'.encode() % 5 }}")
 case("errors/bytes_percent_too_many_args", "{{ 'ab'.encode() % 1 }}")
 case("errors/bytes_percent_c_out_of_range", "{{ '%c'.encode() % 256 }}")
+# 3.14 names a bytes of the wrong length by its *length* -- "not a bytes object
+# of length 2" -- where anything that is not a bytes at all keeps the plain type
+# name. It is the same split str.center's argument 2 makes; see
+# FillCharMessageNamesTheLength. gojja2 said "not bytes" for the bytes case, so
+# the 3.14 column read as agreement. Found by a soak on the version axis.
+for _n, _src in [
+    ("two_bytes", "{{ '%c'.encode() % 'ab'.encode() }}"),
+    ("no_bytes", "{{ '%c'.encode() % ''.encode() }}"),
+    ("three_bytes", "{{ '%c'.encode() % 'abc'.encode() }}"),
+    ("a_str", "{{ '%c'.encode() % 'x' }}"),
+    ("a_float", "{{ '%c'.encode() % 1.5 }}"),
+    ("none", "{{ '%c'.encode() % none }}"),
+    ("a_list", "{{ '%c'.encode() % [1] }}"),
+]:
+    case(f"errors/bytes_percent_c_of_{_n}", _src)
 case("errors/bytes_percent_unsupported_verb", "{{ '%q'.encode() % 1 }}")
 case("errors/str_percent_has_no_b", "{{ '%b' % 'x'.encode() }}")
 

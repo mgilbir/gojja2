@@ -621,12 +621,18 @@ func (m *macroObject) Repr() string {
 // survives the scope a loop body would otherwise discard.
 type namespaceObject struct {
 	d *value.Dict
+	// py is the interpreter being reproduced. Repr comes from the Reprer
+	// interface, which takes no arguments, so the version is carried here
+	// -- as dictView carries it for the same reason. repr escapes by
+	// isprintable, and which characters are printable is the
+	// interpreter's answer.
+	py value.PythonVersion
 }
 
-func newNamespace() *namespaceObject {
+func newNamespace(py value.PythonVersion) *namespaceObject {
 	v := value.NewDict()
 	d, _ := v.Dict()
-	return &namespaceObject{d: d}
+	return &namespaceObject{d: d, py: py}
 }
 
 func (n *namespaceObject) GetAttr(name string) (value.Value, bool) {
@@ -648,7 +654,7 @@ func (n *namespaceObject) QualifiedName() string { return "jinja2.utils.Namespac
 func (n *namespaceObject) AttributeError(name string) string { return name }
 
 func (n *namespaceObject) Repr() string {
-	return "<Namespace " + value.Repr(value.Value(dictValue(n.d))) + ">"
+	return "<Namespace " + value.ReprFor(value.Value(dictValue(n.d)), n.py) + ">"
 }
 
 // dictValue re-wraps a Dict so it can be rendered.

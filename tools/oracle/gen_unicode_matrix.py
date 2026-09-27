@@ -39,7 +39,8 @@ DEFAULT = pyversions.default()
 
 # The columns dump_unicode.py writes, after the code point.
 UPPER, LOWER, TITLE, FOLD, DECIMAL, FLAGS = range(6)
-ISLOWER, ISUPPER, ISTITLE, ISDIGIT, ISNUMERIC, ISPRINTABLE, ISALPHA = range(7)
+(ISLOWER, ISUPPER, ISTITLE, ISDIGIT, ISNUMERIC, ISPRINTABLE, ISALPHA,
+ XIDSTART, XIDCONTINUE) = range(9)
 
 
 def dump(version: str) -> dict[int, tuple[str, ...]]:
@@ -51,7 +52,7 @@ def dump(version: str) -> dict[int, tuple[str, ...]]:
     out = {}
     for line in proc.stdout.splitlines():
         parts = line.split("\t")
-        if len(parts) == 7:
+        if len(parts) == 7:  # the code point plus the six columns above
             out[int(parts[0])] = tuple(parts[1:])
     if not out:
         raise SystemExit(f"no output from CPython {version}")
@@ -98,6 +99,15 @@ def range_table(name: str, points: set[int], doc: str) -> str:
         lines.append("\tR32: []unicode.Range32{")
         lines += ["\t\t{0x%06x, 0x%06x, 1}," % r for r in r32]
         lines.append("\t},")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def go_int_map(name: str, pairs: dict[int, int], doc: str) -> str:
+    """A map[rune]int, for a value an override has to carry rather than flip."""
+    lines = [doc, f"var {name} = map[rune]int{{"]
+    for cp in sorted(pairs):
+        lines.append("\t0x%04x: %d," % (cp, pairs[cp]))
     lines.append("}")
     return "\n".join(lines)
 
@@ -177,6 +187,20 @@ import "unicode"
         "// printableDefault is str.isprintable for the pinned interpreter, which\n"
         "// is what repr escapes by -- and, like alphaDefault, CPython's own answer\n"
         f"// rather than a correction to Go's. {len(printable)} code points."))
+    xidstart = {cp for cp in base if base[cp][FLAGS][XIDSTART] == "1"}
+    xidcont = {cp for cp in base if base[cp][FLAGS][XIDCONTINUE] == "1"}
+    parts.append(range_table(
+        "xidStartDefault", xidstart,
+        "// xidStartDefault is the characters that may begin an identifier for the\n"
+        "// pinned interpreter, which is what str.isidentifier asks of the first\n"
+        "// one. It was unicode.IsLetter plus Nl plus underscore, an approximation\n"
+        f"// that disagreed with the pin about some nine thousand code points.\n"
+        f"// {len(xidstart)} code points."))
+    parts.append(range_table(
+        "xidContinueDefault", xidcont,
+        "// xidContinueDefault is the characters that may continue an identifier,\n"
+        "// which str.isidentifier asks of every one after the first. Probed by\n"
+        f"// prefixing an ASCII letter. {len(xidcont)} code points."))
 
     counts = []
     for v in VERSIONS:
@@ -190,7 +214,13 @@ import "unicode"
                  if older.get(cp) and older[cp][FLAGS][ISDIGIT] != base[cp][FLAGS][ISDIGIT]}
         numeric = {cp for cp in base
                    if older.get(cp) and older[cp][FLAGS][ISNUMERIC] != base[cp][FLAGS][ISNUMERIC]}
-        decimal = {cp for cp in base
+        # The *value*, not just the membership. A version newer than the pin
+        # assigns decimal digits the pin does not know, and there is nowhere
+        # else to read their value from -- recording membership alone made
+        # `{{ "\U00010d40"|int }}` on 3.14 answer as though the character were
+        # not a digit at all.
+        decimal = {cp: (-1 if older[cp][DECIMAL] == "-" else int(older[cp][DECIMAL]))
+                   for cp in base
                    if older.get(cp) and older[cp][DECIMAL] != base[cp][DECIMAL]}
         lower = {cp for cp in base
                  if older.get(cp) and older[cp][FLAGS][ISLOWER] != base[cp][FLAGS][ISLOWER]}
@@ -200,6 +230,10 @@ import "unicode"
                  if older.get(cp) and older[cp][FLAGS][ISTITLE] != base[cp][FLAGS][ISTITLE]}
         alpha = {cp for cp in base
                  if older.get(cp) and older[cp][FLAGS][ISALPHA] != base[cp][FLAGS][ISALPHA]}
+        xidstart = {cp for cp in base
+                    if older.get(cp) and older[cp][FLAGS][XIDSTART] != base[cp][FLAGS][XIDSTART]}
+        xidcont = {cp for cp in base
+                   if older.get(cp) and older[cp][FLAGS][XIDCONTINUE] != base[cp][FLAGS][XIDCONTINUE]}
         maps = {col: {cp: older[cp][col] for cp in base
                       if older.get(cp) and older[cp][col] != base[cp][col]}
                 for col in (UPPER, LOWER, TITLE, FOLD)}
@@ -213,9 +247,17 @@ import "unicode"
                 f"{nm.lower()}Other{suffix}", maps[col],
                 f"// {nm.lower()}Other{suffix} is str.{nm.lower()}() where CPython {v} differs\n"
                 f"// from the pin. {len(maps[col])} code points."))
-        for pts, nm in ((digit, "digit"), (numeric, "numeric"), (decimal, "decimal"),
+        parts.append(go_int_map(
+            f"decimalOther{suffix}", decimal,
+            f"// decimalOther{suffix} is the decimal value CPython {v} reads a code\n"
+            f"// point as, where that differs from the pin's -- -1 where it reads none\n"
+            f"// at all. The value is carried rather than flipped, because a version\n"
+            f"// newer than the pin assigns digits the pin has never heard of.\n"
+            f"// {len(decimal)} code points."))
+        for pts, nm in ((digit, "digit"), (numeric, "numeric"),
                         (lower, "isLower"), (upper, "isUpper"), (title, "isTitle"),
-                        (alpha, "isAlpha")):
+                        (alpha, "isAlpha"), (xidstart, "xidStart"),
+                        (xidcont, "xidContinue")):
             parts.append(range_table(
                 f"{nm}Other{suffix}", pts,
                 f"// {nm}Other{suffix} is where CPython {v} and the pin disagree\n"
@@ -237,6 +279,8 @@ import "unicode"
             f"\t\tdecimal: decimalOther{suffix},\n"
             f"\t\tisLower: isLowerOther{suffix}, isUpper: isUpperOther{suffix},\n"
             f"\t\tisTitle: isTitleOther{suffix}, isAlpha: isAlphaOther{suffix},\n"
+            f"\t\txidStart: xidStartOther{suffix},\n"
+            f"\t\txidContinue: xidContinueOther{suffix},\n"
             f"\t}},\n")
     parts.append(
         "// unicodeOther is every non-pinned interpreter's overrides, by version.\n"

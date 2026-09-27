@@ -1,6 +1,4 @@
 {
   "case": "methods/set_membership.jj2",
-  "variables": {
-    "d": "or"
-  }
+  "variables": {}
 }

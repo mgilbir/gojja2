@@ -645,32 +645,26 @@ func methodIsTitle(s *State, r value.Value, _ *value.CallArgs) (value.Value, err
 // parser does: XID_Start followed by XID_Continue, with underscore allowed in
 // either position. It says nothing about keywords -- "class".isidentifier() is
 // True.
-func methodIsIdentifier(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+func methodIsIdentifier(st *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
 	s := r.AsString()
 	if s == "" {
 		return value.False, nil
 	}
+	// Looked up once for the whole string, as every other classifier does,
+	// so the version stays out of the loop.
+	u := value.UnicodeFor(st.PythonVersion())
 	for i, c := range s {
 		if i == 0 {
-			if !isXIDStart(c) {
+			if !u.IsXIDStart(c, value.XIDStartDefault(c)) {
 				return value.False, nil
 			}
 			continue
 		}
-		if !isXIDContinue(c) {
+		if !u.IsXIDContinue(c, value.XIDContinueDefault(c)) {
 			return value.False, nil
 		}
 	}
 	return value.True, nil
-}
-
-func isXIDStart(c rune) bool {
-	return c == '_' || unicode.IsLetter(c) || unicode.Is(unicode.Nl, c)
-}
-
-func isXIDContinue(c rune) bool {
-	return isXIDStart(c) || unicode.IsDigit(c) ||
-		unicode.In(c, unicode.Mn, unicode.Mc, unicode.Pc)
 }
 
 // methodExpandtabs is str.expandtabs: each tab advances to the next multiple
@@ -1229,7 +1223,7 @@ func indexMethod(search func(string, string) int, name string) func(*State, valu
 // safe does not mark its arguments safe.
 func methodFormat(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	return formatWith(st, r, func(name string, auto *int) (value.Value, error) {
-		return resolveFieldBase(name, args, auto)
+		return resolveFieldBase(name, args, auto, st.PythonVersion())
 	})
 }
 
@@ -1674,7 +1668,7 @@ func splitFieldName(field string) (string, []fieldAccessor) {
 
 // resolveFieldBase finds the argument a field names: automatic numbering when
 // empty, positional when all digits, keyword otherwise.
-func resolveFieldBase(name string, args *value.CallArgs, auto *int) (value.Value, error) {
+func resolveFieldBase(name string, args *value.CallArgs, auto *int, py value.PythonVersion) (value.Value, error) {
 	switch {
 	case name == "":
 		// One format string counts its own fields or names them, never
@@ -1711,7 +1705,7 @@ func resolveFieldBase(name string, args *value.CallArgs, auto *int) (value.Value
 		v, ok := args.Kwarg(name)
 		if !ok {
 			return value.Undefined, errs.New(errs.KeyError,
-				"%s", value.Repr(value.String(name)))
+				"%s", value.ReprFor(value.String(name), py))
 		}
 		return v, nil
 	}

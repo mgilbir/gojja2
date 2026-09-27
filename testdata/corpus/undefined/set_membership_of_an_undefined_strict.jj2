@@ -1,12 +1,7 @@
 {
   "__settings__": {
     "undefined": "strict"
-  },
-  "d": {
-    "b": 2,
-    "a": 1,
-    "C": 3
   }
 }
 ---
-{{ nope in (d.keys() - 'a') }}
+{% set q = {'b': 2, 'a': 1, 'C': 3} %}{{ nope in (q.keys() - 'a') }}

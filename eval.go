@@ -291,7 +291,10 @@ func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
 
 	var b strings.Builder
 	for _, v := range parts {
-		text := value.Str(v)
+		// StrFor, because a container's text is its repr and repr
+		// escapes by the interpreter's isprintable. See the same call in
+		// optimize.go, which folds this at compile time.
+		text := value.StrFor(v, ex.pyVersion())
 		if escaping && !v.IsSafe() {
 			text = escapeHTML(text)
 		}
@@ -761,8 +764,9 @@ func sliceBounds(start, stop, step value.Value) (a, b, c *int, err error) {
 // sliceRepr is repr(slice(a, b, c)), which is the whole of the KeyError a
 // mapping raises for a slice from 3.12 on. An omitted bound is None there, not
 // absent, so all three always appear.
-func sliceRepr(start, stop, step value.Value) string {
-	return "slice(" + value.Repr(start) + ", " + value.Repr(stop) + ", " + value.Repr(step) + ")"
+func sliceRepr(start, stop, step value.Value, py value.PythonVersion) string {
+	return "slice(" + value.ReprFor(start, py) + ", " + value.ReprFor(stop, py) +
+		", " + value.ReprFor(step, py) + ")"
 }
 
 func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.PythonVersion) (value.Value, error) {
@@ -864,7 +868,7 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.Python
 		// an ordinary KeyError naming the slice that missed.
 		if py.SliceKeysAreHashable() {
 			return value.Undefined, errs.New(errs.KeyError, "%s",
-				sliceRepr(startV, stopV, stepV))
+				sliceRepr(startV, stopV, stepV, py))
 		}
 		return value.Undefined, errs.New(errs.TypeError, "unhashable type: 'slice'")
 	}

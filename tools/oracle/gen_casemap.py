@@ -10,7 +10,8 @@ followed by a combining dot. Using strings.ToUpper for str.upper therefore left
 102 characters unchanged that Python expands, and casefold, which was
 strings.ToLower, disagreed with Python for 298.
 
-The second half is what counts as *cased*. Python's islower/isupper/istitle
+The second half is what counts as lowercase and uppercase. Python's
+islower/isupper/istitle
 rest on Unicode's Cased derived property, which is Lu/Ll/Lt plus
 Other_Lowercase and Other_Uppercase -- the modifier letters, the Roman
 numerals, the circled letters. Go's unicode.IsLower and IsUpper are the general
@@ -193,8 +194,11 @@ def main() -> int:
 
     is_lower = [cp for cp in points if chr(cp).islower()]
     is_upper = [cp for cp in points if chr(cp).isupper()]
-    # Cased is what a word boundary in title() and the swap in swapcase() are
-    # decided by, and it includes titlecase characters as well.
+    # Cased -- what a word boundary in title() and the swap in swapcase() are
+    # decided by -- is not a table here. It is Lowercase, Uppercase and Lt
+    # together, and the first two move between interpreters, so one table for
+    # the pin was wrong for the others. pyIsCased composes them; see casing.go.
+    # The count is still printed, as a check that this file sees what it should.
     cased = [cp for cp in points
              if chr(cp).islower() or chr(cp).isupper() or chr(cp).istitle()]
 
@@ -255,11 +259,11 @@ def main() -> int:
               "// upperCased is str.isupper for a single character, broader than unicode.IsUpper\n"
               "// for the same reason: Other_Uppercase carries the Roman numerals and the\n"
               "// circled capitals."),
-        "",
-        table("anyCased", cased,
-              "// anyCased is Unicode's Cased property: what title() treats as inside a word\n"
-              "// and what swapcase() will swap. Titlecase characters are cased too, which\n"
-              "// is why this is not simply lowerCased plus upperCased."),
+        # No anyCased table. Cased is Lowercase, Uppercase and Lt together, and
+        # the first two move between interpreters -- so one fixed table for it
+        # disagreed with 3.11 about 73 code points and with 3.14 about 52.
+        # pyIsCased composes the two version-aware predicates with Go's Lt
+        # instead; see casing.go.
         "",
         "// caseMapDigest is a sha256 over every code point's upper, lower, title,\n"
         "// casefold, islower, isupper and istitle, as CPython answers them.\n"

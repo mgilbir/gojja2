@@ -25,13 +25,23 @@ type UnicodeOverrides struct {
 	// upper, lower, title and fold are the mappings that differ, by rune.
 	upper, lower, title, fold map[rune]string
 	// digit, numeric and decimal are where the numeric predicates differ.
-	digit, numeric, decimal *unicode.RangeTable
+	digit, numeric *unicode.RangeTable
+	// decimal carries the *value*, not just the membership: a version newer
+	// than the pin assigns decimal digits the pin does not know, and there
+	// is nowhere else to read their value from. -1 means this version reads
+	// no decimal value at all.
+	decimal map[rune]int
 	// isLower, isUpper and isTitle are where the case predicates differ.
 	isLower, isUpper, isTitle *unicode.RangeTable
 	// isAlpha is where str.isalpha differs, which follows the same rule:
 	// Go and the interpreter are on different Unicode releases, and either
 	// can be the one that knows a character.
 	isAlpha *unicode.RangeTable
+	// xidStart and xidContinue are where str.isidentifier's two halves
+	// differ: which characters may begin an identifier and which may
+	// continue one. They follow the same rule as the rest -- a code point
+	// listed here answers the opposite of the pin's.
+	xidStart, xidContinue *unicode.RangeTable
 }
 
 // unicodeFor is the overrides to apply for one interpreter, or nil for the
@@ -115,21 +125,21 @@ func (u *UnicodeOverrides) IsNumeric(r rune, def bool) bool {
 	return flipIn(u.numeric, r, def)
 }
 
-// DecimalValueFor is DecimalValue for one interpreter: -1 where this version
-// does not read the code point as a digit, and the default's value otherwise.
+// DecimalValueFor is DecimalValue for one interpreter: the value this version
+// reads the code point as, and -1 where it reads none.
 //
-// The overrides record only membership, not the value, because a code point
-// that is a decimal digit in two interpreters always has the same value in
-// both -- it is the assignment that moved, not the meaning.
+// The override carries the value. It used to record membership alone and answer
+// -1 for every code point in it, which is right for a version *older* than the
+// pin -- those only ever lose assignments -- and wrong for a newer one, where 80
+// code points that 3.14 reads as digits answered as though they were not digits
+// at all. `{{ "\U00010d40"|int }}` was the shape that showed it.
 func (u *UnicodeOverrides) DecimalValueFor(r rune) int {
-	v := DecimalValue(r)
-	if u != nil && unicode.Is(u.decimal, r) {
-		if v >= 0 {
-			return -1
+	if u != nil {
+		if v, ok := u.decimal[r]; ok {
+			return v
 		}
-		return -1
 	}
-	return v
+	return DecimalValue(r)
 }
 
 // IsAlpha answers str.isalpha for this interpreter, given the default's answer.
@@ -154,4 +164,32 @@ func PrintableDefault(r rune) bool {
 // AlphaDefault is str.isalpha for the pinned interpreter, read the same way.
 func AlphaDefault(r rune) bool {
 	return unicode.Is(alphaDefault, r)
+}
+
+// XIDStartDefault and XIDContinueDefault are str.isidentifier's two halves for
+// the pinned interpreter: which characters may begin an identifier and which may
+// continue one.
+//
+// These were `unicode.IsLetter(c) || unicode.Is(unicode.Nl, c) || c == '_'` and
+// that plus digits and Mn/Mc/Pc, which is the *rule* CPython's grammar states
+// and not the table CPython carries -- it disagreed with the pin about 8,975
+// code points for the first and 9,168 for the second. Like alphaDefault they are
+// CPython's own answers and owe nothing to the Unicode release Go carries.
+func XIDStartDefault(r rune) bool    { return unicode.Is(xidStartDefault, r) }
+func XIDContinueDefault(r rune) bool { return unicode.Is(xidContinueDefault, r) }
+
+// IsXIDStart and IsXIDContinue answer str.isidentifier's two halves for this
+// interpreter, given the pin's answer.
+func (u *UnicodeOverrides) IsXIDStart(r rune, def bool) bool {
+	if u == nil {
+		return def
+	}
+	return flipIn(u.xidStart, r, def)
+}
+
+func (u *UnicodeOverrides) IsXIDContinue(r rune, def bool) bool {
+	if u == nil {
+		return def
+	}
+	return flipIn(u.xidContinue, r, def)
 }

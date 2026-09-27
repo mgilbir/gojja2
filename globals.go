@@ -341,7 +341,7 @@ func globalNamespace(s *State, args *value.CallArgs) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
-	ns := newNamespace()
+	ns := newNamespace(s.PythonVersion())
 	d, _ := built.Dict()
 	for _, e := range d.Entries() {
 		ns.SetAttr(value.Str(e.Key), e.Value)

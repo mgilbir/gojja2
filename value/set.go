@@ -73,8 +73,21 @@ func NewSet(elements []Value, py PythonVersion, budget Budget) (*Set, error) {
 // jinja2's grammar calls a method on the result of one.
 func (s *Set) GetAttr(string) (Value, bool) { return Undefined, false }
 
-func (s *Set) TypeName() string      { return "set" }
-func (s *Set) QualifiedName() string { return "builtins.set" }
+func (s *Set) TypeName() string { return "set" }
+
+// Unhashable reports that a set cannot be a dict key or a set element. Python's
+// set defines __eq__ without __hash__ -- only frozenset is hashable -- so
+// `{{ (d.keys() - 'a') is filter }}` is "unhashable type: 'set'" and
+// `{{ {(d.keys() - 'a'): 1} }}` is a TypeError. Without this a set hashed by
+// identity and both answered.
+func (s *Set) Unhashable() bool { return true }
+
+// QualifiedName is plain "set": object_type_repr qualifies a class with its
+// module only *outside* builtins, so a set is "set object" where a Joiner is
+// "jinja2.utils.Joiner object". Writing "builtins.set" made 3.14's
+// "cannot use 'builtins.set' as a dict key" and would have made an undefined
+// built from a set report the wrong owner.
+func (s *Set) QualifiedName() string { return "set" }
 func (s *Set) Len() int              { return len(s.items) }
 
 // Repr is Python's, including the empty case: `set()` and not `{}`, which is

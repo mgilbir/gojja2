@@ -1,10 +1,5 @@
 {
-  "__settings__": {},
-  "d": {
-    "b": 2,
-    "a": 1,
-    "C": 3
-  }
+  "__settings__": {}
 }
 ---
-{{ nope in (d.keys() - 'a') }}
+{% set q = {'b': 2, 'a': 1, 'C': 3} %}{{ nope in (q.keys() - 'a') }}

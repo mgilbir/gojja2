@@ -196,7 +196,7 @@ func (v *dictView) Repr() string {
 	var b strings.Builder
 	b.WriteString(v.kind.name())
 	b.WriteByte('(')
-	b.WriteString(value.Repr(value.NewList(v.entries()...)))
+	b.WriteString(value.ReprFor(value.NewList(v.entries()...), v.py))
 	b.WriteByte(')')
 	return b.String()
 }

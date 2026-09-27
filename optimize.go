@@ -63,7 +63,13 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
 				continue
 			}
-			text := value.Str(v)
+			// StrFor, not Str: a container's text is its repr, and
+			// repr escapes by isprintable, which the interpreter
+			// decides. Folding with the pin's tables baked
+			// `{{ ['\u1c89'] }}` as an escape under 3.14, where the
+			// character is assigned and prints as itself -- the
+			// unfolded path was already right.
+			text := value.StrFor(v, c.pyVersion())
 			if escaping && !v.IsSafe() {
 				// A value whose own __html__ cannot be called
 				// stays a run-time failure, for the same reason
@@ -563,7 +569,7 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		// context to be stopped by.
 		var b strings.Builder
 		for _, item := range items {
-			text := value.Str(item)
+			text := value.StrFor(item, c.pyVersion())
 			if c.st.ChargeBytes(int64(len(text))) != nil {
 				return value.Undefined, false
 			}

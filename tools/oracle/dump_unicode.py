@@ -31,10 +31,16 @@ def main() -> int:
             dec = str(unicodedata.decimal(ch))
         except (ValueError, TypeError):
             dec = "-"
-        out.append("%d\t%s\t%s\t%s\t%s\t%s\t%d%d%d%d%d%d%d\n" % (
+        # The last two are str.isidentifier's two halves. A one-character
+        # string is an identifier exactly when the character may *start* one,
+        # and prefixing an ASCII letter asks whether it may continue one -- so
+        # the pair is XID_Start and XID_Continue as this interpreter knows them,
+        # which is what gojja2 needs and cannot get from Go's tables.
+        out.append("%d\t%s\t%s\t%s\t%s\t%s\t%d%d%d%d%d%d%d%d%d\n" % (
             cp, ch.upper(), ch.lower(), ch.title(), ch.casefold(), dec,
             ch.islower(), ch.isupper(), ch.istitle(),
-            ch.isdigit(), ch.isnumeric(), ch.isprintable(), ch.isalpha()))
+            ch.isdigit(), ch.isnumeric(), ch.isprintable(), ch.isalpha(),
+            ch.isidentifier(), ("a" + ch).isidentifier()))
     sys.stdout.write("".join(out))
     sys.stderr.write("dumped %d code points from CPython %s (Unicode %s)\n" % (
         len(out), sys.version.split()[0], unicodedata.unidata_version))

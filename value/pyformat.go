@@ -549,7 +549,16 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 			// A byte, or a code point that fits in one.
 			if v.kind == KindBytes {
 				if len(v.str) != 1 {
-					return formatted{}, c.errPercentCBytes(v.TypeName())
+					// A bytes of the wrong length is named by
+					// its length in 3.14, the way the padding
+					// methods name a fill's: "not a bytes
+					// object of length 2" rather than "not
+					// bytes". Anything that is not a bytes at
+					// all keeps the plain type name --
+					// str.center's argument 2 splits the same
+					// way, see FillCharMessageNamesTheLength.
+					return formatted{}, c.errPercentCBytes(
+						fmt.Sprintf("a bytes object of length %d", len(v.str)))
 				}
 				return formatted{body: text(v.str)}, nil
 			}
@@ -832,7 +841,7 @@ func markupFloat(v Value, py PythonVersion) (float64, error) {
 			}
 		}
 		return 0, errs.New(errs.ValueError,
-			"could not convert string to float: %s", Repr(v))
+			"could not convert string to float: %s", ReprFor(v, py))
 	}
 	return 0, errs.New(errs.TypeError,
 		"float() argument must be a string or a real number, not '%s'", v.TypeName())

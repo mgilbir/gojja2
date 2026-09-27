@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a²-²bcdef'|wordwrap(4) }}|{{ '²²-²bcdef'|wordwrap(4) }}|{{ 'a²²-²bcdef'|wordwrap(5) }}|{{ 'a1-1bcdef'|wordwrap(4) }}|{{ 'ab-cdefgh'|wordwrap(4) }}

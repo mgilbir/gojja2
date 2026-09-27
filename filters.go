@@ -1286,6 +1286,9 @@ func lastHyphenBefore(chunk string, limit int) int {
 // whitespace runs, and words, optionally broken after an internal hyphen.
 func wrapChunks(s *State, text string, breakOnHyphens bool) ([]string, error) {
 	var chunks []string
+	// Looked up once for the whole text, as the classifiers do: the word
+	// classes below are the interpreter's, not Go's.
+	u := value.UnicodeFor(s.PythonVersion())
 	runes := []rune(text)
 	i := 0
 	for i < len(runes) {
@@ -1306,7 +1309,7 @@ func wrapChunks(s *State, text string, breakOnHyphens bool) ([]string, error) {
 			chunks = append(chunks, word)
 			continue
 		}
-		chunks = append(chunks, splitOnHyphens(word)...)
+		chunks = append(chunks, splitOnHyphens(word, u)...)
 	}
 	return chunks, nil
 }
@@ -1325,7 +1328,7 @@ func wrapChunks(s *State, text string, breakOnHyphens bool) ([]string, error) {
 // Two or more hyphens are an em-dash instead, and become a chunk of their own
 // when they sit between a word character and a word character: `a--b` is three
 // chunks where `a-b` is one.
-func splitOnHyphens(word string) []string {
+func splitOnHyphens(word string, u *value.UnicodeOverrides) []string {
 	runes := []rune(word)
 	var out []string
 	start := 0
@@ -1334,7 +1337,8 @@ func splitOnHyphens(word string) []string {
 			continue
 		}
 		if run := dashRun(runes, i); run >= 2 {
-			if i > 0 && isWordPunct(runes[i-1]) && i+run < len(runes) && isWordChar(runes[i+run]) {
+			if i > 0 && isWordPunct(runes[i-1], u) &&
+				i+run < len(runes) && isWordChar(runes[i+run], u) {
 				if i > start {
 					out = append(out, string(runes[start:i]))
 				}
@@ -1344,7 +1348,7 @@ func splitOnHyphens(word string) []string {
 			i += run - 1
 			continue
 		}
-		if splitsAfterHyphen(runes, i) {
+		if splitsAfterHyphen(runes, i, u) {
 			out = append(out, string(runes[start:i+1]))
 			start = i + 1
 		}
@@ -1361,44 +1365,51 @@ func dashRun(runes []rune, i int) int {
 	return n
 }
 
-// isWordLetter is Python's [^\d\W]: a word character that is not a digit.
-func isWordLetter(r rune) bool { return r == '_' || unicode.IsLetter(r) }
+// isWordChar is Python's `\w`, which for a str pattern is Py_UNICODE_ISALNUM
+// plus the underscore -- str.isalpha, isdecimal, isdigit or isnumeric, any of
+// them.
+//
+// It was `unicode.IsLetter || unicode.IsDigit || '_'`, which is the same idea
+// read off Go's tables rather than the interpreter's: 9,039 code points wrong
+// against the pin, 14,049 against 3.11, and the count moving with whichever
+// Unicode release the toolchain carried. Composing the classifiers gojja2
+// already has for isalpha and isnumeric is exact on all 1,112,064 code points
+// for every interpreter, so this needs no table of its own.
+func isWordChar(r rune, u *value.UnicodeOverrides) bool {
+	return r == '_' || u.IsAlpha(r, value.AlphaDefault(r)) || pyIsNumeric(r, u)
+}
 
-// isWordChar is Python's \w.
-func isWordChar(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+// isWordLetter is Python's `[^\d\W]`: a word character that is not a decimal
+// digit. `\d` is isdecimal, so a superscript two is one of these and an ASCII
+// digit is not -- which reading it as unicode.IsLetter got backwards for 10,097
+// code points.
+func isWordLetter(r rune, u *value.UnicodeOverrides) bool {
+	return isWordChar(r, u) && !pyIsDecimal(r, u)
 }
 
 // isWordPunct is textwrap's word_punct, the class an em-dash must follow.
-func isWordPunct(r rune) bool {
-	return isWordChar(r) || strings.ContainsRune(`!"'&.,?`, r)
+func isWordPunct(r rune, u *value.UnicodeOverrides) bool {
+	return isWordChar(r, u) || strings.ContainsRune(`!"'&.,?`, r)
 }
 
 // splitsAfterHyphen reports whether the single hyphen at i is one a line may
 // end after: (?<=LL-|L-L-) at the hyphen, and (?=L-?L) past it.
-func splitsAfterHyphen(runes []rune, i int) bool {
-	twoLetters := i >= 2 && isWordLetter(runes[i-1]) && isWordLetter(runes[i-2])
-	letterHyphenLetter := i >= 3 && isWordLetter(runes[i-1]) &&
-		runes[i-2] == '-' && isWordLetter(runes[i-3])
+func splitsAfterHyphen(runes []rune, i int, u *value.UnicodeOverrides) bool {
+	twoLetters := i >= 2 && isWordLetter(runes[i-1], u) && isWordLetter(runes[i-2], u)
+	letterHyphenLetter := i >= 3 && isWordLetter(runes[i-1], u) &&
+		runes[i-2] == '-' && isWordLetter(runes[i-3], u)
 	if !twoLetters && !letterHyphenLetter {
 		return false
 	}
 	j := i + 1
-	if j >= len(runes) || !isWordLetter(runes[j]) {
+	if j >= len(runes) || !isWordLetter(runes[j], u) {
 		return false
 	}
 	j++
 	if j < len(runes) && runes[j] == '-' {
 		j++
 	}
-	return j < len(runes) && isWordLetter(runes[j])
-}
-
-// isWordRune is what jinja2's wordcount counts a word out of: `[\p{L}\p{N}_]`.
-// It is not the same as splitting on whitespace -- "[]" has one field and no
-// words. Go's \w is ASCII-only; Python's is not, so the class is spelled out.
-func isWordRune(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
+	return j < len(runes) && isWordLetter(runes[j], u)
 }
 
 // filterWordcount counts runs of word characters.
@@ -1412,6 +1423,7 @@ func isWordRune(r rune) bool {
 func filterWordcount(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	var n int64
 	inWord := false
+	u := value.UnicodeFor(s.PythonVersion())
 	subject, err := strictStr(v)
 	if err != nil {
 		return value.Undefined, err
@@ -1420,7 +1432,7 @@ func filterWordcount(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 		if err := s.Poll(); err != nil {
 			return value.Undefined, err
 		}
-		if !isWordRune(r) {
+		if !isWordChar(r, u) {
 			inWord = false
 			continue
 		}
@@ -2879,8 +2891,12 @@ func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.
 		}
 		f, ok := value.ParseFloat(strings.TrimSpace(text), s.PythonVersion())
 		if !ok {
+			// ReprFor: repr escapes by isprintable, which the
+			// interpreter decides, so the string this message quotes
+			// escapes the way *that* interpreter would print it.
 			return value.Undefined, errs.New(errs.ValueError,
-				"could not convert string to float: %s", value.Repr(v))
+				"could not convert string to float: %s",
+				value.ReprFor(v, s.PythonVersion()))
 		}
 		bytes = f
 	}
