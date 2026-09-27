@@ -1,0 +1,3 @@
+{}
+---
+{% autoescape true %}{{ (('<b>'|safe) ~ 'x') is escaped }}|{% set m = '<b>'|safe %}{{ ((m ~ 'x')) is escaped }}{% endautoescape %}

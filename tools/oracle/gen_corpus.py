@@ -679,6 +679,22 @@ case("escape/volatile_concat_nested", "{% autoescape yes %}{% autoescape true %}
      yes=True, mk="<i>", s="a&b")
 case("escape/volatile_concat_macro", "{% autoescape yes %}{% macro q() %}{{ (mk|safe) ~ s }}{% endmacro %}{{ q() }}{% endautoescape %}",
      yes=True, mk="<i>", s="a&b")
+# And the same `~` asymmetric between the *folded* and the run-time path, with no
+# volatility involved: Concat.as_const joins `str()` of each operand, so a Markup
+# that the folder can see loses its safety and the output escapes it -- while the
+# run-time concat answers Markup and the output leaves it alone. Two spellings of
+# one expression, two answers, and jinja2 does the same.
+#
+# This is the exception TestFoldedMatchesUnfolded carries: it requires the two
+# paths to agree everywhere else, and requires *these* to differ, so the
+# exception cannot quietly become true.
+case("escape/concat_markup_folded_and_not",
+     "{% autoescape true %}{{ ('<b>'|safe) ~ 'x' }}|{{ 'x' ~ ('<b>'|safe) }}|"
+     "{% set m = '<b>'|safe %}{{ m ~ 'x' }}|{{ 'x' ~ m }}|"
+     "{{ ('<b>'|safe) ~ ('<i>'|safe) }}{% endautoescape %}")
+case("escape/concat_markup_is_escaped_either_way",
+     "{% autoescape true %}{{ (('<b>'|safe) ~ 'x') is escaped }}|"
+     "{% set m = '<b>'|safe %}{{ ((m ~ 'x')) is escaped }}{% endautoescape %}")
 
 # Markup on the left of * settles the operation before an undefined on the
 # right can raise: Markup.__mul__ asks for __index__ and lets that TypeError
