@@ -1,0 +1,6 @@
+{
+  "case": "control/continue_keeps_namespace_write.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

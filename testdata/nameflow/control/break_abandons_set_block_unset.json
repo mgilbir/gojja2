@@ -1,0 +1,7 @@
+{
+  "case": "control/break_abandons_set_block_unset.jj2",
+  "variables": {
+    "seq": "fr",
+    "v": "or"
+  }
+}

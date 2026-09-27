@@ -1,0 +1,6 @@
+{
+  "case": "control/do_inside_filter_block.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

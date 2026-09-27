@@ -244,6 +244,52 @@ case("control/continue_keeps_counting",
      "{% for x in seq %}{% if x % 2 %}{% continue %}{% endif %}{{ loop.index }}:{{ x }},{% endfor %}",
      __settings__={"extensions": ["loopcontrols"]}, **SEQ)
 
+# What a jump out of the middle of something leaves half done. jinja2 buffers a
+# filter block's body and applies the filter *after* it, so a break inside one
+# discards the buffer rather than filtering what was written; a `{% set %}` block
+# is the same shape and the assignment never happens, so the name keeps whatever
+# it had. None of this is jinja2's choice -- it is what Python's `break` does to
+# the statements it jumps over -- and none of it was graded.
+case("control/break_discards_filter_buffer",
+     "{% for x in seq %}{% filter upper %}a{% break %}b{% endfilter %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_keeps_earlier_filter_output",
+     "{% for x in seq %}{% filter upper %}a{% if x == 2 %}{% break %}{% endif %}b{% endfilter %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_abandons_set_block",
+     "{% set v = 'pre' %}{% for x in seq %}{% set v %}a{% break %}{% endset %}{% endfor %}[{{ v }}]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_abandons_set_block_unset",
+     "{% for x in seq %}{% set v %}a{% break %}{% endset %}{% endfor %}[{{ v|default('-') }}]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+# A namespace outlives the pass, so a continue keeps what the pass wrote to it --
+# where a plain `{% set %}` in the body does not survive the iteration at all.
+case("control/continue_keeps_namespace_write",
+     "{% set ns = namespace(v=0) %}{% for x in seq %}{% set ns.v = x %}{% continue %}{% endfor %}[{{ ns.v }}]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_recursive_before_descent",
+     "{% for x in seq recursive %}a{% break %}{{ loop([x]) }}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_recursive_after_descent",
+     "{% for x in seq recursive %}{{ loop([]) }}a{% break %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_controls_read_the_loop_var",
+     "{% for x in seq %}{{ loop.index }}{% if loop.first %}{% continue %}{% endif %}{% endfor %}|"
+     "{% for x in seq %}{% if loop.last %}{% break %}{% endif %}{{ loop.revindex }}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_inner_loop_with_else",
+     "{% for x in seq %}{% for y in seq %}{% if y == 2 %}{% break %}{% endif %}{{ y }}{% else %}I{% endfor %}|{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_in_loop_else_may_break",
+     "{% for x in e %}a{% else %}{% for y in seq %}{% break %}{% endfor %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, e=[], **SEQ)
+case("control/do_and_break_together",
+     "{% set l = [] %}{% for x in seq %}{% do l.append(x) %}{% if x == 2 %}{% break %}{% endif %}{% endfor %}{{ l }}",
+     __settings__={"extensions": ["loopcontrols", "do"]}, **SEQ)
+case("control/do_inside_filter_block",
+     "{% set l = [] %}{% for x in seq %}{% filter upper %}{% do l.append(x) %}a{% endfilter %}{% endfor %}{{ l }}",
+     __settings__={"extensions": ["loopcontrols", "do"]}, **SEQ)
+
 # Where a break binds to nothing at all. jinja2's parser accepts every one of
 # these and CPython refuses the Python it generates, naming a line of that
 # generated module -- so gojja2 refuses them too, with CPython's wording and

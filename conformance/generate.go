@@ -227,6 +227,18 @@ type generator struct {
 	// recursive marks a {% for ... recursive %} body, where loop() calls
 	// the loop again.
 	recursive bool
+	// do and loopControls are the drawn extensions, which decide whether
+	// the tags they add may be written at all. Without them the tag is not a
+	// tag: `{% do 1 %}` is "Encountered unknown tag 'do'".
+	do           bool
+	loopControls bool
+	// fnLoops counts the loops open around this point *within the function
+	// jinja2 would generate*, which is what a break or a continue binds to
+	// -- so a macro body resets it where inLoop would carry through. A
+	// break with nothing to bind does not compile under CPython
+	// (docs/divergences.md), and generating one would report a divergence
+	// per template on the message alone.
+	fnLoops int
 }
 
 // GeneratedCase is a template together with the environment it is meant to
@@ -265,6 +277,18 @@ type GeneratedCase struct {
 	Trim                bool
 	Lstrip              bool
 	KeepTrailingNewline bool
+	// Extensions names the optional tags the environment enables: any of
+	// "do" and "loopcontrols".
+	//
+	// They were the last statements the generator could not write. The
+	// parser knows `break`, `continue` and `do`, and every one of them needs
+	// an extension the soak never enabled -- so sixty thousand templates a
+	// run held none of the three, and the corpus graded them on two
+	// hand-written cases. The loop-control pair is the interesting half:
+	// jinja2 emits Python's own keywords for them, so what a break does to a
+	// loop's `{% else %}` branch, to `loop.index`, and to a filtered loop's
+	// generator is decided by Python and not by jinja2.
+	Extensions []string
 }
 
 // undefinedKinds are drawn against, default-weighted: the others shift the whole
@@ -296,6 +320,17 @@ func GenerateCase(input []byte) GeneratedCase {
 	trim := g.c.chance(3)
 	lstrip := g.c.chance(3)
 	keepNewline := g.c.chance(3)
+	// Drawn before the template because the generator has to know: a tag an
+	// extension did not add is a syntax error, not a statement.
+	g.do = g.c.chance(3)
+	g.loopControls = g.c.chance(3)
+	var extensions []string
+	if g.do {
+		extensions = append(extensions, "do")
+	}
+	if g.loopControls {
+		extensions = append(extensions, "loopcontrols")
+	}
 	g.template()
 	return GeneratedCase{
 		Source:              g.b.String(),
@@ -304,6 +339,7 @@ func GenerateCase(input []byte) GeneratedCase {
 		Trim:                trim,
 		Lstrip:              lstrip,
 		KeepTrailingNewline: keepNewline,
+		Extensions:          extensions,
 	}
 }
 
@@ -380,7 +416,7 @@ func (g *generator) stmt(depth int) {
 		g.b.WriteString("x")
 		return
 	}
-	switch g.c.intn(15) {
+	switch g.c.intn(16) {
 	case 0:
 		g.b.WriteString(g.c.pick([]string{"text ", "\n", " ", "a\nb", "<p>", "  "}))
 	case 1, 2, 3:
@@ -426,6 +462,8 @@ func (g *generator) stmt(depth int) {
 		}))
 	case 13:
 		g.autoescapeStmt(depth)
+	case 14:
+		g.tagStmt()
 	default:
 		g.open("{{")
 		g.b.WriteString(g.expr(2))
@@ -446,6 +484,51 @@ func (g *generator) autoescapeStmt(depth int) {
 	g.close("%}")
 	g.body(depth - 1)
 	g.b.WriteString("{% endautoescape %}")
+}
+
+// tagStmt emits a statement that is a tag rather than an expression in braces.
+//
+// `{% print %}` needs no extension and is jinja2's other Output node: a
+// comma-separated *list* of expressions, with comma rules of its own. `{% do %}`
+// and the loop controls are only tags when the drawn extensions added them.
+func (g *generator) tagStmt() {
+	// print twice, so a run without either extension still draws it.
+	kinds := []string{"print", "print"}
+	if g.do {
+		kinds = append(kinds, "do")
+	}
+	if g.loopControls && g.fnLoops > 0 {
+		kinds = append(kinds, "break", "continue")
+	}
+	switch g.c.pick(kinds) {
+	case "do":
+		g.open("{%")
+		// A mutating call is what `do` is for, and it is the shape that
+		// makes the *next* statement's answer depend on this one.
+		g.b.WriteString("do " + g.c.pick([]string{
+			g.expr(2),
+			"lst.append(" + g.c.pick(smallInts) + ")",
+			"d.update(k=1)",
+			"lst.sort()",
+			"nope.nothing",
+		}))
+		g.close("%}")
+	case "break":
+		g.open("{%")
+		g.b.WriteString("break")
+		g.close("%}")
+	case "continue":
+		g.open("{%")
+		g.b.WriteString("continue")
+		g.close("%}")
+	default:
+		g.open("{%")
+		g.b.WriteString("print " + g.expr(2))
+		for range g.c.intn(3) {
+			g.b.WriteString(", " + g.expr(1))
+		}
+		g.close("%}")
+	}
 }
 
 func (g *generator) ifStmt(depth int) {
@@ -488,13 +571,33 @@ func (g *generator) forStmt(depth int) {
 	g.close("%}")
 
 	g.inLoop++
+	g.fnLoops++
 	wasRecursive := g.recursive
 	g.recursive = g.recursive || recursive
 	if recursive && g.c.chance(2) {
 		g.b.WriteString("{{ loop(" + g.c.pick([]string{"[]", "lst", "i", "[i]"}) + ") }}")
 	}
+	// A guarded loop control, written here rather than left to the statement
+	// table: that table only lands inside a loop by chance, and this is the
+	// shape where the `{% else %}` branch, `loop.index` and a filtered loop's
+	// generator each answer differently. Which side of the body it sits on
+	// matters -- a control before the body leaves the rest of the pass
+	// unreached, which is what makes jinja2 run the else branch.
+	control := ""
+	if g.loopControls && g.c.chance(3) {
+		control = "{% if " + g.expr(1) + " %}{% " +
+			g.c.pick([]string{"break", "continue"}) + " %}{% endif %}"
+	}
+	before := control != "" && g.c.chance(2)
+	if before {
+		g.b.WriteString(control)
+	}
 	g.body(depth - 1)
+	if control != "" && !before {
+		g.b.WriteString(control)
+	}
 	g.recursive = wasRecursive
+	g.fnLoops--
 	g.inLoop--
 
 	if g.c.chance(4) {
@@ -585,7 +688,12 @@ func (g *generator) macroStmt(depth int) {
 		g.b.WriteString(", y=" + g.c.pick(smallInts))
 	}
 	g.b.WriteString(") %}")
+	// A macro body is a function of its own, so a loop outside it does not
+	// bind a break inside it -- CPython refuses the generated module.
+	outerLoops := g.fnLoops
+	g.fnLoops = 0
 	g.body(depth - 1)
+	g.fnLoops = outerLoops
 	g.b.WriteString("[{{ x }}]{% endmacro %}")
 
 	if g.c.chance(3) {

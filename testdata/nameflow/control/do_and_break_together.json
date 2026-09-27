@@ -1,0 +1,6 @@
+{
+  "case": "control/do_and_break_together.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

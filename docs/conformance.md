@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**5908 of 5945 gradable cases (99.4%)** match CPython jinja2, across eight
+**5920 of 5957 gradable cases (99.4%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The five that do not are listed with reasons
 in `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["5908 / 5945 gradable  (99.4%)"]
+    TC --> RATE["5920 / 5957 gradable  (99.4%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 3625 | 3592 |
+| gojja2's own (committed, with goldens) | 3637 | 3604 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **5945** | **5908 (99.4%)** |
+| **total** | **5957** | **5920 (99.4%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -275,8 +275,13 @@ template means rather than what it prints, and they were the last dimension the
 run left fixed -- sixty thousand templates a run all lexed under jinja2's
 defaults while the generator wrote `{%- ... -%}` constantly, and the interaction
 between an explicit marker and an implicit setting is exactly where a whitespace
-rule goes wrong. `GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as a
-sixth axis, configuring both sides to match.
+rule goes wrong. The optional extensions are drawn too -- `do` and
+`loopcontrols` -- because the tags they add are not tags without them: the
+parser knows `{% break %}`, `{% continue %}` and `{% do %}`, all three need an
+extension, and for as long as the run enabled none of them those statements were
+graded by two hand-written corpus cases and nothing else.
+`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as a seventh axis,
+configuring both sides to match.
 
 Both engines are handed the same settings from one function, because there were
 two built by hand and they had drifted: the syntax soak sent autoescaping and
@@ -284,7 +289,10 @@ not the Undefined class, so an axis reached one engine and not the other. **A
 setting applied to one side only is a comparison between two environments rather
 than between two engines, and it looks exactly like a divergence.** Every run
 prints a count per axis, because a dimension that silently stopped varying would
-otherwise look exactly like a clean run.
+otherwise look exactly like a clean run. For the extensions the count is of the
+tag actually *written* as well as the setting drawn, and a run of any size that
+writes none of them fails: enabling `loopcontrols` costs a run nothing if no
+template ever writes a break.
 
 The oracle runs as a warm subprocess. That is what makes a soak practical at
 all: starting an interpreter and importing jinja2 per case costs tens of

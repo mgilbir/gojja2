@@ -93,6 +93,9 @@ func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
 		gojja2.WithLstripBlocks(c.Lstrip),
 		gojja2.WithKeepTrailingNewline(c.KeepTrailingNewline),
 	}
+	if len(c.Extensions) > 0 {
+		opts = append(opts, gojja2.WithExtensions(c.Extensions...))
+	}
 	switch c.Undefined {
 	case "strict":
 		opts = append(opts, gojja2.WithUndefined(value.UndefinedStrict))
@@ -129,6 +132,9 @@ func caseSettings(c conformance.GeneratedCase) map[string]any {
 	}
 	if c.KeepTrailingNewline {
 		settings["keep_trailing_newline"] = true
+	}
+	if len(c.Extensions) > 0 {
+		settings["extensions"] = c.Extensions
 	}
 	if len(settings) == 0 {
 		return nil
@@ -215,8 +221,17 @@ func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.
 func (h *harness) minimize(t testing.TB, c conformance.GeneratedCase, budget int) (conformance.GeneratedCase, *conformance.Divergence) {
 	// Only the source shrinks: the environment is part of what diverged,
 	// so changing it would reduce a different case.
+	//
+	// Copied rather than rebuilt field by field. It was rebuilt, from a
+	// list written when autoescape was the only setting, so every reduction
+	// silently dropped the Undefined class and the three whitespace
+	// settings: a case that diverged *because* of one was shrunk without it,
+	// the reduction lost the divergence, and the fallback reported the
+	// unreduced template. The shrinker looked weak rather than wrong.
 	with := func(source string) conformance.GeneratedCase {
-		return conformance.GeneratedCase{Source: source, Autoescape: c.Autoescape}
+		reduced := c
+		reduced.Source = source
+		return reduced
 	}
 	minimal := with(conformance.Shrink(c.Source, budget, func(candidate string) *conformance.Divergence {
 		return h.check(t, with(candidate))
@@ -298,6 +313,7 @@ func TestDifferential(t *testing.T) {
 	var failures int
 	undefinedRuns := map[string]int{}
 	lexRuns := map[string]int{}
+	tagRuns := map[string]int{}
 	for range count {
 		input := make([]byte, 1+rng.IntN(96))
 		for i := range input {
@@ -316,6 +332,7 @@ func TestDifferential(t *testing.T) {
 			undefinedRuns[c.Undefined]++
 		}
 		countLexSettings(c, lexRuns)
+		countTags(c, tagRuns)
 
 		d := h.check(t, c)
 		if d == nil {
@@ -335,10 +352,23 @@ func TestDifferential(t *testing.T) {
 	// default Undefined without anything saying so.
 	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), "+
 		"%d autoescaping, %d empty; undefined %d strict, %d chainable, %d debug; "+
-		"lexer %d trim, %d lstrip, %d keep-newline",
+		"lexer %d trim, %d lstrip, %d keep-newline; "+
+		"extensions %d do, %d loopcontrols, writing %d print, %d do, %d break, %d continue",
 		checked, seed, escaping, skipped,
 		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"],
-		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"])
+		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
+		tagRuns["ext-do"], tagRuns["ext-loopcontrols"],
+		tagRuns["print"], tagRuns["do"], tagRuns["break"], tagRuns["continue"])
+	// An extension that is enabled and never written is an axis that costs a
+	// run and asks nothing, which is what `break` was for as long as the
+	// generator could not emit it. Asserted rather than printed, because a
+	// zero in a log line is exactly what nobody reads.
+	for _, tag := range []string{"print", "do", "break", "continue"} {
+		if checked > 1000 && tagRuns[tag] == 0 {
+			t.Errorf("%d templates and not one wrote {%% %s %%}; the arm is unreachable",
+				checked, tag)
+		}
+	}
 }
 
 // countLexSettings tallies the lexer axis for the summary line, which is the
@@ -352,6 +382,23 @@ func countLexSettings(c conformance.GeneratedCase, into map[string]int) {
 	}
 	if c.KeepTrailingNewline {
 		into["keep"]++
+	}
+}
+
+// countTags tallies the extensions axis and the tags it gates. The drawn
+// setting and the tag actually written are counted apart on purpose: enabling
+// `loopcontrols` costs a run nothing if no template ever writes a break, and
+// that is the state the soak was in until the generator learned the arm.
+func countTags(c conformance.GeneratedCase, into map[string]int) {
+	for _, name := range c.Extensions {
+		into["ext-"+name]++
+	}
+	for _, tag := range []string{"print", "do", "break", "continue"} {
+		if strings.Contains(c.Source, "% "+tag) ||
+			strings.Contains(c.Source, "%- "+tag) ||
+			strings.Contains(c.Source, "%+ "+tag) {
+			into[tag]++
+		}
 	}
 }
 
