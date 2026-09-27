@@ -1123,6 +1123,28 @@ for _u in ("strict", "chainable", "debug", ""):
          "{{ nope|items|list }}|{{ 'x'.a|items|list }}|"
          "{% for k, v in nope|items %}x{% endfor %}",
          __settings__={"undefined": _u} if _u else {})
+# A set hashes what it is asked about, and a template can ask about anything --
+# so `{{ {} in (d.keys() - 'a') }}` is "unhashable type: 'dict'". Set.Contains had
+# no channel for that complaint and hashed with the form that cannot fail, whose
+# guard is a panic; the render answered "internal error in gojja2 (please report
+# this)". Found by a soak seed, on the only set arithmetic a template can write.
+for _n, _src in [
+    ("a_dict", "{{ {} in (d.keys() - 'a') }}"),
+    ("a_list", "{{ [] in (d.keys() - 'a') }}"),
+    ("a_nonempty_dict", "{{ {'a': 1} in (d.keys() - 'a') }}"),
+    ("a_view", "{{ d.keys() in (d.keys() - 'a') }}"),
+]:
+    case(f"errors/set_membership_of_{_n}", _src, d={"b": 2, "a": 1, "C": 3})
+# ...and the hashable ones, so the check is a check and not a refusal.
+case("methods/set_membership",
+     "{{ 'a' in (d.keys() - 'x') }}|{{ 'a' in (d.keys() - 'a') }}|"
+     "{{ ((1, 2)) in (d.items() - []) }}", d={"b": 2, "a": 1, "C": 3})
+for _u in ("strict", ""):
+    _n = _u or "default"
+    case(f"undefined/set_membership_of_an_undefined_{_n}",
+         "{{ nope in (d.keys() - 'a') }}",
+         __settings__={"undefined": _u} if _u else {}, d={"b": 2, "a": 1, "C": 3})
+
 # |urlencode puts each half of a pair through str(), so a StrictUndefined in
 # either position refuses rather than encoding as nothing -- jinja2 writes
 # `f"{quote(k)}={quote(v)}"`. gojja2 converted without consulting the refusal, so

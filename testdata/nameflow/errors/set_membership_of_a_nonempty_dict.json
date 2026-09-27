@@ -1,0 +1,6 @@
+{
+  "case": "errors/set_membership_of_a_nonempty_dict.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

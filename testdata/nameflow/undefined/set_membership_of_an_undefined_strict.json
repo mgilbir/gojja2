@@ -1,0 +1,7 @@
+{
+  "case": "undefined/set_membership_of_an_undefined_strict.jj2",
+  "variables": {
+    "d": "or",
+    "nope": "or"
+  }
+}
