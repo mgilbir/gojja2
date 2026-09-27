@@ -235,7 +235,9 @@ func (v Value) IsNumber() bool {
 // IsInteger reports whether v is an int or bool (an int subclass).
 func (v Value) IsInteger() bool { return v.kind == KindInt || v.kind == KindBool }
 
-// IsSequence reports whether v is an ordered sequence: list, tuple or str.
+// IsSequence reports whether v is an ordered sequence: list, tuple, str or
+// bytes. A bytes is one because Python's is a sequence of integers, which is
+// also why `97 in b"ab"` is True.
 func (v Value) IsSequence() bool {
 	switch v.kind {
 	case KindList, KindTuple, KindString, KindBytes:
