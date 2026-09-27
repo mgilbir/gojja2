@@ -1,0 +1,6 @@
+{
+  "__settings__": {},
+  "yes": true
+}
+---
+{{ range(3) in ((yes, nope)) }}

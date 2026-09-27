@@ -133,8 +133,12 @@ func (v *dictView) Iterate() iter.Seq[value.Value] {
 //     it defers. known=false means "ask the generic path".
 func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found, known bool, err error) {
 	d, ok := v.d.Dict()
-	if !ok || v.kind == viewValues {
+	if !ok {
 		return false, false, nil
+	}
+	if v.kind == viewValues {
+		found, err := v.scan(item, py)
+		return found, true, err
 	}
 	key := item
 	if v.kind == viewItems {
@@ -160,18 +164,32 @@ func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found,
 		return true, true, nil
 	}
 	pair, _ := item.Seq()
-	return value.Equal(pair.At(1), got), true, nil
+	eq, err := value.EqualErr(pair.At(1), got, py)
+	return eq, true, err
 }
 
 func (v *dictView) Contains(item value.Value) (found, known bool) {
-	// Keys and items are answered by ContainsErr above; this is the values
-	// view's scan, and the fallback for a receiver that is no longer a dict.
+	// Unreachable while ContainsErr answers every view, and kept because
+	// Container is the interface a value.Object is asked through.
+	found, _, _ = v.ContainsErr(item, v.py)
+	return found, true
+}
+
+// scan is the values view's element-by-element search, which is a real `==` per
+// element -- so a StrictUndefined among the *values* refuses rather than
+// answering False. `{% set q = {'a': nope} %}{{ 1 in q.values() }}` answered
+// False because the scan compared with a form that has nowhere to put an error.
+func (v *dictView) scan(item value.Value, py value.PythonVersion) (bool, error) {
 	for _, have := range v.entries() {
-		if value.Equal(item, have) {
-			return true, true
+		eq, err := value.EqualErr(item, have, py)
+		if err != nil {
+			return false, err
+		}
+		if eq {
+			return true, nil
 		}
 	}
-	return false, true
+	return false, nil
 }
 
 func (v *dictView) Repr() string {
@@ -183,32 +201,42 @@ func (v *dictView) Repr() string {
 	return b.String()
 }
 
-// Equals compares a keys or items view the way Python does, as a set. A values
-// view has no __eq__ at all there, so two of them are equal only by identity --
-// `{'a':1}.values() == {'a':1}.values()` is False.
-func (v *dictView) Equals(other value.Value) (bool, bool) {
+// EqualsErr compares a keys or items view the way Python does, as a set. A
+// values view has no __eq__ at all there, so two of them are equal only by
+// identity -- `{'a':1}.values() == {'a':1}.values()` is False.
+//
+// The set comparison compares elements, so a StrictUndefined among them refuses:
+// an items view carries the dict's values and `{'a': nope}.items() ==
+// {'a': 1}.items()` raises, where a keys view carries only the keys and answers
+// True. This compared with a form that has nowhere to put an error and answered
+// False for both.
+func (v *dictView) EqualsErr(other value.Value, py value.PythonVersion) (bool, bool, error) {
 	o, ok := other.Interface().(*dictView)
 	if !ok || o.kind != v.kind {
-		return false, true
+		return false, true, nil
 	}
 	if v.kind == viewValues {
-		return v == o, true
+		return v == o, true, nil
 	}
 	mine, theirs := v.entries(), o.entries()
 	if len(mine) != len(theirs) {
-		return false, true
+		return false, true, nil
 	}
 	for _, item := range mine {
 		found := false
 		for _, cand := range theirs {
-			if value.Equal(item, cand) {
+			eq, err := value.EqualErr(item, cand, py)
+			if err != nil {
+				return false, true, err
+			}
+			if eq {
 				found = true
 				break
 			}
 		}
 		if !found {
-			return false, true
+			return false, true, nil
 		}
 	}
-	return true, true
+	return true, true, nil
 }

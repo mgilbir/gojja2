@@ -471,7 +471,14 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 	//	           undefined's own error, naming the missing variable
 	//	%x %o %c   go through __index__, which Undefined does not
 	//	           define, so CPython raises its own TypeError instead
-	if v.IsUndefined() && strings.IndexByte("diueEfFgG", c.verb) >= 0 {
+	//
+	// A *bytes* format's float verbs are the exception: formatfloat in
+	// bytesobject.c replaces whatever the conversion raised with its own
+	// "float argument required, not Undefined", so the undefined's error
+	// never gets out there. Its integer verbs do not do that, which is why
+	// this is the float half and not the whole set.
+	if v.IsUndefined() && strings.IndexByte("diueEfFgG", c.verb) >= 0 &&
+		(!c.bytes || strings.IndexByte("diu", c.verb) >= 0) {
 		return formatted{}, v.UndefinedError()
 	}
 

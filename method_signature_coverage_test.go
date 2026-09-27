@@ -21,6 +21,14 @@ import (
 // makes removing them safe is this test rather than that measurement, because
 // the measurement only covers the methods that exist today.
 //
+// A later `make ungraded` pass found eighteen more of the same kind, missed the
+// first time because they are worded as a *missing* argument rather than as a
+// count -- str.translate, str.join, startswith, endswith, str.format_map,
+// dict.get, dict.pop, dict.setdefault, dict.popitem, dict.fromkeys,
+// list.append, list.extend, list.insert, list.remove, index and count -- plus
+// two in str.maketrans: a third-argument type check the loop above it already
+// made, and a count the table refuses. Same reasoning, same guarantee.
+//
 // tools/oracle/gen_methods.py reads these same maps, so a method added without
 // re-running `make methods` is exactly the gap being closed here.
 func TestEveryMethodHasASignature(t *testing.T) {

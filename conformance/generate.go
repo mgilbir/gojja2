@@ -1031,10 +1031,17 @@ func (g *generator) classObject() string {
 		// Parenthesised: `'x'|safe.__class__` is the dotted filter name
 		// `safe.__class__`, not the class of a Markup, and the arm that
 		// was meant to reach markupsafe.Markup reached nothing at all.
-		"('x'|safe)", "('ab'.encode())", "((1, 2))",
+		"('x'|safe)", "('ab'.encode())",
 	})
 	if generic {
-		subject = g.c.pick([]string{"lst", "d", "[1]", "{}", "dict(a=1)"})
+		// Every builtin with a __class_getitem__, which is the set that
+		// answers a generic alias rather than refusing the subscript.
+		// A tuple belongs here: `tuple['a']` is `tuple[str]` just as
+		// `list['a']` is, and drawing it as an ordinary subject let a
+		// soak reach the divergence through `|sum(attribute='age')`.
+		subject = g.c.pick([]string{
+			"lst", "d", "[1]", "{}", "dict(a=1)", "((1, 2))",
+		})
 	}
 	chain := subject + ".__class__"
 	// Calling one of these classes gives an instance whose repr embeds a
@@ -1075,7 +1082,12 @@ func (g *generator) classObject() string {
 			" in [n.__class__, s.__class__]",
 		}) + ")"
 	}
-	if g.c.chance(6) {
+	// A container hands the class object onwards just as a bare one does --
+	// an outer filter with `attribute=` subscripts what it walks -- so this
+	// arm is closed to the generic classes too. `[[1].__class__,
+	// [1].__class__]|unique|list|sum(attribute='age')` reached
+	// `list['age']`, which is a GenericAlias there and undefined here.
+	if !generic && g.c.chance(6) {
 		return g.c.pick([]string{
 			"{" + chain + ": 1}",
 			"[" + chain + ", n.__class__]|unique|list",

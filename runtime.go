@@ -313,7 +313,7 @@ func (l *loopObject) GetAttr(name string) (value.Value, bool) {
 	case "cycle":
 		return value.FromObject(&builtinFunc{name: "cycle", fn: stateless(l.cycle)}), true
 	case "changed":
-		return value.FromObject(&builtinFunc{name: "changed", fn: stateless(l.changed)}), true
+		return value.FromObject(&builtinFunc{name: "changed", fn: l.changed}), true
 	}
 	return value.Undefined, false
 }
@@ -332,13 +332,29 @@ func (l *loopObject) cycle(args *value.CallArgs) (value.Value, error) {
 
 // changed reports whether its arguments differ from the previous call's, which
 // is how templates group consecutive rows.
-func (l *loopObject) changed(args *value.CallArgs) (value.Value, error) {
+//
+// jinja2 writes it as `self._last_checked_value != value`, a real `!=` on two
+// tuples -- so a StrictUndefined among the arguments raises instead of
+// answering, and it raises from the *second* call rather than the first: the
+// first has only the `missing` sentinel to compare against, which is not a
+// tuple, so Python falls back to identity and never looks at the elements. This
+// compared without consulting the refusal, so `{% for a in [1, 2] %}{{
+// loop.changed(nope) }}` answered "TrueTrue" where jinja2 refuses the second
+// iteration. Found by a soak seed, which noticed only that the two engines
+// failed in different places.
+func (l *loopObject) changed(s *State, args *value.CallArgs) (value.Value, error) {
 	if err := bindArgs(runtimeSignatures["LoopContext.changed"], args, 1); err != nil {
 		return value.Undefined, err
 	}
 	current := value.NewTuple(args.Pos...)
-	if l.hasLastValue && value.Equal(l.lastChanged, current) {
-		return value.False, nil
+	if l.hasLastValue {
+		same, err := value.EqualErr(l.lastChanged, current, s.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		if same {
+			return value.False, nil
+		}
 	}
 	l.lastChanged, l.hasLastValue = current, true
 	return value.True, nil

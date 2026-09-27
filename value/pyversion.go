@@ -197,6 +197,18 @@ func (v PythonVersion) UnpackErrorNamesTheCount() bool { return v.AtLeast(Python
 // errors/bytes_ljust_fill_length, errors/bytes_rjust_fill_not_bytes.
 func (v PythonVersion) FillCharMessageNamesTheLength() bool { return v.AtLeast(Python314) }
 
+// TranslateTableMessagesLoseASpace reports whether the two complaints
+// str.maketrans makes about a key are spelled a space short.
+//
+// 3.14 has "keys in translate table mustbe strings or integers" and "string
+// keys in translatetable must be of length 1" -- each missing the space a C
+// string concatenation used to supply, and each upstream's own. They are the
+// only two that changed: translate's "character mapping must be in
+// range(0x110000)" and "character mapping must return integer, None or str"
+// read the same on every interpreter.
+// Corpus: errors/maketrans_key_is_a_float, errors/maketrans_long_string_key.
+func (v PythonVersion) TranslateTableMessagesLoseASpace() bool { return v.AtLeast(Python314) }
+
 // FromhexTakesBytesLike reports whether bytes.fromhex accepts a bytes argument
 // as well as a str, and says so when it refuses one.
 //

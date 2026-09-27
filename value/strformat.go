@@ -12,6 +12,28 @@ import (
 	"github.com/mgilbir/gojja2/errs"
 )
 
+// ParseFormatInteger reads a run of decimal digits the way the format
+// mini-language does: CPython accumulates digit by digit and checks before each
+// step that the result will still fit in a Py_ssize_t, so anything wider is
+// "Too many decimal digits in format string" and not a wrapped number. It is
+// the same routine behind a width, a precision and a replacement field's index,
+// which is why the three report the same thing.
+//
+// gojja2 multiplied and added without the check, so `'{18446744073709551616}'`
+// wrapped to 0 and printed the *first* argument.
+func ParseFormatInteger(digits string) (int, error) {
+	n := 0
+	for i := range len(digits) {
+		d := int(digits[i] - '0')
+		if n > (math.MaxInt-d)/10 {
+			return 0, errs.New(errs.ValueError,
+				"Too many decimal digits in format string")
+		}
+		n = n*10 + d
+	}
+	return n, nil
+}
+
 // FormatValue is Python's format(v, spec) -- the __format__ behind every
 // replacement field in str.format.
 //
@@ -124,9 +146,9 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 		i++
 	}
 	if i > start {
-		n, err := strconv.Atoi(string(r[start:i]))
+		n, err := ParseFormatInteger(string(r[start:i]))
 		if err != nil {
-			return f, invalidSpec(spec, v)
+			return f, err
 		}
 		f.width, f.hasWidth = n, true
 	}
@@ -166,9 +188,9 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 			return f, errs.New(errs.ValueError,
 				"Format specifier missing precision")
 		}
-		n, err := strconv.Atoi(string(r[start:i]))
+		n, err := ParseFormatInteger(string(r[start:i]))
 		if err != nil {
-			return f, invalidSpec(spec, v)
+			return f, err
 		}
 		f.prec, f.hasPrec = n, true
 	}

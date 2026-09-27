@@ -1,0 +1,6 @@
+{
+  "case": "undefined/compare_elements_short_circuit_default.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

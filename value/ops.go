@@ -297,13 +297,22 @@ func markupText(v Value) string {
 
 // Sub implements `-`, which is numeric only.
 func Sub(a, b Value, budget Budget, py PythonVersion) (Value, error) {
-	if err := undefinedOperand(a, b); err != nil {
+	// An undefined on the *left* refuses before anything else: Python asks
+	// `type(a).__sub__` first, and every Undefined class raises from it.
+	if err := undefinedOperand(a); err != nil {
 		return Undefined, err
 	}
 	// A dict's keys or items view subtracts as a set, taking any iterable
 	// on the right. Its values view does not, and neither does a Set: in
 	// CPython `set - list` is a TypeError, so the only set arithmetic a
 	// template can write is one view difference. See Set.
+	//
+	// This runs before the right operand's refusal is consulted, because
+	// dictviews_sub answers without asking it: it builds a set from the view
+	// and hands the other operand to difference_update, which *iterates* it.
+	// The default Undefined iterates empty, so `d.keys() - nope` is the keys
+	// unchanged -- where `d.values() - nope`, whose view is not a set
+	// operand, falls through to __rsub__ and raises.
 	if view, ok := a.Interface().(SetOperand); ok {
 		if _, isOperand := view.SetElements(); isOperand {
 			return setDifference(view, b, py, budget)
@@ -316,6 +325,9 @@ func Sub(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 		if _, isOperand := view.SetElements(); isOperand {
 			return setReverseDifference(a, view, py, budget)
 		}
+	}
+	if err := undefinedOperand(b); err != nil {
+		return Undefined, err
 	}
 	if !bothNumbers(a, b) {
 		return Undefined, binTypeError("-", a, b)

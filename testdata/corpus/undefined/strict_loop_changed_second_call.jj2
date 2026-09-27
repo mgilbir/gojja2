@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% for a in [1, 2] %}{{ loop.changed(nope) }}{% endfor %}

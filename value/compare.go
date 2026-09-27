@@ -82,7 +82,11 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 	// explicit opinion; standing for a tuple only supplies the default a
 	// subclass inherits.
 	if tupleSubclass(a) || tupleSubclass(b) {
-		if equal, known := statedEqual(a, b); known {
+		equal, known, err := statedEqual(a, b, py)
+		if err != nil {
+			return false, err
+		}
+		if known {
 			return equal, nil
 		}
 		a, b = AsTupleIfPossible(a), AsTupleIfPossible(b)
@@ -139,7 +143,11 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 		}
 		return true, nil
 	case KindObject:
-		if equal, known := statedEqual(a, b); known {
+		equal, known, err := statedEqual(a, b, py)
+		if err != nil {
+			return false, err
+		}
+		if known {
 			return equal, nil
 		}
 		return a.obj == b.obj, nil
@@ -244,22 +252,27 @@ func compare(op string, a, b Value, depth int, py PythonVersion) (int, bool, err
 // statedEqual asks either operand whether it decides equality for itself,
 // which is what an Object implementing Equaler is for. known is false when
 // neither has an opinion and the caller's own rule applies.
-func statedEqual(a, b Value) (equal, known bool) {
-	if a.kind == KindObject {
-		if e, ok := a.obj.(Equaler); ok {
-			if equal, known := e.Equals(b); known {
-				return equal, known
+func statedEqual(a, b Value, py PythonVersion) (equal, known bool, err error) {
+	for _, pair := range [2][2]Value{{a, b}, {b, a}} {
+		self, other := pair[0], pair[1]
+		if self.kind != KindObject {
+			continue
+		}
+		// EqualerErr first: an Object that can fail the comparison is
+		// also an Equaler, and the erroring form is the fuller answer.
+		if e, ok := self.obj.(EqualerErr); ok {
+			if equal, known, err := e.EqualsErr(other, py); err != nil || known {
+				return equal, known, err
+			}
+			continue
+		}
+		if e, ok := self.obj.(Equaler); ok {
+			if equal, known := e.Equals(other); known {
+				return equal, known, nil
 			}
 		}
 	}
-	if b.kind == KindObject {
-		if e, ok := b.obj.(Equaler); ok {
-			if equal, known := e.Equals(a); known {
-				return equal, known
-			}
-		}
-	}
-	return false, false
+	return false, false, nil
 }
 
 // AsTupleIfPossible returns the tuple v stands for when v is a TupleView, and
@@ -481,7 +494,17 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 			if err := chargeItems(budget, 1); err != nil {
 				return false, err
 			}
-			if Equal(item, v) {
+			// Each candidate is a real `==`, so a StrictUndefined
+			// among the *elements* refuses just as one in the item
+			// position does -- `{{ 1 in [yes, nope] }}` raises
+			// rather than answering False. Comparing with Equal
+			// swallowed that, and the same held for the two object
+			// arms below.
+			eq, err := EqualErr(item, v, py)
+			if err != nil {
+				return false, err
+			}
+			if eq {
 				return true, nil
 			}
 		}
@@ -509,7 +532,14 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 					return false, err
 				}
 				v, ok := o.GetIndex(i)
-				if ok && Equal(item, v) {
+				if !ok {
+					continue
+				}
+				eq, err := EqualErr(item, v, py)
+				if err != nil {
+					return false, err
+				}
+				if eq {
 					return true, nil
 				}
 			}
@@ -519,7 +549,11 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 				if err := chargeItems(budget, 1); err != nil {
 					return false, err
 				}
-				if Equal(item, v) {
+				eq, err := EqualErr(item, v, py)
+				if err != nil {
+					return false, err
+				}
+				if eq {
 					return true, nil
 				}
 			}

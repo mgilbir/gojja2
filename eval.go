@@ -490,7 +490,20 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 		if base.UndefinedBehavior() == value.UndefinedChainable {
 			return base, nil
 		}
-		return value.Undefined, base.UndefinedError()
+		err := base.UndefinedError()
+		// jinja2's getitem catches AttributeError, TypeError and
+		// LookupError from the subscript and answers a fresh undefined,
+		// which is why `{{ 1[0] }}` is empty. An UndefinedError is none
+		// of those and travels out -- unless the undefined was built
+		// with a fourth argument that is not an exception class, where
+		// *raising* it is itself a TypeError and so gets caught:
+		// `{{ nope.__class__(1, 2, 3, 4)[0] }}` renders nothing, while
+		// `.x` on the same undefined is the TypeError, because getattr
+		// catches AttributeError alone.
+		if errs.KindOf(err) != errs.UndefinedError {
+			return ex.st.Undefined(value.UndefinedElement(base, key)), nil
+		}
+		return value.Undefined, err
 	}
 
 	switch base.Kind() {

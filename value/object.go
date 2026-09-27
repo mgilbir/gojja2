@@ -77,6 +77,15 @@ type Equaler interface {
 	Equals(other Value) (equal bool, known bool)
 }
 
+// EqualerErr is [Equaler] for an Object whose comparison can fail: a dict view
+// compares element by element, so a StrictUndefined among the elements refuses
+// rather than answering. It is consulted before Equaler, so an Object may
+// implement either one.
+type EqualerErr interface {
+	Object
+	EqualsErr(other Value, py PythonVersion) (equal bool, known bool, err error)
+}
+
 // Reprer overrides how an Object renders. Repr is Python's repr(), used inside
 // containers; Str is Python's str(), used when the value is printed on its own.
 type Reprer interface {

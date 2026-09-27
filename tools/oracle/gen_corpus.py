@@ -1123,6 +1123,129 @@ for _u in ("strict", "chainable", "debug", ""):
          "{{ nope|items|list }}|{{ 'x'.a|items|list }}|"
          "{% for k, v in nope|items %}x{% endfor %}",
          __settings__={"undefined": _u} if _u else {})
+# A bytes `%` float verb reports the *type* of an undefined, where a str one
+# lets the undefined's own error out.
+#
+# formatfloat in bytesobject.c replaces whatever the conversion raised with
+# "float argument required, not Undefined", so the undefined's error never
+# escapes there. The integer verbs do not do that, and neither does the str
+# formatter, so the same argument gives three different answers depending on
+# which of the two format types and which half of the verbs it meets. gojja2
+# refused every undefined for `diueEfFgG` before it looked at the format's type.
+# Found by a soak seed, on an undefined that `|last` had built.
+for _u in ("strict", "chainable", "debug", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"format/percent_bytes_float_of_an_undefined_{_n}",
+         "{{ ('[%f]'.encode()) % nope }}", __settings__=_set)
+    case(f"format/percent_bytes_exp_of_an_undefined_{_n}",
+         "{{ ('[%e]'.encode()) % nope }}|{{ ('[%G]'.encode()) % nope }}", __settings__=_set)
+    # The halves that keep the undefined's error: a bytes integer verb, and a
+    # str float verb.
+    case(f"format/percent_bytes_int_of_an_undefined_{_n}",
+         "{{ ('[%d]'.encode()) % nope }}", __settings__=_set)
+    case(f"format/percent_str_float_of_an_undefined_{_n}",
+         "{{ '[%f]' % nope }}", __settings__=_set)
+# ...and the hint an undefined built by a filter carries, which is what makes
+# the difference visible rather than two spellings of the same name.
+case("format/percent_bytes_float_of_a_built_undefined",
+     "{{ ('[%f]'.encode()) % -1.5|attr('name')|last }}")
+case("format/percent_str_float_of_a_built_undefined",
+     "{{ '[%f]' % -1.5|attr('name')|last }}")
+
+# `view - undefined` iterates the undefined rather than asking it for a value.
+#
+# dictviews_sub builds a set from the view and hands the other operand to
+# set.difference_update, which *iterates* it -- so the right operand's refusal is
+# never consulted, and the default Undefined, which iterates empty, leaves the
+# view's elements untouched. gojja2 refused both operands before it looked at
+# either, so `{{ d.keys() - nope }}` raised where jinja2 answers the keys.
+#
+# The two cases that must keep raising are what makes it a rule about the *view*
+# and not about `-`: a values view is no set operand at all, so it falls through
+# to the undefined's __rsub__, and an undefined on the left is asked for __sub__
+# first and raises whatever is on the right. A one-key dict is used throughout
+# because a set of two or more prints in a hash order nothing can reproduce.
+for _u in ("strict", "chainable", "debug", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/view_minus_an_undefined_keys_{_n}",
+         "{% set q = {'a': 1} %}{{ q.keys() - nope }}", __settings__=_set)
+    case(f"undefined/view_minus_an_undefined_items_{_n}",
+         "{% set q = {'a': 1} %}{{ q.items() - nope }}", __settings__=_set)
+    case(f"undefined/view_minus_an_undefined_values_{_n}",
+         "{% set q = {'a': 1} %}{{ q.values() - nope }}", __settings__=_set)
+    case(f"undefined/an_undefined_minus_a_view_{_n}",
+         "{% set q = {'a': 1} %}{{ nope - q.keys() }}", __settings__=_set)
+# ...and an empty list on the right, which is the same answer by a route that
+# has no undefined in it at all.
+case("methods/dict_view_difference_empty_list",
+     "{% set q = {'a': 1} %}{{ q.keys() - [] }}|{{ q.items() - [] }}")
+
+# Every one of these is a real `==` per element, so a StrictUndefined among the
+# *elements* refuses just as one in the item position does. gojja2 compared with a
+# form that has nowhere to put an error, so all of them answered instead: `in`
+# over a list, a tuple and a values view; list.index, list.count and list.remove;
+# and a dict view compared as a set. Found by a soak seed on
+# `range(3) in [yes, nope]`, which is the shape where nothing short-circuits --
+# `1 in [yes, nope]` matches the first element and never reaches the second,
+# which is why it is here too.
+for _u in ("strict", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/compare_elements_in_a_list_{_n}",
+         "{{ range(3) in [yes, nope] }}", __settings__=_set, yes=True)
+    case(f"undefined/compare_elements_short_circuit_{_n}",
+         "{{ 1 in [1, nope] }}|{{ 1 in (1, nope) }}", __settings__=_set)
+    case(f"undefined/compare_elements_in_a_tuple_{_n}",
+         "{{ range(3) in ((yes, nope)) }}", __settings__=_set, yes=True)
+    case(f"undefined/compare_elements_searching_methods_{_n}",
+         "{{ [1].index(nope) }}", __settings__=_set)
+    case(f"undefined/compare_elements_index_of_an_undefined_{_n}",
+         "{{ [nope].index(1) }}", __settings__=_set)
+    case(f"undefined/compare_elements_count_{_n}",
+         "{{ [nope].count(1) }}", __settings__=_set)
+    case(f"undefined/compare_elements_remove_{_n}",
+         "{% set l = [nope] %}{{ l.remove(1) }}", __settings__=_set)
+    case(f"undefined/compare_elements_values_view_{_n}",
+         "{% set q = {'a': nope} %}{{ 1 in q.values() }}", __settings__=_set)
+    case(f"undefined/compare_elements_items_view_{_n}",
+         "{% set q = {'a': nope} %}{{ ('a', 1) in q.items() }}", __settings__=_set)
+    # An items view carries the dict's values and so refuses; a keys view
+    # carries only the keys and answers True.
+    case(f"undefined/compare_elements_items_equality_{_n}",
+         "{% set q = {'a': nope} %}{{ q.items() == {'a': 1}.items() }}", __settings__=_set)
+    case(f"undefined/compare_elements_keys_equality_{_n}",
+         "{% set q = {'a': nope} %}{{ q.keys() == {'a': 1}.keys() }}", __settings__=_set)
+# ...and the answers that must not change: a values view has no __eq__, so two
+# are equal only by identity, and a set comparison ignores order.
+case("methods/dict_view_values_are_equal_by_identity",
+     "{% set q = {'a': 1, 'b': 2} %}{{ q.values() == q.values() }}|"
+     "{{ q.items() == {'b': 2, 'a': 1}.items() }}")
+case("methods/dict_view_values_membership",
+     "{% set q = {'a': 1} %}{{ 1 in q.values() }}|{{ 2 in q.values() }}")
+
+# An undefined built by hand, with a fourth argument that is not an exception
+# class. jinja2's Undefined stores it and *raises* it, so raising is itself a
+# TypeError -- and `environment.getitem` catches AttributeError, TypeError and
+# LookupError and answers a fresh undefined, which is the same reason `{{ 1[0] }}`
+# is empty. So the subscript renders nothing under the default class, the hint
+# under DebugUndefined, and the fresh *environment* undefined's own refusal under
+# StrictUndefined -- "object has no element 0" and not the TypeError.
+#
+# An attribute on the same undefined is the TypeError, because
+# `environment.getattr` catches AttributeError alone. gojja2 let the TypeError
+# out of the subscript too. Found by a soak seed.
+for _u in ("strict", "chainable", "debug", ""):
+    _n = _u or "default"
+    case(f"undefined/element_of_a_built_undefined_{_n}",
+         "[{{ (nope.__class__(1, 2, 3, 4))[0] }}]|"
+         "{{ (nope.__class__(1, 2, 3, 4))[0] is defined }}|"
+         "[{{ (nope.__class__(1, 2, 3, 'x'))[0] }}]",
+         __settings__={"undefined": _u} if _u else {})
+case("errors/attribute_of_a_built_undefined",
+     "{{ (nope.__class__(1, 2, 3, 4)).x }}")
+
 # ...and the shapes it must still refuse, so the rule above cannot spread.
 case("errors/items_of_a_non_mapping", "{{ [1]|items|list }}")
 case("errors/items_of_a_string", "{{ 'ab'|items|list }}")
@@ -3142,6 +3265,28 @@ case("globals/joiner_non_string_sep",
 # empty cycle. The caller macro has no name, and CPython prints that as None.
 case("errors/loop_cycle_keyword", "{% for i in [1,2] %}{{ loop.cycle(a=1) }}{% endfor %}")
 case("errors/loop_changed_keyword", "{% for i in [1,2] %}{{ loop.changed(a=1) }}{% endfor %}")
+# loop.changed is `self._last_checked_value != value`, a real `!=` on two tuples,
+# so a StrictUndefined among the arguments raises instead of answering -- and it
+# raises from the *second* call, not the first: the first has only the `missing`
+# sentinel to compare against, which is not a tuple, so Python falls back to
+# identity and never looks at the elements. gojja2 compared without consulting
+# the refusal and answered "TrueTrue" for both.
+#
+# The one-iteration case is the one that keeps the fix honest: refusing on the
+# first call as well would be just as wrong.
+case("undefined/strict_loop_changed_first_call",
+     "{% for a in [1] %}{{ loop.changed(nope) }}{% endfor %}",
+     __settings__={"undefined": "strict"})
+case("undefined/strict_loop_changed_two_arguments",
+     "{% for a in [1] %}{{ loop.changed(nope, 1) }}{% endfor %}",
+     __settings__={"undefined": "strict"})
+case("undefined/strict_loop_changed_second_call",
+     "{% for a in [1, 2] %}{{ loop.changed(nope) }}{% endfor %}",
+     __settings__={"undefined": "strict"})
+# Two undefineds compare as unequal here only because the comparison never
+# happens; with a defined value it is a real comparison and the repeats show.
+case("loops/loop_changed_repeats", "{% for a in [1, 1, 2] %}{{ loop.changed(a) }}{% endfor %}")
+case("loops/loop_changed_no_arguments", "{% for a in [1, 2] %}{{ loop.changed() }}{% endfor %}")
 case("errors/loop_call_missing", "{% for i in [1,2] %}{{ loop() }}{% endfor %}")
 case("errors/loop_call_too_many", "{% for i in [1,2] %}{{ loop(i,i) }}{% endfor %}")
 case("errors/loop_call_not_recursive", "{% for i in [1,2] %}{{ loop(i) }}{% endfor %}")
@@ -4597,6 +4742,150 @@ for _n, _src in [
 # A matching *str* key is still a miss under a bytes format, which the
 # missing-key case above cannot show: its dict has no candidate at all.
 case("errors/percent_key_is_bytes_in_a_dict", "{{ '%(k)s'.encode() % {'k': 1} }}")
+
+# --- messages nothing had ever produced: methods.go ---------------------------
+# `make ungraded` had 40 of its 109 remaining sites in methods.go, in four
+# clusters. Every one of the shapes below already agreed with CPython; what was
+# missing was a case saying so, which is the point of the audit -- an ungraded
+# message reads as agreement in every column of the version matrix. One shape
+# did not agree, and it is the block after this.
+#
+# str.maketrans and str.translate: the happy paths were generated, none of the
+# refusals were.
+for _n, _src in [
+    ("maketrans_one_arg_not_a_dict", "{{ 'a'.maketrans('ab') }}"),
+    ("maketrans_unequal_length", "{{ 'a'.maketrans('ab', 'x') }}"),
+    ("maketrans_third_not_a_string", "{{ 'a'.maketrans('ab', 'xy', 1) }}"),
+    ("maketrans_no_arguments", "{{ 'a'.maketrans() }}"),
+    ("maketrans_too_many_arguments", "{{ 'a'.maketrans('a', 'b', 'c', 'd') }}"),
+    ("maketrans_long_string_key", "{{ 'a'.maketrans({'ab': 1}) }}"),
+    ("maketrans_key_is_a_float", "{{ 'a'.maketrans({1.5: 'x'}) }}"),
+    ("translate_no_arguments", "{{ 'a'.translate() }}"),
+    ("translate_out_of_range", "{{ 'abc'.translate({97: 1114112}) }}"),
+    ("translate_bad_value", "{{ 'abc'.translate({97: 1.5}) }}"),
+]:
+    case(f"errors/{_n}", _src)
+# A separator that is not a string, and the one that is empty.
+for _n, _src in [
+    ("split_separator_is_an_int", "{{ 'a b'.split(1) }}"),
+    ("split_empty_separator", "{{ 'a b'.split('') }}"),
+    ("rsplit_separator_is_a_float", "{{ 'a b'.rsplit(1.5) }}"),
+    ("join_no_arguments", "{{ 'a'.join() }}"),
+    ("join_item_is_an_int", "{{ ','.join([1]) }}"),
+    ("join_second_item_is_an_int", "{{ ','.join(['a', 2]) }}"),
+]:
+    case(f"errors/{_n}", _src)
+# The replacement-field parser's own complaints. Which one a truncated field
+# gets depends on how far it read: a lone brace, a name that never closed, and a
+# spec whose nested field never closed are three different messages.
+for _n, _src in [
+    ("format_single_close_brace", "{{ '}'.format() }}"),
+    ("format_unmatched_in_spec", "{{ '{0:{1'.format(1, 2) }}"),
+    ("format_unterminated_index", "{{ '{0[a'.format({'a': 1}) }}"),
+    ("format_expected_close", "{{ '{0'.format(1) }}"),
+    ("format_single_open_brace", "{{ '{'.format(1) }}"),
+    ("format_empty_conversion", "{{ '{0!}'.format(1) }}"),
+    ("format_map_key_missing", "{{ '{a}'.format_map({}) }}"),
+    ("format_string_index_out_of_range", "{{ '{0[5]}'.format('abc') }}"),
+    ("format_manual_then_automatic", "{{ '{0}{}'.format(1, 2) }}"),
+    ("format_auto_index_out_of_range", "{{ '{}{}'.format(1) }}"),
+    ("format_keyword_missing", "{{ '{x}'.format() }}"),
+    ("format_map_auto_field", "{{ '{}'.format_map({}) }}"),
+    ("format_index_key_missing", "{{ '{0[a]}'.format({'b': 1}) }}"),
+]:
+    case(f"errors/{_n}", _src)
+# The arity checks on dict's and list's own methods, which each word themselves
+# differently -- "expected at least 1 argument, got 0", "takes exactly one
+# argument (0 given)", "takes no arguments (1 given)" -- and so cannot be
+# generated from one rule.
+for _n, _src in [
+    ("dict_get_no_arguments", "{{ {'a': 1}.get() }}"),
+    ("dict_pop_no_arguments", "{{ {'a': 1}.pop() }}"),
+    ("dict_setdefault_no_arguments", "{{ {'a': 1}.setdefault() }}"),
+    ("dict_popitem_takes_none", "{{ {'a': 1}.popitem(1) }}"),
+    ("dict_fromkeys_no_arguments", "{{ {}.fromkeys() }}"),
+    ("list_append_no_arguments", "{{ [].append() }}"),
+    ("list_extend_no_arguments", "{{ [].extend() }}"),
+    ("list_insert_one_argument", "{{ [1].insert(1) }}"),
+    ("list_remove_no_arguments", "{{ [1].remove() }}"),
+    ("list_index_no_arguments", "{{ [1].index() }}"),
+    ("list_count_no_arguments", "{{ [1].count() }}"),
+]:
+    case(f"errors/{_n}", _src)
+
+# An integer in the mini-language that does not fit.
+#
+# CPython reads a width, a precision and a replacement field's index with the
+# same routine, which accumulates digit by digit and checks before each step
+# that the result will still hold a Py_ssize_t -- so all three say "Too many
+# decimal digits in format string". gojja2 multiplied and added without the
+# check, which was not only the wrong message: `'{18446744073709551616}'`
+# wrapped to 0 and printed the *first* argument, and a field index one past
+# that printed the second.
+#
+# A leading-zero index is the case that keeps the check honest: those digits are
+# long and the number is small, so refusing on length alone would break them.
+for _n, _src in [
+    ("format_digits_in_an_index", "{{ '{0[99999999999999999999]}'.format([1]) }}"),
+    ("format_digits_in_a_field", "{{ '{99999999999999999999}'.format(1) }}"),
+    ("format_digits_that_wrap", "{{ '{18446744073709551616}'.format('a', 'b') }}"),
+    ("format_digits_that_wrap_to_one", "{{ '{18446744073709551617}'.format('a', 'b') }}"),
+    ("format_digits_in_a_width", "{{ '{:99999999999999999999}'.format(1) }}"),
+    ("format_digits_in_a_precision", "{{ '{:.99999999999999999999f}'.format(1.5) }}"),
+    ("format_digits_in_a_nested_spec", "{{ '{:{}}'.format(1, 99999999999999999999) }}"),
+]:
+    case(f"errors/{_n}", _src)
+# The `[key]` step of a replacement field is a real obj[key], and what each base
+# says about one it cannot take is the base's own complaint. gojja2 answered a
+# KeyError -- what a *mapping* says about a key it does not hold -- for every
+# object, indexed a bytes as though it were a str, and reported a subscript
+# error for an undefined instead of the undefined's own.
+#
+# A bytes indexes to the *number* its byte is; its refusals are "byte indices
+# must be integers or slices, not str" and an out-of-range message that names no
+# type at all. A range names itself in both, with an "object" in the
+# out-of-range one that a list does not have. A groupby group is a namedtuple,
+# and both of its complaints come from tuple rather than from the subclass. A
+# namespace, a cycler, a joiner, a dict view and a class object are not
+# subscriptable at all.
+case("format/field_index_into_a_bytes",
+     "{{ '{0[0]}'.format('ab'.encode()) }}|{{ '{0[1]}'.format('ab'.encode()) }}")
+case("errors/field_index_bytes_out_of_range", "{{ '{0[9]}'.format('ab'.encode()) }}")
+case("errors/field_index_bytes_string_key", "{{ '{0[a]}'.format('ab'.encode()) }}")
+case("format/field_index_into_a_range",
+     "{{ '{0[1]}'.format(range(3)) }}|{{ '{0[2]}'.format(range(1, 9, 3)) }}")
+case("errors/field_index_range_out_of_range", "{{ '{0[9]}'.format(range(3)) }}")
+case("errors/field_index_range_string_key", "{{ '{0[a]}'.format(range(3)) }}")
+# "-1" and "1.5" are not all digits, so both are string keys and neither is an
+# index -- which is why a negative one is a type error and not the last element.
+case("errors/field_index_range_negative", "{{ '{0[-1]}'.format(range(3)) }}")
+for _n, _src in [
+    ("namespace", "{{ '{0[v]}'.format(namespace(v=1)) }}"),
+    ("cycler", "{{ '{0[a]}'.format(cycler('a','b')) }}"),
+    ("joiner", "{{ '{0[a]}'.format(joiner('-')) }}"),
+    ("dict_view", "{{ '{0[a]}'.format({'a': 1}.items()) }}"),
+    ("an_int", "{{ '{0[a]}'.format(1) }}"),
+]:
+    case(f"errors/field_index_not_subscriptable_{_n}", _src)
+case("errors/field_index_on_an_undefined", "{{ '{0[a]}'.format(nope) }}")
+case("format/field_index_into_a_group",
+     "{% set g = [{'k': 1}]|groupby('k') %}{{ '{0[0]}'.format(g[0]) }}")
+for _n, _src in [
+    ("group_out_of_range",
+     "{% set g = [{'k': 1}]|groupby('k') %}{{ '{0[9]}'.format(g[0]) }}"),
+    ("group_string_key",
+     "{% set g = [{'k': 1}]|groupby('k') %}{{ '{0[a]}'.format(g[0]) }}"),
+]:
+    case(f"errors/field_index_{_n}", _src)
+# A manual index past the end, and a spec whose nested field is closed by the
+# outer field's brace: two messages the parser makes that nothing reached, the
+# second because an outer field that never closes is reported first.
+case("errors/format_manual_index_out_of_range", "{{ '{5}'.format(1) }}")
+case("errors/format_unmatched_in_a_closed_spec", "{{ '{0:{1}'.format(1, 2) }}")
+case("errors/format_unmatched_after_spec_text", "{{ '{0:a{b}'.format(1) }}")
+case("format/leading_zeros_in_an_index",
+     "{{ '{0[00000000000000000001]}'.format([1, 2]) }}|"
+     "{{ '{00000000000000000001}'.format(1, 2) }}|{{ '{:00000000000005d}'.format(1) }}")
 
 # --- a dict view subtracts as a set --------------------------------------------
 # `d.keys() - xs` is the whole of the set arithmetic a template can write:

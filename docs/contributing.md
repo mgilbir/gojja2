@@ -312,7 +312,7 @@ ever produced?**
 
 It runs the corpus under coverage on every interpreter, intersects the blocks
 that never executed with the lines that build an error, and counts what is left.
-Today that is **110 of 415**.
+Today that is **70 of 402**.
 
 A message nothing produces is not evidence of anything -- it has never been
 compared to CPython. It is worse than untested: it reads as *agreement in every
@@ -348,6 +348,25 @@ coercion and were right, which is exactly what made `+`, `-`, `*`, `/`, `|float`
 `|filesizeformat`, `|sum` and both format paths look deliberate. Everything else
 on the list already agreed, and what was missing was a case saying so -- which is
 the point of the audit.
+
+A third pass (110 down to 70, and `methods.go` from 40 to none) found four bugs
+and 402 sites where there had been 417 -- because eighteen of what it read were
+not messages at all. They were `arg(args, i, ...)` guards in method bodies,
+unreachable since the generated arity table started refusing a call of the wrong
+shape before the body runs, and each one a claim about CPython that nothing could
+ever compare. `TestEveryMethodHasASignature` is what makes removing them safe;
+seventeen of the same kind went earlier, and its comment records both batches.
+
+The four bugs were in `str.format`. An integer in the mini-language that does not
+fit is "Too many decimal digits in format string" -- for a width, a precision and
+a replacement index alike -- and gojja2 multiplied and added without the check,
+so `'{18446744073709551616}'` wrapped to 0 and printed the *first* argument. The
+`[key]` step of a replacement field answered a `KeyError` -- what a mapping says
+about a key it does not hold -- for every object that is not subscriptable at
+all, indexed a bytes as though it were a str (a character, not the byte's
+number), and reported a subscript error where an undefined should have raised its
+own. And CPython 3.14 spells two of `str.maketrans`'s complaints a space short,
+which no version column had ever compared.
 
 The thing that looked like a fourth category was a mistake, and the mistake is
 the more useful record. I wrote that `float.as_integer_ratio()` on an infinity

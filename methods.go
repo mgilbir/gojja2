@@ -7,7 +7,6 @@ import (
 	"errors"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -429,7 +428,7 @@ func methodMaketrans(s *State, _ value.Value, args *value.CallArgs) (value.Value
 				"if you give only one argument to maketrans it must be a dict")
 		}
 		for _, e := range src.Entries() {
-			key, err := transKey(e.Key)
+			key, err := transKey(e.Key, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -464,39 +463,38 @@ func methodMaketrans(s *State, _ value.Value, args *value.CallArgs) (value.Value
 			}
 		}
 		if len(args.Pos) == 3 {
-			if !args.Pos[2].IsString() {
-				return value.Undefined, errs.New(errs.TypeError,
-					"third argument to maketrans must be a string")
-			}
 			for _, c := range value.Str(args.Pos[2]) {
 				if err := d.Set(value.Int(int64(c)), value.None, s.PythonVersion()); err != nil {
 					return value.Undefined, err
 				}
 			}
 		}
-	default:
-		return value.Undefined, errs.New(errs.TypeError,
-			"maketrans() takes 1, 2 or 3 arguments (%d given)", len(args.Pos))
 	}
 	return out, nil
 }
 
 // transKey turns a maketrans key into the ordinal the table is keyed by: a
 // one-character string becomes its code point, an integer is already one.
-func transKey(k value.Value) (value.Value, error) {
+func transKey(k value.Value, py value.PythonVersion) (value.Value, error) {
 	if k.IsString() {
 		rs := []rune(value.Str(k))
 		if len(rs) != 1 {
-			return value.Undefined, errs.New(errs.ValueError,
-				"string keys in translate table must be of length 1")
+			msg := "string keys in translate table must be of length 1"
+			if py.TranslateTableMessagesLoseASpace() {
+				msg = "string keys in translatetable must be of length 1"
+			}
+			return value.Undefined, errs.New(errs.ValueError, "%s", msg)
 		}
 		return value.Int(int64(rs[0])), nil
 	}
 	if k.IsInteger() {
 		return k, nil
 	}
-	return value.Undefined, errs.New(errs.TypeError,
-		"keys in translate table must be strings or integers")
+	msg := "keys in translate table must be strings or integers"
+	if py.TranslateTableMessagesLoseASpace() {
+		msg = "keys in translate table mustbe strings or integers"
+	}
+	return value.Undefined, errs.New(errs.TypeError, "%s", msg)
 }
 
 // translateLookup is `table[ord(c)]` with LookupError meaning "leave this
@@ -533,11 +531,7 @@ func translateLookup(table value.Value, c rune, py value.PythonVersion) (value.V
 // is None. A character the table does not mention is left exactly as it was,
 // which is why a missing key is not an error.
 func methodTranslate(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	table, ok := arg(args, 0, "table")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"translate() takes exactly one argument (0 given)")
-	}
+	table, _ := arg(args, 0, "table")
 	// str.translate is `table[ord(c)]` per character, catching LookupError
 	// -- so the table is not converted and not even looked at for an empty
 	// string. Anything subscriptable by an integer will do: a str, a list
@@ -971,10 +965,7 @@ func methodSplitlines(st *State, r value.Value, args *value.CallArgs) (value.Val
 }
 
 func methodJoin(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "iterable")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "join() takes exactly one argument")
-	}
+	v, _ := arg(args, 0, "iterable")
 	seq, err := value.Iterate(v)
 	if err != nil {
 		// str.join says this and nothing about the type, because it
@@ -1047,10 +1038,7 @@ func chargeReplace(st *State, src, old, new string, count int) error {
 // candidates as well as a single string.
 func affixMethod(name string, match func(string, string) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		v, ok := arg(args, 0, "prefix")
-		if !ok {
-			return value.Undefined, errs.New(errs.TypeError, "missing required argument")
-		}
+		v, _ := arg(args, 0, "prefix")
 		within, _, inRange, err := strSliceBounds(r.AsString(), args, 1)
 		if err != nil {
 			return value.Undefined, err
@@ -1451,11 +1439,7 @@ func convertAndFormat(st *State, v value.Value, conv, spec string) (string, erro
 // methodFormatMap is str.format_map: the same substitution, with the fields
 // looked up in a single mapping argument rather than in keyword arguments.
 func methodFormatMap(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	mapping, ok := arg(args, 0, "mapping")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"format_map() takes exactly one argument (0 given)")
-	}
+	mapping, _ := arg(args, 0, "mapping")
 	// format_map does not convert its argument. It subscripts it once per
 	// *named* field, so a string with no fields never touches it at all --
 	// `{{ "ab".format_map(none) }}` is "ab" -- and one that is not a
@@ -1526,12 +1510,11 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 	}
 	var key value.Value
 	if isAllDigits(name) {
-		n, err := strconv.ParseInt(name, 10, 64)
+		n, err := value.ParseFormatInteger(name)
 		if err != nil {
-			return value.Undefined, errs.New(errs.ValueError,
-				"invalid index %q", name)
+			return value.Undefined, err
 		}
-		key = value.Int(n)
+		key = value.Int(int64(n))
 	} else {
 		key = value.String(name)
 	}
@@ -1544,7 +1527,7 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 		}
 		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, py))
 
-	case value.KindString, value.KindBytes:
+	case value.KindString:
 		idx, ok := key.Int64()
 		if !ok {
 			return value.Undefined, errs.New(errs.TypeError,
@@ -1554,6 +1537,24 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 			return value.String(ch), nil
 		}
 		return value.Undefined, errs.New(errs.IndexError, "string index out of range")
+
+	case value.KindBytes:
+		// A bytes indexes to the *number* its byte is, not to a
+		// one-character bytes, and its two complaints are its own:
+		// "byte indices must be integers or slices, not str" -- the
+		// singular the `%` mapping path also reports -- and an
+		// out-of-range message that names no type at all. This shared
+		// the string arm and so answered a character and said "string".
+		idx, ok := key.Int64()
+		if !ok {
+			return value.Undefined, errs.New(errs.TypeError,
+				"byte indices must be integers or slices, not %s", key.TypeName())
+		}
+		b := v.AsString()
+		if idx >= 0 && idx < int64(len(b)) {
+			return value.Int(int64(b[idx])), nil
+		}
+		return value.Undefined, errs.New(errs.IndexError, "index out of range")
 
 	case value.KindList, value.KindTuple:
 		idx, ok := key.Int64()
@@ -1570,14 +1571,44 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 			"%s index out of range", v.TypeName())
 	}
 
+	// An undefined defines __getitem__ and raises its own error from it, so
+	// it never reaches the subscriptability question.
+	if v.Kind() == value.KindUndefined {
+		return value.Undefined, v.UndefinedError()
+	}
+
 	// An object may still define __getitem__; anything else is not
 	// subscriptable at all, which is a different complaint from a miss.
 	if item, ok := lookupItem(v, key, py); ok {
 		return item, nil
 	}
-	if v.Kind() == value.KindObject {
-		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, py))
+	// A groupby group is a namedtuple, and both of the complaints CPython
+	// makes about indexing one come from tuple itself rather than from the
+	// subclass's name -- "tuple indices ...", "tuple index out of range".
+	// Reading it as the tuple it is gets those and the element as well.
+	if t, ok := v.Interface().(interface{ AsTuple() value.Value }); ok {
+		return fieldSubscript(t.AsTuple(), name, py)
 	}
+	// Any other Sequence object -- a range -- indexes by integer and names
+	// itself in both complaints. Note the "object" a range puts in its
+	// out-of-range message and a list does not.
+	if seq, ok := v.Interface().(value.Sequence); ok {
+		idx, ok := key.Int64()
+		if !ok {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s indices must be integers or slices, not %s",
+				v.TypeName(), key.TypeName())
+		}
+		if item, in := seq.GetIndex(int(idx)); in {
+			return item, nil
+		}
+		return value.Undefined, errs.New(errs.IndexError,
+			"%s object index out of range", v.TypeName())
+	}
+	// Everything left is not subscriptable at all: a namespace, a cycler, a
+	// joiner, a dict view, a class object. gojja2 answered a KeyError for
+	// every one of them, which is the complaint a *mapping* makes about a
+	// key it does not hold.
 	return value.Undefined, notSubscriptable(v)
 }
 
@@ -1666,9 +1697,9 @@ func resolveFieldBase(name string, args *value.CallArgs, auto *int) (value.Value
 				"cannot switch from automatic field numbering to manual field specification")
 		}
 		*auto = -1
-		i := 0
-		for _, c := range name {
-			i = i*10 + int(c-'0')
+		i, err := value.ParseFormatInteger(name)
+		if err != nil {
+			return value.Undefined, err
 		}
 		v, ok := args.Arg(i)
 		if !ok {
@@ -1875,17 +1906,7 @@ func methodDictItems(s *State, r value.Value, _ *value.CallArgs) (value.Value, e
 
 func methodDictGet(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
-	// dict.get is a C function: it counts its arguments rather than binding
-	// them by name, so both the shortage and the excess are reported with
-	// the count that was actually passed.
-	if n := len(args.Pos) + len(args.Kwargs); n > 2 {
-		return value.Undefined, errs.New(errs.TypeError,
-			"get expected at most 2 arguments, got %d", n)
-	}
-	key, ok := arg(args, 0, "key")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "get expected at least 1 argument, got 0")
-	}
+	key, _ := arg(args, 0, "key")
 	v, found, err := d.Get(key, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
@@ -1901,14 +1922,7 @@ func methodDictGet(s *State, r value.Value, args *value.CallArgs) (value.Value, 
 
 func methodDictPop(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
-	key, ok := arg(args, 0, "key")
-	if !ok {
-		// CPython names the count it actually got, and dict.pop() is a
-		// C function so the message comes from the argument clinic
-		// rather than from Python.
-		return value.Undefined, errs.New(errs.TypeError,
-			"pop expected at least 1 argument, got %d", len(args.Pos))
-	}
+	key, _ := arg(args, 0, "key")
 	v, found, err := d.Get(key, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
@@ -1927,10 +1941,7 @@ func methodDictPop(s *State, r value.Value, args *value.CallArgs) (value.Value, 
 
 func methodDictSetdefault(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
-	key, ok := arg(args, 0, "key")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "setdefault expected at least 1 argument")
-	}
+	key, _ := arg(args, 0, "key")
 	if v, found, err := d.Get(key, s.PythonVersion()); err != nil {
 		return value.Undefined, err
 	} else if found {
@@ -2085,21 +2096,14 @@ var tupleMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.
 }
 
 func methodListAppend(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"append() takes exactly one argument (0 given)")
-	}
+	v, _ := arg(args, 0, "")
 	s, _ := r.Seq()
 	s.Append(v)
 	return value.None, nil
 }
 
 func methodListExtend(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "extend() takes exactly one argument")
-	}
+	v, _ := arg(args, 0, "")
 	seq, err := value.Iterate(v)
 	if err != nil {
 		return value.Undefined, err
@@ -2121,10 +2125,7 @@ func methodListInsert(_ *State, r value.Value, args *value.CallArgs) (value.Valu
 	if err != nil {
 		return value.Undefined, err
 	}
-	v, ok := arg(args, 1, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "insert() takes exactly 2 arguments")
-	}
+	v, _ := arg(args, 1, "")
 	s, _ := r.Seq()
 	items := s.Items()
 	if at < 0 {
@@ -2159,14 +2160,19 @@ func methodListPop(_ *State, r value.Value, args *value.CallArgs) (value.Value, 
 	return out, nil
 }
 
-func methodListRemove(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "remove() takes exactly one argument")
-	}
+// methodListRemove walks the list comparing, so a StrictUndefined on either
+// side raises from the comparison rather than reaching "not in list": the three
+// searching methods -- remove, index and count -- all did the latter, because
+// they compared with a form that has nowhere to put an error.
+func methodListRemove(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, _ := arg(args, 0, "")
 	s, _ := r.Seq()
 	for i, item := range s.Items() {
-		if value.Equal(item, v) {
+		eq, err := value.EqualErr(item, v, st.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		if eq {
 			items := s.Items()
 			*s = *mustSeq(value.NewList(append(append([]value.Value{}, items[:i]...), items[i+1:]...)...))
 			return value.None, nil
@@ -2193,10 +2199,7 @@ func methodListReverse(_ *State, r value.Value, _ *value.CallArgs) (value.Value,
 // list.index declares them as indices outright, so the message has no "or
 // None" in it.
 func methodSeqIndex(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "index() takes at least one argument")
-	}
+	v, _ := arg(args, 0, "")
 	s, _ := r.Seq()
 	items := s.Items()
 	start, end, err := seqSearchBounds(args, len(items))
@@ -2204,7 +2207,11 @@ func methodSeqIndex(st *State, r value.Value, args *value.CallArgs) (value.Value
 		return value.Undefined, err
 	}
 	for i := start; i < end; i++ {
-		if value.Equal(items[i], v) {
+		eq, err := value.EqualErr(items[i], v, st.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		if eq {
 			return value.Int(int64(i)), nil
 		}
 	}
@@ -2374,10 +2381,7 @@ func methodListSort(st *State, r value.Value, args *value.CallArgs) (value.Value
 // methodDictPopitem is dict.popitem, which takes the *last* pair inserted:
 // dicts have been ordered since 3.7, so it is a stack rather than arbitrary.
 func methodDictPopitem(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	if len(args.Pos) > 0 || len(args.Kwargs) > 0 {
-		return value.Undefined, errs.New(errs.TypeError,
-			"dict.popitem() takes no arguments (%d given)", len(args.Pos)+len(args.Kwargs))
-	}
+
 	d, _ := r.Dict()
 	entries := d.Entries()
 	if len(entries) == 0 {
@@ -2395,11 +2399,7 @@ func methodDictPopitem(s *State, r value.Value, args *value.CallArgs) (value.Val
 // through contributes nothing, so `{{ d.fromkeys("ab") }}` is a fresh two-entry
 // dict whatever d held.
 func methodDictFromkeys(st *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
-	keys, ok := arg(args, 0, "iterable")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"fromkeys expected at least 1 argument, got 0")
-	}
+	keys, _ := arg(args, 0, "iterable")
 	fill := value.None
 	if v, ok := arg(args, 1, "value"); ok {
 		fill = v
@@ -2421,15 +2421,16 @@ func methodDictFromkeys(st *State, _ value.Value, args *value.CallArgs) (value.V
 	return out, nil
 }
 
-func methodSeqCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "count() takes exactly one argument")
-	}
+func methodSeqCount(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, _ := arg(args, 0, "")
 	s, _ := r.Seq()
 	n := 0
 	for _, item := range s.Items() {
-		if value.Equal(item, v) {
+		eq, err := value.EqualErr(item, v, st.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		if eq {
 			n++
 		}
 	}
