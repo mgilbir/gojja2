@@ -88,3 +88,127 @@ func TestEveryVersionRuleNamesACorpusCase(t *testing.T) {
 	}
 	t.Logf("%d version rules, each naming a corpus case that exists", checked)
 }
+
+// TestEveryVersionRuleIsConsulted: a rule nobody calls models a difference the
+// engine does not reproduce, and the test above cannot see it -- naming a corpus
+// case that exists says nothing about whether anything asks the question.
+//
+// IndexAcceptsWideInt was exactly that. It said "3.12 stopped raising 'Python int
+// too large to convert to C int'", named three corpus cases, and had no caller:
+// BoolArgsAreTruthy was already carrying that change, whose own comment calls it
+// "one change with two visible faces, so it is one rule". The corpus cases passed
+// on every interpreter, so nothing failed -- the rule was simply inert.
+func TestEveryVersionRuleIsConsulted(t *testing.T) {
+	const src = "value/pyversion.go"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, src, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse %s: %v", src, err)
+	}
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read %s: %v", src, err)
+	}
+	banner := strings.Index(string(raw), "// --- the rules ---")
+	if banner < 0 {
+		t.Fatal("value/pyversion.go has no rules banner")
+	}
+	firstRule := fset.File(f.Pos()).Pos(banner)
+
+	var rules []string
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if ok && fn.Pos() >= firstRule && fn.Recv != nil && fn.Name.IsExported() {
+			rules = append(rules, fn.Name.Name)
+		}
+	}
+	if len(rules) == 0 {
+		t.Fatal("found no rules below the banner")
+	}
+
+	// Which rules each rule's own body consults, so that one carried by
+	// another counts: RecursionMessageFor is what the engine calls and
+	// UnifiedRecursionMessage is what it asks, and neither is inert.
+	within := map[string][]string{}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Pos() < firstRule || fn.Recv == nil || !fn.Name.IsExported() {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			for _, r := range rules {
+				if sel.Sel.Name == r && r != fn.Name.Name {
+					within[fn.Name.Name] = append(within[fn.Name.Name], r)
+				}
+			}
+			return true
+		})
+	}
+
+	// Every .go file in the module except pyversion.go itself and the tests.
+	// A rule consulted only from a test is not consulted: the engine has to
+	// ask the question for the answer to reach a template.
+	calls := map[string]int{}
+	err = filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if name := d.Name(); name == "testdata" || name == ".git" ||
+				name == ".venv" || name == "tools" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") ||
+			filepath.ToSlash(path) == src {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, name := range rules {
+			calls[name] += strings.Count(string(body), "."+name+"(")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+
+	// Reachable from the engine: called directly, or called by a rule that is.
+	reached := map[string]bool{}
+	var walk func(string)
+	walk = func(name string) {
+		if reached[name] {
+			return
+		}
+		reached[name] = true
+		for _, next := range within[name] {
+			walk(next)
+		}
+	}
+	for _, name := range rules {
+		if calls[name] > 0 {
+			walk(name)
+		}
+	}
+
+	consulted := 0
+	for _, name := range rules {
+		if !reached[name] {
+			t.Errorf("%s is never called outside %s, so nothing reproduces the "+
+				"difference it describes. Consult it where the behaviour is "+
+				"decided, or delete it -- another rule may already carry the "+
+				"same change.", name, src)
+			continue
+		}
+		consulted++
+	}
+	t.Logf("%d version rules, each consulted by the engine", consulted)
+}

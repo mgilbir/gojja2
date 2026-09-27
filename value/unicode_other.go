@@ -3013,10 +3013,6 @@ var isLowerOther311 = &unicode.RangeTable{
 // about isUpper. 0 code points.
 var isUpperOther311 = &unicode.RangeTable{}
 
-// isTitleOther311 is where CPython 3.11 and the pin disagree
-// about isTitle. 0 code points.
-var isTitleOther311 = &unicode.RangeTable{}
-
 // isAlphaOther311 is where CPython 3.11 and the pin disagree
 // about isAlpha. 4970 code points.
 var isAlphaOther311 = &unicode.RangeTable{
@@ -3153,10 +3149,6 @@ var isLowerOther312 = &unicode.RangeTable{}
 // isUpperOther312 is where CPython 3.12 and the pin disagree
 // about isUpper. 0 code points.
 var isUpperOther312 = &unicode.RangeTable{}
-
-// isTitleOther312 is where CPython 3.12 and the pin disagree
-// about isTitle. 0 code points.
-var isTitleOther312 = &unicode.RangeTable{}
 
 // isAlphaOther312 is where CPython 3.12 and the pin disagree
 // about isAlpha. 622 code points.
@@ -3514,20 +3506,6 @@ var isUpperOther314 = &unicode.RangeTable{
 	},
 }
 
-// isTitleOther314 is where CPython 3.14 and the pin disagree
-// about isTitle. 27 code points.
-var isTitleOther314 = &unicode.RangeTable{
-	R16: []unicode.Range16{
-		{0x1c89, 0x1c89, 1},
-		{0xa7cb, 0xa7cc, 1},
-		{0xa7da, 0xa7da, 1},
-		{0xa7dc, 0xa7dc, 1},
-	},
-	R32: []unicode.Range32{
-		{0x010d50, 0x010d65, 1},
-	},
-}
-
 // isAlphaOther314 is where CPython 3.14 and the pin disagree
 // about isAlpha. 4302 code points.
 var isAlphaOther314 = &unicode.RangeTable{
@@ -3638,7 +3616,7 @@ var unicodeOther = map[PythonVersion]*UnicodeOverrides{
 		digit: digitOther311, numeric: numericOther311,
 		decimal: decimalOther311,
 		isLower: isLowerOther311, isUpper: isUpperOther311,
-		isTitle: isTitleOther311, isAlpha: isAlphaOther311,
+		isAlpha:     isAlphaOther311,
 		xidStart:    xidStartOther311,
 		xidContinue: xidContinueOther311,
 	},
@@ -3649,7 +3627,7 @@ var unicodeOther = map[PythonVersion]*UnicodeOverrides{
 		digit: digitOther312, numeric: numericOther312,
 		decimal: decimalOther312,
 		isLower: isLowerOther312, isUpper: isUpperOther312,
-		isTitle: isTitleOther312, isAlpha: isAlphaOther312,
+		isAlpha:     isAlphaOther312,
 		xidStart:    xidStartOther312,
 		xidContinue: xidContinueOther312,
 	},
@@ -3660,7 +3638,7 @@ var unicodeOther = map[PythonVersion]*UnicodeOverrides{
 		digit: digitOther314, numeric: numericOther314,
 		decimal: decimalOther314,
 		isLower: isLowerOther314, isUpper: isUpperOther314,
-		isTitle: isTitleOther314, isAlpha: isAlphaOther314,
+		isAlpha:     isAlphaOther314,
 		xidStart:    xidStartOther314,
 		xidContinue: xidContinueOther314,
 	},

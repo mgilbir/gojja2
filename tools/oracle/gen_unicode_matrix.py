@@ -226,8 +226,10 @@ import "unicode"
                  if older.get(cp) and older[cp][FLAGS][ISLOWER] != base[cp][FLAGS][ISLOWER]}
         upper = {cp for cp in base
                  if older.get(cp) and older[cp][FLAGS][ISUPPER] != base[cp][FLAGS][ISUPPER]}
-        title = {cp for cp in base
-                 if older.get(cp) and older[cp][FLAGS][ISTITLE] != base[cp][FLAGS][ISTITLE]}
+        # No isTitle delta. str.istitle of a single character is "isupper or
+        # Lt", and Lt has not moved across the releases modelled here, so the
+        # isUpper delta plus Go's Lt is exact -- measured over every code point
+        # for every version. The table this used to write had no caller.
         alpha = {cp for cp in base
                  if older.get(cp) and older[cp][FLAGS][ISALPHA] != base[cp][FLAGS][ISALPHA]}
         xidstart = {cp for cp in base
@@ -255,7 +257,7 @@ import "unicode"
             f"// newer than the pin assigns digits the pin has never heard of.\n"
             f"// {len(decimal)} code points."))
         for pts, nm in ((digit, "digit"), (numeric, "numeric"),
-                        (lower, "isLower"), (upper, "isUpper"), (title, "isTitle"),
+                        (lower, "isLower"), (upper, "isUpper"),
                         (alpha, "isAlpha"), (xidstart, "xidStart"),
                         (xidcont, "xidContinue")):
             parts.append(range_table(
@@ -263,7 +265,7 @@ import "unicode"
                 f"// {nm}Other{suffix} is where CPython {v} and the pin disagree\n"
                 f"// about {nm}. {len(pts)} code points."))
         counts.append((v, len(printable), len(digit) + len(numeric) + len(decimal),
-                       sum(len(m) for m in maps.values()) + len(lower) + len(upper) + len(title)))
+                       sum(len(m) for m in maps.values()) + len(lower) + len(upper)))
 
     # One place that names every table, so a lookup asks by version rather than
     # by spelling a variable name.
@@ -278,7 +280,7 @@ import "unicode"
             f"\t\tdigit: digitOther{suffix}, numeric: numericOther{suffix},\n"
             f"\t\tdecimal: decimalOther{suffix},\n"
             f"\t\tisLower: isLowerOther{suffix}, isUpper: isUpperOther{suffix},\n"
-            f"\t\tisTitle: isTitleOther{suffix}, isAlpha: isAlphaOther{suffix},\n"
+            f"\t\tisAlpha: isAlphaOther{suffix},\n"
             f"\t\txidStart: xidStartOther{suffix},\n"
             f"\t\txidContinue: xidContinueOther{suffix},\n"
             f"\t}},\n")

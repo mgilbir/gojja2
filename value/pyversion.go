@@ -98,7 +98,14 @@ func (v PythonVersion) SliceKeysAreHashable() bool { return v.AtLeast(Python312)
 //
 // 3.12 relaxed the argument clinic, so `{{ x|sort(reverse=none) }}` and
 // `{{ "ab".splitlines(1.5) }}` render instead of raising "cannot be interpreted
-// as an integer". Corpus: errors/sort_reverse_none, errors/method_none_keepends.
+// as an integer" -- and the other face of the same change is that a value past a
+// C int is taken rather than overflowing, which is why
+// `{{ [3,1]|sort(reverse=2147483648) }}` renders from 3.12 on. There was a
+// second rule for that half, IndexAcceptsWideInt, which nothing ever called;
+// TestEveryVersionRuleIsConsulted is what found it.
+// Corpus: errors/sort_reverse_none, errors/method_none_keepends,
+// errors/index_overflow_c_int_sort, errors/index_overflow_c_int_negative,
+// errors/index_overflow_c_int_splitlines.
 func (v PythonVersion) BoolArgsAreTruthy() bool { return v.AtLeast(Python312) }
 
 // IntHasIsInteger reports whether int carries is_integer().
@@ -108,13 +115,6 @@ func (v PythonVersion) BoolArgsAreTruthy() bool { return v.AtLeast(Python312) }
 // is a float method only, and `{{ (0).is_integer() }}` raises the ordinary
 // missing-attribute error. Corpus: methods/int_is_integer.
 func (v PythonVersion) IntHasIsInteger() bool { return v.AtLeast(Python312) }
-
-// IndexAcceptsWideInt reports whether an index too large for a C int is taken
-// rather than refused.
-//
-// 3.12 stopped raising "Python int too large to convert to C int" for these.
-// Corpus: errors/index_overflow_c_int_sort and its two neighbours.
-func (v PythonVersion) IndexAcceptsWideInt() bool { return v.AtLeast(Python312) }
 
 // UnifiedRecursionMessage reports whether every recursion error carries the
 // same sentence.

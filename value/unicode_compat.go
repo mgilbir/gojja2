@@ -31,8 +31,13 @@ type UnicodeOverrides struct {
 	// is nowhere else to read their value from. -1 means this version reads
 	// no decimal value at all.
 	decimal map[rune]int
-	// isLower, isUpper and isTitle are where the case predicates differ.
-	isLower, isUpper, isTitle *unicode.RangeTable
+	// isLower and isUpper are where the case predicates differ. There is no
+	// isTitle beside them: str.istitle of a single character is
+	// "isupper or Lt", and Lt has not moved across the four releases
+	// modelled here -- so composing isUpper with Go's Lt is exact on all
+	// 1,112,064 code points for every interpreter, and the delta table for
+	// it had no caller. See pyIsCased and isTitleString in casing.go.
+	isLower, isUpper *unicode.RangeTable
 	// isAlpha is where str.isalpha differs, which follows the same rule:
 	// Go and the interpreter are on different Unicode releases, and either
 	// can be the one that knows a character.
@@ -100,13 +105,6 @@ func (u *UnicodeOverrides) IsUpper(r rune, def bool) bool {
 		return def
 	}
 	return flipIn(u.isUpper, r, def)
-}
-
-func (u *UnicodeOverrides) IsTitle(r rune, def bool) bool {
-	if u == nil {
-		return def
-	}
-	return flipIn(u.isTitle, r, def)
 }
 
 // IsDigit, IsNumeric and IsDecimal answer the numeric predicates for this
