@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import json
 import sys
+
+import jinja2
 from pathlib import Path
 
 import nameflow
@@ -77,7 +79,10 @@ def main() -> int:
             except Exception:
                 return None
 
-        result = nameflow.analyze(tree, env.globals, resolver)
+        # StrictUndefined widens what can fail, so the analysis has to be
+        # told which class the case renders under.
+        strict = env.undefined is jinja2.StrictUndefined
+        result = nameflow.analyze(tree, env.globals, resolver, strict)
         out = DST / (rel[: -len(".jj2")] + ".json")
         keep.add(out)
         body = json.dumps(

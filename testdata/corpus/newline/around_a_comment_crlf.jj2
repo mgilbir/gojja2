@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "newline_sequence": "\r\n"
+  },
+  "v": "a\r\nb"
+}
+---
+a
+{#c#}
+b

@@ -69,9 +69,11 @@ func TestSyntaxDifferential(t *testing.T) {
 	}
 	t.Logf("syntax differential: %d generated templates compared against "+
 		"CPython jinja2 (seed %d), %d empty; %d of the analysis's negatives "+
-		"checked by rendering; lexer %d trim, %d lstrip, %d keep-newline",
+		"checked by rendering; lexer %d trim, %d lstrip, %d keep-newline, "+
+		"%d crlf, %d cr",
 		checked, seed, skipped, claims,
-		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"])
+		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
+		lexRuns["crlf"], lexRuns["cr"])
 }
 
 // compareSyntax returns a description of the first divergence, or "".
@@ -138,13 +140,19 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claim
 			firstDifference(ref.Info, string(gotInfo))
 	}
 
-	flow := dataflow.Analyze(tree, dataflow.WithResolver(func(name string) *syntax.Tree {
+	// The generated case's Undefined class is part of the question: under
+	// strict an arm that reads a name can stop the render.
+	flowOpts := []dataflow.Option{dataflow.WithResolver(func(name string) *syntax.Tree {
 		other, err := env.GetTemplate(name)
 		if err != nil {
 			return nil
 		}
 		return other.Syntax()
-	}))
+	})}
+	if c.Undefined == "strict" {
+		flowOpts = append(flowOpts, dataflow.WithStrictUndefined())
+	}
+	flow := dataflow.Analyze(tree, flowOpts...)
 	gotVars := map[string]string{}
 	for name, e := range flow.Context(tree) {
 		gotVars[name] = encodeEffect(e)

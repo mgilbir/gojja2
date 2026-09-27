@@ -342,6 +342,17 @@ func (s *State) PythonVersion() PythonVersion {
 	return s.env.pyVersion
 }
 
+// NewlineSequence is what a newline in the template renders as, which the
+// lexer applies to data and to string literals -- and which |wordwrap joins
+// its lines with, since jinja2's do_wordwrap defaults its wrapstring to
+// environment.newline_sequence rather than to "\n".
+func (s *State) NewlineSequence() string {
+	if s == nil || s.env == nil || s.env.syntax.NewlineSequence == "" {
+		return "\n"
+	}
+	return s.env.syntax.NewlineSequence
+}
+
 // Name returns the name of the template currently executing.
 func (s *State) Name() string { return s.tmpl.name }
 

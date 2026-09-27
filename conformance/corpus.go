@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/mgilbir/gojja2"
+	"github.com/mgilbir/gojja2/dataflow"
 	"github.com/mgilbir/gojja2/value"
 )
 
@@ -298,6 +299,19 @@ func DecodeContext(raw json.RawMessage) (map[string]value.Value, error) {
 // default interpreter.
 func (c *Case) Environment() (*gojja2.Environment, error) {
 	return c.EnvironmentFor(gojja2.DefaultPythonVersion)
+}
+
+// DataflowOptions are the analysis options this case's environment implies.
+//
+// StrictUndefined is one: it widens what can stop a render, so the analysis has
+// to be told. A case that renders under it and is analysed without it gets an
+// answer for a different environment -- which is the same trap as a setting that
+// reaches one engine and not the other.
+func (c *Case) DataflowOptions() []dataflow.Option {
+	if c.Settings.Undefined == "strict" {
+		return []dataflow.Option{dataflow.WithStrictUndefined()}
+	}
+	return nil
 }
 
 // EnvironmentFor is Environment for one interpreter version, which is what

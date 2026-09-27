@@ -128,8 +128,16 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		"join filter steps": {`{% set v = range(2000)|join %}`, gojja2.ErrTooManyIterations, 0, 1000},
 		// filters_seq.go, filterBatch
 		"batch": {`{% set v = range(2000)|batch(2) %}`, gojja2.ErrTooManyIterations, 0, 1000},
-		// filters_web.go, filterURLEncode
-		"urlencode": {`{% set v = range(2000)|map("string")|list|batch(2)|urlencode %}`, gojja2.ErrTooManyIterations, 0, 1000},
+		// filters_web.go, filterURLEncode. The bound sits *between* what
+		// building the pairs costs (4,000 for `range(2000)|batch(2)`)
+		// and what urlencode's own walk adds (1,000 more), because every
+		// shape that hands it pairs has already paid for them. The case
+		// this replaced asked for two thousand pairs under a bound of a
+		// thousand, so `map` refused before urlencode ran at all -- it
+		// passed, and it passed for the wrong reason. `make mutate` is
+		// what said so: taking urlencode's charge out changed nothing.
+		"urlencode": {`{% set v = range(2000)|batch(2)|urlencode %}`,
+			gojja2.ErrTooManyIterations, 0, 4500},
 		// filters_seq.go, filterFirst: one item is one step, so what
 		// this measures is that asking costs anything at all.
 		"first costs a step": {`{% set a = range(9)|first %}{% set b = range(9)|first %}`,

@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "newline_sequence": "\n"
+  },
+  "v": "a\r\nb"
+}
+---
+{{ 'a
+b'|length }}|{{ 'a
+b'|length }}|{{ 'ab'|length }}

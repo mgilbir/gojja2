@@ -6256,6 +6256,106 @@ case("errors/cycler_dynamic_empty", "{% set c = cycler(*e) %}{{ c.next() }}", e=
 case("control/loop_cycle_no_items", "{% for i in seq %}{{ loop.cycle() }}{% endfor %}", **SEQ)
 
 
+# The branches a happy path does not reach, found by reading the *line* the
+# ungraded list names rather than the message: the same words are raised from
+# two or three sites, and a case that produces them may leave the listed one
+# untouched.
+#
+# searchArg takes bytes *or* an integer byte, so find/index/count reject an int
+# outside range(0, 256) where split and partition reject any int at all.
+case("bytes/find_int_out_of_range", "{{ 'ab'.encode().find(300) }}")
+case("bytes/count_int_out_of_range", "{{ 'ab'.encode().count(300) }}")
+case("bytes/index_negative_int", "{{ 'ab'.encode().find(-1) }}")
+case("bytes/find_int_in_range", "{{ 'ab'.encode().find(97) }}|{{ 'ab'.encode().count(98) }}")
+case("bytes/startswith_int", "{{ 'ab'.encode().startswith(300) }}")
+case("bytes/endswith_int", "{{ 'ab'.encode().endswith(300) }}")
+case("bytes/partition_int_separator", "{{ 'ab'.encode().partition(300) }}")
+
+# round(x, None) is round(x): it answers an *integer*, which is the only route
+# to the conversion that a non-finite float cannot make. round(x, 0) answers a
+# float and does not.
+case("nonfinite/round_none_of_infinity", "{{ (s_inf|float)|round(none) }}", s_inf="inf")
+case("nonfinite/round_none_of_nan", "{{ (s_nan|float)|round(none) }}", s_nan="nan")
+case("filters/round_none_is_an_integer", "{{ 2.5|round(none) }}|{{ 3.5|round(none) }}|{{ (-2.5)|round(none) }}")
+
+# int.to_bytes, whose two refusals are CPython's own.
+# (300 in one byte is errors/to_bytes_too_big.)
+case("methods/to_bytes_wide_int", "{{ (2**100).to_bytes(4,'big') }}")
+case("methods/to_bytes_negative", "{{ (-1).to_bytes(1,'big') }}")
+
+# A `*` width or precision reads an argument of its own, so it can run out
+# before the conversion does.
+case("methods/percent_star_no_arguments", "{{ '%*d' % (()) }}")
+case("methods/percent_precision_star_no_arguments", "{{ '%.*f' % (()) }}")
+
+# A replacement field's spec may hold a field of its own, and the brace rules
+# inside one are their own.
+case("methods/format_nested_spec_unmatched", "{{ '{0:{1}'.format(1,2) }}")
+case("methods/format_nested_spec_stray_close", "{{ '{0:{1}}}'.format(1,2) }}")
+case("methods/format_nested_spec_after_align", "{{ '{0:>{1}'.format(1,5) }}")
+
+# --- a guard over an arm that can fail ----------------------------------------
+# The dataflow analysis answers whether a variable can stop the render, and a
+# *guard* decides whether whatever it guards runs at all. Two shapes had it
+# wrong, both found by rendering the analysis's negatives:
+#
+#   - an arm holding only an attribute access. Reaching through an undefined
+#     raises, so the guard decides whether the render fails -- and Getattr had
+#     been left out of the walk's list of what can fail, beside its sibling
+#     Getitem.
+#   - under StrictUndefined, an arm that merely *reads* a name. Reading one that
+#     was not passed raises there, where every other class renders it.
+#
+# The cases are here so the rule is graded by testdata/nameflow as well as by
+# the probe: what each records is the effect set for `c`.
+case("dataflow/guard_over_getattr", "{% if c %}{{ nope.attr }}{% endif %}ok", c=1)
+case("dataflow/guard_over_getattr_false", "{% if c %}{{ nope.attr }}{% endif %}ok", c=0)
+case("dataflow/guard_over_getitem", "{% if c %}{{ nope['a'] }}{% endif %}ok", c=1)
+case("dataflow/guard_over_text", "{% if c %}text{% endif %}ok", c=1)
+case("dataflow/guard_over_a_name_strict", "{% if c %}{{ nope }}{% endif %}ok",
+     __settings__={"undefined": "strict"}, c=0)
+case("dataflow/guard_over_a_name_default", "{% if c %}{{ nope }}{% endif %}ok", c=1)
+case("dataflow/loop_guard_over_getattr",
+     "{% for i in seq %}{% if c %}{{ nope.attr }}{% endif %}{% endfor %}ok", c=0, **SEQ)
+
+# --- newline_sequence, which nothing had ever graded -------------------------
+# jinja2 normalises the newlines it finds in the *template* -- both in data and
+# inside a string literal -- to the environment's newline_sequence, before the
+# parser ever sees them. Nothing that arrives from the context is touched.
+#
+# The option had validation tests on both sides and not one case about what it
+# does. It changes what a literal *is*, so `{{ 'a\r\nb'|length }}` is 4 under
+# "\r\n" and 3 under "\n", and `|list` of it holds a different number of
+# elements. A filter that re-joins lines does not use it: do_indent splits with
+# splitlines() and joins with "\n" whatever the setting says.
+_NEWLINE_BODIES = [
+    ("data_mixed", "x\ny|x\r\ny|x\ry"),
+    ("literal_mixed", "{{ 'a\nb' }}|{{ 'a\rb' }}|{{ 'a\r\nb' }}"),
+    ("literal_length", "{{ 'a\r\nb'|length }}|{{ 'a\nb'|length }}|{{ 'a\rb'|length }}"),
+    ("literal_list", "{{ 'a\r\nb'|list }}"),
+    ("context_untouched", "{{ v }}"),
+    ("block_body", "{% if 1 %}\na\r\nb\rc\n{% endif %}"),
+    ("loop_body", "{% for i in [1,2] %}\r\n{{ i }}{% endfor %}"),
+    ("indent_joins_with_lf", "{{ 'a\r\nb'|indent(2, true) }}"),
+    ("splitlines", "{{ 'a\r\nb'.splitlines() }}"),
+    ("wordwrap", "{{ 'a\r\nb'|wordwrap(1) }}"),
+    ("raw_block", "{% raw %}a\r\nb{% endraw %}"),
+    ("around_a_comment", "a\r\n{#c#}\r\nb"),
+    ("trailing", "a\r\n"),
+]
+for _n, _src in _NEWLINE_BODIES:
+    for _label, _seq in (("lf", "\n"), ("crlf", "\r\n"), ("cr", "\r")):
+        case(f"newline/{_n}_{_label}", _src,
+             __settings__={"newline_sequence": _seq}, v="a\r\nb")
+# ...and the interaction with the two settings that also eat newlines.
+case("newline/keep_trailing_crlf", "a\r\n",
+     __settings__={"newline_sequence": "\r\n", "keep_trailing_newline": True}, v="")
+case("newline/trim_blocks_crlf", "{% if 1 %}\r\na{% endif %}\r\nb",
+     __settings__={"newline_sequence": "\r\n", "trim_blocks": True}, v="")
+case("newline/lstrip_blocks_cr", "  {% if 1 %}\ra{% endif %}",
+     __settings__={"newline_sequence": "\r", "lstrip_blocks": True}, v="")
+
+
 def main() -> int:
     if DST.exists():
         shutil.rmtree(DST)

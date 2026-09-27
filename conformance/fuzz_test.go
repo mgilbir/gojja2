@@ -96,6 +96,9 @@ func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
 	if len(c.Extensions) > 0 {
 		opts = append(opts, gojja2.WithExtensions(c.Extensions...))
 	}
+	if c.NewlineSequence != "" {
+		opts = append(opts, gojja2.WithNewlineSequence(c.NewlineSequence))
+	}
 	switch c.Undefined {
 	case "strict":
 		opts = append(opts, gojja2.WithUndefined(value.UndefinedStrict))
@@ -135,6 +138,9 @@ func caseSettings(c conformance.GeneratedCase) map[string]any {
 	}
 	if len(c.Extensions) > 0 {
 		settings["extensions"] = c.Extensions
+	}
+	if c.NewlineSequence != "" {
+		settings["newline_sequence"] = c.NewlineSequence
 	}
 	if len(settings) == 0 {
 		return nil
@@ -352,11 +358,12 @@ func TestDifferential(t *testing.T) {
 	// default Undefined without anything saying so.
 	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), "+
 		"%d autoescaping, %d empty; undefined %d strict, %d chainable, %d debug; "+
-		"lexer %d trim, %d lstrip, %d keep-newline; "+
+		"lexer %d trim, %d lstrip, %d keep-newline, %d crlf, %d cr; "+
 		"extensions %d do, %d loopcontrols, writing %d print, %d do, %d break, %d continue",
 		checked, seed, escaping, skipped,
 		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"],
 		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
+		lexRuns["crlf"], lexRuns["cr"],
 		tagRuns["ext-do"], tagRuns["ext-loopcontrols"],
 		tagRuns["print"], tagRuns["do"], tagRuns["break"], tagRuns["continue"])
 	// An extension that is enabled and never written is an axis that costs a
@@ -382,6 +389,12 @@ func countLexSettings(c conformance.GeneratedCase, into map[string]int) {
 	}
 	if c.KeepTrailingNewline {
 		into["keep"]++
+	}
+	switch c.NewlineSequence {
+	case "\r\n":
+		into["crlf"]++
+	case "\r":
+		into["cr"]++
 	}
 }
 

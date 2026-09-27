@@ -92,6 +92,9 @@ class Analysis:
         # Following a reference to another template needs a way to reach it,
         # and a way not to follow a cycle round for ever.
         self.resolver = None
+        # StrictUndefined: reading an unpassed name raises, so an arm that
+        # reads one can stop the render. See can_fail_in.
+        self.strict = False
         self.visiting = set()
         self.cache = {}
         # Namespaces being followed field by field, and the ones that got away.
@@ -289,6 +292,7 @@ class Analysis:
         self.visiting.add(name)
         sub = Analysis()
         sub.resolver, sub.visiting, sub.cache = self.resolver, self.visiting, self.cache
+        sub.strict = self.strict
         sub.em = syntax_emit.Emitter(self.em.globals)
         sub.em.stmt(tree)
         sub.push(tree)
@@ -574,8 +578,9 @@ class Analysis:
             # else off the outermost if, so an elif's own subtree does not hold
             # the arm that runs when it is false -- and it decides whether that
             # arm runs.
-            self.if_stmt(n, can_fail_in(n.body) or can_fail_in(n.elif_)
-                         or can_fail_in(n.else_))
+            self.if_stmt(n, can_fail_in(n.body, self.strict)
+                         or can_fail_in(n.elif_, self.strict)
+                         or can_fail_in(n.else_, self.strict))
 
         elif isinstance(n, nodes.For):
             # The iterable is evaluated outside the loop's own frame.
@@ -594,7 +599,7 @@ class Analysis:
                 loop.deps |= srcs
             loop_test = self.expr(n.test)
             self.apply(loop_test, FLOW)
-            if can_fail_in(n.body):
+            if can_fail_in(n.body, self.strict):
                 self.apply(loop_test, REQUIRED)
             self.stmts(n.body)
             self.stmts(n.else_)
@@ -804,17 +809,30 @@ _CAN_FAIL = tuple(getattr(nodes, n) for n in
                    "Or", "Not", "Neg", "Pos", "Compare", "Operand", "Test",
                    "Filter", "Call", "Getitem", "Pair", "For", "Include",
                    "Extends", "Import", "FromImport", "NSRef",
-                   "Break", "Continue")
+                   "Break", "Continue",
+                   # Getattr beside Getitem, which had been here alone:
+                   # reaching through an undefined raises, so an arm holding
+                   # `{{ nope.attr }}` can stop the render.
+                   "Getattr")
                   if hasattr(nodes, n))
 
 
-def can_fail_in(body) -> bool:
+def can_fail_in(body, strict: bool = False) -> bool:
+    """Whether anything in a body can stop the render.
+
+    Under StrictUndefined a *name* can: reading one that was not passed raises
+    rather than rendering empty, so `{% if c %}{{ nope }}{% endif %}` fails
+    exactly when c is truthy and c decides whether the render fails. Coarse, and
+    deliberately so -- this cannot tell a name the caller passes from one it does
+    not. See dataflow.WithStrictUndefined, which says the same thing in Go.
+    """
     if body is None:
         return False
+    kinds = _CAN_FAIL + ((nodes.Name,) if strict else ())
     for n in body if isinstance(body, list) else [body]:
-        if isinstance(n, _CAN_FAIL):
+        if isinstance(n, kinds):
             return True
-        for _ in n.find_all(_CAN_FAIL):
+        for _ in n.find_all(kinds):
             return True
     return False
 
@@ -833,7 +851,7 @@ def imported_names(n):
     return [x if isinstance(x, str) else x[1] for x in n.names]
 
 
-def analyze(tree, globals_=(), resolver=None) -> dict[str, dict]:
+def analyze(tree, globals_=(), resolver=None, strict=False) -> dict[str, dict]:
     """Classify every context variable a parsed template reads.
 
     `globals_` are names the environment supplies -- range, dict, lipsum and
@@ -845,6 +863,7 @@ def analyze(tree, globals_=(), resolver=None) -> dict[str, dict]:
     """
     a = Analysis()
     a.resolver = resolver
+    a.strict = strict
     a.em = syntax_emit.Emitter(globals_)
     a.em.stmt(tree)
     a.push(tree)

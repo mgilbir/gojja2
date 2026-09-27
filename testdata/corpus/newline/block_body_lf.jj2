@@ -1,0 +1,11 @@
+{
+  "__settings__": {
+    "newline_sequence": "\n"
+  },
+  "v": "a\r\nb"
+}
+---
+{% if 1 %}
+a
+bc
+{% endif %}

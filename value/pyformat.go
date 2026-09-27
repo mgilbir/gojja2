@@ -250,6 +250,10 @@ func lookupFormatKey(mapping Value, key Value) (Value, error) {
 				mapping.TypeName(), key.TypeName())
 		}
 	}
+	// Unreachable while this switch handles every kind isMappingArg accepts,
+	// which is the invariant between the two: nothing else gets this far,
+	// because a format with a `%(name)s` and a non-mapping operand is refused
+	// before the lookup. It is the right answer if that ever stops being true.
 	return Undefined, errs.New(errs.TypeError, "format requires a mapping")
 }
 

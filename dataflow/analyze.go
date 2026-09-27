@@ -51,10 +51,14 @@ type analyzer struct {
 	// and aliased marks the ones that got away. See namespace.go.
 	namespaces map[*syntax.Symbol]map[string]*syntax.Symbol
 	aliased    map[*syntax.Symbol]bool
+
+	// strict is WithStrictUndefined: reading a name that was not passed
+	// raises, so an arm that reads one can fail. See canFailIn.
+	strict bool
 }
 
-func newAnalyzer(t *syntax.Tree, resolve Resolver, visiting map[string]bool,
-	cache map[string]map[string]Effect) *analyzer {
+func newAnalyzer(t *syntax.Tree, resolve Resolver, strict bool,
+	visiting map[string]bool, cache map[string]map[string]Effect) *analyzer {
 	return &analyzer{
 		tree:        t,
 		derives:     map[*syntax.Symbol]symset{},
@@ -68,6 +72,7 @@ func newAnalyzer(t *syntax.Tree, resolve Resolver, visiting map[string]bool,
 		external:    map[string]*syntax.Symbol{},
 		namespaces:  map[*syntax.Symbol]map[string]*syntax.Symbol{},
 		aliased:     map[*syntax.Symbol]bool{},
+		strict:      strict,
 	}
 }
 
@@ -80,7 +85,8 @@ func Analyze(t *syntax.Tree, opts ...Option) *Flow {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	a := newAnalyzer(t, o.resolve, map[string]bool{}, map[string]map[string]Effect{})
+	a := newAnalyzer(t, o.resolve, o.strict, map[string]bool{},
+		map[string]map[string]Effect{})
 	a.seedAliases()
 	a.stmt(t.Root)
 	a.sealNamespaces()

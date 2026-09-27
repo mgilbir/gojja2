@@ -260,9 +260,19 @@ as it is converted, so a per-item step has to be driven by a lazy `range()`
 rather than by a list a test passes in.
 
 **Six survive.** Every one is a second charge on bytes or items that something
-upstream has already charged: `|batch` after `materialize`, `|urlencode` and
+upstream has already charged: `|batch` after `materialize`, `|map` and
 `str.join` over a sequence the conversion paid for, `pad` beside the
 `repeatString` inside it, and the two walks that materialise a loop's source.
+
+A seventh survived for a while and was a finding about the *test*, not the
+charge. `|urlencode`'s per-item step was measured by
+`range(2000)|map("string")|list|batch(2)|urlencode` under a bound of a thousand
+-- and `map` alone costs two thousand, so the bound was reached before urlencode
+ran at all. The case passed, and it passed for the wrong reason. It asks for
+`range(2000)|batch(2)|urlencode` under 4,500 now, which is *between* what building
+the pairs costs (4,000) and what urlencode's own walk adds (1,000 more), because
+every shape that hands it pairs has already paid for them. **A charge is only
+measured by a bound the site itself has to cross.**
 They are belt-and-braces rather than gaps, and they are left alone on the same
 principle as the open `frames.go` survivor above: a line that cannot be shown to
 matter is not the same as one shown not to.

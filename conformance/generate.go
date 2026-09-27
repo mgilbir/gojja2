@@ -157,6 +157,9 @@ var testWithArg = map[string][]string{
 	"eq":          {"1", "'a'", "n"},
 	"ne":          {"1", "'a'"},
 	"lt":          {"5"}, "le": {"5"}, "gt": {"0"}, "ge": {"0"},
+	// jinja2's aliases for three of those. An alias is where a table
+	// drifts, and nothing generated wrote one.
+	"equalto": {"1", "'a'"}, "greaterthan": {"0"}, "lessthan": {"5"},
 	"in":     {"lst", "'abc'", "d"},
 	"sameas": {"none", "true"},
 	"filter": {},
@@ -277,6 +280,15 @@ type GeneratedCase struct {
 	Trim                bool
 	Lstrip              bool
 	KeepTrailingNewline bool
+	// NewlineSequence is what every newline in the *template* is rendered
+	// as: "" for jinja2's default "\n", or "\r\n" or "\r".
+	//
+	// It is a lexer setting like the three above, and the one the corpus had
+	// no case for at all: jinja2 normalises the newlines it finds in data
+	// *and* inside a string literal before the parser sees them, so it
+	// changes what a literal is -- `{{ 'a\r\nb'|length }}` is 4 under
+	// "\r\n" and 3 under "\n". The generator writes newlines constantly.
+	NewlineSequence string
 	// Extensions names the optional tags the environment enables: any of
 	// "do" and "loopcontrols".
 	//
@@ -324,6 +336,9 @@ func GenerateCase(input []byte) GeneratedCase {
 	// extension did not add is a syntax error, not a statement.
 	g.do = g.c.chance(3)
 	g.loopControls = g.c.chance(3)
+	// Weighted toward the default, which is what almost every template in
+	// the world runs under.
+	newline := g.c.pick([]string{"", "", "", "", "\r\n", "\r"})
 	var extensions []string
 	if g.do {
 		extensions = append(extensions, "do")
@@ -340,6 +355,7 @@ func GenerateCase(input []byte) GeneratedCase {
 		Lstrip:              lstrip,
 		KeepTrailingNewline: keepNewline,
 		Extensions:          extensions,
+		NewlineSequence:     newline,
 	}
 }
 

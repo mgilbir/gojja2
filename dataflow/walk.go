@@ -350,9 +350,9 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		// whatever happens, so it is not guarded by itself. An elif's test
 		// is guarded, because it only runs when the ones before it were
 		// false, and it travels with the arms.
-		a.ifStmt(n, canFailInAny(n.Children(syntax.RoleBody)) ||
-			canFailInAny(n.Children(syntax.RoleElif)) ||
-			canFailInAny(n.Children(syntax.RoleElse)))
+		a.ifStmt(n, a.canFailInAny(n.Children(syntax.RoleBody)) ||
+			a.canFailInAny(n.Children(syntax.RoleElif)) ||
+			a.canFailInAny(n.Children(syntax.RoleElse)))
 
 	case syntax.KindFor:
 		// The sequence's length decides how many times the body runs, so
@@ -369,7 +369,7 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		loopTest := a.expr(n.Child(syntax.RoleTest))
 		a.apply(loopTest, Steers)
 		for _, guarded := range n.Children(syntax.RoleBody) {
-			if canFailIn(guarded) {
+			if a.canFailIn(guarded) {
 				a.apply(loopTest, Required)
 				break
 			}
@@ -551,7 +551,7 @@ func canRaise(k syntax.Kind) bool {
 // does.
 //
 // An over-approximation, like Required itself: the construct *can* raise.
-func canFailIn(n *syntax.Node) bool {
+func (a *analyzer) canFailIn(n *syntax.Node) bool {
 	found := false
 	syntax.Walk(n, func(nd *syntax.Node, _ syntax.Role) bool {
 		if found {
@@ -561,6 +561,17 @@ func canFailIn(n *syntax.Node) bool {
 		case syntax.KindBinOp, syntax.KindUnaryOp, syntax.KindCompare,
 			syntax.KindOperand, syntax.KindTest, syntax.KindFilter,
 			syntax.KindCall, syntax.KindGetitem, syntax.KindPair,
+			// Getattr, beside its sibling Getitem, which had been here
+			// alone: reaching through an undefined raises, so an arm
+			// holding `{{ nope.attr }}` can stop the render and the
+			// test that guards it decides whether it does. The analysis
+			// already says as much about the *base* -- it marks `nope`
+			// Required -- so leaving the guard out was inconsistent with
+			// what it says one node down. Found by a generated
+			// `{% if users %}{% do nope.nothing %}{% endif %}`, which is
+			// the minimal arm: anything else in it is usually a filter
+			// or a call, and those were already listed.
+			syntax.KindGetattr,
 			syntax.KindFor, syntax.KindInclude, syntax.KindExtends,
 			syntax.KindImport, syntax.KindFromImport,
 			// An nsref appears only as the target of a `{% set %}`, and
@@ -582,6 +593,15 @@ func canFailIn(n *syntax.Node) bool {
 			syntax.KindBreak, syntax.KindContinue:
 			found = true
 			return false
+		case syntax.KindName:
+			// Only under StrictUndefined, where reading a name that
+			// was not passed raises rather than rendering empty --
+			// so `{% if c %}{{ nope }}{% endif %}` fails exactly
+			// when c is truthy. See WithStrictUndefined.
+			if a.strict {
+				found = true
+				return false
+			}
 		}
 		return true
 	})
@@ -589,9 +609,9 @@ func canFailIn(n *syntax.Node) bool {
 }
 
 // canFailInAny is canFailIn over a list.
-func canFailInAny(list []*syntax.Node) bool {
+func (a *analyzer) canFailInAny(list []*syntax.Node) bool {
 	for _, n := range list {
-		if canFailIn(n) {
+		if a.canFailIn(n) {
 			return true
 		}
 	}

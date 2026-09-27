@@ -1074,7 +1074,11 @@ func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	wrapString := "\n"
+	// jinja2 defaults the wrapstring to the *environment's* newline sequence,
+	// not to "\n": `{{ 'a\r\nb'|wordwrap(1) }}` rejoins with "\r\n" under
+	// WithNewlineSequence("\r\n"). Joining with "\n" regardless was invisible
+	// until the option had a corpus case at all.
+	wrapString := s.NewlineSequence()
 	if w, ok := arg(args, 2, "wrapstring"); ok && !w.IsNone() {
 		// jinja2's body is `wrapstring.join([... for line in
 		// s.splitlines()])`, and Python resolves the attribute on the

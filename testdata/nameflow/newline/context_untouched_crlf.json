@@ -1,0 +1,6 @@
+{
+  "case": "newline/context_untouched_crlf.jj2",
+  "variables": {
+    "v": "o"
+  }
+}
