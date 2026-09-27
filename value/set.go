@@ -118,24 +118,22 @@ func (s *Set) Iterate() iter.Seq[Value] {
 	}
 }
 
-// ContainsErr is Contains with the complaint hashing the item can make, which a
-// template can provoke with any value at all: a set hashes what it is asked
-// about, so `{{ {} in (d.keys() - 'a') }}` is "unhashable type: 'dict'" and not
-// False. Contains has no channel for that and hashed with the form that cannot
-// fail, which turned a template's question into "internal error in gojja2".
+// ContainsErr answers `x in <set>` with the complaint hashing the item can make,
+// which a template can provoke with any value at all: a set hashes what it is
+// asked about, so `{{ {} in (d.keys() - 'a') }}` is "unhashable type: 'dict'" and
+// not False.
+//
+// There is no Contains beside it. There was, because Container is one of the
+// interfaces searchable() accepts -- but Iterate already makes a set an Iterable,
+// which searchable() accepts too, and ContainsErr answers before either is
+// consulted. Removing it left the whole suite green; it was the last function
+// whole-suite coverage had never executed.
 func (s *Set) ContainsErr(item Value, py PythonVersion) (found, known bool, err error) {
 	if err := CheckHashable(item, py, AsSetElement); err != nil {
 		return false, true, err
 	}
 	_, ok := s.index.GetKnown(item)
 	return ok, true, nil
-}
-
-func (s *Set) Contains(item Value) (found, known bool) {
-	// Unreachable while ContainsErr answers first, and kept because
-	// Container is the interface an Object is asked through.
-	found, _, _ = s.ContainsErr(item, DefaultPythonVersion)
-	return found, true
 }
 
 // Equals compares as a set: same size, same members, order irrelevant.

@@ -129,8 +129,12 @@ func (v *dictView) Iterate() iter.Seq[value.Value] {
 //     two-element pair simply is not in it -- `nope in d.items()` is False even
 //     under StrictUndefined -- while the *key* of a pair is hashed, so
 //     `(nope, 1) in d.items()` raises;
-//   - a values view compares element by element and has nothing to say here, so
-//     it defers. known=false means "ask the generic path".
+//   - a values view compares element by element, which scan below does.
+//
+// There is no Contains beside it. There was, because Container is one of the
+// interfaces searchable() accepts -- but Iterate already makes a view an
+// Iterable, which searchable() accepts too, and this answers before either is
+// consulted. Removing it left the whole suite green.
 func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found, known bool, err error) {
 	d, ok := v.d.Dict()
 	if !ok {
@@ -166,13 +170,6 @@ func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found,
 	pair, _ := item.Seq()
 	eq, err := value.EqualErr(pair.At(1), got, py)
 	return eq, true, err
-}
-
-func (v *dictView) Contains(item value.Value) (found, known bool) {
-	// Unreachable while ContainsErr answers every view, and kept because
-	// Container is the interface a value.Object is asked through.
-	found, _, _ = v.ContainsErr(item, v.py)
-	return found, true
 }
 
 // scan is the values view's element-by-element search, which is a real `==` per

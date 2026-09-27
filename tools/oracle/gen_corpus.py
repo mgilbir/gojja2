@@ -390,6 +390,33 @@ case("errors/include_dict_not_found", "{% include {'a':1} %}", __templates__=INC
 case("errors/include_none_ignore_missing", "[{% include none ignore missing %}]", __templates__=INC)
 case("include/select_dict_key", "{% include {'inc.html': 1} %}", __templates__=INC)
 case("include/select_tuple", "{% include ('inc.html',) %}", __templates__=INC)
+# The *unqualified* name of the same objects, which is what a TypeError uses
+# where an UndefinedError uses the qualified one: a macro is 'Macro' in
+# "unsupported operand type(s) for +" and "jinja2.runtime.Macro object" in "has
+# no attribute". Both were reachable and neither was graded, so both TypeName
+# methods sat unexecuted by the whole suite.
+#
+# `{{ {self.b: 1} }}` is deliberately absent: a BlockReference has no repr of its
+# own, so a dict holding one prints an address.
+for _n, _src in [
+    ("macro_addition", "{% macro m() %}{% endmacro %}{{ m + 1 }}"),
+    ("macro_length", "{% macro m() %}{% endmacro %}{{ m|length }}"),
+    ("macro_membership", "{% macro m() %}{% endmacro %}{{ 1 in m }}"),
+    ("macro_iteration", "{% macro m() %}{% endmacro %}{{ m|sum }}"),
+    ("block_addition", "{% block b %}{{ self.b + 1 }}{% endblock %}"),
+    ("block_length", "{% block b %}{{ self.b|length }}{% endblock %}"),
+    ("block_membership", "{% block b %}{{ 1 in self.b }}{% endblock %}"),
+]:
+    case(f"errors/unqualified_type_name_{_n}", _src)
+# A macro has a repr of its own, so it can be a dict key and be printed.
+case("methods/macro_as_a_dict_key",
+     "{% macro m() %}{% endmacro %}{{ {m: 1} }}")
+# ...and a subscript of either answers undefined rather than raising, because
+# jinja2's getitem catches the TypeError.
+case("subscript/of_the_engines_objects",
+     "{% macro m() %}{% endmacro %}[{{ m[0] }}]|"
+     "{% block b %}[{{ self.b[0] }}]{% endblock %}")
+
 # What each of the engine's own objects calls itself, which a template sees when
 # it asks one for an attribute it has not got: under StrictUndefined the name is
 # the *qualified* one, as object_type_repr writes it, so a Macro is
