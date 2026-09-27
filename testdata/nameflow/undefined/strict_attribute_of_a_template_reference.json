@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_attribute_of_a_template_reference.jj2",
+  "variables": {
+    "self": "or"
+  }
+}

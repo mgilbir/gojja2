@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{{ d.__class__.get|pprint }}|{% macro m() %}{% endmacro %}{{ m|pprint }}|{% for i in [1] %}{{ loop|pprint }}{% endfor %}

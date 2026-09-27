@@ -1,0 +1,3 @@
+{}
+---
+{% macro m() %}{% endmacro %}[{{ m.nope }}]|{% for i in [1] %}[{{ loop.nope }}]{% endfor %}|[{{ self.nope }}]|{{ m.nope|default('d') }}

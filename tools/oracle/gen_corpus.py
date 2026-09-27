@@ -390,6 +390,39 @@ case("errors/include_dict_not_found", "{% include {'a':1} %}", __templates__=INC
 case("errors/include_none_ignore_missing", "[{% include none ignore missing %}]", __templates__=INC)
 case("include/select_dict_key", "{% include {'inc.html': 1} %}", __templates__=INC)
 case("include/select_tuple", "{% include ('inc.html',) %}", __templates__=INC)
+# What each of the engine's own objects calls itself, which a template sees when
+# it asks one for an attribute it has not got: under StrictUndefined the name is
+# the *qualified* one, as object_type_repr writes it, so a Macro is
+# "jinja2.runtime.Macro object" while a method descriptor is plain
+# "method_descriptor object" and a set is "set object" -- builtins are not
+# qualified. Every one of these already agreed; they were the type names no case
+# had ever asked for, which is what makes them load-bearing now.
+#
+# `{{ self.b|pprint }}` is deliberately absent: a BlockReference has no repr of
+# its own, so jinja2 prints its address.
+for _n, _src in [
+    ("a_method_descriptor", "{% set d = {'a': 1} %}{{ d.__class__.get.nope }}"),
+    ("a_macro", "{% macro m() %}{% endmacro %}{{ m.nope }}"),
+    ("a_loop", "{% for i in [1] %}{{ loop.nope }}{% endfor %}"),
+    ("a_set", "{% set d = {'a': 1} %}{{ (d.keys() - 'a').nope }}"),
+    ("a_template_reference", "{{ self.nope }}"),
+    ("a_block_reference", "{% block b %}{{ self.b.nope }}{% endblock %}"),
+]:
+    case(f"undefined/strict_attribute_of_{_n}", _src,
+         __settings__={"undefined": "strict"})
+# ...and the same attribute under the default class, which answers rather than
+# refusing -- so the type name is only in the message and not in the answer.
+case("undefined/attribute_of_the_engines_objects",
+     "{% macro m() %}{% endmacro %}[{{ m.nope }}]|"
+     "{% for i in [1] %}[{{ loop.nope }}]{% endfor %}|[{{ self.nope }}]|"
+     "{{ m.nope|default('d') }}")
+# The reprs that are not an address: a method descriptor names the type it came
+# from, a macro its name, a loop its position.
+case("methods/repr_of_the_engines_objects",
+     "{% set d = {'a': 1} %}{{ d.__class__.get|pprint }}|"
+     "{% macro m() %}{% endmacro %}{{ m|pprint }}|"
+     "{% for i in [1] %}{{ loop|pprint }}{% endfor %}")
+
 # `is callable` asks whether the value is callable, not what calling it does --
 # which is the whole of what a builtinFunc's Call method is for: its body is
 # unreachable (the evaluator hands a global the render through callWith, and the
