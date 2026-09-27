@@ -299,3 +299,18 @@ func (v PythonVersion) UnifiedDivisionByZero() bool { return v.AtLeast(Python314
 // have shown it was never asked. Corpus: errors/zero_division_float_mod,
 // errors/zero_division_float_mod_lhs, errors/zero_division_float_mod_both.
 func (v PythonVersion) FloatModuloNamesZero() bool { return v.AtLeast(Python313) }
+
+// RandrangeNamesItsBounds reports whether an empty range says which call it
+// was, rather than which step it computed.
+//
+// 3.11 answers "empty range for randrange() (5, 3, -2)" -- the two bounds and
+// the width between them, which is negative and says nothing a reader wanted.
+// 3.12 made it "empty range in randrange(5, 3)".
+//
+// A template reaches it through `lipsum(min=5, max=3)`, which jinja2 passes
+// straight to random.randrange. gojja2 carried the 3.11 wording for every
+// interpreter, including the pinned one, and nothing said so: the message had
+// never been produced by a corpus case, and an ungraded message reads as
+// agreement in every column of the version matrix.
+// Corpus: errors/lipsum_empty_range, errors/lipsum_equal_bounds.
+func (v PythonVersion) RandrangeNamesItsBounds() bool { return v.AtLeast(Python312) }

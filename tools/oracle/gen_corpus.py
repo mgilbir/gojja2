@@ -1059,7 +1059,6 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_print", "[{{ nope }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
-    case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
 # PyBytes_Format words a float verb's refusal after the *verb* rather than after
 # the type -- "float argument required, not str" where PyUnicode_Format says
 # "must be real number, not str" -- and says the same for an integer too wide for
@@ -1767,10 +1766,12 @@ for _n, _src in [
     ("in_string", "{{ nope in 'abc' }}"),
     ("not_in_string", "{{ nope not in 'abc' }}"),
     ("in_bytes", "{{ nope in 'ab'.encode() }}"),
-    ("in_list", "{{ nope in [1] }}"),
+    # in_list and in_range are not here: the sweep over all four Undefined
+    # classes already holds them (undefined/*_op_in_list and
+    # undefined/membership_of_a_range_*), and a second copy under a second name
+    # grades nothing twice.
     ("in_tuple", "{{ nope in (1,) }}"),
     ("in_dict", "{{ nope in {'a':1} }}"),
-    ("in_range", "{{ nope in range(3) }}"),
     ("container_is_undefined", "{{ 'a' in nope }}"),
 ]:
     case(f"undefined/strict_membership_{_n}", _src, __settings__={"undefined": "strict"})
@@ -1989,17 +1990,11 @@ _FOLDED = [
     ("attr_on_bool", "{{ true.missing }}"),
     ("missing_dict_key", "{{ {'a': 1}['b'] }}"),
     ("chained_on_none", "{{ none.a.b }}"),
-    ("folded_length", "{{ none.missing|length }}"),
     ("folded_arith", "{{ none.missing + 1 }}"),
     ("folded_truth", "{% if none.missing %}t{% else %}f{% endif %}"),
 ]
 for _kind in ("strict", "chainable", "debug", "default"):
     for _n, _src in _FOLDED:
-        # |length on an undefined is a separate defect: StrictUndefined must
-        # raise from __len__ and gojja2 answers 0. It is graded where that is
-        # fixed; folding is not what is wrong with it.
-        if (_kind, _n) == ("strict", "folded_length"):
-            continue
         case(f"undefined/{_kind}_{_n}", _src, __settings__={"undefined": _kind})
 
 # DebugUndefined renders the expression that failed instead of "", and jinja2's
@@ -2025,7 +2020,6 @@ _DEBUG = [
     ("slice_all_bad", "{{ 'ab'['a':'b':'c'] }}", {}),
     ("hint_from_filter", "{{ nope|first }}", {}),
     ("hint_from_empty", "{{ []|first }}", {}),
-    ("in_string_filter", "{{ nope|string }}", {}),
     ("chained", "{{ nope.a }}", {}),
     ("printed_twice", "{{ nope }}{{ d.missing }}", {"d": {"a": 1}}),
 ]
@@ -2170,23 +2164,25 @@ for _n, _src, _ctx in _BADKEY:
 # "undefined value printed: ..." rather than naming the subscript. The run-time
 # form raises TypeError on both engines and is unaffected; this is only about
 # the constant that folding leaves behind.
+# The run-time form carries the value in the *context*, written out per case
+# rather than substituted into the template. It was substituted, and bound x=1
+# for every one of them: five cases named after five types graded an int five
+# times, and nothing said so because they all agreed.
 _SLICEFOLD = [
-    ("none", "{{ none[1:2] }}"),
-    ("none_bad_stop", "{{ none[1:'x'] }}"),
-    ("none_zero_step", "{{ none[::0] }}"),
-    ("bool", "{{ true[1:2] }}"),
-    ("int", "{{ 1[1:2] }}"),
-    ("float", "{{ 1.5[1:2] }}"),
-    ("dict", "{{ {'a': 1}[1:2] }}"),
-    ("dict_full", "{{ {'a': 1}[::-1] }}"),
+    ("none", "{{ none[1:2] }}", "{{ x[1:2] }}", None),
+    ("none_bad_stop", "{{ none[1:'x'] }}", "{{ x[1:'x'] }}", None),
+    ("none_zero_step", "{{ none[::0] }}", "{{ x[::0] }}", None),
+    ("bool", "{{ true[1:2] }}", "{{ x[1:2] }}", True),
+    ("int", "{{ 1[1:2] }}", "{{ x[1:2] }}", 1),
+    ("float", "{{ 1.5[1:2] }}", "{{ x[1:2] }}", 1.5),
+    ("dict", "{{ {'a': 1}[1:2] }}", "{{ x[1:2] }}", {"a": 1}),
+    ("dict_full", "{{ {'a': 1}[::-1] }}", "{{ x[::-1] }}", {"a": 1}),
 ]
-for _n, _src in _SLICEFOLD:
+for _n, _src, _runtime, _x in _SLICEFOLD:
     case(f"subscript/slicefold_{_n}", _src)
     case(f"subscript/slicefold_{_n}_debug", _src, __settings__={"undefined": "debug"})
     # The run-time form, which raises instead of folding.
-    case(f"subscript/sliceruntime_{_n}", _src.replace("none[", "x[").replace(
-        "true[", "x[").replace("1.5[", "x[").replace("1[", "x[").replace(
-        "{'a': 1}[", "x["), x=1)
+    case(f"subscript/sliceruntime_{_n}", _runtime, x=_x)
 
 
 # jinja2 writes a filter block's result into its output buffer as it stands and
@@ -3008,13 +3004,12 @@ case("methods/dict_popitem",
 case("methods/dict_fromkeys",
      "{{ {'x': 1}.fromkeys('ab') }}|{{ {'x': 1}.fromkeys([3,1,2], 9) }}|"
      "{{ {'x': 1}.fromkeys([]) }}|{{ {'b':2,'a':1}.fromkeys({'b':2,'a':1}) }}")
-# A C function counts its arguments, and a tuple names itself.
-case("errors/dict_get_too_many", "{{ {'a':1}.get('a', 1, 2) }}")
+# A C function counts its arguments, and a tuple names itself: see
+# errors/method_get_too_many.
 case("errors/tuple_index_missing", "{{ (1,2).index(99) }}")
 case("errors/list_index_missing", "{{ [1,2].index(99) }}")
 case("errors/sort_positional_argument", "{% set L = [1] %}{{ L.sort(1) }}")
 case("errors/popitem_on_an_empty_dict", "{{ {}.popitem() }}")
-case("errors/cycler_without_items", "{{ cycler() }}")
 
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
@@ -3298,8 +3293,8 @@ case("scope/a_block_body_never_aliases",
 # from owning it.
 case("scope/autoescape_read_before_set",
      "{% autoescape false %}[{{ m }}]{% set m = 1 %}[{{ m }}]{% endautoescape %}", m=10)
-case("scope/autoescape_owns_what_it_assigns",
-     "{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}", m=10)
+# (The case that shows the autoescape block owning what it assigns is
+# scope/inner_frame_with_no_outer_reference, which is the same template.)
 case("scope/autoescape_does_not_leak_out",
      "[{{ m }}]{% autoescape false %}{% set m = 1 %}{% endautoescape %}[{{ m }}]", m=10)
 case("scope/autoescape_import_is_an_assignment",
@@ -3685,7 +3680,6 @@ case("errors/format_unknown_code", "{{ '{:*}'.format(1) }}")
 case("errors/format_invalid_specifier", "{{ '{:qq}'.format(1) }}")
 # One format string counts its fields or names them, never both.
 case("errors/format_mixed_numbering", "{{ '{} {0}'.format(1) }}")
-case("errors/format_unterminated_field", "{{ '{0'.format(1) }}")
 
 # Python has three numeric predicates and they are three different sets: only
 # isdecimal is a general category (Nd). isdigit adds Numeric_Type=Digit, and
@@ -6093,6 +6087,174 @@ case("errors/index_not_an_integer", '{{ "ab"|center("x") }}')
 # number instead of answering what the case asks.
 case("limits/integer_width_multiply", "{% set x = 2 ** e %}{{ (x * x) > x }}", e=524288)
 case("limits/integer_width_power", "{{ (2 ** e) > 0 }}", e=2000000)
+
+# --- messages nothing had ever produced: the second audit ----------------------
+# `make ungraded` counts the error sites no corpus case reaches, and 69 of 402
+# were left. Every shape below was measured against CPython before it was written
+# down, and every one already agreed -- which is exactly why they are worth a
+# case: an ungraded message reads as agreement in every column of the version
+# matrix, so nothing would have said when it stopped agreeing.
+
+# A test that takes an argument, called without one. jinja2's parser lets it
+# through and the arity check refuses it with CPython's wording, on all four
+# routes a test can be called by -- which is what made the guards inside the
+# tests themselves unreachable: they answered something else and were deleted.
+for _n, _src in [
+    ("is_divisibleby_no_argument", "{{ 4 is divisibleby }}"),
+    ("is_divisibleby_empty_call", "{{ 4 is divisibleby() }}"),
+    ("is_sameas_no_argument", "{{ 4 is sameas }}"),
+    ("is_in_no_argument", "{{ 4 is in }}"),
+    ("is_eq_no_argument", "{{ 4 is eq }}"),
+    ("is_lessthan_no_argument", "{{ 4 is lessthan }}"),
+    ("select_test_needing_an_argument", "{{ [1,2]|select('divisibleby')|list }}"),
+    ("reject_test_needing_an_argument", "{{ [1,2]|reject('sameas')|list }}"),
+    ("selectattr_test_needing_an_argument", "{{ [{'a':1}]|selectattr('a','in')|list }}"),
+    ("select_operator_test_needing_an_argument", "{{ [1,2]|select('eq')|list }}"),
+    # The parameter names are jinja2's own and a template may use them, which
+    # is the other half of the same signature.
+    ("is_divisibleby_by_keyword", "{{ 4 is divisibleby(num=2) }}"),
+    ("is_sameas_by_keyword", "{{ 4 is sameas(other=4) }}"),
+    ("is_in_by_keyword", "{{ 4 is in(seq=[4]) }}"),
+    ("is_divisibleby_wrong_keyword", "{{ 4 is divisibleby(nope=2) }}"),
+    ("is_eq_takes_no_keywords", "{{ 4 is eq(num=2) }}"),
+]:
+    case("tests/" + _n, _src)
+
+# A filter whose required argument is missing, and the lazy ones where the
+# refusal only surfaces when the generator is walked: printing `{{ 'a'|map }}`
+# prints a generator's address in jinja2, so the case has to ask for the list.
+for _n, _src in [
+    ("replace_no_arguments", "{{ 'a'|replace }}"),
+    ("replace_one_argument", "{{ 'a'|replace('b') }}"),
+    ("attr_no_argument", "{{ 1|attr }}"),
+    ("groupby_no_argument", "{{ [1]|groupby }}"),
+    ("map_no_filter", "{{ 'a'|map|list }}"),
+    ("map_unknown_filter", "{{ [1]|map('nope')|list }}"),
+    ("select_unknown_test", "{{ [1]|select('nope')|list }}"),
+    ("reject_unknown_test", "{{ [1]|reject('nope')|list }}"),
+    ("selectattr_unknown_test", "{{ [1]|selectattr('x','nope')|list }}"),
+]:
+    case("errors/" + _n, _src)
+
+# urlencode over something that is not a pair. jinja2 hands the sequence to a
+# tuple unpacking, so what fails is Python's unpacking and not the filter.
+case("filters/urlencode_not_a_pair", "{{ [1]|urlencode }}")
+case("filters/urlencode_pair_too_short", "{{ [[1]]|urlencode }}")
+case("filters/urlencode_pair_too_long", "{{ [[1,2,3]]|urlencode }}")
+
+# printf-style formatting with a mapping, and with too few or too many
+# arguments. `%(a)s` against a non-mapping and against a mapping missing the key
+# are different failures, and the second reports the key alone.
+case("methods/percent_mapping_required", "{{ '%(a)s' % 1 }}")
+case("methods/percent_mapping_missing_key", "{{ '%(a)s' % {'b': 1} }}")
+case("methods/percent_not_enough_arguments", "{{ '%s %s' % (('a',)) }}")
+case("methods/percent_too_many_arguments", "{{ '%s' % ((1,2)) }}")
+case("methods/percent_star_width", "{{ '%*d' % ((1,2)) }}")
+case("methods/format_spec_unmatched_brace", "{{ '{0:{}'.format(1) }}")
+case("methods/format_spec_manual_then_auto", "{{ '{0:>{}}'.format(1) }}")
+case("methods/format_spec_nested", "{{ '{:{}}'.format(1, '>5') }}")
+
+# The bytes methods that refuse. index and rindex raise where find and rfind
+# answer -1, and every one of these had a happy-path case and no refusal.
+case("bytes/index_not_found", "{{ 'abc'.encode().index('z'.encode()) }}")
+case("bytes/rindex_not_found", "{{ 'abc'.encode().rindex('z'.encode()) }}")
+case("bytes/join_rejects_str", "{{ 'x'.encode().join(['a']) }}")
+case("bytes/join_rejects_int", "{{ 'x'.encode().join([1]) }}")
+case("bytes/split_empty_separator", "{{ 'ab'.encode().split(''.encode()) }}")
+case("bytes/rsplit_empty_separator", "{{ 'ab'.encode().rsplit(''.encode()) }}")
+case("bytes/maketrans_unequal_length",
+     "{{ 'ab'.encode().maketrans('a'.encode(), 'bc'.encode()) }}")
+
+# A non-finite float where an integer is wanted. The value comes from the
+# *context*, because `'inf'|float` is a constant expression: jinja2 folds it and
+# writes `inf` into its generated Python, where the name does not exist, and the
+# template fails with a NameError about jinja2's own output instead
+# (docs/divergences.md, "A folded infinity jinja2 writes out").
+NONFINITE = {"s_inf": "inf", "s_nan": "nan"}
+for _n, _src in [
+    ("int_of_infinity", "{{ s_inf|float|int }}"),
+    ("int_of_negative_infinity", "{{ (s_inf|float * -1)|int }}"),
+    ("int_of_infinity_with_default", "{{ s_inf|float|int(5) }}"),
+    # int() of a NaN answers the default instead: jinja2 catches the
+    # ValueError and falls back, which is not what it does for an infinity.
+    ("int_of_nan", "{{ s_nan|float|int }}"),
+    ("round_ceil_of_nan", "{{ (s_nan|float)|round(0,'ceil') }}"),
+    ("round_floor_of_nan", "{{ (s_nan|float)|round(0,'floor') }}"),
+    ("round_ceil_of_infinity", "{{ (s_inf|float)|round(0,'ceil') }}"),
+    ("round_of_infinity", "{{ (s_inf|float)|round }}"),
+    ("percent_d_of_nan", "{{ '%d' % (s_nan|float) }}"),
+    ("percent_d_of_infinity", "{{ '%d' % (s_inf|float) }}"),
+    ("percent_x_of_nan", "{{ '%x' % (s_nan|float) }}"),
+    ("percent_c_of_nan", "{{ '%c' % (s_nan|float) }}"),
+    ("format_d_of_nan", "{{ '{:d}'.format(s_nan|float) }}"),
+    ("range_of_nan", "{{ range(s_nan|float) }}"),
+    ("subscript_by_nan", "[{{ [1,2][s_nan|float] }}]"),
+    ("truncate_by_nan", "{{ 'abcdef'|truncate(s_nan|float) }}"),
+    ("center_by_nan", "{{ 'ab'|center(s_nan|float) }}"),
+    ("filesizeformat_of_nan", "{{ (s_nan|float)|filesizeformat }}"),
+    ("batch_by_nan", "{{ [1,2]|batch(s_nan|float)|list }}"),
+    ("repeat_by_nan", "{{ 'x'*(s_nan|float) }}"),
+    ("iterate_a_float", "{{ (s_nan|float)|list }}"),
+]:
+    case("nonfinite/" + _n, _src, **NONFINITE)
+
+# lipsum's bounds go straight to random.randrange, and an empty range is the one
+# thing about lipsum that is not random. The wording moved in 3.12, which is the
+# version rule RandrangeNamesItsBounds -- gojja2 carried 3.11's for every
+# interpreter, and no case had ever produced the message to say so.
+case("errors/lipsum_empty_range", "{{ lipsum(1, false, 5, 3) }}")
+case("errors/lipsum_equal_bounds", "{{ lipsum(1, false, 5, 5) }}")
+
+# `%(name)s` against something that is not a dict. CPython's test is "supports
+# subscripting", so anything that does gets asked and answers for itself -- a
+# list and a range complain about the index type, and only something that cannot
+# be subscripted at all gets "format requires a mapping".
+case("methods/percent_mapping_range", "{{ '%(a)s' % range(3) }}")
+case("methods/percent_mapping_empty_range", "{{ '%(a)s' % range(0) }}")
+case("methods/percent_mapping_list", "{{ '%(a)s' % [1,2] }}")
+case("methods/percent_mapping_str", "{{ '%(a)s' % 'abc' }}")
+case("methods/percent_mapping_bytes", "{{ '%(a)s' % 'x'.encode() }}")
+case("methods/percent_mapping_namespace", "{{ '%(a)s' % namespace(a=1) }}")
+case("methods/percent_mapping_tuple", "{{ '%(a)s' % ((1,2)) }}")
+case("methods/percent_mapping_cycler", "{{ '%(a)s' % cycler('a') }}")
+case("methods/percent_star_not_enough", "{{ '%*d' % ((1,)) }}")
+
+# The bytes searches that raise, and the branches a happy path does not reach: a
+# window that cannot hold the needle, a separator that is an int rather than
+# bytes, and a tuple of prefixes holding something that is not bytes.
+case("bytes/index_window_empty", "{{ 'abc'.encode().index('a'.encode(), 5, 2) }}")
+case("bytes/rindex_window_empty", "{{ 'abc'.encode().rindex('a'.encode(), 5, 2) }}")
+case("bytes/split_int_separator", "{{ 'ab'.encode().split(300) }}")
+case("bytes/split_negative_separator", "{{ 'ab'.encode().split(-1) }}")
+case("bytes/startswith_tuple_of_str", "{{ 'ab'.encode().startswith(('a',)) }}")
+case("bytes/endswith_tuple_of_int", "{{ 'ab'.encode().endswith((1,)) }}")
+case("bytes/partition_empty_separator", "{{ 'ab'.encode().partition(''.encode()) }}")
+case("bytes/rpartition_empty_separator", "{{ 'ab'.encode().rpartition(''.encode()) }}")
+
+# |random over a dict subscripts it by the *index*, which is a key lookup: it
+# finds something only when that integer is one of the keys. A one-entry dict
+# makes the draw deterministic, so this is gradable.
+# (|random over a one-entry dict is errors/random_mapping_index.)
+case("filters/random_dict_integer_key", "{{ {0:'z'}|random }}")
+
+# A structure that contains itself. |tojson refuses it, and printing it prints
+# Python's ellipsis. (|pprint names an address, which is the divergence
+# docs/divergences.md records.)
+case("filters/tojson_circular_list", "{% set l = [] %}{% do l.append(l) %}{{ l|tojson }}",
+     __settings__={"extensions": ["do"]})
+case("filters/tojson_circular_dict", "{% set d = {} %}{% do d.update(k=d) %}{{ d|tojson }}",
+     __settings__={"extensions": ["do"]})
+case("filters/print_circular_list", "{% set l = [] %}{% do l.append(l) %}{{ l }}|{{ l|string }}",
+     __settings__={"extensions": ["do"]})
+
+# A cycler built from a dynamic splat, which is the only way to reach it with
+# nothing to cycle -- and jinja2 refuses at construction either way.
+case("errors/cycler_dynamic_empty", "{% set c = cycler(*e) %}{{ c.next() }}", e=[])
+
+# loop.cycle with nothing to cycle. The other cycler -- the global -- already had
+# a case; the loop's own method did not.
+case("control/loop_cycle_no_items", "{% for i in seq %}{{ loop.cycle() }}{% endfor %}", **SEQ)
+
 
 def main() -> int:
     if DST.exists():

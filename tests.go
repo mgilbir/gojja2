@@ -6,7 +6,6 @@ package gojja2
 import (
 	"math"
 
-	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/value"
 )
 
@@ -188,10 +187,12 @@ func intParity(want int64) Test {
 // are the names arity.go carries, which is what a wrong one is checked
 // against.
 func testDivisibleBy(s *State, v value.Value, args *value.CallArgs) (bool, error) {
-	divisor, ok := arg(args, 0, "num")
-	if !ok {
-		return false, errs.New(errs.TypeError, "divisibleby requires an argument")
-	}
+	// Not checked for: arity.go carries jinja2's signature and checkArity
+	// refuses the call before the test runs, with CPython's own wording --
+	// "test_divisibleby() missing 1 required positional argument: 'num'".
+	// The guard that stood here answered something else and could not be
+	// reached to say it, through `is`, `select`, `reject` or `selectattr`.
+	divisor, _ := arg(args, 0, "num")
 	rem, err := value.Mod(v, divisor, s, s.PythonVersion())
 	if err != nil {
 		return false, err
@@ -208,10 +209,8 @@ func testDivisibleBy(s *State, v value.Value, args *value.CallArgs) (bool, error
 // types have an identity; for everything else jinja2's answer coincides with
 // equality of value and type.
 func testSameAs(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
-	other, ok := arg(args, 0, "other")
-	if !ok {
-		return false, errs.New(errs.TypeError, "sameas requires an argument")
-	}
+	// Refused by checkArity before this runs; see testDivisibleBy.
+	other, _ := arg(args, 0, "other")
 	if v.Kind() != other.Kind() {
 		return false, nil
 	}
@@ -237,10 +236,8 @@ func testSameAs(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
 }
 
 func testIn(s *State, v value.Value, args *value.CallArgs) (bool, error) {
-	container, ok := arg(args, 0, "seq")
-	if !ok {
-		return false, errs.New(errs.TypeError, "in requires an argument")
-	}
+	// Refused by checkArity before this runs; see testDivisibleBy.
+	container, _ := arg(args, 0, "seq")
 	return value.Contains(v, container, s, s.PythonVersion())
 }
 
@@ -278,10 +275,10 @@ func hasRegistered(v value.Value, lookup func(string) bool, py value.PythonVersi
 
 func comparisonTest(op string) Test {
 	return func(s *State, v value.Value, args *value.CallArgs) (bool, error) {
-		other, ok := args.Arg(0)
-		if !ok {
-			return false, errs.New(errs.TypeError, "%s requires an argument", op)
-		}
+		// Refused by checkArity before this runs, with the wording a C
+		// function gets: "eq expected 2 arguments, got 1". See
+		// testDivisibleBy.
+		other, _ := args.Arg(0)
 		return compareStep(op, v, other, s, s.PythonVersion())
 	}
 }

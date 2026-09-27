@@ -1,0 +1,6 @@
+{
+  "case": "nonfinite/round_ceil_of_nan.jj2",
+  "variables": {
+    "s_nan": "or"
+  }
+}

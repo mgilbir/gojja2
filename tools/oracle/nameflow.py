@@ -794,11 +794,17 @@ def can_raise(n) -> bool:
 # and writing a field needs something to write it to: the `=` form wants a
 # namespace, and the block form does an item assignment that a list, a string or
 # a None refuses.
+# Break and Continue are in it for a different reason: neither fails, but both
+# decide whether the statements after them in the loop body run at all, which is
+# the same question. A generated template found the hole -- a `{% continue %}`
+# guarded by a name, in a loop whose body could fail after it -- and both this
+# and dataflow/walk.go said the name could not matter.
 _CAN_FAIL = tuple(getattr(nodes, n) for n in
                   ("Add", "Sub", "Mul", "Div", "FloorDiv", "Mod", "Pow", "And",
                    "Or", "Not", "Neg", "Pos", "Compare", "Operand", "Test",
                    "Filter", "Call", "Getitem", "Pair", "For", "Include",
-                   "Extends", "Import", "FromImport", "NSRef")
+                   "Extends", "Import", "FromImport", "NSRef",
+                   "Break", "Continue")
                   if hasattr(nodes, n))
 
 

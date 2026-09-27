@@ -1,0 +1,6 @@
+{
+  "case": "nonfinite/iterate_a_float.jj2",
+  "variables": {
+    "s_nan": "or"
+  }
+}

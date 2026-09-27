@@ -680,16 +680,14 @@ func filterString(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 // filterReplace implements jinja2's do_replace, whose autoescaping rule is
 // finer than it looks; see below.
 func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	old, ok := arg(args, 0, "old")
-	if !ok {
-		return value.Undefined, errs.New(errs.FilterArgumentError,
-			"replace() missing required argument 'old'")
-	}
-	new, ok := arg(args, 1, "new")
-	if !ok {
-		return value.Undefined, errs.New(errs.FilterArgumentError,
-			"replace() missing required argument 'new'")
-	}
+	// Neither is checked for: arity.go carries do_replace's signature and
+	// checkArity refuses the call first, with CPython's own wording --
+	// "do_replace() missing 2 required positional arguments: 'old' and
+	// 'new'". The guards that stood here answered something else and could
+	// not be reached to say it. Corpus: errors/replace_no_arguments,
+	// errors/replace_one_argument.
+	old, _ := arg(args, 0, "old")
+	new, _ := arg(args, 1, "new")
 	count, err := intArg(args, 2, "count", -1, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
@@ -2987,11 +2985,9 @@ func filterDefault(_ *State, v value.Value, args *value.CallArgs) (value.Value, 
 // filterAttr fetches an attribute without the item-lookup fallback `.` has, so
 // `d|attr("items")` is the method and `d["items"]` would be the entry.
 func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	name, ok := arg(args, 0, "name")
-	if !ok {
-		return value.Undefined, errs.New(errs.FilterArgumentError,
-			"attr() missing required argument 'name'")
-	}
+	// Refused by checkArity first; see filterReplace. Corpus:
+	// errors/attr_no_argument.
+	name, _ := arg(args, 0, "name")
 	// do_attr starts with inspect.getattr_static, which looks the name up
 	// in the type's dictionaries -- so an unhashable name is refused by
 	// the lookup before anything checks that it is a string at all, and a

@@ -237,6 +237,18 @@ func lookupFormatKey(mapping Value, key Value) (Value, error) {
 			}
 			return v, nil
 		}
+		if _, ok := mapping.Interface().(Sequence); ok {
+			// Subscriptable, so CPython does the lookup -- and the
+			// complaint is the object's own, naming its type:
+			// `'%(a)s' % range(3)` is "range indices must be
+			// integers or slices, not str". The blanket "format
+			// requires a mapping" was gojja2's answer for every one
+			// of these, which is what CPython says only for
+			// something it cannot subscript at all.
+			return Undefined, errs.New(errs.TypeError,
+				"%s indices must be integers or slices, not %s",
+				mapping.TypeName(), key.TypeName())
+		}
 	}
 	return Undefined, errs.New(errs.TypeError, "format requires a mapping")
 }

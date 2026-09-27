@@ -508,6 +508,10 @@ func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 	// count==0 case that then panicked on text[:1] below: a silently fixed
 	// argument turned a clean ValueError into a crash.
 	if hi <= lo {
+		if s.PythonVersion().RandrangeNamesItsBounds() {
+			return value.Undefined, errs.New(errs.ValueError,
+				"empty range in randrange(%d, %d)", lo, hi)
+		}
 		return value.Undefined, errs.New(errs.ValueError,
 			"empty range for randrange() (%d, %d, %d)", lo, hi, hi-lo)
 	}

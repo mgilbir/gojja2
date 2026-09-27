@@ -9,6 +9,6 @@
   "ok": false,
   "error": {
     "type": "TypeError",
-    "message": "'int' object is not subscriptable"
+    "message": "'float' object is not subscriptable"
   }
 }

@@ -681,11 +681,9 @@ func filterSlice(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 // filterGroupby sorts by the attribute and then runs together adjacent items
 // that share it, yielding (grouper, list) pairs.
 func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	attribute, ok := arg(args, 0, "attribute")
-	if !ok {
-		return value.Undefined, errs.New(errs.FilterArgumentError,
-			"groupby() missing required argument 'attribute'")
-	}
+	// Refused by checkArity first, with sync_do_groupby's own signature; see
+	// filterReplace. Corpus: errors/groupby_no_argument.
+	attribute, _ := arg(args, 0, "attribute")
 	// make_attrgetter substitutes the default with `if default is not None`,
 	// so an explicit None is no default at all: the undefined stays, and
 	// what happens next is whatever the undefined does. gojja2 substituted

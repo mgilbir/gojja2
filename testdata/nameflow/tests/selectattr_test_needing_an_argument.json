@@ -1,0 +1,4 @@
+{
+  "case": "tests/selectattr_test_needing_an_argument.jj2",
+  "variables": {}
+}

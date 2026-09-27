@@ -569,7 +569,17 @@ func canFailIn(n *syntax.Node) bool {
 			// assignment that a list, a string or a None refuses. So a
 			// branch holding one can stop the render, and the test that
 			// guards it decides whether it does.
-			syntax.KindNSRef:
+			syntax.KindNSRef,
+			// A break or a continue does not fail, but it decides
+			// whether the statements after it in the loop body run
+			// at all -- which is the same question this asks. A
+			// generated template found the hole:
+			// `{% for i in xs %}{% if c %}{% continue %}{% endif %}
+			// {{ d.nope ** 0 }}{% endfor %}` cannot fail when c is
+			// truthy and does when it is not, and the analysis said
+			// c could not matter, because the arm it guards holds
+			// nothing that fails.
+			syntax.KindBreak, syntax.KindContinue:
 			found = true
 			return false
 		}

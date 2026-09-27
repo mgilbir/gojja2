@@ -1,0 +1,6 @@
+{
+  "case": "nonfinite/batch_by_nan.jj2",
+  "variables": {
+    "s_nan": "or"
+  }
+}
