@@ -191,3 +191,44 @@ func (u *UnicodeOverrides) IsXIDContinue(r rune, def bool) bool {
 	}
 	return flipIn(u.xidContinue, r, def)
 }
+
+// NameClass reports whether r may appear in a name as jinja2's lexer matches
+// one: `jinja2._identifier.pattern` is `[\w<extra>]+`, so the class is Python's
+// `\w` under this interpreter plus 2,231 code points frozen into that module at
+// jinja2's release.
+//
+// It is deliberately wider than an identifier. The lexer matches a maximal run
+// of this and *then* asks [IsIdentifier] about the run, which is what gives
+// "Invalid character in identifier" for `a²` -- part of the match, not an
+// identifier -- against "unexpected char" for `a࢘`, which is neither.
+func NameClass(r rune, py PythonVersion) bool {
+	in := unicode.Is(nameClassDefault, r)
+	if t := nameClassOther[py]; t != nil && unicode.Is(t, r) {
+		return !in
+	}
+	return in
+}
+
+// IsIdentifier is str.isidentifier for one interpreter: the first character may
+// begin an identifier and every later one may continue it, both read from the
+// tables CPython carries rather than from the rule its grammar states. The empty
+// string is not an identifier.
+func IsIdentifier(s string, py PythonVersion) bool {
+	if s == "" {
+		return false
+	}
+	// One lookup for the whole string, as every other classifier does.
+	u := UnicodeFor(py)
+	for i, r := range s {
+		if i == 0 {
+			if !u.IsXIDStart(r, XIDStartDefault(r)) {
+				return false
+			}
+			continue
+		}
+		if !u.IsXIDContinue(r, XIDContinueDefault(r)) {
+			return false
+		}
+	}
+	return true
+}

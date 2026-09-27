@@ -48,7 +48,6 @@ are safety controls rather than behavioural choices, and they live in
 | [lipsum() and random](#lipsum-and-random) | a different random draw | No -- likewise |
 | [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there | Only for a literal-vs-literal `sameas`, which is a tautology |
 | [Comparison order inside a long sort](#comparison-order-inside-a-long-sort) | which pair a failing sort names | Only inside an error message, above 64 elements |
-| [Identifier characters](#identifier-characters) | exotic code points in names | No |
 | [A `{% set %}` block writing to a name that was never set](#a--set--block-writing-to-a-name-that-was-never-set) | both raise `TypeError`; jinja2 names a sentinel of its own | No -- only the type in the message |
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
@@ -542,15 +541,6 @@ counterpart here, so gojja2 names what it actually holds.
 `testdata/corpus/errors/nsref_block_undefined.jj2` is listed in
 `testdata/known_failures.txt` to keep it that way.
 
-### Identifier characters
-
-jinja2 matches names against a table generated from Python's `str.isidentifier`.
-gojja2 approximates it with Unicode categories: a name starts with `_`, a letter
-or `Nl`, and continues with those plus `Nd`, `Mn`, `Mc` and `Pc`. The two agree
-on every identifier anyone writes; they could differ on exotic code points, in
-which case gojja2 reports `unexpected char` where jinja2 reports
-`Invalid character in identifier`.
-
 ### Python object introspection
 
 `__class__` is implemented. Every value answers it with a type object that has
@@ -827,31 +817,6 @@ Five filters reach the second of those -- `dictsort`, `xmlattr`, `wordwrap`,
 `wordwrap(wrapstring=...)` and `urlize(rel=...)`. A 161-shape sweep over every
 subject the template generator writes and every accessor it can follow one with
 found the generic alias above and nothing else.
-
-### A folded infinity jinja2 writes out
-
-jinja2's optimizer folds a constant and its code generator writes the result
-into the generated Python **as its repr**. A float infinity reprs as `inf`,
-which is not a Python name, so the module raises as soon as that line runs:
-
-```jinja
-{% set v = 'inf'|float %}{{ v }}
-{{ x|default('inf'|float) }}
-```
-
-Both raise `NameError: name 'inf' is not defined` on CPython at render. gojja2
-answers `inf`.
-
-It depends on where the constant lands, not on the value: `{{ 'inf'|float }}`,
-`{{ ('inf'|float) + 1 }}` and `{{ 1e400 }}` all print `inf` on both sides,
-because a print puts the value in the module's constant table rather than
-writing it as source. A `{% set %}` and a filter's default argument are written
-out. `nan` does the same thing for the same reason.
-
-This is one of the few places gojja2 renders where CPython cannot, so it is
-listed in `testdata/known_failures.txt` rather than fixed: reproducing it would
-mean refusing a number a template legitimately computed, to match a limitation
-of the other implementation's code generator.
 
 ### A folded infinity jinja2 writes out
 

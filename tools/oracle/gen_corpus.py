@@ -390,6 +390,44 @@ case("errors/include_dict_not_found", "{% include {'a':1} %}", __templates__=INC
 case("errors/include_none_ignore_missing", "[{% include none ignore missing %}]", __templates__=INC)
 case("include/select_dict_key", "{% include {'inc.html': 1} %}", __templates__=INC)
 case("include/select_tuple", "{% include ('inc.html',) %}", __templates__=INC)
+# jinja2's lexer matches a name out of a class that is *wider* than an
+# identifier -- `jinja2._identifier.pattern` is `[\w<extra>]+`, Python's `\w`
+# plus 2,231 code points frozen into that module at jinja2's release -- and then
+# checks isidentifier() on what it matched. Two phases, three answers, and gojja2
+# had one rule built from Unicode categories:
+#
+#   * U+00B7 MIDDLE DOT is one of the frozen extras and `'a\u00b7'.isidentifier()`
+#     is True, so jinja2 renders. gojja2 refused. Same for U+1885, which Python
+#     reads as an identifier start although it is a combining mark.
+#   * U+0898 is a mark assigned *after* the extras were frozen, so it is outside
+#     the class: the name ends before it and nothing matches it. gojja2 read Mn
+#     as a continuation and *accepted* a name jinja2 rejects -- a template that
+#     worked here and not there.
+#   * U+00B2 SUPERSCRIPT TWO is `\w`, so it is part of the match, and then
+#     isidentifier says no: "Invalid character in identifier" rather than
+#     "unexpected char", and at the name rather than at the character.
+#
+# The class is generated per interpreter by tools/oracle/gen_name_class.py,
+# because `\w` is CPython's and moves; the extras came out identical on all four.
+for _n, _src in [
+    ("middle_dot", "{% set a\u00b7 = 1 %}{{ a\u00b7 }}"),
+    ("mongolian_mark_alone", "{% set \u1885 = 1 %}{{ \u1885 }}"),
+    ("arabic_indic_digit", "{% set a\u0660 = 1 %}{{ a\u0660 }}"),
+]:
+    case(f"syntax/name_accepts_{_n}", _src)
+for _n, _src in [
+    ("a_mark_outside_the_class", "{% set a\u0898 = 1 %}{{ a\u0898 }}"),
+    ("a_mark_outside_the_class_in_a_print", "{{ a\u0899 is defined }}"),
+]:
+    case(f"errors/name_unexpected_char_{_n}", _src)
+for _n, _src in [
+    ("superscript", "{% set a\u00b2 = 1 %}{{ a\u00b2 }}"),
+    ("vulgar_fraction", "{{ x\u00bc }}"),
+    ("superscript_alone", "{{ \u00b2 }}"),
+    ("digit_start", "{% set \u0660 = 1 %}{{ \u0660 }}"),
+]:
+    case(f"errors/name_invalid_character_{_n}", _src)
+
 # The *unqualified* name of the same objects, which is what a TypeError uses
 # where an UndefinedError uses the qualified one: a macro is 'Macro' in
 # "unsupported operand type(s) for +" and "jinja2.runtime.Macro object" in "has
@@ -5152,6 +5190,24 @@ case("errors/bytes_percent_c_out_of_range", "{{ '%c'.encode() % 256 }}")
 # name. It is the same split str.center's argument 2 makes; see
 # FillCharMessageNamesTheLength. gojja2 said "not bytes" for the bytes case, so
 # the 3.14 column read as agreement. Found by a soak on the version axis.
+# 3.14 names the type *qualified* in the two `%c` messages and nowhere else in
+# the family: `%c` of an Undefined is "not jinja2.runtime.Undefined" while `%f` of
+# the same value is "not Undefined" and `%x` likewise. A builtin is unqualified
+# either way, so a dict view stays "dict_keys". Found by a soak on the version
+# axis, which is the only place the two names differ.
+for _n, _src in [
+    ("an_undefined", "{{ '[%c]' % nope }}"),
+    ("an_undefined_in_bytes", "{{ ('[%c]'.encode()) % nope }}"),
+    ("a_macro", "{% macro m() %}{% endmacro %}{{ '[%c]' % m }}"),
+    ("a_loop", "{% for i in [1] %}{{ '[%c]' % loop }}{% endfor %}"),
+    ("a_dict_view", "{% set d = {'a': 1} %}{{ '[%c]' % d.keys() }}"),
+    ("a_list", "{{ '[%c]' % [1] }}"),
+]:
+    case(f"errors/percent_c_names_{_n}", _src)
+# ...and the neighbours that stay unqualified, which is what makes it the `%c`
+# pair rather than a rule about the family.
+case("errors/percent_f_of_an_undefined_is_unqualified", "{{ '[%f]' % nope }}")
+case("errors/percent_x_of_an_undefined_is_unqualified", "{{ '[%x]' % nope }}")
 for _n, _src in [
     ("two_bytes", "{{ '%c'.encode() % 'ab'.encode() }}"),
     ("no_bytes", "{{ '%c'.encode() % ''.encode() }}"),

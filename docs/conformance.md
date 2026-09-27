@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**5855 of 5884 gradable cases (99.5%)** match CPython jinja2, across eight
+**5872 of 5901 gradable cases (99.5%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The five that do not are listed with reasons
 in `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["5855 / 5884 gradable  (99.5%)"]
+    TC --> RATE["5872 / 5901 gradable  (99.5%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 3564 | 3539 |
+| gojja2's own (committed, with goldens) | 3581 | 3556 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **5884** | **5855 (99.5%)** |
+| **total** | **5901** | **5872 (99.5%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the

@@ -646,25 +646,9 @@ func methodIsTitle(s *State, r value.Value, _ *value.CallArgs) (value.Value, err
 // either position. It says nothing about keywords -- "class".isidentifier() is
 // True.
 func methodIsIdentifier(st *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-	s := r.AsString()
-	if s == "" {
-		return value.False, nil
-	}
-	// Looked up once for the whole string, as every other classifier does,
-	// so the version stays out of the loop.
-	u := value.UnicodeFor(st.PythonVersion())
-	for i, c := range s {
-		if i == 0 {
-			if !u.IsXIDStart(c, value.XIDStartDefault(c)) {
-				return value.False, nil
-			}
-			continue
-		}
-		if !u.IsXIDContinue(c, value.XIDContinueDefault(c)) {
-			return value.False, nil
-		}
-	}
-	return value.True, nil
+	// The same helper the lexer asks, so the method and the tokenizer cannot
+	// disagree about what an identifier is.
+	return value.Bool(value.IsIdentifier(r.AsString(), st.PythonVersion())), nil
 }
 
 // methodExpandtabs is str.expandtabs: each tab advances to the next multiple

@@ -617,7 +617,18 @@ func (l *lexer) lexExprToken() error {
 		return nil
 	}
 	if n := l.matchName(); n > 0 {
-		l.emit(Name, l.advance(n))
+		line := l.line
+		text := l.advance(n)
+		// jinja2 matches a name out of a class that is wider than an
+		// identifier and then checks isidentifier() on what it matched,
+		// so a run that is not one is reported as the *name* rather than
+		// at the character: `{{ a\u00b2 }}` is "Invalid character in
+		// identifier" where `{{ a\u0898 }}`, whose mark is outside the
+		// class, ends the name and fails on the character after it.
+		if !value.IsIdentifier(text, l.syn.PythonVersion) {
+			return l.errorf(line, "Invalid character in identifier")
+		}
+		l.emit(Name, text)
 		return nil
 	}
 	if n, ok := l.matchString(); ok {
@@ -676,16 +687,14 @@ func (l *lexer) matchOperator() (Kind, int, bool) {
 	return EOF, 0, false
 }
 
-// matchName scans a Python identifier.
+// matchName scans a maximal run of jinja2's name class, which is what its lexer
+// matches a NAME token out of. Whether the run *is* an identifier is a separate
+// question, asked by the caller; see value.NameClass.
 func (l *lexer) matchName() int {
 	i := 0
 	for i < len(l.src[l.pos:]) {
 		r, size := utf8.DecodeRuneInString(l.src[l.pos+i:])
-		if i == 0 {
-			if !isIdentStart(r) {
-				return 0
-			}
-		} else if !isIdentContinue(r) {
+		if !value.NameClass(r, l.syn.PythonVersion) {
 			break
 		}
 		i += size
@@ -712,16 +721,6 @@ func (l *lexer) matchString() (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-func isIdentStart(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.Is(unicode.Nl, r)
-}
-
-func isIdentContinue(r rune) bool {
-	return isIdentStart(r) || unicode.IsDigit(r) ||
-		unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r) ||
-		unicode.Is(unicode.Nd, r) || unicode.Is(unicode.Pc, r)
 }
 
 // --- whitespace helpers ------------------------------------------------------

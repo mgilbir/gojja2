@@ -563,7 +563,9 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 				return formatted{body: text(v.str)}, nil
 			}
 			if !v.IsInteger() {
-				return formatted{}, c.errPercentCBytes(v.TypeName())
+				// Qualified, as the str form above is: the two
+				// `%c` messages are the pair 3.14 changed.
+				return formatted{}, c.errPercentCBytes(QualifiedTypeName(v))
 			}
 			n, ok := v.Int64()
 			if !ok || n < 0 || n > 255 {
@@ -585,7 +587,13 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 		// one: the first says %c took the wrong kind of thing, the
 		// second says the code point does not exist.
 		if !v.IsInteger() {
-			return formatted{}, c.errPercentC(v, v.TypeName())
+			// The *qualified* name, which is the only thing 3.14
+			// qualifies in this family: `%c` of an Undefined is
+			// "not jinja2.runtime.Undefined" while `%f` of the same
+			// value is "not Undefined" and `%x` "not Undefined".
+			// A builtin is unqualified either way, so a dict view
+			// stays "dict_keys".
+			return formatted{}, c.errPercentC(v, QualifiedTypeName(v))
 		}
 		n, ok := v.Int64()
 		if !ok || n < 0 || n > 0x10FFFF {
