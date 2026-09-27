@@ -421,7 +421,13 @@ func ErrUnhashable(outerType string, inner Value, py PythonVersion, use HashUse)
 }
 
 func errUnhashable(outer, inner Value, py PythonVersion, use HashUse) error {
-	return ErrUnhashable(outer.TypeName(), inner, py, use)
+	// 3.14 names the *outer* type the way object_type_repr does, qualified:
+	// a groupby group is "jinja2.filters._GroupTuple" and not "_GroupTuple".
+	// The inner one stays bare, which is why only this half is qualified --
+	// `cannot use 'jinja2.filters._GroupTuple' as a set element (unhashable
+	// type: 'list')`. Every builtin's qualified name is its bare one, so the
+	// group tuple is the only place the two differ today.
+	return ErrUnhashable(QualifiedTypeName(outer), inner, py, use)
 }
 
 // hashKnown is hash for a key that cannot fail: a Go string, or one that
@@ -513,6 +519,15 @@ func hashTuple(items []Value, outer Value, py PythonVersion, use HashUse) (hashK
 		}
 		child := top.items[top.i]
 		top.i++
+		// Python hashes a tuple's elements in turn, so the first one
+		// with something to say decides: `(nope, [1])` is the
+		// undefined's own error under StrictUndefined, where
+		// `([1], nope)` is "unhashable type: 'list'". Only the outer
+		// value's refusal was consulted, so an undefined inside a tuple
+		// hashed by identity and whatever came after it won.
+		if err := StrictRefusal(child); err != nil {
+			return hashKey{}, err
+		}
 		if sub, ok := tupleItems(child); ok {
 			buf = append(buf, tupleOpen)
 			stack = append(stack, hashFrame{items: sub})

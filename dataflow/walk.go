@@ -63,26 +63,32 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		return out
 
 	case syntax.KindGetattr:
-		// Reaching *through* an undefined raises, and the thing most
-		// likely to be one is an attribute that was not there. So `x.a`
-		// cannot fail whatever x holds -- a missing attribute is
-		// undefined and prints empty -- while `(x.a).b` can, because
-		// `x.a` is undefined for most x and `.b` on an undefined raises.
+		// An attribute that is not there raises under StrictUndefined,
+		// at the access itself, so `x.a` decides whether the render
+		// finishes: `{{ neg.denominator }}` renders for an int and stops
+		// the render dead for a string.
 		//
-		// A plain name or a constant as the subject is what makes the
-		// one-step case safe. Anything computed -- another attribute, an
-		// item, a filter, a call -- can hand back an undefined, so
-		// reaching through it decides whether the render finishes.
-		if sub := n.Child(syntax.RoleSubject); sub != nil &&
-			sub.Kind != syntax.KindName && sub.Kind != syntax.KindConst {
-			defer func() { a.apply(out, Required) }()
-		}
+		// This used to exempt a one-step access on a plain name or a
+		// constant, on the grounds that a missing attribute is undefined
+		// and prints empty. That is true of three of the four Undefined
+		// classes and false of the one that exists to refuse, and the
+		// analysis has no environment to tell them apart -- so the
+		// exemption was a false negative, which is the one kind of error
+		// a caller reading "cannot fail because of this" cannot recover
+		// from. It cost 17 of 167 claims over the corpus to drop; the
+		// remaining 150 are true under every class. A soak seed found it
+		// through `{{ neg.denominator }}` after a generator change moved
+		// what that seed draws.
+		//
+		// A namespace field returns first, before this: the field is
+		// named in the template, so whether it is there is not in doubt.
 		if ns := a.namespaceOf(n.Child(syntax.RoleSubject)); ns != nil {
 			if f := a.namespaceField(ns, n.Attr("attr")); f != nil {
 				out[f] = true
 				return out
 			}
 		}
+		defer func() { a.apply(out, Required) }()
 		out.add(a.expr(n.Child(syntax.RoleSubject)))
 		return out
 

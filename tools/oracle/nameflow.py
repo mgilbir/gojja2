@@ -375,14 +375,16 @@ class Analysis:
             if ns is not None:
                 return {self.namespace_field(ns, n.attr).id}
             out = self.expr(n.node)
-            # Reaching *through* an undefined raises, and the thing most likely
-            # to be one is an attribute that was not there. `x.a` cannot fail
-            # whatever x holds -- a missing attribute is undefined and prints
-            # empty -- while `(x.a).b` can, because `x.a` is undefined for most
-            # x. A plain name or a constant as the subject is what makes the
-            # one-step case safe; anything computed can hand back an undefined.
-            if not isinstance(n.node, (nodes.Name, nodes.Const)):
-                self.apply(out, REQUIRED)
+            # An attribute that is not there raises under StrictUndefined, at
+            # the access itself, so `x.a` decides whether the render finishes:
+            # `{{ neg.denominator }}` renders for an int and stops the render
+            # dead for a string. This used to exempt a one-step access on a
+            # plain name or a constant, on the grounds that a missing attribute
+            # is undefined and prints empty -- true of three of the four
+            # Undefined classes and false of the one that exists to refuse.
+            # A namespace field returns above, before this: the field is named
+            # in the template, so whether it is there is not in doubt.
+            self.apply(out, REQUIRED)
             return out
 
         if isinstance(n, nodes.NSRef):

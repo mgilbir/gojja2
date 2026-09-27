@@ -1123,6 +1123,95 @@ for _u in ("strict", "chainable", "debug", ""):
          "{{ nope|items|list }}|{{ 'x'.a|items|list }}|"
          "{% for k, v in nope|items %}x{% endfor %}",
          __settings__={"undefined": _u} if _u else {})
+# |urlencode puts each half of a pair through str(), so a StrictUndefined in
+# either position refuses rather than encoding as nothing -- jinja2 writes
+# `f"{quote(k)}={quote(v)}"`. gojja2 converted without consulting the refusal, so
+# `{{ [(nope, 'x')]|urlencode }}` rendered "=x". Found by a soak seed through
+# `|groupby`, whose group key was an undefined and whose pair `|urlencode` then
+# encoded.
+for _u in ("strict", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/urlencode_an_undefined_key_{_n}",
+         "{{ [(nope, 'x')]|urlencode }}", __settings__=_set)
+    case(f"undefined/urlencode_an_undefined_value_{_n}",
+         "{{ [('x', nope)]|urlencode }}", __settings__=_set)
+    case(f"undefined/urlencode_an_undefined_dict_value_{_n}",
+         "{{ {'a': nope}|urlencode }}", __settings__=_set)
+    case(f"undefined/urlencode_a_group_key_{_n}",
+         "{{ {(1,2): 'x'}|groupby('age')|list|urlencode }}", __settings__=_set)
+# ...and the pairs with nothing undefined in them, so the conversion is still a
+# conversion.
+case("filters/urlencode_converts_each_half",
+     "{{ [('a', 1), ('b', none)]|urlencode }}|{{ {'a': 1, 'b': [1,2]}|urlencode }}|"
+     "{{ [(1.5, true)]|urlencode }}")
+
+# Hashing a tuple walks its elements in turn, so the first one with something to
+# say decides. `(nope, [1])` is the undefined's own error under StrictUndefined
+# and `([1], nope)` is "unhashable type: 'list'" -- the same pair either way
+# round under every other class, where an undefined hashes by identity. gojja2
+# consulted only the *outer* value's refusal, so an undefined inside a tuple
+# hashed by identity and whatever came after it won. Found by a soak seed through
+# `|groupby`, whose group tuples carry the grouping key and a list.
+for _u in ("strict", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/hash_a_tuple_undefined_first_{_n}",
+         "{{ {(nope, [1]): 1} }}", __settings__=_set)
+    case(f"undefined/hash_a_tuple_list_first_{_n}",
+         "{{ {([1], nope): 1} }}", __settings__=_set)
+    # Nothing unhashable at all, so only the refusal can speak.
+    case(f"undefined/hash_a_tuple_undefined_alone_{_n}",
+         "{{ [(nope, 1)]|unique|list }}", __settings__=_set)
+    # ...and nested, where the walk has to descend before it decides.
+    case(f"undefined/hash_a_tuple_nested_{_n}",
+         "{{ {(1, (nope, [1])): 1} }}", __settings__=_set)
+    # A groupby group is a tuple whose first element is the key, which is how
+    # the soak reached it.
+    case(f"undefined/hash_a_group_tuple_{_n}",
+         "{{ {'a': 1}|groupby('city')|list|unique|list }}", __settings__=_set)
+# ...and the pair with nothing wrong with it, so the walk cannot simply refuse.
+case("methods/hash_a_tuple_of_hashables", "{{ {(1, (2, 'x')): 'y'}[(1, (2, 'x'))] }}")
+
+# An *empty* container answers before the item's refusal is consulted, because
+# the refusal comes from the comparison each candidate makes and there are no
+# candidates: `{{ nope in [] }}` is False under StrictUndefined, and so is the
+# same question of an empty tuple, an empty range and an empty values view.
+#
+# A dict is the exception, and a keys or items view with it: they *hash* the item
+# before they look for it, so `{{ nope in {} }}` raises on an empty dict where an
+# empty list does not. gojja2 refused the item up front for every container --
+# which was the right answer by the wrong route, and wrong for the empty ones.
+# A range answers the refusal from its length rather than by walking to find
+# something to compare against; see rangeObject.ContainsErr and
+# TestStrictRangeMembershipIsConstantTime for why.
+for _u in ("strict", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/membership_of_an_empty_list_{_n}",
+         "{{ nope in [] }}|{{ nope in ((())) }}", __settings__=_set)
+    # The two halves are separate cases on purpose: put them together and the
+    # non-empty one raises, so the golden is the error either way and nothing
+    # grades the empty one.
+    case(f"undefined/membership_of_an_empty_range_{_n}",
+         "{{ nope in range(0) }}", __settings__=_set)
+    case(f"undefined/membership_of_a_range_{_n}",
+         "{{ nope in range(3) }}", __settings__=_set)
+    case(f"undefined/membership_of_an_empty_values_view_{_n}",
+         "{% set q = {} %}{{ nope in q.values() }}", __settings__=_set)
+    # ...and the three that hash, so an empty one refuses too.
+    case(f"undefined/membership_of_an_empty_dict_{_n}",
+         "{% set q = {} %}{{ nope in q }}", __settings__=_set)
+    case(f"undefined/membership_of_an_empty_keys_view_{_n}",
+         "{% set q = {} %}{{ nope in q.keys() }}", __settings__=_set)
+    case(f"undefined/membership_of_an_empty_items_view_{_n}",
+         "{% set q = {} %}{{ nope in q.items() }}", __settings__=_set)
+# A range compares for real in CPython whenever the item is not an exact int, so
+# these are the answers the arithmetic has to match.
+case("subscript/range_membership_of_a_non_integer",
+     "{{ 'x' in range(3) }}|{{ 0.5 in range(3) }}|{{ 1.0 in range(3) }}|"
+     "{{ [1] in range(3) }}|{{ true in range(3) }}|{{ 'x' in range(0) }}")
+
 # A bytes `%` float verb reports the *type* of an undefined, where a str one
 # lets the undefined's own error out.
 #
@@ -2373,18 +2462,29 @@ case("scope/nsref_write_settles_the_name_block",
      "{% for i in xs %}{% set ns.v %}q{% endset %}{% set ns = namespace() %}{{ ns }}{% endfor %}",
      xs=[], ns=None)
 
-# Reaching *through* an attribute can stop the render, and the analysis did not
-# know it. `x.a` cannot fail whatever x holds -- a missing attribute is
-# undefined and prints empty -- but `(x.a).b` can, because `x.a` is undefined
-# for most x and reaching through an undefined raises. So x decides whether the
-# render finishes, which is what Required says.
+# An attribute access decides whether the render finishes, and the analysis did
+# not know it. Twice.
 #
-# Found by the soak's render check rather than by the differential: the Python
-# reference had the same gap, so the two agreed with each other and both were
-# wrong. `{{ (f.real).name }}` renders for a float and raises for a string.
+# The first pass taught it that reaching *through* an attribute can raise --
+# `{{ (f.real).name }}` renders for a float and raises for a string -- and left a
+# one-step access exempt, on the grounds that a missing attribute is undefined
+# and prints empty. That is true of three of the four Undefined classes and false
+# of the one whose whole purpose is to refuse: under StrictUndefined
+# `{{ src.nosuch }}` raises at the access. The exemption was a false negative,
+# which is the one kind of error a caller reading "cannot fail because of this"
+# cannot recover from, and it cost 17 of 167 claims over the corpus to drop.
+#
+# Both were found by the soak's render check rather than by the differential,
+# because the Python reference had the same gap each time -- the two agreed with
+# each other and both were wrong. Writing "an undefined prints empty" is what
+# produced both; it is a statement about a *setting*, not about jinja2.
 case("dataflow/required_through_an_attribute", "{{ (src.real).name }}", src=2.5)
 case("dataflow/required_through_an_item", "{{ (src.real)[0] }}", src=2.5)
-case("dataflow/not_required_one_step", "[{{ src.nosuch }}]", src=2.5)
+case("dataflow/required_by_a_one_step_attribute", "[{{ src.nosuch }}]", src=2.5)
+# A namespace field is the exception, and the only one: the field is named in the
+# template, so whether it is there is not in doubt.
+case("dataflow/not_required_through_a_namespace_field",
+     "{% set ns = namespace(v=src) %}[{{ ns.v }}]", src=2.5)
 
 # A guard whose branch writes a namespace field decides whether the render
 # finishes, because writing one needs something to write it to: the `=` form

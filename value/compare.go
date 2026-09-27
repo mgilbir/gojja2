@@ -456,9 +456,12 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 		return false, errs.New(errs.TypeError,
 			"a bytes-like object is required, not '%s'", item.TypeName())
 	}
-	if err := StrictRefusal(item); err != nil {
-		return false, err
-	}
+	// The item's own refusal is *not* consulted here: it comes from the
+	// comparison each candidate makes, so a container with no candidates
+	// never reaches it. `{{ nope in [] }}` is False, and so is
+	// `{{ nope in range(0) }}`. A dict is the exception below, because it
+	// hashes the item before it looks for it, which is why `{{ nope in {} }}`
+	// raises on an empty dict where an empty list does not.
 	if o, ok := container.obj.(Container); ok && container.kind == KindObject {
 		if found, known := o.Contains(item); known {
 			return found, nil
@@ -511,6 +514,10 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 		return false, nil
 	case KindDict:
 		d, _ := container.Dict()
+		// Hashed before it is looked for, so this refuses whether the
+		// dict holds anything or not. CheckHashable reports a
+		// StrictUndefined's own error, because hashing one is what
+		// raises it.
 		if err := CheckHashable(item, py, AsDictKey); err != nil {
 			return false, err
 		}

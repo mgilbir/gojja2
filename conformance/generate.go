@@ -1023,7 +1023,6 @@ func (g *generator) classObject() string {
 	// reached a second way. jinja2's attribute fallback puts `.a` in the
 	// same position. So a class object from one of those subjects is never
 	// handed onwards bare; it is either called or reduced to a string.
-	generic := g.c.chance(3)
 	subject := g.c.pick([]string{
 		"n", "s", "yes", "nil", "f", "uni", "html", "nope",
 		"(1.5)", "(1)", "'x'", "none", "true",
@@ -1033,12 +1032,12 @@ func (g *generator) classObject() string {
 		// was meant to reach markupsafe.Markup reached nothing at all.
 		"('x'|safe)", "('ab'.encode())",
 	})
-	if generic {
-		// Every builtin with a __class_getitem__, which is the set that
-		// answers a generic alias rather than refusing the subscript.
-		// A tuple belongs here: `tuple['a']` is `tuple[str]` just as
-		// `list['a']` is, and drawing it as an ordinary subject let a
-		// soak reach the divergence through `|sum(attribute='age')`.
+	if g.c.chance(3) {
+		// The builtins with a __class_getitem__, which answer a generic
+		// alias under a subscript rather than refusing it. A tuple
+		// belongs here: `tuple['a']` is `tuple[str]` just as `list['a']`
+		// is, and drawing it as an ordinary subject let a soak reach the
+		// divergence through `|sum(attribute='age')`.
 		subject = g.c.pick([]string{
 			"lst", "d", "[1]", "{}", "dict(a=1)", "((1, 2))",
 		})
@@ -1082,12 +1081,27 @@ func (g *generator) classObject() string {
 			" in [n.__class__, s.__class__]",
 		}) + ")"
 	}
-	// A container hands the class object onwards just as a bare one does --
-	// an outer filter with `attribute=` subscripts what it walks -- so this
-	// arm is closed to the generic classes too. `[[1].__class__,
-	// [1].__class__]|unique|list|sum(attribute='age')` reached
-	// `list['age']`, which is a GenericAlias there and undefined here.
-	if !generic && g.c.chance(6) {
+	// A container hands the class object onwards just as a bare one does, and
+	// an outer arm then does whatever it likes with what it walks -- so the
+	// arm is open only to the classes for which every such operation agrees.
+	//
+	// Two soaks found the two that do not. A generic class is a GenericAlias
+	// under a subscript, which `|sum(attribute='age')` performs:
+	// `[[1].__class__, [1].__class__]|unique|list|sum(attribute='age')`
+	// reached `list['age']`. And markupsafe's Markup carries an `__html__`
+	// that an autoescaping `|join` calls unbound:
+	// `[('x'|safe).__class__, n.__class__]|unique|list|join(*['-'])` is
+	// "Markup.__html__() missing 1 required positional argument". Both are
+	// divergences docs/divergences.md records and the corpus pins.
+	//
+	// The list is therefore an allowlist rather than a set of exclusions: a
+	// class not named here is handed on bare, called, compared or reduced by
+	// the arms above and below, where the shape is known.
+	containerSafe := map[string]bool{
+		"n": true, "f": true, "yes": true, "nil": true, "none": true,
+		"true": true, "(1)": true, "(1.5)": true, "range(3)": true,
+	}
+	if containerSafe[subject] && g.c.chance(6) {
 		return g.c.pick([]string{
 			"{" + chain + ": 1}",
 			"[" + chain + ", n.__class__]|unique|list",

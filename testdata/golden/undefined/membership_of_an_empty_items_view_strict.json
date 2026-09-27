@@ -1,5 +1,5 @@
 {
-  "case": "dataflow/not_required_one_step.jj2",
+  "case": "undefined/membership_of_an_empty_items_view_strict.jj2",
   "oracle": {
     "impl": "cpython-jinja2",
     "version": "3.1.6",
@@ -7,5 +7,5 @@
     "python": "3.13"
   },
   "ok": true,
-  "output": "[]"
+  "output": "False"
 }

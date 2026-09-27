@@ -168,7 +168,7 @@ func (r *rangeObject) Slice(start, stop, step *int) (value.Value, error) {
 	)), nil
 }
 
-// Contains decides `x in range(...)` by arithmetic, as Python's range does.
+// ContainsErr decides `x in range(...)` by arithmetic, as Python's range does.
 //
 // Falling through to the generic scan makes membership cost the length of the
 // range: `{{ -1 in range(9223372036854775807) }}` walked toward nine quintillion
@@ -179,26 +179,36 @@ func (r *rangeObject) Slice(start, stop, step *int) (value.Value, error) {
 // answered False without looking. CPython only takes this path for an exact
 // int and scans for anything else; the answer is the same either way, so the
 // arithmetic is used for every number that is one.
-func (r *rangeObject) Contains(item value.Value) (found, known bool) {
+//
+// What the scan does produce, and arithmetic does not, is the *comparison*: a
+// StrictUndefined on the left refuses from the first element CPython reaches, so
+// `{{ nope in range(3) }}` raises where `{{ nope in range(0) }}` is False. That
+// is answered here from the length rather than by walking, which keeps the bound
+// above -- the alternative reintroduces it for every non-integer item and not
+// just the undefined ones.
+func (r *rangeObject) ContainsErr(item value.Value, _ value.PythonVersion) (found, known bool, err error) {
 	n, ok := integerOf(item)
 	if !ok {
-		// Not an integer -- a float with a fraction, a string, a list.
-		// None of them can equal an element of a range.
-		return false, true
+		if r.length.Sign() > 0 {
+			if err := value.StrictRefusal(item); err != nil {
+				return false, true, err
+			}
+		}
+		return false, true, nil
 	}
 	start, stop, step := r.bounds()
 	offset := new(big.Int).Sub(n, start)
 	// Before the start, or at or past the stop, in the step's direction.
 	if step.Sign() > 0 {
 		if offset.Sign() < 0 || n.Cmp(stop) >= 0 {
-			return false, true
+			return false, true, nil
 		}
 	} else {
 		if offset.Sign() > 0 || n.Cmp(stop) <= 0 {
-			return false, true
+			return false, true, nil
 		}
 	}
-	return new(big.Int).Rem(offset, step).Sign() == 0, true
+	return new(big.Int).Rem(offset, step).Sign() == 0, true, nil
 }
 
 // integerOf reports the exact integer a value stands for: an int, a bool, or a

@@ -19,12 +19,24 @@ import (
 // filterURLEncode percent-encodes a string, or builds a query string from a
 // mapping or a sequence of pairs.
 func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	// Each half of a pair goes through str(), so a StrictUndefined in either
+	// position refuses rather than encoding as nothing: jinja2 writes
+	// `f"{quote(k)}={quote(v)}"`. Converting without consulting the refusal
+	// made `{{ [(nope, 'x')]|urlencode }}` render "=x".
 	pair := func(k, val value.Value) (string, error) {
-		key, err := quotePlus(s, value.Str(k))
+		ks, err := strictStrFor(k, s.PythonVersion())
 		if err != nil {
 			return "", err
 		}
-		text, err := quotePlus(s, value.Str(val))
+		key, err := quotePlus(s, ks)
+		if err != nil {
+			return "", err
+		}
+		vs, err := strictStrFor(val, s.PythonVersion())
+		if err != nil {
+			return "", err
+		}
+		text, err := quotePlus(s, vs)
 		if err != nil {
 			return "", err
 		}

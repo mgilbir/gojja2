@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/not_required_through_a_namespace_field.jj2",
+  "variables": {
+    "src": "o"
+  }
+}
