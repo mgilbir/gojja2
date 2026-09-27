@@ -167,6 +167,133 @@ case("control/loop_controls", "{% for x in seq %}{% if x == 2 %}{% continue %}{%
 case("control/do", "{% set l = [] %}{% do l.append(1) %}{% do l.append(2) %}{{ l }}",
      __settings__={"extensions": ["do"]})
 
+# The two extension-gated tags, and the message when they are not enabled: the
+# tag is only a tag because the extension added it, so the refusal is part of
+# what "extensions" means. Graded here because the soak enables them.
+case("control/do_tuple", "{% set l = [] %}{% do l.append(1), l.append(2) %}{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("control/do_discards", "{% do 1 %}{% do 'x'|upper %}{% do [1,2]|length %}[end]",
+     __settings__={"extensions": ["do"]})
+case("errors/do_without_extension", "{% do 1 %}")
+case("errors/do_no_expression", "{% do %}", __settings__={"extensions": ["do"]})
+case("errors/do_missing_comma", "{% do 1 2 %}", __settings__={"extensions": ["do"]})
+case("errors/enddo", "{% do 1 %}{% enddo %}", __settings__={"extensions": ["do"]})
+case("errors/do_raises", "{% do nope.attr %}", __settings__={"extensions": ["do"]})
+case("errors/break_without_extension",
+     "{% for x in seq %}{% break %}{% endfor %}", **SEQ)
+case("errors/continue_without_extension",
+     "{% for x in seq %}{% continue %}{% endfor %}", **SEQ)
+case("errors/break_argument", "{% for x in seq %}{% break 1 %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+
+# jinja2 writes Python's own `break` and `continue`, and Python clears the
+# for-else indicator at the *end* of the loop body -- so a pass that left early
+# never clears it and the else branch runs. Every one of these printed the other
+# answer here until the indicator was moved to where jinja2 keeps it.
+case("control/loop_else_after_break",
+     "{% for x in seq %}{{ x }}{% break %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_after_continue",
+     "{% for x in seq %}{% continue %}{{ x }}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_pass_completed",
+     "{% for x in seq %}{{ x }}{% if x == 2 %}{% break %}{% endif %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_filtered_continue",
+     "{% for x in seq if x > 1 %}{% continue %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_recursive_break",
+     "{% for x in seq recursive %}{{ x }}{% break %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+# An inner loop's else body is emitted after the inner loop and inside the
+# outer one, so a continue there binds to the *outer* loop -- which is why the
+# `o` never prints.
+case("control/loop_else_continues_outer",
+     "{% for x in seq %}{% for y in [] %}i{% else %}{% continue %}{% endfor %}o{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_inner_and_outer",
+     "{% for x in seq %}{% for y in [1] %}{% continue %}{% else %}I{% endfor %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+
+# Which blocks a break reaches out of. A filter block, a `{% set %}` block,
+# `{% with %}` and `{% autoescape %}` are emitted inline, so the loop is still
+# there; a macro, a block and a `{% call %}` body are functions of their own and
+# jinja2's Python will not compile a break inside one (docs/divergences.md).
+case("control/break_through_filter_block",
+     "{% for x in seq %}{% filter upper %}a{% break %}{% endfilter %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_through_set_block",
+     "{% for x in seq %}{% set v %}a{% break %}{% endset %}{{ v }}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_through_with_block",
+     "{% for x in seq %}{% with y = x %}{{ y }}{% break %}{% endwith %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_through_autoescape",
+     "{% for x in seq %}{% autoescape true %}{{ x }}{% break %}{% endautoescape %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_macro_own_loop",
+     "{% macro m() %}{% for x in seq %}{{ x }}{% break %}{% endfor %}{% endmacro %}{{ m() }}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_block_own_loop",
+     "{% block b %}{% for x in seq %}{{ x }}{% break %}{% endfor %}{% endblock %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_inner_loop_only",
+     "{% for x in seq %}{% for y in seq %}{{ y }}{% break %}{% endfor %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/continue_keeps_counting",
+     "{% for x in seq %}{% if x % 2 %}{% continue %}{% endif %}{{ loop.index }}:{{ x }},{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+
+# Where a break binds to nothing at all. jinja2's parser accepts every one of
+# these and CPython refuses the Python it generates, naming a line of that
+# generated module -- so gojja2 refuses them too, with CPython's wording and
+# without the line. Admitted in testdata/known_failures.txt, asserted by
+# TestUnboundLoopControlIsRefused, and recorded in docs/divergences.md. They are
+# here because the *shape* of what each side does is what the goldens pin: a
+# refusal at compile time, from both.
+case("errors/break_outside_loop", "{% break %}", __settings__={"extensions": ["loopcontrols"]})
+case("errors/continue_outside_loop", "{% continue %}", __settings__={"extensions": ["loopcontrols"]})
+case("errors/break_in_loop_else",
+     "{% for x in seq %}x{% else %}{% break %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/continue_in_loop_else",
+     "{% for x in seq %}x{% else %}{% continue %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/break_in_recursive_loop_else",
+     "{% for x in seq recursive %}x{% else %}{% break %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/break_in_macro",
+     "{% for x in seq %}{% macro m() %}{% break %}{% endmacro %}{{ m() }}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/break_in_block",
+     "{% for x in seq %}{% block b %}{% break %}{% endblock %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/break_in_call_block",
+     "{% macro m() %}{{ caller() }}{% endmacro %}"
+     "{% for x in seq %}{% call m() %}{% break %}{% endcall %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+
+# `{% print %}` needs no extension and had no case at all: it is an Output node
+# like `{{ }}`, but it takes a comma-separated *list* of expressions and the
+# comma rules are its own.
+case("control/print", "{% print 1 + 1 %}|{% print %}|{% print 'a', 'b' %}|{% print 1, 2, 3 %}")
+case("control/print_expressions", "{% print 'x'|upper, 1 if 0 else 2, ((1, 2)), 1 == 1 %}")
+case("control/print_undefined", "[{% print nope %}]")
+case("control/print_in_blocks",
+     "{% for x in seq %}{% print x, loop.index %}{% endfor %}|"
+     "{% macro m() %}{% print 'm' %}{% endmacro %}{{ m() }}|"
+     "{% block b %}{% print 'b' %}{% endblock %}|"
+     "{% filter upper %}{% print 'f' %}{% endfilter %}|"
+     "{% set v %}{% print 's' %}{% endset %}{{ v }}", **SEQ)
+case("control/print_escapes", "{% print '<i>', ('<b>'|safe), v %}",
+     __settings__={"autoescape": True}, v="<u>")
+case("errors/print_trailing_comma", "{% print 1, %}")
+case("errors/print_missing_comma", "{% print 1 2 %}")
+case("errors/print_leading_comma", "{% print , 1 %}")
+case("errors/print_star", "{% print *seq %}", **SEQ)
+case("errors/endprint", "{% print 1 %}{% endprint %}")
+case("errors/print_raises", "{% print nope.attr %}")
+
 # --- frame scoping ------------------------------------------------------------
 # Whether a name resolves from the render arguments or from the template's own
 # frame depends on which mention comes first, and nested frames read through to

@@ -1,0 +1,6 @@
+{
+  "case": "control/break_through_with_block.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

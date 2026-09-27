@@ -1,0 +1,6 @@
+{
+  "case": "control/loop_else_filtered_continue.jj2",
+  "variables": {
+    "seq": "fr"
+  }
+}

@@ -445,7 +445,17 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 	// The cursor lives on the loop object rather than in this loop, because
 	// `loop` is the iterator: a body that consumes it -- `{{ loop|list }}`
 	// -- advances this walk, and the walk has to see that.
-	ran := false
+	// completed is jinja2's own iteration indicator, and it says more than
+	// "the loop ran": jinja2 writes it at the *end* of the loop body, so a
+	// pass that left early through break or continue never clears it. The
+	// else branch therefore runs unless some pass reached the body's end --
+	// `{% for i in seq %}{% continue %}{% else %}E{% endfor %}` prints E.
+	// Setting it on entry instead reads as the same thing until loopcontrols
+	// is enabled, which is why it was that for so long.
+	completed := false
+	// broke records a `{% break %}`, which ends the walk without ending the
+	// statement.
+	broke := false
 	// A body that cannot let its scope outlive the iteration gets one
 	// frame reused for the whole loop instead of one per pass. See
 	// bodyRetainsScope: only a macro keeps a reference to the scope it was
@@ -462,7 +472,6 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		if err := ex.st.budget.step(); err != nil {
 			return err
 		}
-		ran = true
 		// Each iteration gets a fresh scope, so a `{% set %}` in the
 		// body does not carry into the next pass -- jinja2 rebinds
 		// every body-assigned symbol from the enclosing scope at the
@@ -491,21 +500,30 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		err := body.execBody(n.Body)
 		switch {
 		case errors.Is(err, errBreakLoop):
-			return nil
+			// A break leaves the loop but not the statement: the
+			// else branch still asks whether any pass finished, so
+			// breaking out of the first one runs it.
+			broke = true
 		case errors.Is(err, errContinueLoop):
 			continue
 		case err != nil:
 			return err
+		default:
+			completed = true
+		}
+		if broke {
+			break
 		}
 	}
 	// A filter that failed part way stops the loop rather than ending it.
-	if err := src.err(); err != nil {
+	// A break stops it *before* that pull, so there is nothing to report.
+	if err := src.err(); err != nil && !broke {
 		return err
 	}
-	// The else branch runs when nothing did, which is what jinja2 tracks
-	// rather than asking the source how long it is -- asking would run a
-	// filtered loop's test over every item before the first pass.
-	if !ran {
+	// The else branch runs when no pass finished, which is what jinja2
+	// tracks rather than asking the source how long it is -- asking would run
+	// a filtered loop's test over every item before the first pass.
+	if !completed {
 		return ex.execBody(n.Else)
 	}
 	return nil

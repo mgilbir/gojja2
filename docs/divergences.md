@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-five divergences below, **one** is worth going looking for:
+Of the twenty-six divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -37,6 +37,7 @@ are safety controls rather than behavioural choices, and they live in
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
 | [A folded infinity jinja2 writes out](#a-folded-infinity-jinja2-writes-out) | renders the number; jinja2 raises `NameError: name 'inf' is not defined` | No -- it renders where CPython cannot |
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
+| [A break or a continue that binds to no loop](#a-break-or-a-continue-that-binds-to-no-loop) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
 | [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | Only `self is iterable`, which answers differently |
@@ -176,6 +177,57 @@ The duplicate is refused in a *signature* and nowhere else, which is also
 jinja2's rule: `{% for a, a in ... %}`, `{% set a, a = 1, 2 %}` and
 `{% with a = 1, a = 2 %}` all let the later binding win, and a macro may be
 redefined.
+
+### A break or a continue that binds to no loop
+
+```jinja
+{% for x in seq %}x{% else %}{% break %}{% endfor %}
+```
+
+With the `loopcontrols` extension enabled, CPython raises
+`SyntaxError: 'break' outside loop (<template>, line 21)`.
+
+jinja2 implements `{% break %}` and `{% continue %}` by emitting Python's own
+keywords, so what binds one is a `for` in the function jinja2 *generated*, and
+CPython refuses the module when nothing does. Line 21 is a line of that module.
+gojja2 has none, so -- as with [a repeated parameter
+name](#a-macro-with-a-repeated-parameter-name) -- it refuses the same templates
+at the same point, with CPython's class and CPython's words, and stops there:
+
+```
+SyntaxError: 'break' outside loop
+SyntaxError: 'continue' not properly in loop
+```
+
+The error carries the line *of the template*, which is where gojja2 reports every
+compile error.
+
+Which shapes bind nothing is jinja2's rule, and it is not the one a reader of the
+template would draw. Measured against CPython jinja2:
+
+| where the break sits | binds to the loop? | why |
+|---|---|---|
+| `{% if %}`, `{% filter %}`, `{% set v %}...{% endset %}`, `{% with %}`, `{% autoescape %}` | **yes** | emitted inline, so the `for` is still there |
+| a loop's own `{% else %}` body | no | emitted *after* the loop |
+| a `recursive` loop's `{% else %}` body | no | that loop and its else are a function of their own |
+| `{% macro %}`, `{% block %}`, `{% call %}` | no | each compiles to a function |
+| an inner loop's `{% else %}`, inside an outer loop | **yes, to the outer one** | the inner else body sits in the outer loop's body |
+
+The inline half is graded by the corpus and passes. The refusals are admitted in
+`testdata/known_failures.txt`, because only the message differs, and
+`TestUnboundLoopControlIsRefused` pins each shape.
+
+This was a *behavioural* divergence until the refusal was added, and in the
+direction that costs a template author something. `{% break %}` outside a loop
+rendered an error whose entire message was `break` -- the sentinel gojja2 passes
+a break along as, reaching the caller. Worse, a break inside a macro body
+propagated out of the call and broke the loop the macro was *called* from, so
+
+```jinja
+{% for x in seq %}{% macro m() %}{% break %}{% endmacro %}{{ m() }}{% endfor %}
+```
+
+rendered nothing here and would not compile under CPython.
 
 ### Complex numbers
 

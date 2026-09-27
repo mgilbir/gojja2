@@ -67,8 +67,8 @@ own/limits/integer_width_power.jj2      # gojja2 bounds a computed integer at 2*
 # Both refuse the template; only the wording differs. jinja2 compiles a macro to
 # a Python function, so a duplicate parameter reaches the Python compiler, and
 # the SyntaxError it raises names `l_1_a` -- the identifier jinja2 generated --
-# and a line of the generated module. Neither exists here, so gojja2 raises its
-# own TemplateSyntaxError naming the parameter the template wrote.
+# and a line of the generated module. Neither exists here, so gojja2 raises the
+# same SyntaxError naming the parameter the template wrote.
 #
 # This was a *behavioural* divergence until the macro was refused: gojja2
 # compiled it and the later parameter won, so a macro written here failed when
@@ -172,3 +172,26 @@ own/divergence/unpack_count_lazy_filter.jj2@3.14   # |reverse is a list here
 own/divergence/undefined_exc_callable_class_global.jj2      # raise range(msg)
 own/divergence/undefined_exc_callable_class_that_refuses.jj2  # raise dict(msg)
 own/divergence/undefined_exc_callable_macro.jj2             # raise macro(msg)
+
+# --- a break or a continue that binds to no loop -------------------------------
+# Both refuse the template at compile time, with the same class and the same
+# words; only a suffix differs. jinja2 implements these tags by emitting Python's
+# own keywords, so CPython refuses the generated module and names a line *of that
+# module*: "'break' outside loop (<template>, line 11)". gojja2 has no generated
+# module to name a line of, so it stops at the wording CPython chose.
+#
+# Which shapes bind nothing is jinja2's, measured rather than guessed: a loop's
+# `{% else %}` body is emitted after the loop, a recursive loop's `{% else %}`
+# with it, and a macro, a block and a `{% call %}` body are each functions of
+# their own. A filter block, a `{% set %}` block, `{% with %}` and
+# `{% autoescape %}` are inline and a break reaches the loop through them -- those
+# are graded, and they pass. See docs/divergences.md and
+# TestUnboundLoopControlIsRefused.
+own/errors/break_outside_loop.jj2            # CPython names a line of the generated module
+own/errors/continue_outside_loop.jj2         # likewise
+own/errors/break_in_loop_else.jj2            # likewise
+own/errors/continue_in_loop_else.jj2         # likewise
+own/errors/break_in_recursive_loop_else.jj2  # likewise
+own/errors/break_in_macro.jj2                # likewise
+own/errors/break_in_block.jj2                # likewise
+own/errors/break_in_call_block.jj2           # likewise

@@ -1,0 +1,6 @@
+{
+  "case": "control/loop_else_inner_and_outer.jj2",
+  "variables": {
+    "seq": "fr"
+  }
+}

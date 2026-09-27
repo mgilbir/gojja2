@@ -1,0 +1,6 @@
+{
+  "case": "control/break_in_macro_own_loop.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}
