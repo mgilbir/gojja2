@@ -1695,9 +1695,11 @@ func filterPprint(st *State, v value.Value, _ *value.CallArgs) (value.Value, err
 
 // maxPPrintDepth bounds how deeply pprint descends, for the same reason
 // maxJSONDepth does: the nesting is chosen at render time and the walk would
-// otherwise exhaust the stack. CPython's pprint hits its own wall at 326
-// levels, three interpreter frames per level, and reports it as a failure to
-// take the repr -- which is where it happens.
+// otherwise exhaust the stack. CPython's pprint hits its own wall first, at 326
+// levels, three interpreter frames per level -- and reports it as a failure to
+// take the repr, which is where it happens. That one did not move with 3.12:
+// pprint recurses in Python, so it reaches the Python limit rather than the C
+// one. See docs/limits.md.
 const maxPPrintDepth = 1000
 
 // RecursionMessageRepr is what CPython reports when it runs out of stack

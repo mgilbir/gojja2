@@ -267,22 +267,43 @@ throughout, and the configured limit is on the error's `Limit` field.
 The depth of a *value* is chosen at render time, not at compile time -- the
 nesting bound above is about the template's own text, and says nothing about
 what a loop builds. CPython walks such a value with its interpreter stack and
-raises `RecursionError` at around a thousand levels, with a different message
-for each walk: `while getting the repr of an object`, `in comparison`, `while
-encoding a JSON object`.
+raises `RecursionError` when it runs out, with a different message for each
+walk: `while getting the repr of an object`, `in comparison`, `while encoding a
+JSON object`.
 
-gojja2 matches that wherever the walk can report a failure, and does not need
-to wall the walk at all where it cannot:
+Where CPython runs out is not one number. It was ~990 for every C-level walk
+until 3.12 gave the C recursion limit a counter of its own, and 3.14 grows the
+stack rather than counting frames at all; `pprint` did not move, because it
+recurses in Python and three frames a level reaches the *Python* limit first.
+Each number below is the deepest value that walk survives, measured per
+interpreter by `make value-depth` into `testdata/value_depth.json`, and
+`TestValueWalkDepthsAreMeasured` fails if this table drifts from it or from
+gojja2's own wall:
 
-| walk | CPython | gojja2 |
-|---|---|---|
-| `==`, `<`, `\|sort`, `\|min` | `RecursionError` at ~991 | the same error, at 1,000 |
-| `\|tojson` | `RecursionError` at ~986 | the same error, at 1,000 |
-| `\|pprint` | `RecursionError` at ~326 | the same error, at 1,000 |
-| `{{ v }}`, `\|string`, `\|upper`, a dict key | `RecursionError` at ~989 | renders |
-| hashing a tuple | no limit | no limit |
+| walk | 3.11 | 3.12 | 3.13 (pinned) | 3.14 | gojja2 |
+|---|---|---|---|---|---|
+| `==`, `<`, `\|min` | 992 | 9994 | 9995 | 43439 | 1000 |
+| `\|sort` | 990 | 9993 | 9993 | 43414 | 999 |
+| `\|tojson` | 986 | 9993 | 9994 | 52126 | 1000 |
+| `\|pprint` | 326 | 328 | 328 | 328 | 1000 |
+| `{{ v }}`, `\|string`, `\|upper`, a dict key | 990 | 9993 | 9994 | 65159 | no wall |
+| hashing a tuple | no limit | no limit | no limit | no limit | no limit |
 
-The last two rows are the divergence. `str()` and `repr()` are reached from
+The `|sort` row is one lower than the comparison row on both sides for the same
+reason: the list being sorted is itself a level, so the comparison inside it
+starts one deeper.
+
+**gojja2's wall is the lower one from 3.12 onwards**, so a value nested deeper
+than 1,000 raises `RecursionError` here where CPython 3.12 and later render it.
+That is the bound doing its job rather than a behavioural choice -- a Go stack
+overflow is fatal and unrecoverable, so the walk needs a wall somewhere, and
+1,000 was chosen when CPython's own was ~990. It is worth knowing which way it
+now points: below 1,000 the two agree exactly, including the message; above it,
+gojja2 refuses and 3.12+ does not. The exact numbers drift with a patch release;
+what the table fixes is which side of the wall each interpreter falls on.
+
+The `|pprint` row goes the other way -- CPython gives up at 328 and gojja2 walks
+to 1,000 -- and the `{{ v }}` row is a divergence of a different kind. `str()` and `repr()` are reached from
 more than a hundred places here, most of them building an error message, and
 none of them can return an error -- so those walks are written iteratively and
 have no depth to exceed. That is strictly safer than the alternative: before,

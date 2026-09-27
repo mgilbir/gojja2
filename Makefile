@@ -244,6 +244,10 @@ syntax: venv ## Regenerate testdata/syntax.jsonl: jinja2's parse tree in gojja2'
 unicode-matrix: venv ## Regenerate value/unicode_other.go from every CPython gojja2 reproduces
 	$(PY) tools/oracle/gen_unicode_matrix.py
 
+.PHONY: value-depth
+value-depth: venv ## Regenerate testdata/value_depth.json: how deep a value each CPython walks
+	$(PY) tools/oracle/gen_value_depth.py
+
 .PHONY: name-class
 name-class: venv ## Regenerate value/nameclass.go: the class jinja2's lexer matches a name out of
 	$(PY) tools/oracle/gen_name_class.py

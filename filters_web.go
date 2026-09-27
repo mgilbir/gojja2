@@ -526,8 +526,10 @@ func (p jsonPath) leave(key any) { delete(p, key) }
 //
 // The nesting of a value graph is chosen at render time, so the walk needs a
 // wall of its own or a deep one takes the stack out. CPython has the same wall
-// and the same message, at about the same depth: json.dumps runs out of
-// interpreter stack at 986 levels of list.
+// and the same message, and had it at about the same depth when this was
+// written: json.dumps ran out of interpreter stack at 986 levels of list on
+// 3.11. 3.12 gave the C recursion limit its own counter and it moved to ~9,993,
+// so this is now the lower wall of the two. See docs/limits.md.
 const maxJSONDepth = 1000
 
 // RecursionMessageJSON is what CPython reports when json.dumps runs out of

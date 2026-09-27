@@ -17,7 +17,9 @@ import (
 // into a cyclic Value rather than expanding forever. Two *distinct* cyclic
 // structures have no fixed point, so the descent has to be bounded or it takes
 // the stack out -- and a Go stack overflow cannot be recovered. CPython raises
-// RecursionError at the same wall, which is what EqualErr reports.
+// RecursionError too, and its message is what EqualErr reports -- but not at the
+// same depth any more: 3.11 gave up at 992 and 3.12 onwards goes ten times
+// deeper. See docs/limits.md, which measures both.
 const maxCompareDepth = 1000
 
 // RecursionMessageComparison is what CPython reports when the stack runs out
