@@ -865,7 +865,25 @@ func (e *Environment) selectTemplateValues(names []value.Value) (*Template, erro
 			parts[i] = name.UndefinedError().Error()
 			continue
 		}
-		parts[i] = value.Str(name)
+		// A loaded template is cached under `(weakref(loader), name)`, so
+		// the candidate is hashed as part of a tuple before it is looked
+		// up -- and an unhashable one raises there rather than missing:
+		// `{% include [['x']] %}` is "unhashable type: 'list'" and not
+		// "none of the templates given were found". It is per candidate,
+		// so `{% include ['nope', ['x']] %}` reports the miss on 'nope'
+		// only by going on to the list and raising.
+		//
+		// `{% import %}`, `{% extends %}` and `{% from %}` take a name
+		// rather than a list, so they hash the whole value and already
+		// said so; only the candidate list read its way past it.
+		if err := value.CheckHashable(value.NewTuple(name), e.pyVersion,
+			value.AsDictKey); err != nil {
+			return nil, err
+		}
+		// StrFor: a candidate that is not a string at all is named by
+		// its repr in the message, and a repr escapes by the
+		// interpreter's isprintable.
+		parts[i] = value.StrFor(name, e.pyVersion)
 		tmpl, err := e.GetTemplate(parts[i])
 		if err == nil {
 			return tmpl, nil

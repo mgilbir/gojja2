@@ -390,6 +390,29 @@ case("errors/include_dict_not_found", "{% include {'a':1} %}", __templates__=INC
 case("errors/include_none_ignore_missing", "[{% include none ignore missing %}]", __templates__=INC)
 case("include/select_dict_key", "{% include {'inc.html': 1} %}", __templates__=INC)
 case("include/select_tuple", "{% include ('inc.html',) %}", __templates__=INC)
+# A loaded template is cached under `(weakref(loader), name)`, so each candidate
+# is hashed as part of a tuple before it is looked up -- and an unhashable one
+# raises there rather than missing. gojja2 stringified it and reported
+# TemplatesNotFound with its repr. It is per candidate, so the second case reports
+# the list and not the miss on 'nope' that precedes it.
+#
+# `{% import %}`, `{% extends %}` and `{% from %}` take a name rather than a list,
+# so they hash the whole value and already said so -- errors/import_list above.
+# Only the candidate list read its way past the hash.
+for _n, _src in [
+    ("a_list", "{% include [['x']] %}"),
+    ("after_a_miss", "{% include ['nope', ['x']] %}"),
+    ("in_a_tuple", "{% include ((['x'],)) %}"),
+    ("a_dict_candidate", "{% include [{'a': 1}] %}"),
+]:
+    case(f"errors/include_unhashable_candidate_{_n}", _src, __templates__=INC)
+# ...and the candidates that *are* hashable and simply miss, which is what keeps
+# the hash from swallowing the message.
+case("errors/include_candidates_miss",
+     "{% include [1] %}", __templates__=INC)
+case("include/select_hashable_candidates",
+     "{% include ['nope', 'inc.html'] %}|{% include [((1, 2)), 'inc.html'] %}",
+     __templates__=INC)
 case("errors/import_number", "{% import 1 as m %}{{ m }}", __templates__=INC)
 case("errors/import_none", "{% import none as m %}{{ m }}", __templates__=INC)
 case("errors/import_list", "{% import ['a'] as m %}{{ m }}", __templates__=INC)
