@@ -487,20 +487,55 @@ func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
 	if !f.hasPrec {
 		prec = 6
 	}
+	// '%' scales before it lays anything out, so its result can be the
+	// infinity even where x is finite: `{:%}` of 1e308 is "inf%". The
+	// magnitude that is actually written is what decides whether there are
+	// digits at all.
+	mag := math.Abs(x)
+	percent := f.typ == '%'
+	if percent {
+		mag *= 100
+	}
+	if math.IsInf(mag, 0) || math.IsNaN(mag) {
+		// An infinity has no digits to lay out, so neither the alternate
+		// form nor the grouping has anything to do -- but the sign, the
+		// fill and the percent sign all still go on. None of the
+		// formatters below may be asked for it: Go writes "+Inf", which
+		// has no exponent to split and no digits to group, and expForm
+		// and generalForm both indexed into what was not there.
+		//
+		// An unknown type is still refused first, exactly as CPython
+		// parses the spec before it looks at the value.
+		switch f.typ {
+		case 'f', 'F', 'e', 'E', 'g', 'G', 'n', '%', 0:
+		default:
+			return "", unknownCode(f.typ, v)
+		}
+		body := FormatFloat(mag)
+		if f.typ == 'E' || f.typ == 'G' || f.typ == 'F' {
+			body = strings.ToUpper(body)
+		}
+		if percent {
+			body += "%"
+		}
+		// A NaN is never negative in Python's output, however its sign
+		// bit happens to be set -- `{:f}` of `inf - inf` is "nan" and
+		// `{:+f}` of it is "+nan". 'z' has nothing to coerce either:
+		// there is no digit here to round.
+		return f.withSign(math.Signbit(x) && !math.IsNaN(x), "", body), nil
+	}
 	var body string
-	percent := false
 	switch f.typ {
 	case 'f', 'F':
-		body = strconv.FormatFloat(math.Abs(x), 'f', prec, 64)
+		body = strconv.FormatFloat(mag, 'f', prec, 64)
 	case 'e', 'E':
-		body = expForm(math.Abs(x), prec, f.typ == 'E')
+		body = expForm(mag, prec, f.typ == 'E')
 	case 'g', 'G', 'n':
-		body = generalForm(math.Abs(x), prec, f.typ == 'G', f.alt, false)
+		body = generalForm(mag, prec, f.typ == 'G', f.alt, false)
 	case '%':
 		// The sign goes on after the grouping: appending it here let the
 		// separator fall between the last digits and the '%' itself.
-		body = strconv.FormatFloat(math.Abs(x)*100, 'f', prec, 64)
-		percent = true
+		body = strconv.FormatFloat(mag, 'f', prec, 64)
 	case 0:
 		// No type at all is str(float) laid out, not %g: it keeps the
 		// shortest round-tripping digits rather than six of them.
@@ -511,37 +546,27 @@ func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
 		// keeps a ".0" on a result that would otherwise be all digits.
 		// So `{:.0}` on 1.5 is "2e+00" where `{:.0g}` is "2".
 		if f.hasPrec {
-			body = generalForm(math.Abs(x), prec, false, f.alt, true)
+			body = generalForm(mag, prec, false, f.alt, true)
 		} else {
-			body = FormatFloat(math.Abs(x))
+			body = FormatFloat(mag)
 		}
 	default:
 		return "", unknownCode(f.typ, v)
 	}
-	if math.IsInf(x, 0) || math.IsNaN(x) {
-		// An infinity has no digits to lay out, so neither the
-		// alternate form nor the grouping has anything to do -- but the
-		// percent sign still goes on.
-		body = strings.TrimPrefix(FormatFloat(math.Abs(x)), "-")
-		if f.typ == 'E' || f.typ == 'G' || f.typ == 'F' {
-			body = strings.ToUpper(body)
-		}
-	} else {
-		if f.alt {
-			body = withAltPoint(body)
-		}
-		if f.grouping != 0 {
-			body = groupMantissa(body, f.grouping)
-		}
+	if f.alt {
+		body = withAltPoint(body)
+	}
+	if f.grouping != 0 {
+		body = groupMantissa(body, f.grouping)
 	}
 	if percent {
 		body += "%"
 	}
 	// 'z' drops the sign from what *rounds* to zero rather than from -0.0
 	// alone, so `{:z.1f}` of -0.04 is "0.0" while `{:z.2%}` of -0.001 keeps
-	// its sign at "-0.10%". An infinity has no digits and is never coerced.
+	// its sign at "-0.10%".
 	negative := math.Signbit(x)
-	if f.zcoerce && negative && !math.IsInf(x, 0) && !math.IsNaN(x) && !hasNonZeroDigit(body) {
+	if f.zcoerce && negative && !hasNonZeroDigit(body) {
 		negative = false
 	}
 	return f.withSign(negative, "", body), nil

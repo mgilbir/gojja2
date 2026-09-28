@@ -6320,6 +6320,52 @@ case("format/z_with_width_and_sign",
 # in docs/divergences.md rather than anything about z.
 case("format/z_leaves_infinity_alone",
      "{{ '{:z}'.format(big * -10) }}|{{ '{:z}'.format(big * 10) }}", big=1e308)
+
+# Every presentation type on an infinity and a nan. Each formatter read Go's
+# own output, which writes "+Inf": there is no exponent for 'e' to split and no
+# digit string for 'g' and a bare type with a precision to measure, so all four
+# indexed past the end and the render died with an internal error. Only 'f' and
+# '%' happened to survive, because they never look inside. The layout still
+# applies to an infinity -- the sign, the fill, even a zero pad -- while the
+# alternate point and the grouping have nothing to act on.
+#
+# Same rule as the case above: the infinity comes from a context value, since a
+# constant one is folded into jinja2's generated Python and raises NameError.
+_INF = "{% set inf = big * 10 %}{% set nan = inf - inf %}"
+case("format/infinity_every_type",
+     _INF + "{{ '{:e}'.format(inf) }}|{{ '{:E}'.format(inf) }}|{{ '{:f}'.format(inf) }}|"
+     "{{ '{:F}'.format(inf) }}|{{ '{:g}'.format(inf) }}|{{ '{:G}'.format(inf) }}|"
+     "{{ '{:n}'.format(inf) }}|{{ '{:%}'.format(inf) }}|{{ '{:}'.format(inf) }}|"
+     "{{ '{:.2}'.format(inf) }}|{{ '{:.0}'.format(inf) }}|{{ '{:.17e}'.format(inf) }}",
+     big=1e308)
+case("format/nan_every_type",
+     _INF + "{{ '{:e}'.format(nan) }}|{{ '{:E}'.format(nan) }}|{{ '{:f}'.format(nan) }}|"
+     "{{ '{:F}'.format(nan) }}|{{ '{:g}'.format(nan) }}|{{ '{:G}'.format(nan) }}|"
+     "{{ '{:n}'.format(nan) }}|{{ '{:%}'.format(nan) }}|{{ '{:}'.format(nan) }}|"
+     "{{ '{:.2}'.format(nan) }}|{{ '{:.0g}'.format(nan) }}",
+     big=1e308)
+case("format/infinity_takes_the_layout",
+     _INF + "{{ '{:020}'.format(inf) }}|{{ '{:+}'.format(-inf) }}|{{ '{: e}'.format(inf) }}|"
+     "{{ '{:*^12g}'.format(inf) }}|{{ '{:=10E}'.format(inf) }}|{{ '{:<8n}'.format(nan) }}|"
+     "{{ '{:#,.2e}'.format(inf) }}|{{ '{:030.4%}'.format(-inf) }}",
+     big=1e308)
+case("errors/infinity_unknown_code",
+     _INF + "{{ '{:d}'.format(inf) }}", big=1e308)
+# A NaN never carries a '-', however its sign bit is set -- and `inf - inf`
+# sets it, on CPython and here alike. `{:+}` still writes a '+'. The printf
+# side already knew this; the format-spec side signed it.
+case("format/nan_has_no_sign",
+     _INF + "{{ '{:f}'.format(nan) }}|{{ '{:+f}'.format(nan) }}|{{ '{: e}'.format(nan) }}|"
+     "{{ '{:z}'.format(nan) }}|{{ '{:020g}'.format(nan) }}|{{ '{:%}'.format(nan) }}|"
+     "{{ '%f' % nan }}|{{ nan }}|{{ nan|string }}", big=1e308)
+
+# '%' scales before it writes, so its own result can be the infinity where the
+# number is finite: 100 * 1e308 overflows. gojja2 asked whether *x* was infinite
+# and so wrote Go's "+Inf%" -- sign included, and past the fill and the grouping.
+case("format/percent_overflows",
+     "{{ '{:%}'.format(big) }}|{{ '{:+%}'.format(big) }}|{{ '{:%}'.format(-big) }}|"
+     "{{ '{:020%}'.format(big) }}|{{ '{:,%}'.format(big) }}|{{ '{:#.0%}'.format(big) }}|"
+     "{{ '{:=10%}'.format(big) }}|{{ '{:%}'.format(small) }}", big=1e308, small=1e305)
 case("errors/z_not_allowed_on_int", "{{ '{:z}'.format(1) }}")
 case("errors/z_not_allowed_on_int_code", "{{ '{:zx}'.format(255) }}")
 case("errors/z_not_allowed_on_bool", "{{ '{:z}'.format(true) }}")

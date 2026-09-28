@@ -1,0 +1,6 @@
+{
+  "case": "format/nan_every_type.jj2",
+  "variables": {
+    "big": "or"
+  }
+}

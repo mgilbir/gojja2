@@ -1,0 +1,7 @@
+{
+  "case": "format/percent_overflows.jj2",
+  "variables": {
+    "big": "or",
+    "small": "or"
+  }
+}

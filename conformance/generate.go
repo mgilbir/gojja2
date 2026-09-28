@@ -1825,6 +1825,16 @@ func (g *generator) formatSpecCall() string {
 	return "'{:" + spec.String() + "}'.format(" + g.c.pick([]string{
 		"1", "0", "1234567890", "-1234567", "1.5", "0.0001", "1e20", "1e-20",
 		"-0.0", "123456.789", "'a'", "true", "none", "lst",
+		// An infinity and a nan have no digits to lay out, which is a
+		// different path through every formatter -- and '%' can reach
+		// it from a finite number, since it scales before it writes.
+		// They have to be built from a context name: a constant that
+		// folds to an infinity is written into jinja2's generated
+		// Python as `inf` and raises NameError, which is a divergence
+		// of its own rather than anything about the spec. `f` is
+		// 1e308 in the awkward context and a small number elsewhere,
+		// so which of these is infinite moves with the context axis.
+		"f * 10", "f * -10", "(f * 10) - (f * 10)", "fz",
 	}) + ")"
 }
 
