@@ -267,6 +267,23 @@ func materializeOr(s *State, v value.Value, notIterable error) ([]value.Value, e
 	return collect(s, seq)
 }
 
+// lengthHint is the question CPython asks before it allocates a list.
+//
+// list(), sorted() and random.choice() all narrow the object's length to a
+// Py_ssize_t -- PyObject_LengthHint for the first two, len() for the third --
+// so a range longer than that is refused *there* and never walked:
+// `{{ range(2**70)|list }}` is an OverflowError on CPython, where gojja2 spent
+// the whole render budget walking toward a list it could never hold.
+//
+// Only the overflow travels. An object with no length simply has no hint, which
+// is not an error, and the walk that follows still charges per element.
+func lengthHint(v value.Value) error {
+	if _, err := value.LenValue(v); err != nil && errors.Is(err, errs.OverflowError) {
+		return err
+	}
+	return nil
+}
+
 // collect walks an iterator into a slice, charging as it goes.
 func collect(s *State, seq iter.Seq[value.Value]) ([]value.Value, error) {
 	var out []value.Value

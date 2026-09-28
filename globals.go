@@ -127,6 +127,19 @@ func (r *rangeObject) GetIndex(i int) (value.Value, bool) {
 	return value.BigInt(e.Add(e, r.wide.start)), true
 }
 
+// BigIndex is GetIndex for an index that does not fit an int, which is what a
+// range wider than a Py_ssize_t needs: CPython's reversed() answers such a
+// range's first element by arithmetic and never asks for its length as a
+// Py_ssize_t.
+func (r *rangeObject) BigIndex(i *big.Int) (value.Value, bool) {
+	if i.Sign() < 0 || i.Cmp(r.length) >= 0 {
+		return value.Undefined, false
+	}
+	start, _, step := r.bounds()
+	e := new(big.Int).Mul(step, i)
+	return value.BigInt(e.Add(e, start)), true
+}
+
 // bound returns one of the three bounds as a value, which is what the start,
 // stop and step attributes answer.
 func (r *rangeObject) bound(narrow int64, wide func(*wideRange) *big.Int) value.Value {

@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"math"
+	"math/big"
 	"math/rand/v2"
 	"strings"
 
@@ -19,6 +20,9 @@ func filterLength(_ *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 }
 
 func filterList(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	if err := lengthHint(v); err != nil {
+		return value.Undefined, err
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
@@ -103,6 +107,33 @@ func reversible(v value.Value) bool {
 	return false
 }
 
+// lastByIndex answers the final element of an indexable Object without walking
+// it. The third result reports whether the value was indexable at all; the
+// second, whether it was empty, which is the undefined jinja2 substitutes for
+// reversed()'s StopIteration.
+func lastByIndex(v value.Value) (item value.Value, empty, ok bool) {
+	if v.Kind() != value.KindObject {
+		return value.Undefined, false, false
+	}
+	switch o := v.Interface().(type) {
+	case value.BigSequence:
+		n := o.BigLen()
+		if n.Sign() <= 0 {
+			return value.Undefined, true, true
+		}
+		it, found := o.BigIndex(new(big.Int).Sub(n, big.NewInt(1)))
+		return it, false, found
+	case value.Sequence:
+		n := o.Len()
+		if n == 0 {
+			return value.Undefined, true, true
+		}
+		it, found := o.GetIndex(n - 1)
+		return it, false, found
+	}
+	return value.Undefined, false, false
+}
+
 func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	// jinja2 takes the last item through reversed(), which reaches a
 	// string by __getitem__ -- so the last character of a Markup is
@@ -124,6 +155,18 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 	if !reversible(v) {
 		return value.Undefined, errs.New(errs.TypeError,
 			"'%s' object is not reversible", v.TypeName())
+	}
+	// reversed() of a sequence is __len__ and __getitem__, not a walk, so the
+	// last element of something indexable is answered without touching the
+	// ones before it. A range's length can be wider than a Py_ssize_t and
+	// CPython's range_reverse computes the element arithmetically rather than
+	// narrowing that length -- `range(2**70)|last` answers 2**70-1 there,
+	// where walking to it cost the whole render budget and then failed.
+	if item, empty, ok := lastByIndex(v); ok {
+		if empty {
+			return s.Undefined(value.UndefinedHint("No last item, sequence was empty.")), nil
+		}
+		return item, nil
 	}
 	// jinja2 takes the last item with reversed(), so a value that cannot be
 	// walked names reversibility rather than iterability. A render that ran
@@ -147,6 +190,11 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 // mapping is subscripted by the *index*, which is a key lookup that finds
 // nothing unless that integer happens to be one of its keys.
 func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	// LenValue rather than Len: random.choice() asks for len(), which narrows
+	// to a Py_ssize_t, so a range longer than that refuses here.
+	if _, err := value.LenValue(v); err != nil {
+		return value.Undefined, err
+	}
 	n, err := value.Len(v)
 	if err != nil {
 		return value.Undefined, err
@@ -325,6 +373,10 @@ func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	}
 	attribute, _ := arg(args, 2, "attribute")
 
+	// sorted() narrows the length before it allocates; see lengthHint.
+	if err := lengthHint(v); err != nil {
+		return value.Undefined, err
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
@@ -606,6 +658,12 @@ func filterSlice(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		fill = value.None
 	}
 
+	// `seq = list(value)` is do_slice's first statement, so it narrows the
+	// length before it divides by `slices`: `{{ range(2**70)|slice(0) }}` is
+	// the OverflowError and not the ZeroDivisionError. See lengthHint.
+	if err := lengthHint(v); err != nil {
+		return value.Undefined, err
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
@@ -696,6 +754,10 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		return value.Undefined, err
 	}
 
+	// sorted(), again before anything is walked; see lengthHint.
+	if err := lengthHint(v); err != nil {
+		return value.Undefined, err
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err

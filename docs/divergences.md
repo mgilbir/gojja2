@@ -798,11 +798,36 @@ including the wording and the exact boundary: a length of `2**63-1` is returned
 and `2**63` raises.
 
 Internally the length is still computed exactly, in arbitrary precision, and
-only clamped where a Go `int` is required -- iterating or indexing such a range.
-That clamp is unobservable: a loop over a range that long is stopped by the
-render budget long before the count could matter. Asserted by
-`TestRangeLengthDoesNotOverflow` and graded against CPython over 1,452
-start/stop/step combinations.
+only clamped where a Go `int` is required -- iterating or ordinary indexing.
+Asserted by `TestRangeLengthDoesNotOverflow` and graded against CPython over
+1,452 start/stop/step combinations.
+
+That clamp was once described here as unobservable, on the grounds that a loop
+over a range that long is stopped by the render budget long before the count
+matters. It is not, and probing found two ways to see it:
+
+- CPython's `reversed()` of a sequence is `__len__` and `__getitem__`, and
+  `range_reverse` computes the first element arithmetically *without* narrowing
+  the length -- so `{{ range(2 ** 70)|last }}` answers `1180591620717411303423`
+  where `|length` on the same range raises. gojja2 walked to it and spent the
+  whole iteration budget. It now indexes in arbitrary precision, through
+  `value.BigSequence`; graded by `globals/range_wide_last` and
+  `TestLastIndexesRatherThanWalking`.
+- every filter whose jinja2 implementation builds a list narrows the length
+  first -- `PyObject_LengthHint` for `list()` and `sorted()`, `len()` for
+  `random.choice()` -- so `|list`, `|sort`, `|slice`, `|groupby` and `|random`
+  over such a range raise the `OverflowError` above and never walk. gojja2 asks
+  the same question before it materialises; graded by the `errors/wide_range_*`
+  cases. The ordering is CPython's too: `seq = list(value)` is `do_slice`'s
+  first statement, so `{{ range(2 ** 70)|slice(0) }}` is the OverflowError and
+  not the ZeroDivisionError.
+
+What remains observable is the lazy-filter fork below: jinja2's `|reverse`
+answers an iterator, which `|first` reads in constant time, while gojja2's
+answers a list -- and a list of 2**70 elements cannot exist, so
+`{{ range(2 ** 70)|reverse|first }}` runs out of budget here where CPython
+prints the last element. That is the same choice as everything else in
+[Lazy sequence filters](#lazy-sequence-filters), reached from the other end.
 
 ## Differences in how the host is treated
 

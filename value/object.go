@@ -117,6 +117,22 @@ type BigLener interface {
 	BigLen() *big.Int
 }
 
+// BigSequence is a Sequence whose length and indices can exceed an int.
+//
+// It exists for the one place CPython's own arithmetic goes past a Py_ssize_t:
+// reversed(range(2**70)) answers its first element by computing
+// start + (len-1)*step, never by narrowing the length, so `range(2**70)|last`
+// answers there while `len()` of that range raises. Walking to it instead cost
+// the whole render budget and then failed.
+//
+// Len and GetIndex stay as they are -- saturating -- so iteration and ordinary
+// indexing keep working on an int; BigIndex is the exact path beside them.
+type BigSequence interface {
+	Sequence
+	BigLener
+	BigIndex(i *big.Int) (Value, bool)
+}
+
 // Container is an Object that answers `x in obj` itself.
 //
 // It exists for the types where scanning is the wrong algorithm rather than

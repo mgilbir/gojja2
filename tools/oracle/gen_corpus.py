@@ -6664,6 +6664,35 @@ case("globals/range_wide_equality",
 case("globals/range_wide_length_overflows", "{{ range(1180591620717411303424)|length }}")
 case("globals/range_wide_negative", "{{ range(-1180591620717411303424,0) }}|{{ range(1180591620717411303424,0,-1) }}")
 
+# Every filter whose jinja2 implementation builds a list narrows the length to a
+# Py_ssize_t first -- PyObject_LengthHint for list() and sorted(), len() for
+# random.choice() -- so a range longer than that refuses *there* and is never
+# walked. gojja2 walked instead, and the answer was its own iteration budget
+# after ten million steps. The zero slice count is the ordering: `seq = list(v)`
+# is do_slice's first statement, so the overflow beats the ZeroDivisionError.
+#
+# Written out rather than as `2 ** 70` because either engine folds that, and the
+# point here is the filter rather than the arithmetic.
+_WIDE = "range(1180591620717411303424)"
+for _n, _src in [
+    ("through_list", "{{ %s|list }}"),
+    ("through_sort", "{{ %s|sort }}"),
+    ("through_slice", "{{ %s|slice(2)|list }}"),
+    ("through_slice_of_zero", "{{ %s|slice(0)|list }}"),
+    ("through_slice_of_a_string", "{{ %s|slice('x')|list }}"),
+    ("through_groupby", "{{ %s|groupby(0)|list }}"),
+    ("through_random", "{{ %s|random }}"),
+]:
+    case(f"errors/wide_range_{_n}", _src % _WIDE)
+
+# |last is the other side of it: reversed() of a sequence is __len__ and
+# __getitem__, and CPython's range_reverse computes its first element
+# arithmetically without narrowing the length at all -- so this answers where
+# `|length` on the same range raises. Walking to it cost the whole budget.
+case("globals/range_wide_last",
+     "{{ range(1180591620717411303424)|last }}|"
+     "{{ range(0,1180591620717411303424,3)|last }}|{{ range(0)|last }}")
+
 # --- a search bound is a slice index, so it clamps ----------------------------
 # str.find and friends take their start and end as slice indices: out of range
 # clamps rather than refusing, in both directions and in both positions. An
