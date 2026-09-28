@@ -51,7 +51,16 @@ func EqualErr(a, b Value, py PythonVersion) (bool, error) {
 
 func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 	if depth > maxCompareDepth {
-		return false, errs.New(errs.RecursionError, "%s", py.RecursionMessageFor(RecursionMessageComparison))
+		// The suffix stays, in every version. 3.12 dropped "while
+		// calling a Python object" from the *call* path's message, and
+		// RecursionMessageFor exists for that -- but a comparison
+		// still names itself: 3.11, 3.12 and 3.13 all say "maximum
+		// recursion depth exceeded in comparison", and 3.14 says
+		// "Stack overflow (used N kB) in comparison", where N is the
+		// stack this machine had. Unifying it here made
+		// `{% do l.append(m) %}{% do m.append(l) %}{{ l == m }}` say
+		// the wrong thing on every interpreter but one.
+		return false, errs.New(errs.RecursionError, "%s", RecursionMessageComparison)
 	}
 	// StrictUndefined defines __eq__ and __ne__ as failures, so a
 	// comparison involving one is an error rather than an answer -- on
@@ -328,7 +337,7 @@ func allContainedIn(items []Value, container Value, py PythonVersion) (bool, err
 // recover cannot catch.
 func compare(op string, a, b Value, depth int, py PythonVersion) (int, bool, error) {
 	if depth > maxCompareDepth {
-		return 0, false, errs.New(errs.RecursionError, "%s", py.RecursionMessageFor(RecursionMessageComparison))
+		return 0, false, errs.New(errs.RecursionError, "%s", RecursionMessageComparison)
 	}
 	// Undefined has no ordering: jinja2's Undefined raises on <, <=, > and
 	// >= even though == is answerable. Report the undefined's own error

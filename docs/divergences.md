@@ -46,6 +46,7 @@ are safety controls rather than behavioural choices, and they live in
 | [Which codecs and handlers are known](#which-codecs-and-error-handlers-encode-and-decode-know) | utf-8, ascii, latin-1; jinja2 has ~100. Three error handlers are missing too | Only outside those three, or with `namereplace` or a surrogate handler on a decode |
 | [Objects whose repr carries an address](#objects-whose-repr-carries-an-address) | a different address | No -- unreproducible in CPython too |
 | [`\|pprint` of a value that contains itself](#pprint-of-a-value-that-contains-itself) | a different address | No -- likewise |
+| [A comparison that runs out of stack under 3.14](#a-comparison-that-runs-out-of-stack-under-314) | the sentence is CPython's through 3.13; 3.14 names the stack it used | No -- only under 3.14, and only the wording |
 | [The order a set prints in](#the-order-a-set-prints-in) | sorted, where CPython's is its hash order | No -- CPython's own order differs between runs |
 | [lipsum() and random](#lipsum-and-random) | a different random draw | No -- likewise |
 | [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there | Only for a literal-vs-literal `sameas`, which is a tautology |
@@ -472,6 +473,26 @@ not, so the conformance suite treats it as ungradable.
 
 Only a *call* renders a block. Printing the reference prints the object, which
 is why `{% block x %}{{ self.x }}{% endblock %}` terminates.
+
+### A comparison that runs out of stack under 3.14
+
+```jinja
+{% set l = [] %}{% set m = [] %}{% do l.append(m) %}{% do m.append(l) %}{{ l == m }}
+```
+
+A comparison names itself when the stack runs out, unlike the *call* path, whose
+suffix 3.12 dropped:
+
+```
+3.11, 3.12, 3.13:  maximum recursion depth exceeded in comparison
+3.14:              Stack overflow (used 8156 kB) in comparison
+```
+
+gojja2 says the first on every version. The number in 3.14's is the stack *this
+machine* had -- it differs between two runs of CPython on two machines, and
+there is nothing for gojja2 to compute it from. The corpus cannot hold the case
+for the same reason a `|pprint` id cannot;
+`conformance/recursion_compare_test.go` pins the sentence instead.
 
 ### `|pprint` of a value that contains itself
 
