@@ -1,0 +1,6 @@
+{
+  "case": "errshape/star_kwargs_undefined_in_a_global_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

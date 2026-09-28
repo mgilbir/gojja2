@@ -1,0 +1,6 @@
+{
+  "case": "errshape/star_undefined_attribute_default.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

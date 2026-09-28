@@ -67,6 +67,13 @@ func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 		}
 		seq, err := value.Iterate(v)
 		if err != nil {
+			// An undefined is *iterated* rather than type-checked:
+			// the default, debug and chainable classes yield
+			// nothing, and the strict one raises its own error
+			// where this said "not StrictUndefined".
+			if refusal := value.StrictRefusal(v); refusal != nil {
+				return nil, refusal
+			}
 			// Unnamed, unlike the ** message below: jinja2 always
 			// passes something before the star -- the filtered
 			// value, or the macro being called -- so CPython
@@ -98,6 +105,13 @@ func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 		}
 		d, ok := v.Dict()
 		if !ok {
+			// `**x` asks x for `keys`, which every Undefined class
+			// refuses -- the chainable one answers itself and then
+			// refuses the call -- so an undefined here raises its
+			// own error rather than being called not a mapping.
+			if v.IsUndefined() {
+				return nil, v.UndefinedError()
+			}
 			return nil, errs.New(errs.TypeError,
 				"%s argument after ** must be a mapping, not %s",
 				callee, v.TypeName())

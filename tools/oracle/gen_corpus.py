@@ -3302,6 +3302,38 @@ case("scope/autoescape_import_is_an_assignment",
      "{% import 'mod.html' as mod %}{% endautoescape %}",
      m=10, __templates__={"mod.html": "{% set a = 1 %}"})
 
+# A binding the frame already has is not a copy of anything outside. jinja2's
+# `Symbols.store` asks its *own* table first, so writing to a macro parameter,
+# a loop target or a {% with %} name leaves that binding alone -- where gojja2
+# saw a store of a name an enclosing frame also binds and made the parameter an
+# alias of it. Nothing rendered differently, because a parameter is overwritten
+# by its argument before the body runs; what was wrong was the scope facts the
+# tree exposes, and so what the dataflow analysis derives from. Found by the
+# syntax differential once the generator could write a macro parameter named
+# after one of the specials -- an enclosing macro frame always provides those.
+case("scope/param_written_in_the_body",
+     "{% set x = 0 %}{% macro b(x) %}[{{ x }}]{% set x = 1 %}[{{ x }}]{% endmacro %}"
+     "{{ b(2) }}[{{ x }}]")
+case("scope/defaulted_param_written_in_the_body",
+     "{% set x = 0 %}{% macro b(x=9) %}[{{ x }}]{% set x = 1 %}[{{ x }}]{% endmacro %}"
+     "{{ b() }}[{{ x }}]")
+case("scope/param_written_in_a_nested_macro",
+     "{% macro a(x) %}{% macro b(x) %}[{{ x }}]{% set x = 1 %}[{{ x }}]{% endmacro %}"
+     "{{ b(2) }}{% endmacro %}{{ a(3) }}")
+case("scope/loop_target_written_in_the_body",
+     "{% set x = 0 %}{% for x in [7] %}[{{ x }}]{% set x = 2 %}[{{ x }}]{% endfor %}[{{ x }}]")
+case("scope/with_target_written_in_the_body",
+     "{% set x = 0 %}{% with x = 5 %}[{{ x }}]{% set x = 1 %}[{{ x }}]{% endwith %}[{{ x }}]")
+case("scope/param_named_caller_written_in_the_body",
+     "{% macro sp(caller=2) %}[{{ caller }}]{% set caller = 1 %}[{{ caller }}]{% endmacro %}"
+     "[{{ sp(3) }}]")
+case("scope/call_block_param_written_in_the_body",
+     "{% macro takes() %}<{{ caller(1) }}>{% endmacro %}"
+     "{% call(p) takes() %}[{{ p }}]{% set p = 1 %}[{{ p }}]{% endcall %}")
+case("scope/loop_target_written_inside_a_macro",
+     "{% macro b(x) %}{% for x in [7] %}[{{ x }}]{% set x = 2 %}[{{ x }}]{% endfor %}"
+     "[{{ x }}]{% endmacro %}{{ b(4) }}")
+
 # `is filter` and `is test` are `value in env.filters` and `value in env.tests`,
 # so the value is hashed before anything asks whether it could be a name.
 case("tests/is_filter_and_is_test",
@@ -5003,6 +5035,31 @@ case("errshape/dyn_kwargs_key_not_a_string", '{{ lst|join(**{1: "-"}) }}', lst=[
 case("errshape/dyn_kwargs_duplicate_in_a_filter", '{{ lst|join(d="-", **{"d": "+"}) }}', lst=[1, 2])
 case("errshape/dyn_kwargs_duplicate_in_a_call",
      '{% macro mm(x) %}{% endmacro %}{{ mm(x=1, **{"x": 2}) }}', lst=[1, 2])
+
+# ...and what it is handed is *asked*, not type-checked. `f(**x)` makes Python
+# look for `x.keys`, which every Undefined class refuses -- the chainable one
+# answers itself and then refuses the call -- so `{{ m(**nope) }}` is "'nope' is
+# undefined" under all four, where gojja2 said "argument after ** must be a
+# mapping, not Undefined". `*x` is *iterated* instead, and there the classes
+# differ: three of them yield nothing and the call goes ahead with no extra
+# arguments, and only StrictUndefined raises. Both sites were deciding by type
+# where jinja2 lets the value answer; the ** half was wrong for every class.
+for _n, _src in [
+    ("star_undefined", "{% macro mm(a=0) %}[{{ a }}]{% endmacro %}{{ mm(*nope) }}"),
+    ("star_undefined_attribute",
+     "{% macro mm(a=0) %}[{{ a }}]{% endmacro %}{{ mm(*d.missing) }}"),
+    ("star_kwargs_undefined", "{% macro mm(a=0) %}[{{ a }}]{% endmacro %}{{ mm(**nope) }}"),
+    ("star_kwargs_undefined_attribute",
+     "{% macro mm(a=0) %}[{{ a }}]{% endmacro %}{{ mm(**d.missing) }}"),
+    ("star_kwargs_undefined_in_a_global", "{{ dict(**nope) }}"),
+    ("star_kwargs_undefined_in_a_filter", "{{ lst|join(**nope) }}"),
+    ("star_undefined_in_a_filter", "{{ lst|join(*nope) }}"),
+    ("star_kwargs_undefined_in_a_test", "{{ 1 is odd(**nope) }}"),
+]:
+    for _kind in ("default", "chainable", "debug", "strict"):
+        _set = {} if _kind == "default" else {"undefined": _kind}
+        case(f"errshape/{_n}_{_kind}", _src, __settings__=_set,
+             lst=[1, 2], d={"a": 1})
 
 # A `*` or `**` argument is folded with the rest when everything in it is
 # constant, and holds the fold back when it is not.

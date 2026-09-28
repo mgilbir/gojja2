@@ -1,0 +1,7 @@
+{
+  "case": "errshape/star_kwargs_undefined_in_a_filter_debug.jj2",
+  "variables": {
+    "lst": "or",
+    "nope": "or"
+  }
+}

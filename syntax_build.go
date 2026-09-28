@@ -97,6 +97,18 @@ func (b *synBuilder) declareBody(body []ast.Stmt) {
 	// agree about it as well as about the symbols -- and every name that
 	// gets one here is written, so this reaches exactly the same set.
 	for _, name := range names.storeOrder {
+		if _, mine := f.owned[name]; mine {
+			// Already this frame's own binding -- a macro parameter,
+			// a loop target, a {% with %} name -- declared before
+			// the body was walked. jinja2's Symbols.store finds that
+			// reference before it asks the enclosing table, so
+			// writing to it copies nothing from outside. Without
+			// this, `{% set x = 0 %}{% macro b(x) %}{% set x = 1 %}`
+			// marked the *parameter* an alias of the outer x, and
+			// the analysis then had it deriving from a value it can
+			// never hold.
+			continue
+		}
 		if names.stores[name] {
 			if outer := b.enclosingSymbol(name); outer != nil {
 				alias := b.declare(name, syntax.SymAlias)
