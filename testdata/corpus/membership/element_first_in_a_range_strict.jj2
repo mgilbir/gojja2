@@ -1,0 +1,15 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "d": {
+    "a": 1
+  },
+  "lst": [
+    3,
+    1,
+    2
+  ]
+}
+---
+{{ nope in range(3) }}

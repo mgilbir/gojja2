@@ -1,0 +1,6 @@
+{
+  "case": "membership/element_first_in_a_range_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

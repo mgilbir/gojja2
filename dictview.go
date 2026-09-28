@@ -378,7 +378,9 @@ func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found,
 // False because the scan compared with a form that has nowhere to put an error.
 func (v *dictView) scan(item value.Value, py value.PythonVersion) (bool, error) {
 	for _, have := range v.entries() {
-		eq, err := value.EqualErr(item, have, py)
+		// The element on the left, as every containment scan in
+		// CPython has it.
+		eq, err := value.EqualErr(have, item, py)
 		if err != nil {
 			return false, err
 		}

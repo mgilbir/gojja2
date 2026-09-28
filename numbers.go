@@ -317,15 +317,30 @@ func intToBytes(st *State, b *big.Int, args *value.CallArgs) (value.Value, error
 	}
 	out := make([]byte, length)
 	mag := new(big.Int).Abs(b)
-	if signed && b.Sign() < 0 {
-		// Two's complement in `length` bytes.
-		mod := new(big.Int).Lsh(big.NewInt(1), uint(length)*8)
-		mag = new(big.Int).Add(b, mod)
-		if mag.Sign() < 0 {
+	if signed {
+		// The signed range is [-2**(8L-1), 2**(8L-1)-1], and nothing
+		// wider: (-200).to_bytes(1) does not fit although its two's
+		// complement in one byte does, and 200 does not fit either.
+		// This checked the *complement* instead, so both rendered.
+		// Zero bytes hold zero and nothing else -- and the shift would
+		// be by -1, which is a very large uint.
+		fits := b.Sign() == 0
+		if length == 0 && st.PythonVersion().MinusOneFitsInZeroBytes() {
+			// Zero bytes held -1 as well as 0 until 3.13.
+			fits = fits || b.Cmp(big.NewInt(-1)) == 0
+		}
+		if length > 0 {
+			limit := new(big.Int).Lsh(big.NewInt(1), uint(length)*8-1)
+			fits = b.Cmp(limit) < 0 && b.Cmp(new(big.Int).Neg(limit)) >= 0
+		}
+		if !fits {
 			return value.Undefined, errs.New(errs.OverflowError, "int too big to convert")
 		}
-	}
-	if mag.BitLen() > length*8 {
+		if b.Sign() < 0 {
+			// Two's complement in `length` bytes.
+			mag = new(big.Int).Add(b, new(big.Int).Lsh(big.NewInt(1), uint(length)*8))
+		}
+	} else if mag.BitLen() > length*8 {
 		return value.Undefined, errs.New(errs.OverflowError, "int too big to convert")
 	}
 	mag.FillBytes(out)

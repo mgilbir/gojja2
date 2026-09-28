@@ -101,6 +101,14 @@ func (v PythonVersion) SliceKeysAreHashable() bool { return v.AtLeast(Python312)
 // Corpus: dictview/mapping_is_unhashable.
 func (v PythonVersion) ProxyHashNamesTheMapping() bool { return v.AtLeast(Python312) }
 
+// MinusOneFitsInZeroBytes reports whether `(-1).to_bytes(0, signed=True)` is
+// b” rather than an OverflowError.
+//
+// Zero bytes hold no value at all, and -1 was accepted there until 3.13 --
+// every other length has the range CPython documents, and 0 fits in zero bytes
+// in every version. Corpus: methods/to_bytes_signed_zero_length_negative.
+func (v PythonVersion) MinusOneFitsInZeroBytes() bool { return !v.AtLeast(Python313) }
+
 // BoolArgsAreTruthy reports whether an argument declared as a bool is tested
 // for truth rather than coerced to an integer.
 //

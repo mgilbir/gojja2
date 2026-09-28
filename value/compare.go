@@ -636,7 +636,15 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 			// rather than answering False. Comparing with Equal
 			// swallowed that, and the same held for the two object
 			// arms below.
-			eq, err := EqualErr(item, v, py)
+			//
+			// The element is the *left* operand, which is what
+			// decides whose refusal is reported when both sides
+			// have one: CPython's list_contains, tuplecontains and
+			// _PySequence_IterSearch all compare the candidate
+			// against the item, so `{{ nope in [d.nope] }}` names
+			// the element's complaint and only an element with no
+			// opinion hands the question back to the item.
+			eq, err := EqualErr(v, item, py)
 			if err != nil {
 				return false, err
 			}
@@ -675,7 +683,7 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 				if !ok {
 					continue
 				}
-				eq, err := EqualErr(item, v, py)
+				eq, err := EqualErr(v, item, py)
 				if err != nil {
 					return false, err
 				}
@@ -689,7 +697,7 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 				if err := chargeItems(budget, 1); err != nil {
 					return false, err
 				}
-				eq, err := EqualErr(item, v, py)
+				eq, err := EqualErr(v, item, py)
 				if err != nil {
 					return false, err
 				}

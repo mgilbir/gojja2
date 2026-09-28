@@ -1,0 +1,7 @@
+{
+  "case": "membership/element_first_in_a_mapped_list_strict.jj2",
+  "variables": {
+    "lst": "or",
+    "nope": "or"
+  }
+}

@@ -6129,6 +6129,29 @@ case("membership/bytes_contains_int_out_of_range", '{{ 256 in "ab".encode() }}')
 case("membership/bytes_contains_negative", '{{ -1 in "ab".encode() }}')
 case("membership/bytes_contains_other", '{{ "a" in "ab".encode() }}')
 
+# Which operand of `==` a containment scan puts on the left, which decides
+# whose refusal is reported when both have one. CPython's list_contains,
+# tuplecontains and _PySequence_IterSearch all compare the *candidate* against
+# the item, so `{{ nope in [d.nope] }}` names the element's complaint and only
+# an element with no opinion of its own hands the question back -- which is
+# what makes `{{ nope in [1, d.nope] }}` name `nope` instead. gojja2 had the
+# item on the left everywhere, so the item always won. Found by the fuzzer, on
+# `{% if nope in 7|urlencode|map(attribute='name')|list %}`.
+for _n, _src in [
+    ("in_a_list", "{{ nope in [d.nope] }}"),
+    ("in_a_tuple", "{{ nope in (d.nope,) }}"),
+    ("after_a_plain_element", "{{ nope in [1, d.nope] }}"),
+    ("the_other_way_round", "{{ d.nope in [nope] }}"),
+    ("in_a_mapped_list", "{{ nope in lst|map(attribute='name')|list }}"),
+    ("in_a_values_view", "{{ nope in {'k': d.nope}.values() }}"),
+    ("in_a_range", "{{ nope in range(3) }}"),
+    ("in_an_empty_list", "{{ nope in [] }}"),
+]:
+    for _kind in ("default", "strict"):
+        _set = {} if _kind == "default" else {"undefined": _kind}
+        case(f"membership/element_first_{_n}_{_kind}", _src,
+             __settings__=_set, d={"a": 1}, lst=[3, 1, 2])
+
 # --- tojson sorts keys as keys, then converts them -----------------------------
 # json.dumps with sort_keys sorts the key *objects* and converts them
 # afterwards. gojja2 converted first and sorted the text, which is a different
@@ -6498,6 +6521,25 @@ case("filters/round_none_is_an_integer", "{{ 2.5|round(none) }}|{{ 3.5|round(non
 # (300 in one byte is errors/to_bytes_too_big.)
 case("methods/to_bytes_wide_int", "{{ (2**100).to_bytes(4,'big') }}")
 case("methods/to_bytes_negative", "{{ (-1).to_bytes(1,'big') }}")
+# ...and the *signed* range is [-2**(8L-1), 2**(8L-1)-1], not "fits in 8L bits
+# once complemented". gojja2 checked the complement, so one byte held -200 and
+# 200 alike -- both of which CPython refuses. Zero bytes hold only zero.
+for _n, _src in [
+    ("signed_low", "{{ (-128).to_bytes(1,'big',signed=true) }}"),
+    ("signed_high", "{{ (127).to_bytes(1,'big',signed=true) }}"),
+    ("signed_under", "{{ (-129).to_bytes(1,'big',signed=true) }}"),
+    ("signed_over", "{{ (128).to_bytes(1,'big',signed=true) }}"),
+    ("signed_negative_fits_complemented", "{{ (-200).to_bytes(1,'big',signed=true) }}"),
+    ("signed_positive_fits_unsigned", "{{ (200).to_bytes(1,'big',signed=true) }}"),
+    ("signed_zero_length", "{{ (0).to_bytes(0,'big',signed=true) }}"),
+    ("signed_zero_length_negative", "{{ (-1).to_bytes(0,'big',signed=true) }}"),
+    ("signed_zero_length_positive", "{{ (1).to_bytes(0,'big',signed=true) }}"),
+    ("signed_two_bytes", "{{ (-32768).to_bytes(2,'big',signed=true) }}|"
+     "{{ (32767).to_bytes(2,'little',signed=true) }}|{{ (32768).to_bytes(2,'big',signed=true) }}"),
+    ("signed_wide", "{{ (10**30).to_bytes(16,'big',signed=true) }}|"
+     "{{ (10**40).to_bytes(16,'big',signed=true) }}"),
+]:
+    case("methods/to_bytes_" + _n, _src)
 
 # A `*` width or precision reads an argument of its own, so it can run out
 # before the conversion does.
