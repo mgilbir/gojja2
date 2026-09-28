@@ -1819,10 +1819,15 @@ func centerSplit(missing, width int) (left, right int) {
 }
 
 func pad(st *State, s string, width int, fill string, align padAlign) (value.Value, error) {
-	missing := width - value.StrLen(s)
-	if missing <= 0 {
+	// Compared before it is subtracted: a width of math.MinInt64 wraps the
+	// subtraction to a large *positive* margin, so `"abc".center(-2**63)`
+	// asked to build nine quintillion characters where CPython answers "abc"
+	// -- every width at or below the length means no padding at all.
+	n := value.StrLen(s)
+	if width <= n {
 		return value.String(s), nil
 	}
+	missing := width - n
 	// Charge the whole padding before building any of it. center splits it
 	// into two halves, and charging those separately let each pass the
 	// ceiling while their sum went straight past it -- the same way two

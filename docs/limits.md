@@ -161,6 +161,17 @@ Where CPython raises `MemoryError` for these, gojja2 raises its own
 budget to exceed, so there is nothing to match here; the divergence is the
 bound itself, which this file already records above.
 
+One narrow band of that is *not* a `MemoryError` and so is a real difference in
+wording: a `bytes` whose requested size is within `sizeof(PyBytesObject)` of
+`PY_SSIZE_T_MAX` fails CPython's structural check rather than its allocator, so
+`{{ 'abc'.encode().center(9223372036854775807) }}` and
+`{{ (3).to_bytes(9223372036854775807, 'big') }}` are
+`OverflowError: byte string is too large`, while one byte smaller than the band
+-- measured at `2**63 - 33` on the pinned interpreter -- is a `MemoryError`
+again. gojja2 answers its own byte bound throughout. Reproducing the band means
+hard-coding the size of a CPython struct, which changes with the build, and every
+value below it is unrecordable anyway; the wording is recorded here instead.
+
 Not all of them reach a `MemoryError` at all. `{{ x|slice(10000000000000000000000) }}`
 is a perfectly legal `range()` in CPython, which then walks it, so the template
 does not fail -- it runs until something outside the process stops it. gojja2

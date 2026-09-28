@@ -6425,6 +6425,17 @@ case("errors/infinity_unknown_code",
 # A NaN never carries a '-', however its sign bit is set -- and `inf - inf`
 # sets it, on CPython and here alike. `{:+}` still writes a '+'. The printf
 # side already knew this; the format-spec side signed it.
+# A grouping separates a *number*, and an infinity has no digits for it to
+# separate -- so a zero fill in front of one stays plain. gojja2 grouped the
+# fill: `{:z#015,}` of an infinity was "0,000,000,000inf" where CPython writes
+# twelve zeros and "inf". The last two hold the rule the fill does follow, which
+# is why the check is "are there any digits" rather than "is this finite".
+# Found by the fuzzer, on a spec composed of five options at once.
+case("format/infinity_fill_is_not_grouped",
+     _INF + "{{ '{:z#015,}'.format(inf) }}|{{ '{:015,}'.format(inf) }}|"
+     "{{ '{:015_}'.format(nan) }}|{{ '{:=015,f}'.format(-inf) }}|"
+     "{{ '{:015,%}'.format(inf) }}|{{ '{:015,}'.format(1) }}|"
+     "{{ '{:06,}'.format(1) }}|{{ '{:#015_x}'.format(255) }}", big=1e308)
 case("format/nan_has_no_sign",
      _INF + "{{ '{:f}'.format(nan) }}|{{ '{:+f}'.format(nan) }}|{{ '{: e}'.format(nan) }}|"
      "{{ '{:z}'.format(nan) }}|{{ '{:020g}'.format(nan) }}|{{ '{:%}'.format(nan) }}|"
@@ -6437,6 +6448,30 @@ case("format/percent_overflows",
      "{{ '{:%}'.format(big) }}|{{ '{:+%}'.format(big) }}|{{ '{:%}'.format(-big) }}|"
      "{{ '{:020%}'.format(big) }}|{{ '{:,%}'.format(big) }}|{{ '{:#.0%}'.format(big) }}|"
      "{{ '{:=10%}'.format(big) }}|{{ '{:%}'.format(small) }}", big=1e308, small=1e305)
+# A width at or below the length means no padding, however far below it is:
+# CPython compares before it subtracts, and `math.MinInt64 - 3` wraps to a large
+# *positive* margin. `b'abc'.center(-2**63)` then asked make() for that many
+# bytes and panicked with "makeslice: cap out of range", while the str side
+# asked the output budget for nine quintillion characters. zfill compared
+# already, which is how the two halves of one rule came to differ.
+for _n, _src in [
+    ("str_center", "{{ 'abc'.center(-9223372036854775808) }}"),
+    ("str_ljust", "{{ 'abc'.ljust(-9223372036854775808) }}"),
+    ("str_rjust", "{{ 'abc'.rjust(-9223372036854775808) }}"),
+    ("str_zfill", "{{ 'abc'.zfill(-9223372036854775808) }}"),
+    ("bytes_center", "{{ 'abc'.encode().center(-9223372036854775808) }}"),
+    ("bytes_ljust", "{{ 'abc'.encode().ljust(-9223372036854775808) }}"),
+    ("bytes_rjust", "{{ 'abc'.encode().rjust(-9223372036854775808) }}"),
+    ("bytes_zfill", "{{ 'abc'.encode().zfill(-9223372036854775808) }}"),
+    ("str_at_and_below", "{{ 'abc'.center(-1) }}|{{ 'abc'.center(0) }}|{{ 'abc'.center(3) }}|{{ 'abc'.center(4) }}"),
+    ("bytes_at_and_below", "{{ 'abc'.encode().center(-1) }}|{{ 'abc'.encode().center(4) }}"),
+    ("filter_center", "{{ 'abc'|center(-9223372036854775808) }}"),
+    ("filter_indent", "{{ 'a\nb'|indent(-9223372036854775808) }}"),
+    ("filter_wordwrap", "{{ 'a b'|wordwrap(-9223372036854775808) }}"),
+    ("filter_truncate", "{{ 'abcdef'|truncate(-9223372036854775808) }}"),
+]:
+    case(f"methods/pad_below_the_length_{_n}", _src)
+
 case("errors/z_not_allowed_on_int", "{{ '{:z}'.format(1) }}")
 case("errors/z_not_allowed_on_int_code", "{{ '{:zx}'.format(255) }}")
 case("errors/z_not_allowed_on_bool", "{{ '{:z}'.format(true) }}")

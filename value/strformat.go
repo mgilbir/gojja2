@@ -572,6 +572,20 @@ func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
 	return f.withSign(negative, "", body), nil
 }
 
+// isNonFiniteBody reports whether a formatted numeric body is an infinity or a
+// NaN rather than digits, which is what says a grouping has nothing to separate.
+//
+// It cannot be decided from the characters: "inf" and "nan" are spelled with
+// hexadecimal digits, so a rule of "has no digit" skipped the grouping on
+// `{:#015_x}` of 255 -- whose body past the 0x prefix is "ff".
+func isNonFiniteBody(body string) bool {
+	switch strings.TrimSuffix(body, "%") {
+	case "inf", "nan", "INF", "NAN":
+		return true
+	}
+	return false
+}
+
 // hasNonZeroDigit reports whether a formatted body still has a digit that is
 // not zero, which is what says a rounded result is not zero after all.
 func hasNonZeroDigit(body string) bool {
@@ -744,10 +758,13 @@ func (f formatSpec) pad(body string, numeric bool, budget Budget) (string, error
 			strings.IndexByte("bBoOxX", body[i+1]) >= 0 {
 			i += 2
 		}
-		if f.grouping != 0 && f.fill == '0' {
+		if f.grouping != 0 && f.fill == '0' && !isNonFiniteBody(body[i:]) {
 			// Zeros written into a grouped number join it rather
 			// than sitting in front of it, so they take separators
-			// of their own: `{:06,}` on 1 is "00,001".
+			// of their own: `{:06,}` on 1 is "00,001". There has to
+			// be a number for them to join: an infinity has no
+			// digits, so `{:015,}` of one is twelve plain zeros and
+			// "inf", not "0,000,000,000inf".
 			return body[:i] + padGrouped(body[i:], f.width-StrLen(body[:i]),
 				f.grouping, f.groupWidth()), nil
 		}

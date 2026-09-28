@@ -801,10 +801,15 @@ func bytesPad(align padAlign) func(*State, value.Value, *value.CallArgs) (value.
 		// Counted in bytes, not code points: padding a two-byte
 		// character to a width of ten leaves eight bytes of fill, not
 		// nine. strings.Builder over pad() would have counted runes.
-		gap := width - len(s)
-		if gap <= 0 {
+		//
+		// Compared before it is subtracted, as in pad(): a width of
+		// math.MinInt64 wraps the difference to a large positive gap,
+		// and the make() below then panicked with "makeslice: cap out
+		// of range" where CPython answers the receiver unchanged.
+		if width <= len(s) {
 			return value.Bytes([]byte(s)), nil
 		}
+		gap := width - len(s)
 		if err := st.ChargeBytes(int64(width)); err != nil {
 			return value.Undefined, err
 		}

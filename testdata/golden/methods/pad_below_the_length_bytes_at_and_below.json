@@ -1,0 +1,11 @@
+{
+  "case": "methods/pad_below_the_length_bytes_at_and_below.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "b'abc'|b'abc '"
+}

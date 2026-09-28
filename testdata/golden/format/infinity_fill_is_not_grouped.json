@@ -1,0 +1,11 @@
+{
+  "case": "format/infinity_fill_is_not_grouped.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "000000000000inf|000000000000inf|000000000000nan|-00000000000inf|00000000000inf%|000,000,000,001|00,001|0x000_0000_00ff"
+}
