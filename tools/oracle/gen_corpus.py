@@ -731,6 +731,13 @@ INC = {"inc.html": "[{{ v|default('none') }}]", "mac.html": "{% macro f(x) %}<{{
 case("include/basic", "{% set v = 'V' %}{% include 'inc.html' %}", __templates__=INC)
 case("include/without_context", "{% set v = 'V' %}{% include 'inc.html' without context %}", __templates__=INC)
 case("include/in_loop", "{% for v in [1,2] %}{% include 'inc.html' %}{% endfor %}", __templates__=INC)
+# An empty selection never reaches the loader: emptiness is truthiness and is
+# checked first, so every falsy operand is "an empty list of templates" -- and
+# `ignore missing` swallows even that. errors/include_empty_list has the list.
+case("include/empty_list_ignore_missing", "A{% include [] ignore missing %}B", __templates__=INC)
+case("include/empty_tuple", "{% include () %}", __templates__=INC)
+case("include/empty_string", "{% include '' %}", __templates__=INC)
+case("include/zero", "{% include 0 %}", __templates__=INC)
 case("include/missing", "A{% include 'nope.html' %}B", __templates__=INC)
 case("include/ignore_missing", "A{% include 'nope.html' ignore missing %}B", __templates__=INC)
 
@@ -1619,6 +1626,18 @@ for _n, _src in [
     ("unary_plus_string", "{{ +'x' }}"),
     ("unary_plus_list", "{{ +[1] }}"),
     ("unary_minus_string", "{{ -'x' }}"),
+    # A second round of the same audit, 2026-09-28. The two sites it named here
+    # -- value/pyformat.go's trailing "format requires a mapping" and
+    # environment.go's second "empty list of templates" -- turned out to be the
+    # unreachable kind: the first is the fallback under a switch that already
+    # handles every kind isMappingArg accepts, the second is reached only
+    # through the Go SelectTemplate API. The *message* is graded either way.
+    # What was missing was the dispatch: which operand types reach it.
+    ("percent_mapping_on_a_str", "{{ '%(a)s' % 'x' }}"),
+    ("percent_mapping_on_none", "{{ '%(a)s' % none }}"),
+    ("percent_mapping_on_a_tuple", "{{ '%(a)s' % (1, 2) }}"),
+    ("percent_mapping_on_a_set", "{{ '%(a)s' % {1, 2} }}"),
+    ("percent_mapping_on_bytes", "{{ '%(a)s' % 'ab'.encode() }}"),
 ]:
     case(f"errors/{_n}", _src)
 
@@ -1651,6 +1670,18 @@ for _n, _src in [
     ("nan_binary", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|filesizeformat(true) }}"),
     ("infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{{ b|filesizeformat }}"),
     ("negative_infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (-b)|filesizeformat }}"),
+    # A *finite* negative lands in the same branch, and int() of a float is
+    # exact however wide: int(-1e308) is 309 digits. The int64 conversion gave
+    # every magnitude past 2**63 the same answer, -9223372036854775808 -- which
+    # is also the right answer for the one just past the boundary, so the wide
+    # case is what tells the two apart.
+    ("wide_negative", "{{ -1e308|filesizeformat }}"),
+    ("wide_negative_binary", "{{ -1e308|filesizeformat(true) }}"),
+    ("wide_negative_from_text", "{{ '-1e308'|filesizeformat }}"),
+    ("just_past_int64", "{{ -9223372036854775809|filesizeformat }}"),
+    ("truncates_toward_zero",
+     "{{ -1.5|filesizeformat }}|{{ -0.5|filesizeformat }}|{{ 1.5|filesizeformat }}|"
+     "{{ -1e-320|filesizeformat }}"),
 ]:
     case(f"filters/filesizeformat_{_n}", _src)
 

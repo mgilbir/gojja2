@@ -3049,7 +3049,13 @@ func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.
 		// above is what lets a value in. It falls through to the scaling
 		// loop instead, which formats it as "nan". A check for it here
 		// was unreachable.
-		return value.String(fmt.Sprintf("%d Bytes", int64(bytes))), nil
+		//
+		// int() of a float is exact however wide it is -- int(-1e308) is
+		// 309 digits -- so the truncation goes through a big.Float. An
+		// int64 conversion saturated it to -9223372036854775808, and
+		// every magnitude past 2**63 shared that one answer.
+		n, _ := big.NewFloat(bytes).Int(nil)
+		return value.String(n.String() + " Bytes"), nil
 	}
 	// Python's `f"{x:.1f}"` writes a non-finite in words -- "nan", "inf",
 	// "-inf" -- where Go's %.1f writes "NaN" and "+Inf". Only this filter
