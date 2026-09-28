@@ -1,0 +1,4 @@
+{
+  "case": "errors/float_literal_is_not_truncated.jj2",
+  "variables": {}
+}

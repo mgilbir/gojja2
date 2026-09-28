@@ -854,7 +854,7 @@ func markupInt(v Value, verb byte, py PythonVersion) (*big.Int, error) {
 			}
 		}
 		return nil, errs.New(errs.ValueError,
-			"invalid literal for int() with base 10: %s", Repr(v))
+			"invalid literal for int() with base 10: %s", TruncatedRepr(v, py))
 	}
 	return nil, errs.New(errs.TypeError,
 		"%%%c format: a real number is required, not _MarkupEscapeHelper", verb)

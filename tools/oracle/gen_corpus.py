@@ -6577,6 +6577,25 @@ case("filters/round_none_is_an_integer", "{{ 2.5|round(none) }}|{{ 3.5|round(non
 case("methods/to_bytes_wide_int", "{{ (2**100).to_bytes(4,'big') }}")
 case("methods/to_bytes_negative", "{{ (-1).to_bytes(1,'big') }}")
 
+# int()'s complaint about a literal is formatted with CPython's `%.200R`, so a
+# long one is cut at 200 *characters* of the rendered repr -- losing its closing
+# quote, since the cut is of the repr and not of the string inside it. 198
+# characters is the last length that survives whole. float()'s message is not
+# truncated, which is why this is not a rule about reprs.
+#
+# `|int` and `|float` have defaults and swallow the error, so the shapes that
+# reach it are the type object and Markup's own `%`. Found by the fuzzer, on
+# `{{ ('%d'|safe) % '\u0664_\u0665'|center()|urlencode() }}`.
+for _n, _src in [
+    ("int_literal_truncated", "{{ (0).__class__('z' * 250, 16) }}"),
+    ("int_literal_at_the_boundary", "{{ (0).__class__('z' * 198, 16) }}"),
+    ("int_literal_one_over", "{{ (0).__class__('z' * 199, 16) }}"),
+    ("int_literal_through_markup", "{{ ('%d'|safe) % ('a' * 250) }}"),
+    ("int_literal_through_markup_short", "{{ ('%d'|safe) % ('a' * 198) }}"),
+    ("float_literal_is_not_truncated", "{{ (0.0).__class__('a' * 250) }}"),
+]:
+    case("errors/" + _n, _src)
+
 # Messages `make ungraded` said no case reached. Each was already right; what
 # was missing is a case saying so, and a message no case produces reads as
 # agreement in every version column.
