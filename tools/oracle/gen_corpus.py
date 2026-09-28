@@ -6812,6 +6812,56 @@ case("fold/order_a_root_fold_beats_a_blocks_extends",
      "{% block a %}" + _EXT + "{% endblock %}" + _refuses(7),
      __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
 
+# The same three rules again, for the other thing the generator does as it
+# writes a node out: look the filter or test up, and refuse a name the
+# environment does not have. A print tag below a root-level {% extends %} is
+# not written, so `{% extends 'base.txt' %}{{ 1|nosuch }}` renders the parent
+# where gojja2 refused to compile it -- a template jinja2 accepts, which is the
+# worse half of the divergence. The lookups inside a {% block %} happen where
+# its body is generated, after the root body, so an unknown name there loses to
+# one anywhere above.
+for _n, _src in [
+    ("below_extends", _EXT + "{{ 1|nosuchA }}"),
+    ("below_extends_a_test", _EXT + "{{ 1 is nosuchtest }}"),
+    ("below_extends_in_a_loop", _EXT + "{% for i in [1] %}{{ 1|nosuchA }}{% endfor %}"),
+    ("below_extends_in_a_filter_block",
+     _EXT + "{% filter upper %}{{ 1|nosuchA }}{% endfilter %}"),
+    ("below_extends_in_a_with", _EXT + "{% with %}{{ 1|nosuchA }}{% endwith %}"),
+    ("below_extends_in_a_branch", _EXT + "{% if true %}{{ 1|nosuchA }}{% endif %}"),
+    ("below_extends_in_a_block", _EXT + "{% block a %}{{ 1|nosuchA }}{% endblock %}"),
+    ("below_extends_in_a_macro", _EXT + "{% macro m() %}{{ 1|nosuchA }}{% endmacro %}"),
+    ("below_extends_in_a_set_block", _EXT + "{% set q %}{{ 1|nosuchA }}{% endset %}"),
+    ("below_extends_in_an_assignment", _EXT + "{% set q = 1|nosuchA %}"),
+    ("below_extends_in_a_loops_iterable",
+     _EXT + "{% for i in [1]|nosuchA %}x{% endfor %}"),
+    ("below_a_conditional_extends", "{% if true %}" + _EXT + "{% endif %}{{ 1|nosuchA }}"),
+    ("above_extends", "{{ 1|nosuchA }}" + _EXT),
+]:
+    case("fold/generated_lookup_" + _n, _src,
+         __templates__={"base.txt": "B[{% block a %}{% endblock %}]"})
+
+for _n, _src in [
+    ("root_after_a_block",
+     "{% block a %}{{ 1|nosuchA }}{% endblock %}{% set q = 1|nosuchB %}"),
+    ("root_before_a_block",
+     "{% set q = 1|nosuchB %}{% block a %}{{ 1|nosuchA }}{% endblock %}"),
+    ("a_block_loses_to_a_macro",
+     "{% block a %}{{ 1|nosuchA }}{% endblock %}"
+     "{% macro m() %}{{ 1|nosuchB }}{% endmacro %}"),
+    ("a_macro_stays_where_it_is",
+     "{% macro m() %}{{ 1|nosuchB }}{% endmacro %}"
+     "{% block a %}{{ 1|nosuchA }}{% endblock %}"),
+    ("a_nested_block_is_last",
+     "{% block a %}{% block b %}{{ 1|nosuchB }}{% endblock %}{{ 1|nosuchA }}"
+     "{% endblock %}{% block c %}{{ 1|nosuchC }}{% endblock %}"),
+    ("a_loop_beats_a_block",
+     "{% for i in [1] %}{{ 1|nosuchA }}{% endfor %}"
+     "{% block a %}{{ 1|nosuchB }}{% endblock %}"),
+    ("a_branch_defers_and_a_block_does_not",
+     "{% if true %}{{ 1|nosuchA }}{% endif %}{% block a %}{{ 1|nosuchB }}{% endblock %}"),
+]:
+    case("fold/order_lookup_" + _n, _src)
+
 # A macro parameter that was not provided binds to an undefined carrying a
 # *hint* -- jinja2's `undefined(f"parameter {name!r} was not provided")` -- not
 # to one named after the parameter. The difference only speaks when the undefined

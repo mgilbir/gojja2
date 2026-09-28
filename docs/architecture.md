@@ -71,14 +71,22 @@ flowchart TD
 Four things about this path catch people out.
 
 **The order of those boxes is observable.** A fold that refuses ends the
-compile, so which of two broken expressions is named depends on which is folded
-first — and jinja2 folds from its *code generator*, node by node, rather than in
-a pass of its own. Three consequences are reproduced here: a block's body is
-folded after the whole root body (and blocks in the order the pre-pass collected
-them, not where they are written); a print tag below a root-level
-`{% extends %}` is never folded at all, because the generator leaves it out
-rather than guarding it; and a duplicate block name, collected before a line is
-generated, beats every fold. `fold/order_*` in the corpus grades each one.
+compile, and so does an unknown filter name, so which of two broken expressions
+is named depends on which is reached first — and jinja2 does both from its *code
+generator*, node by node, rather than in passes of its own. Three consequences
+are reproduced in the fold and in the dependency check alike: a block's body is
+handled after the whole root body (and blocks in the order the pre-pass
+collected them, not where they are written); a print tag below a root-level
+`{% extends %}` is not handled at all, because the generator leaves it out
+rather than guarding it — `{% extends 'base.txt' %}{{ 1|nosuch }}` renders the
+parent; and a duplicate block name, collected before a line is generated, beats
+both. `fold/order_*` and `fold/generated_*` in the corpus grade each one.
+
+What is *not* reproduced is the interleaving of the two: jinja2 folds an
+expression and looks its filters up in one walk, so
+`{{ 1|nosuch }}{{ (0 ** 0)[7] and 0 }}` names the filter and the same two
+swapped name the subscript. Both are refusals of a template that is broken
+either way, and gojja2 names the fold's.
 
 **Compilation takes no `context.Context` and has no budget.** The bounds in
 [limits.md](limits.md) are *render* bounds. What protects compile time instead is

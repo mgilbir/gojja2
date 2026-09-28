@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "base.txt": "B[{% block a %}{% endblock %}]"
+  }
+}
+---
+{% extends 'base.txt' %}{% for i in [1]|nosuchA %}x{% endfor %}

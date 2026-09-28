@@ -17,10 +17,32 @@ import (
 // deferred to runtime, because the branch may never execute. The error differs
 // too -- "No test named 'x'." when compiled, "No test named 'x' found." when
 // it finally runs -- so the distinction is visible and worth keeping.
-func (e *Environment) checkDependencies(body []ast.Stmt, name, source string) error {
-	c := &depChecker{env: e, name: name, source: source, topLevel: true}
+func (e *Environment) checkDependencies(body []ast.Stmt, blocks []*ast.Block, name, source string) error {
+	c := &depChecker{
+		env: e, name: name, source: source,
+		topLevel: true, rootlevel: true,
+		outputChecked: containsExtends(body),
+	}
 	c.stmts(body, false)
+	// A {% block %} body is generated after the whole root body, and the
+	// lookups inside one are made there -- so `{% block a %}{{ 1|nosuchA }}
+	// {% endblock %}{% set q = 1|nosuchB %}` names nosuchB. See
+	// foldConstantExpressions, which walks the same order for the same
+	// reason.
+	for _, blk := range blocks {
+		c.block(blk)
+	}
 	return c.err
+}
+
+// block checks one {% block %} body, which is compiled into a function of its
+// own: nothing it prints is guarded by the extends check, and it is not top
+// level. A nested block is not reached from here; it has its own entry.
+func (c *depChecker) block(n *ast.Block) {
+	savedTop, savedRoot, savedOut := c.topLevel, c.rootlevel, c.outputChecked
+	c.topLevel, c.rootlevel, c.outputChecked = false, false, false
+	c.stmts(n.Body, false)
+	c.topLevel, c.rootlevel, c.outputChecked = savedTop, savedRoot, savedOut
 }
 
 type depChecker struct {
@@ -32,6 +54,15 @@ type depChecker struct {
 	// into the template's own function. Only `{% extends %}` reads it; see
 	// inner for what clears it.
 	topLevel bool
+	// rootlevel, outputChecked and knownExtends are the generator's flags
+	// of those names: below an {% extends %} the root body reaches
+	// unconditionally, a print tag is not generated at all -- so the
+	// filters and tests inside one are never looked up, and
+	// `{% extends 'b' %}{{ 1|nosuch }}` renders the parent rather than
+	// refusing to compile. foldConstantExpressions carries the same three.
+	rootlevel     bool
+	outputChecked bool
+	knownExtends  bool
 }
 
 // inner walks a body that jinja2 compiles into a frame of its own.
@@ -50,10 +81,31 @@ type depChecker struct {
 //	{% if nil %}{{ 1|nosuch }}{% endif %}                              renders ""
 //	{% if nil %}{% for i in xs %}{{ 1|nosuch }}{% endfor %}{% endif %}  refused
 func (c *depChecker) inner(body []ast.Stmt) {
-	saved := c.topLevel
-	c.topLevel = false
+	savedTop, savedRoot := c.topLevel, c.rootlevel
+	c.topLevel, c.rootlevel = false, false
 	c.stmts(body, false)
-	c.topLevel = saved
+	c.topLevel, c.rootlevel = savedTop, savedRoot
+}
+
+// detached walks a body the generator writes into a buffer of its own: a macro,
+// a {% call %} block and a {% set %} with a body. None of them writes to the
+// template's own stream, so what they print is generated whatever the extends
+// above them says.
+func (c *depChecker) detached(body []ast.Stmt) {
+	saved := c.outputChecked
+	c.outputChecked = false
+	c.inner(body)
+	c.outputChecked = saved
+}
+
+// soft walks a branch's body, which the generator writes inline: it stays top
+// level -- that is what makes a conditional {% extends %} legal -- but an
+// extends inside one is not the known extends.
+func (c *depChecker) soft(body []ast.Stmt) {
+	saved := c.rootlevel
+	c.rootlevel = false
+	c.stmts(body, true)
+	c.rootlevel = saved
 }
 
 func (c *depChecker) fail(kind string, filterName string, line int) {
@@ -80,6 +132,10 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 	}
 	switch n := stmt.(type) {
 	case *ast.Output:
+		if c.outputChecked && c.knownExtends {
+			// Not generated at all, so nothing in it is looked up.
+			return
+		}
 		c.exprs(n.Nodes, soft)
 	case *ast.For:
 		// `loop` is bound by the loop itself, so assigning it anywhere
@@ -98,19 +154,19 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 	case *ast.If:
 		// An if softens its whole subtree, condition and body alike.
 		c.expr(n.Test, true)
-		c.stmts(n.Body, true)
+		c.soft(n.Body)
 		for _, elif := range n.Elif {
 			c.expr(elif.Test, true)
-			c.stmts(elif.Body, true)
+			c.soft(elif.Body)
 		}
-		c.stmts(n.Else, true)
+		c.soft(n.Else)
 	case *ast.Assign:
 		c.expr(n.Node, soft)
 	case *ast.AssignBlock:
 		// The filter runs over the block's buffer, and is resolved with
 		// that buffer's frame rather than the one the block sits in.
 		c.expr(n.Filter, false)
-		c.inner(n.Body)
+		c.detached(n.Body)
 	case *ast.With:
 		c.exprs(n.Values, soft)
 		c.inner(n.Body)
@@ -119,21 +175,22 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 		// Defaults are part of the macro's signature, generated with the
 		// body rather than at the point of definition.
 		c.exprs(n.Defaults, false)
-		c.inner(n.Body)
+		c.detached(n.Body)
 	case *ast.CallBlock:
 		c.checkCallerDefault(n.Args, n.Defaults, n.Line())
 		// The call itself is made where the block is written, so it
 		// softens; the block's own parameters belong to its signature.
 		c.expr(n.Call, soft)
 		c.exprs(n.Defaults, false)
-		c.inner(n.Body)
+		c.detached(n.Body)
 	case *ast.FilterBlock:
 		// The filter naming the block is resolved where the block is
 		// generated, which happens whether or not the branch runs.
 		c.expr(n.Filter, false)
 		c.inner(n.Body)
 	case *ast.Block:
-		c.inner(n.Body)
+		// Nothing: where a block is written the generator only calls it.
+		// Its body is checked by block, after the root body.
 	case *ast.ExprStmt:
 		c.expr(n.Node, soft)
 	case *ast.Include:
@@ -150,8 +207,15 @@ func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
 		// inheritance and a non-empty one applied it.
 		if !c.topLevel {
 			c.failAt(n.Line(), "cannot use extend from a non top-level scope")
+			return
 		}
 		c.expr(n.Template, soft)
+		// Only an extends the root body reaches unconditionally silences
+		// the print tags below it; one inside an {% if %} leaves them
+		// generated, and guarded at run time instead.
+		if c.rootlevel {
+			c.knownExtends = true
+		}
 	case *ast.Scope:
 		c.inner(n.Body)
 	case *ast.AutoescapeBlock:
