@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}{{ (0 ** 0)[7] and 0 }}

@@ -202,6 +202,53 @@ func (f *constFolder) check(e ast.Expr) {
 	if f.dep.err != nil {
 		f.c.refusal = f.dep.err
 	}
+	if f.c.lateRefusal == nil {
+		f.c.lateRefusal = repeatedKeyword(e, f.c.name, f.c.source)
+	}
+}
+
+// repeatedKeyword reports the first call, filter or test in an expression that
+// names a keyword twice.
+//
+// jinja2 writes a call's keywords out as `name=value` pairs, so CPython's own
+// compiler refuses the generated module -- `{{ m(a=1, a=2) }}` does not compile
+// there and rendered here, the direction of divergence that costs a template
+// author something. A node that folded first is gone by now, which is what
+// makes `{{ [1]|join(d='-', d='+') }}` render on both sides.
+func repeatedKeyword(e ast.Expr, name, source string) error {
+	var refusal error
+	ast.Inspect(e, func(n ast.Node) bool {
+		if refusal != nil {
+			return false
+		}
+		var args *ast.Args
+		switch v := n.(type) {
+		case *ast.Call:
+			args = &v.Args
+		case *ast.Filter:
+			args = &v.Args
+		case *ast.Test:
+			args = &v.Args
+		default:
+			return true
+		}
+		seen := make(map[string]bool, len(args.Kwargs))
+		for _, kw := range args.Kwargs {
+			if seen[kw.Key] {
+				// CPython's wording, with the line of the
+				// template rather than of the module it was
+				// compiled into. See docs/divergences.md.
+				err := errs.New(errs.SyntaxError,
+					"keyword argument repeated: %s", kw.Key)
+				err.Line, err.Name, err.Source = n.Line(), name, source
+				refusal = err
+				return false
+			}
+			seen[kw.Key] = true
+		}
+		return true
+	})
+	return refusal
 }
 
 // foldCheck is what the generator does to an expression it writes: fold it,
@@ -1035,6 +1082,11 @@ type constEvaluator struct {
 	// going to be returned either way and a second refusal would only
 	// change which of two broken expressions is named.
 	refusal error
+	// lateRefusal is a repeated keyword argument, which is a SyntaxError
+	// out of the *generated module* -- so CPython raises it only once the
+	// whole module has been written, and every refusal the generator itself
+	// makes wins. It is kept aside for that reason and reported last.
+	lateRefusal error
 }
 
 // refuse records a refusal that must end the compile, and reports the
@@ -1241,7 +1293,14 @@ func (c *constEvaluator) constArgs(a ast.Args) (*value.CallArgs, bool) {
 		if !ok {
 			return nil, false
 		}
-		out.Kwargs = append(out.Kwargs, value.Kwarg{Name: kw.Key, Value: v})
+		// Last wins. jinja2 folds a call's keywords through a dict
+		// comprehension, `{k.key: k.value.as_const() ...}`, where a
+		// repeated name keeps the last quietly -- and a repeated name
+		// in a node that does *not* fold is a SyntaxError out of the
+		// generated module, so this is the only place one survives:
+		// `{{ [1]|join(d='-', d='+') }}` renders where
+		// `{{ lst|join(d='-', d='+') }}` does not compile.
+		setKwarg(out, kw.Key, v)
 	}
 	if a.DynArgs != nil {
 		v, ok := c.constEval(a.DynArgs)
@@ -1284,19 +1343,23 @@ func (c *constEvaluator) extendPos(out *value.CallArgs, v value.Value) bool {
 // so `join(d="-", **{"d": "+"})` folds to "+" where the unfolded call raises
 // "got multiple values". A key that is not a string is left to the call, which
 // is where CPython refuses it.
+// setKwarg binds a keyword in a folded call, replacing one of the same name.
+func setKwarg(out *value.CallArgs, name string, v value.Value) {
+	for i := range out.Kwargs {
+		if out.Kwargs[i].Name == name {
+			out.Kwargs[i].Value = v
+			return
+		}
+	}
+	out.Kwargs = append(out.Kwargs, value.Kwarg{Name: name, Value: v})
+}
+
 func (c *constEvaluator) updateKwargs(out *value.CallArgs, v value.Value) bool {
 	set := func(k, item value.Value) bool {
 		if k.Kind() != value.KindString {
 			return false
 		}
-		name := k.AsString()
-		for i := range out.Kwargs {
-			if out.Kwargs[i].Name == name {
-				out.Kwargs[i].Value = item
-				return true
-			}
-		}
-		out.Kwargs = append(out.Kwargs, value.Kwarg{Name: name, Value: item})
+		setKwarg(out, k.AsString(), item)
 		return true
 	}
 	if d, ok := v.Dict(); ok {

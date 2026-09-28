@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "base.txt": "B"
+  }
+}
+---
+{% extends 'base.txt' %}{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}

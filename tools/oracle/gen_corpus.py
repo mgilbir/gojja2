@@ -4028,6 +4028,50 @@ case("errors/caller_param_called_without_a_default",
      "{% macro m(caller) %}{{ caller() }}{% endmacro %}x")
 case("errors/caller_param_used_in_a_call_blocks_signature",
      "{% macro m() %}{{ caller(5) }}{% endmacro %}{% call(caller) m() %}{{ caller }}{% endcall %}")
+
+# --- a keyword written twice in one call --------------------------------------
+# jinja2 writes a call's keywords out as `name=value` pairs, so CPython's own
+# compiler refuses the *generated module*: `{{ m(a=1, a=2) }}` does not compile
+# there. gojja2 bound the first and swept the second into kwargs, which is the
+# direction of divergence that costs a template author something -- the template
+# worked here and failed under jinja2. It is refused now, with CPython's wording
+# and the line of the template rather than of the module, so these are listed in
+# known_failures.txt beside the repeated *parameter* name, for the same reason.
+case("errors/keyword_repeated_in_a_macro_call",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}")
+case("errors/keyword_repeated_in_a_filter", "{{ lst|join(d='-', d='+') }}", lst=[1, 2])
+case("errors/keyword_repeated_in_a_test",
+     "{{ n3 is divisibleby(num=2, num=3) }}", n3=3)
+case("errors/keyword_repeated_in_a_global", "{{ dict(a=1, a=2) }}")
+case("errors/keyword_repeated_in_a_method", "{{ s.split(sep='a', sep='b') }}", s="ab")
+case("errors/keyword_repeated_in_a_call_block",
+     "{% macro m(a=1) %}{{ a }}{{ caller() }}{% endmacro %}"
+     "{% call m(a=2, a=3) %}c{% endcall %}")
+case("errors/keyword_repeated_among_three",
+     "{% macro m(a=1, b=2) %}{{ a }}{% endmacro %}{{ m(b=1, a=2, b=3) }}")
+case("errors/keyword_repeated_in_a_dead_branch",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{% if false %}{{ m(a=2, a=3) }}{% endif %}ok")
+
+# ...unless the node folds first, and then it never reaches the generator at
+# all: jinja2's `as_const` collects the keywords through a dict comprehension,
+# where a repeated name quietly keeps the last. So the same filter over a
+# literal renders, and over a name does not compile. These are exact matches,
+# not known failures, and they are the half that says the refusal is placed in
+# the right phase rather than in the parser.
+case("fold/keyword_repeated_but_folded", "{{ [1]|join(d='-', d='+') }}")
+case("fold/keyword_repeated_in_a_folded_assignment",
+     "{% set v = [1]|join(d='-', d='+') %}[{{ v }}]")
+case("fold/keyword_repeated_below_extends",
+     "{% extends 'base.txt' %}{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}",
+     __templates__={"base.txt": "B"})
+case("fold/order_a_lookup_beats_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}{{ 1|nosuchA }}")
+case("fold/order_a_later_fold_beats_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}"
+     "{{ (0 ** 0)[7] and 0 }}", __settings__={"undefined": "strict"})
+case("fold/order_a_block_twice_beats_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{% block b %}{% endblock %}"
+     "{% block b %}{% endblock %}{{ m(a=2, a=3) }}")
 case("runtime/loop_call_keyword",
      "{% for i in [[1],[2]] recursive %}{{ loop(iterable=i) if i is sequence else i }}{% endfor %}")
 case("runtime/macro_repr",

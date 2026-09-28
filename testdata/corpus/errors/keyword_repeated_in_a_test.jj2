@@ -1,0 +1,5 @@
+{
+  "n3": 3
+}
+---
+{{ n3 is divisibleby(num=2, num=3) }}

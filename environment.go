@@ -935,6 +935,12 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	if folder.refusal != nil {
 		return nil, folder.refusal
 	}
+	// After all of those: a repeated keyword is CPython refusing the module
+	// jinja2 generated, which happens once the generator has finished, so
+	// anything the generator itself refuses comes first.
+	if folder.lateRefusal != nil {
+		return nil, folder.lateRefusal
+	}
 	// After the fold, so a handler spelled as constant pieces is a literal
 	// by now, and last, so a template that is broken outright says so
 	// before it is told about a construct that merely diverges.

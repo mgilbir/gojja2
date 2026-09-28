@@ -37,6 +37,7 @@ are safety controls rather than behavioural choices, and they live in
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
 | [A folded infinity jinja2 writes out](#a-folded-infinity-jinja2-writes-out) | renders the number; jinja2 raises `NameError: name 'inf' is not defined` | No -- it renders where CPython cannot |
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
+| [A keyword written twice in one call](#a-keyword-written-twice-in-one-call) | both refuse it; the wording differs | No -- only the message differs |
 | [A break or a continue that binds to no loop](#a-break-or-a-continue-that-binds-to-no-loop) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
@@ -177,6 +178,42 @@ The duplicate is refused in a *signature* and nowhere else, which is also
 jinja2's rule: `{% for a, a in ... %}`, `{% set a, a = 1, 2 %}` and
 `{% with a = 1, a = 2 %}` all let the later binding win, and a macro may be
 redefined.
+
+### A keyword written twice in one call
+
+```jinja
+{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}
+```
+
+CPython raises `SyntaxError: keyword argument repeated: a (<template>, line
+23)`. jinja2 writes a call's keywords out as `name=value` pairs, so the
+duplicate reaches the Python compiler -- and line 23 is a line of the module
+jinja2 generated, not of the template.
+
+gojja2 refuses the template too, with CPython's wording and the line the
+template actually wrote:
+
+```
+SyntaxError: keyword argument repeated: a
+```
+
+As with [a repeated parameter name](#a-macro-with-a-repeated-parameter-name),
+this was a *behavioural* divergence first: gojja2 bound the first keyword and
+swept the second into `kwargs`, so `{{ m(a=2, a=3) }}` rendered `2` here and
+failed to compile under CPython.
+
+The refusal is placed where jinja2's is, which is not the parser. A node that
+folds never reaches the generator, and jinja2's `as_const` collects keywords
+through a dict comprehension -- where a repeated name quietly keeps the last. So
+
+```jinja
+{{ [1]|join(d='-', d='+') }}   renders 1 on both sides
+{{ lst|join(d='-', d='+') }}   compiles on neither
+```
+
+and `{% extends %}` above a print tag takes it out of the generator's hands
+entirely, so the repeated keyword below one is never seen. `fold/keyword_
+repeated_*` grades all three.
 
 ### A break or a continue that binds to no loop
 

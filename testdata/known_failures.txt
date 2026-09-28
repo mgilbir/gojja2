@@ -75,6 +75,26 @@ own/limits/integer_width_power.jj2      # gojja2 bounds a computed integer at 2*
 # the template was run under CPython. See docs/divergences.md.
 own/macro/duplicate_parameter.jj2   # same refusal, different wording: jinja2 names a generated identifier
 
+# --- a keyword written twice in one call --------------------------------------
+# The same shape one level out, and the same admission. jinja2 writes a call's
+# keywords as `name=value` pairs, so CPython refuses the module it generated and
+# names a line *of that module*: "keyword argument repeated: a (<template>,
+# line 23)". gojja2 has no module to name a line of and stops at the wording.
+#
+# This too was behavioural until the call was refused: gojja2 bound the first
+# and swept the second into kwargs, so `{{ m(a=1, a=2) }}` rendered here and
+# failed under jinja2. A node that *folds* first never reaches the generator and
+# is not refused on either side -- fold/keyword_repeated_but_folded grades that
+# half, and it is an exact match. See docs/divergences.md.
+own/errors/keyword_repeated_in_a_macro_call.jj2   # CPython names a line of the generated module
+own/errors/keyword_repeated_in_a_filter.jj2       # likewise
+own/errors/keyword_repeated_in_a_test.jj2         # likewise
+own/errors/keyword_repeated_in_a_global.jj2       # likewise
+own/errors/keyword_repeated_in_a_method.jj2       # likewise
+own/errors/keyword_repeated_in_a_call_block.jj2   # likewise
+own/errors/keyword_repeated_among_three.jj2       # likewise
+own/errors/keyword_repeated_in_a_dead_branch.jj2  # likewise
+
 # --- a builtin type's generic alias -------------------------------------------
 # Python 3.9 made a builtin type subscriptable as a *type annotation*, so
 # `dict['k']` is a types.GenericAlias whose repr is `dict['k']`, not a lookup.
