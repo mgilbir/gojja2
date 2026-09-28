@@ -266,8 +266,8 @@ error, and a mutation changes one choice rather than corrupting a tag. A
 divergence is shrunk against the same check before it is reported, so findings
 arrive minimal.
 
-A case is an *environment* as well as a template, and **ten settings are drawn
-alongside it**. Every one of them was fixed at jinja2's default once, and each
+A case is an *environment* as well as a template, and **eleven settings are
+drawn alongside it**. Every one of them was fixed at jinja2's default once, and each
 turned out to hide something.
 
 *What the engine does with a value:* **autoescaping**, and the **Undefined
@@ -282,10 +282,11 @@ whitespace rule goes wrong. **`newline_sequence`** is the fourth: it had no
 corpus case at all, and it changes what a string *literal is*, because jinja2
 normalises the newlines it finds in the template before the parser sees them.
 
-*What counts as a tag:* the six **delimiters** and the **line-statement
-prefix**, which is the lexer's whole job -- a custom set changes what is data,
-where whitespace control attaches, and which of three openings a `{` starts;
-a prefix turns every tag into `# if x` on a line of its own. Both are applied by
+*What counts as a tag:* the six **delimiters**, the **line-statement prefix**
+and the **line-comment prefix**, which is the lexer's whole job -- a custom set
+changes what is data, where whitespace control attaches, and which of three
+openings a `{` starts; the prefixes turn every tag into `# if x` on a line of its
+own and every comment into `## c`. Both are applied by
 rewriting the finished template rather than threading the strings through every
 arm of the generator: both engines are handed the identical bytes, which is all
 the comparison needs. Two details make that work -- the *auxiliary* templates are
@@ -299,7 +300,7 @@ The parser knows `{% break %}`, `{% continue %}` and `{% do %}`, all three need
 an extension, and for as long as the run enabled none of them those statements
 were graded by two hand-written corpus cases and nothing else.
 
-`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as a tenth axis,
+`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as an eleventh axis,
 configuring both sides to match.
 
 Both engines are handed the same settings from one function, because there were

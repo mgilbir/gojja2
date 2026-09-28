@@ -280,6 +280,9 @@ type GeneratedCase struct {
 	Trim                bool
 	Lstrip              bool
 	KeepTrailingNewline bool
+	// LineCommentPrefix, when set, is the prefix that makes the rest of a
+	// line a comment -- jinja2's line_comment_prefix. See asLineStatements.
+	LineCommentPrefix string
 	// LineStatementPrefix, when set, is the prefix that makes a whole line a
 	// statement -- jinja2's line_statement_prefix. See asLineStatements.
 	LineStatementPrefix string
@@ -338,14 +341,30 @@ type Delimiters struct {
 // Rewriting the finished template rather than teaching every arm to write two
 // forms, for the same reason the delimiters are: both engines are handed the
 // same bytes.
-func asLineStatements(text, prefix string) string {
-	if prefix == "" {
+func asLineStatements(text, prefix, commentPrefix string) string {
+	if prefix == "" && commentPrefix == "" {
 		return text
 	}
 	var b strings.Builder
 	raw := false
 	for i := 0; i < len(text); {
-		if !strings.HasPrefix(text[i:], "{%") {
+		// A comment goes the same way, when a comment prefix was drawn:
+		// `{# c #}` becomes "\n## c\n". The rest of the line after the
+		// prefix is the comment, so the newline after it is what ends
+		// one -- and a comment holding a newline of its own cannot be
+		// written this way at all, which is why the text is checked.
+		if commentPrefix != "" && !raw && strings.HasPrefix(text[i:], "{#") {
+			if end := strings.Index(text[i:], "#}"); end >= 0 {
+				inner := strings.TrimSpace(strings.Trim(
+					text[i+2:i+end], "-+ \t"))
+				if !strings.ContainsAny(inner, "\r\n") {
+					b.WriteString("\n" + commentPrefix + " " + inner + "\n")
+					i += end + 2
+					continue
+				}
+			}
+		}
+		if prefix == "" || !strings.HasPrefix(text[i:], "{%") {
 			b.WriteByte(text[i])
 			i++
 			continue
@@ -419,7 +438,24 @@ func (d *Delimiters) Rewrite(text string) string {
 var undefinedKinds = []string{"", "", "", "strict", "chainable", "debug"}
 
 // GenerateCase builds a template and the environment it renders under.
-func GenerateCase(input []byte) GeneratedCase {
+func GenerateCase(input []byte) GeneratedCase { return generateCase(input, true) }
+
+// GenerateDefaultCase is GenerateCase under jinja2's *default* environment: the
+// settings are still drawn, so the same bytes give the same template, and then
+// dropped -- along with the delimiter and line-prefix rewrites that depend on
+// them.
+//
+// It is for the properties that ask about the template rather than about the
+// environment. TestEncodingTheSameMeansRenderingTheSame compares two templates
+// that encode to the same tree and requires the same output: a difference in
+// *settings* is not a missing distinction in the vocabulary, so the settings
+// have to be either in the key or out of the draw. In the key they left 16 pairs
+// to compare where there had been 890, because eleven settings agreeing by
+// chance is rare; out of the draw they leave the question the property is
+// actually asking.
+func GenerateDefaultCase(input []byte) GeneratedCase { return generateCase(input, false) }
+
+func generateCase(input []byte, withEnvironment bool) GeneratedCase {
 	g := &generator{c: &chooser{b: input}}
 	// Drawn before the template so that one byte decides it, and so that
 	// the same bytes after it generate the same template either way --
@@ -444,6 +480,7 @@ func GenerateCase(input []byte) GeneratedCase {
 	// one the soak reached last: a whole line is a statement, which changes
 	// where a tag ends and what the whitespace settings have to work with.
 	linePrefix := g.c.pick([]string{"", "", "", "", "", "#", "%"})
+	lineComment := g.c.pick([]string{"", "", "", "", "", "##", "//"})
 	var extensions []string
 	if g.do {
 		extensions = append(extensions, "do")
@@ -452,8 +489,12 @@ func GenerateCase(input []byte) GeneratedCase {
 		extensions = append(extensions, "loopcontrols")
 	}
 	g.template()
+	if !withEnvironment {
+		return GeneratedCase{Source: g.b.String()}
+	}
 	return GeneratedCase{
-		Source:              delims.Rewrite(asLineStatements(g.b.String(), linePrefix)),
+		Source: delims.Rewrite(
+			asLineStatements(g.b.String(), linePrefix, lineComment)),
 		Autoescape:          autoescape,
 		Undefined:           undefined,
 		Trim:                trim,
@@ -463,6 +504,7 @@ func GenerateCase(input []byte) GeneratedCase {
 		NewlineSequence:     newline,
 		Delimiters:          delims,
 		LineStatementPrefix: linePrefix,
+		LineCommentPrefix:   lineComment,
 	}
 }
 

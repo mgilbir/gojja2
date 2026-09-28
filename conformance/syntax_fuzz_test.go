@@ -70,10 +70,12 @@ func TestSyntaxDifferential(t *testing.T) {
 	t.Logf("syntax differential: %d generated templates compared against "+
 		"CPython jinja2 (seed %d), %d empty; %d of the analysis's negatives "+
 		"checked by rendering; lexer %d trim, %d lstrip, %d keep-newline, "+
-		"%d crlf, %d cr, %d custom delimiters, %d line statements",
+		"%d crlf, %d cr, %d custom delimiters, %d line statements, "+
+		"%d line comments",
 		checked, seed, skipped, claims,
 		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
-		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"], lexRuns["lineprefix"])
+		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"], lexRuns["lineprefix"],
+		lexRuns["linecomment"])
 }
 
 // compareSyntax returns a description of the first divergence, or "".
@@ -265,7 +267,11 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 		for i := range input {
 			input[i] = byte(rng.UintN(256))
 		}
-		c := conformance.GenerateCase(input)
+		// The default environment, because this asks about the
+		// *template*: two that encode alike must render alike, and a
+		// difference in settings is not a missing distinction in the
+		// vocabulary. See GenerateDefaultCase.
+		c := conformance.GenerateDefaultCase(input)
 		if strings.TrimSpace(c.Source) == "" {
 			continue
 		}
@@ -292,18 +298,19 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		// Autoescaping and the Undefined class are the environment's,
-		// not the template's, so two templates that encode the same
-		// under different settings are not a collision. The Undefined
-		// class was missed when it became a generated setting, and the
-		// pair it invented looked exactly like a missing distinction in
-		// the vocabulary: `{{+ (n)[0] -}}` printed nothing and
-		// `{{ (n)[0] -}}` printed a debug hint, for no reason in the
-		// syntax at all.
-		key := c.Undefined + "\x00" + string(raw)
-		if c.Autoescape {
-			key = "escaped\x00" + key
-		}
+		// The *environment* goes in the key beside the tree, because two
+		// templates that encode the same under different settings are
+		// not a collision. It comes from caseSettings rather than from a
+		// list written here: the Undefined class was missed when it
+		// became a generated setting, and the pair it invented looked
+		// exactly like a missing distinction in the vocabulary --
+		// `{{+ (n)[0] -}}` printed nothing and `{{ (n)[0] -}}` printed a
+		// debug hint, for no reason in the syntax at all. The lexer
+		// settings were missed the same way when the delimiters became
+		// one: an auxiliary template rewritten for `<<`/`>>` does not
+		// lex where the default one loads, so an `{% include %}` that
+		// encodes identically renders an error.
+		key := string(raw)
 
 		prev, ok := byTree[key]
 		if !ok {
