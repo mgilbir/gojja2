@@ -1800,6 +1800,9 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, cyclic bool, inde
 		}
 		return pformatString(st, b, v.AsString(), rep, indent, allowance, level+1)
 
+	case value.KindBytes:
+		return pformatBytes(st, b, v.AsString(), rep, indent, allowance, level+1)
+
 	case value.KindList, value.KindTuple:
 		s, _ := v.Seq()
 		open, close := "[", "]"
@@ -2051,6 +2054,71 @@ func pformatString(st *State, b *strings.Builder, text, rep string, indent, allo
 		b.WriteString(chunk)
 	}
 	if level == 1 {
+		b.WriteString(")")
+	}
+	return nil
+}
+
+// pformatBytes is pprint's _pprint_bytes: a bytes whose repr does not fit is
+// split into four-byte-aligned pieces, one literal per line, wrapped in
+// parentheses at the top level -- which is what makes adjacent literals one
+// value in Python source.
+//
+// Four bytes or fewer are printed whole however little room is left, because
+// CPython checks the length of the *value* and not of its repr. Nothing wrapped
+// a bytes here at all before: the pprint dispatch had arms for str, list, tuple
+// and dict, and everything else fell through to its repr on one line. A
+// coverage-guided run found it, on a 256-byte maketrans table.
+func pformatBytes(st *State, b *strings.Builder, data, rep string,
+	indent, allowance, level int) error {
+	if len(data) <= 4 {
+		b.WriteString(rep)
+		return nil
+	}
+	parens := level == 1
+	if parens {
+		indent++
+		allowance++
+		b.WriteString("(")
+	}
+	// _wrap_bytes_repr: gather whole four-byte groups while the repr of what
+	// has been gathered still fits. The allowance is charged against the
+	// group that *starts* the last whole four, so a length that is already a
+	// multiple of four never charges it -- CPython's loop never reaches that
+	// index.
+	width := pprintWidth - indent
+	last := len(data) / 4 * 4
+	current, delim := "", ""
+	write := func(piece string) {
+		b.WriteString(delim)
+		b.WriteString(value.ReprFor(value.Bytes([]byte(piece)), st.PythonVersion()))
+		if delim == "" {
+			delim = "\n" + pprintIndent(indent)
+		}
+	}
+	for i := 0; i < len(data); i += 4 {
+		if err := st.Poll(); err != nil {
+			return err
+		}
+		end := min(i+4, len(data))
+		part := data[i:end]
+		candidate := current + part
+		if i == last {
+			width -= allowance
+		}
+		if len(value.ReprFor(value.Bytes([]byte(candidate)), st.PythonVersion())) > width {
+			if current != "" {
+				write(current)
+			}
+			current = part
+			continue
+		}
+		current = candidate
+	}
+	if current != "" {
+		write(current)
+	}
+	if parens {
 		b.WriteString(")")
 	}
 	return nil

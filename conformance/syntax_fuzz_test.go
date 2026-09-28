@@ -70,21 +70,17 @@ func TestSyntaxDifferential(t *testing.T) {
 	t.Logf("syntax differential: %d generated templates compared against "+
 		"CPython jinja2 (seed %d), %d empty; %d of the analysis's negatives "+
 		"checked by rendering; lexer %d trim, %d lstrip, %d keep-newline, "+
-		"%d crlf, %d cr",
+		"%d crlf, %d cr, %d custom delimiters",
 		checked, seed, skipped, claims,
 		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
-		lexRuns["crlf"], lexRuns["cr"])
+		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"])
 }
 
 // compareSyntax returns a description of the first divergence, or "".
 func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claims *int) string {
 	t.Helper()
 
-	sources := make(map[string]string, len(h.templates)+1)
-	for name, text := range h.templates {
-		sources[name] = text
-	}
-	sources[fuzzTemplateName] = c.Source
+	sources := h.sourcesFor(c)
 
 	// The version goes on both sides or the run compares two
 	// configurations rather than two engines. The tree and the scope facts
@@ -109,7 +105,7 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claim
 		Name:      fuzzTemplateName,
 		Source:    c.Source,
 		Settings:  caseSettings(c),
-		Templates: h.templates,
+		Templates: h.templatesFor(c),
 	})
 	if err != nil {
 		t.Fatalf("oracle: %v", err)
@@ -281,11 +277,7 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 			out = "\x00error: " + err.Error()
 		}
 
-		sources := make(map[string]string, len(h.templates)+1)
-		for name, text := range h.templates {
-			sources[name] = text
-		}
-		sources[fuzzTemplateName] = c.Source
+		sources := h.sourcesFor(c)
 		env, err := gojja2.New(append(caseOptions(c),
 			gojja2.WithLoader(gojja2.DictLoader(sources)),
 			gojja2.WithPythonVersion(h.py))...)

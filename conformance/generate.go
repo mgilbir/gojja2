@@ -280,6 +280,9 @@ type GeneratedCase struct {
 	Trim                bool
 	Lstrip              bool
 	KeepTrailingNewline bool
+	// Delimiters is a non-default set of tag delimiters, or nil for jinja2's
+	// own. See Delimiters.
+	Delimiters *Delimiters
 	// NewlineSequence is what every newline in the *template* is rendered
 	// as: "" for jinja2's default "\n", or "\r\n" or "\r".
 	//
@@ -301,6 +304,49 @@ type GeneratedCase struct {
 	// loop's `{% else %}` branch, to `loop.index`, and to a filtered loop's
 	// generator is decided by Python and not by jinja2.
 	Extensions []string
+}
+
+// Delimiters is what opens and closes a tag. jinja2 lets all six be configured,
+// and the lexer's whole job is finding them: a custom set changes what is data,
+// where whitespace control attaches, and which of three openings a `{` starts.
+// The corpus varies them on thirteen hand-written cases and the soak did not
+// vary them at all.
+//
+// A drawn set is applied by rewriting the finished template rather than by
+// threading six strings through every arm of the generator. That is the same
+// template either way -- both engines are handed the identical bytes, which is
+// all the comparison needs -- and it keeps the arms readable.
+type Delimiters struct {
+	BlockStart, BlockEnd     string
+	VarStart, VarEnd         string
+	CommentStart, CommentEnd string
+}
+
+// delimiterSets are drawn against, weighted toward jinja2's own: a custom set
+// is the unusual configuration, and a run where most templates used one would
+// spend itself on the lexer and leave everything else thinner.
+//
+// The sequences are ones a generated template never writes by itself, so the
+// rewrite cannot turn data into a delimiter: `[[` would, because a nested list
+// literal starts with it.
+var delimiterSets = []*Delimiters{
+	nil, nil, nil, nil, nil, nil,
+	{BlockStart: "<%", BlockEnd: "%>", VarStart: "<<", VarEnd: ">>",
+		CommentStart: "<#", CommentEnd: "#>"},
+	{BlockStart: "[%", BlockEnd: "%]", VarStart: "${", VarEnd: "}$",
+		CommentStart: "[#", CommentEnd: "#]"},
+}
+
+// Rewrite puts text in these delimiters, or returns it unchanged for the
+// default set.
+func (d *Delimiters) Rewrite(text string) string {
+	if d == nil {
+		return text
+	}
+	return strings.NewReplacer(
+		"{%", d.BlockStart, "%}", d.BlockEnd,
+		"{{", d.VarStart, "}}", d.VarEnd,
+		"{#", d.CommentStart, "#}", d.CommentEnd).Replace(text)
 }
 
 // undefinedKinds are drawn against, default-weighted: the others shift the whole
@@ -339,6 +385,7 @@ func GenerateCase(input []byte) GeneratedCase {
 	// Weighted toward the default, which is what almost every template in
 	// the world runs under.
 	newline := g.c.pick([]string{"", "", "", "", "\r\n", "\r"})
+	delims := delimiterSets[g.c.intn(len(delimiterSets))]
 	var extensions []string
 	if g.do {
 		extensions = append(extensions, "do")
@@ -348,7 +395,7 @@ func GenerateCase(input []byte) GeneratedCase {
 	}
 	g.template()
 	return GeneratedCase{
-		Source:              g.b.String(),
+		Source:              delims.Rewrite(g.b.String()),
 		Autoescape:          autoescape,
 		Undefined:           undefined,
 		Trim:                trim,
@@ -356,6 +403,7 @@ func GenerateCase(input []byte) GeneratedCase {
 		KeepTrailingNewline: keepNewline,
 		Extensions:          extensions,
 		NewlineSequence:     newline,
+		Delimiters:          delims,
 	}
 }
 

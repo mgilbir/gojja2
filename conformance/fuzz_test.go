@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -99,6 +100,12 @@ func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
 	if c.NewlineSequence != "" {
 		opts = append(opts, gojja2.WithNewlineSequence(c.NewlineSequence))
 	}
+	if d := c.Delimiters; d != nil {
+		opts = append(opts,
+			gojja2.WithBlockDelimiters(d.BlockStart, d.BlockEnd),
+			gojja2.WithVariableDelimiters(d.VarStart, d.VarEnd),
+			gojja2.WithCommentDelimiters(d.CommentStart, d.CommentEnd))
+	}
 	switch c.Undefined {
 	case "strict":
 		opts = append(opts, gojja2.WithUndefined(value.UndefinedStrict))
@@ -142,6 +149,14 @@ func caseSettings(c conformance.GeneratedCase) map[string]any {
 	if c.NewlineSequence != "" {
 		settings["newline_sequence"] = c.NewlineSequence
 	}
+	if d := c.Delimiters; d != nil {
+		settings["block_start_string"] = d.BlockStart
+		settings["block_end_string"] = d.BlockEnd
+		settings["variable_start_string"] = d.VarStart
+		settings["variable_end_string"] = d.VarEnd
+		settings["comment_start_string"] = d.CommentStart
+		settings["comment_end_string"] = d.CommentEnd
+	}
 	if len(settings) == 0 {
 		return nil
 	}
@@ -150,14 +165,39 @@ func caseSettings(c conformance.GeneratedCase) map[string]any {
 
 const fuzzTemplateName = "fuzz.txt"
 
+// templatesFor are the auxiliary templates a case can reach, in *its* own
+// delimiters: the environment's delimiters apply to every template it loads, so
+// a case drawn with a custom set needs its base and macro templates rewritten
+// too or an `{% extends %}` would not parse. Shared, and unmodified, for the
+// default set.
+func (h *harness) templatesFor(c conformance.GeneratedCase) map[string]string {
+	if c.Delimiters == nil {
+		return h.templates
+	}
+	out := make(map[string]string, len(h.templates))
+	for name, text := range h.templates {
+		out[name] = c.Delimiters.Rewrite(text)
+	}
+	return out
+}
+
+// sourcesFor is templatesFor plus the case's own template, which is what a
+// loader is handed. One function rather than four copies: there were four, and
+// a fifth setting would have had to find all of them.
+func (h *harness) sourcesFor(c conformance.GeneratedCase) map[string]string {
+	aux := h.templatesFor(c)
+	out := make(map[string]string, len(aux)+1)
+	for name, text := range aux {
+		out[name] = text
+	}
+	out[fuzzTemplateName] = c.Source
+	return out
+}
+
 // renderGojja2 renders with gojja2, turning a panic into a reportable result
 // rather than taking the test process down mid-run.
 func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicked string, err error) {
-	sources := make(map[string]string, len(h.templates)+1)
-	for name, text := range h.templates {
-		sources[name] = text
-	}
-	sources[fuzzTemplateName] = c.Source
+	sources := h.sourcesFor(c)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -195,7 +235,7 @@ func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.
 		Source:    c.Source,
 		Context:   h.rawCtx,
 		Settings:  caseSettings(c),
-		Templates: h.templates,
+		Templates: h.templatesFor(c),
 	})
 	if err != nil {
 		t.Fatalf("oracle: %v", err)
@@ -259,13 +299,23 @@ func report(t testing.TB, c conformance.GeneratedCase, d *conformance.Divergence
 		return
 	}
 	// Every setting the case renders under has to be in the report, or the
-	// template alone does not reproduce it.
+	// template alone does not reproduce it -- so it comes from caseSettings,
+	// the same function the render was configured from. It was built by hand
+	// here and named two of the eight: a divergence found under trim_blocks,
+	// a custom delimiter or an extension was reported as if it had been found
+	// under the defaults, where it does not reproduce at all.
 	env := ""
-	if c.Autoescape {
-		env = ", autoescape"
-	}
-	if c.Undefined != "" {
-		env += ", " + c.Undefined + " undefined"
+	if s := caseSettings(c); len(s) > 0 {
+		keys := make([]string, 0, len(s))
+		for k := range s {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%v", k, s[k]))
+		}
+		env = ", settings: " + strings.Join(parts, " ")
 	}
 	t.Errorf("[%s] %s\n%s\n  (context: conformance.FuzzContextJSON%s)",
 		d.Kind, strconv.Quote(c.Source), indent(d.Detail), env)
@@ -358,12 +408,13 @@ func TestDifferential(t *testing.T) {
 	// default Undefined without anything saying so.
 	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), "+
 		"%d autoescaping, %d empty; undefined %d strict, %d chainable, %d debug; "+
-		"lexer %d trim, %d lstrip, %d keep-newline, %d crlf, %d cr; "+
+		"lexer %d trim, %d lstrip, %d keep-newline, %d crlf, %d cr, "+
+		"%d custom delimiters; "+
 		"extensions %d do, %d loopcontrols, writing %d print, %d do, %d break, %d continue",
 		checked, seed, escaping, skipped,
 		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"],
 		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
-		lexRuns["crlf"], lexRuns["cr"],
+		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"],
 		tagRuns["ext-do"], tagRuns["ext-loopcontrols"],
 		tagRuns["print"], tagRuns["do"], tagRuns["break"], tagRuns["continue"])
 	// An extension that is enabled and never written is an axis that costs a
@@ -395,6 +446,9 @@ func countLexSettings(c conformance.GeneratedCase, into map[string]int) {
 		into["crlf"]++
 	case "\r":
 		into["cr"]++
+	}
+	if c.Delimiters != nil {
+		into["delims"]++
 	}
 }
 

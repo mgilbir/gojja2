@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**6059 of 6096 gradable cases (99.4%)** match CPython jinja2, across eight
+**6074 of 6111 gradable cases (99.4%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The five that do not are listed with reasons
 in `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["6059 / 6096 gradable  (99.4%)"]
+    TC --> RATE["6074 / 6111 gradable  (99.4%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 3776 | 3743 |
+| gojja2's own (committed, with goldens) | 3791 | 3758 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **6096** | **6059 (99.4%)** |
+| **total** | **6111** | **6074 (99.4%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -282,8 +282,15 @@ extension, and for as long as the run enabled none of them those statements were
 graded by two hand-written corpus cases and nothing else.
 `newline_sequence` is drawn too -- the setting that had no case at all, and the
 one that changes what a string *literal is*, because jinja2 normalises the
-newlines it finds in the template before the parser sees them.
-`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as an eighth axis,
+newlines it finds in the template before the parser sees them -- and so are the
+six **tag delimiters**, which is the lexer's whole job: a custom set changes what
+is data, where whitespace control attaches, and which of three openings a `{`
+starts. A drawn set is applied by rewriting the finished template rather than
+threading six strings through every arm of the generator; both engines are handed
+the identical bytes, which is all the comparison needs, and the *auxiliary*
+templates are rewritten with it, because an environment's delimiters apply to
+every template it loads and an `{% extends %}` would not otherwise parse.
+`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as a ninth axis,
 configuring both sides to match.
 
 Both engines are handed the same settings from one function, because there were

@@ -6294,6 +6294,40 @@ case("methods/format_nested_spec_unmatched", "{{ '{0:{1}'.format(1,2) }}")
 case("methods/format_nested_spec_stray_close", "{{ '{0:{1}}}'.format(1,2) }}")
 case("methods/format_nested_spec_after_align", "{{ '{0:>{1}'.format(1,5) }}")
 
+# --- pprint wraps a bytes, which nothing here did ------------------------------
+# pprint dispatches on type(obj).__repr__, and CPython has an arm for bytes as
+# well as for str: a bytes whose repr does not fit its line is split into
+# four-byte-aligned pieces, one literal per line, parenthesised at the top level
+# -- which is what makes adjacent literals one value in Python source. gojja2's
+# dispatch had str, list, tuple and dict, and everything else fell through to its
+# repr on one line.
+#
+# Found by `make fuzz` on `{{ 'ab'.encode().maketrans(...)|pprint }}`, whose
+# table is 256 bytes. The boundaries are here because they are where the rule is:
+# four bytes or fewer are printed whole (CPython measures the *value*, not its
+# repr), the parentheses appear only at the top level, and the allowance is
+# charged against the group that starts the last whole four -- so a length that
+# is already a multiple of four never charges it.
+case("filters/pprint_bytes_maketrans",
+     "{{ 'ab'.encode().maketrans('a'.encode(), 'z'.encode())|pprint }}")
+for _n, _src in [
+    ("four", "{{ 'abcd'.encode()|pprint }}"),
+    ("five", "{{ 'abcde'.encode()|pprint }}"),
+    ("fits", "{{ ('x' * 76).encode()|pprint }}"),
+    ("boundary", "{{ ('x' * 77).encode()|pprint }}"),
+    ("over", "{{ ('x' * 78).encode()|pprint }}"),
+    ("long", "{{ ('x' * 100).encode()|pprint }}"),
+    ("in_a_list", "{{ [('x' * 100).encode()]|pprint }}"),
+    ("in_a_dict", "{{ {'k': ('x' * 100).encode()}|pprint }}"),
+    ("nested_twice", "{{ [[('x' * 100).encode()]]|pprint }}"),
+    ("in_a_tuple", "{{ (('a' * 100).encode(), 1)|pprint }}"),
+    ("two_short", "{{ [('x' * 30).encode(), ('y' * 30).encode()]|pprint }}"),
+    ("multibyte", "{{ ('\u00e9' * 60).encode()|pprint }}"),
+    ("not_a_multiple_of_four", "{{ ('x' * 101).encode()|pprint }}"),
+    ("escapes", "{{ ('a\tb\nc' * 20).encode()|pprint }}"),
+]:
+    case("filters/pprint_bytes_" + _n, _src)
+
 # --- a guard over an arm that can fail ----------------------------------------
 # The dataflow analysis answers whether a variable can stop the render, and a
 # *guard* decides whether whatever it guards runs at all. Two shapes had it
