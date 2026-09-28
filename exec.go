@@ -631,6 +631,17 @@ func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 		if err != nil {
 			return err
 		}
+		// jinja2 wraps the *result* under autoescape --
+		// `(Markup if autoescape else identity)(filter(...))` -- so a
+		// filter that answers something other than a string leaves a
+		// Markup of its str() behind, not the value. `{% set v | length
+		// %}abc{% endset %}{{ v + 1 }}` is a TypeError there and was 4
+		// here, and `{% set v | list %}` printed escaped quotes where
+		// jinja2's Markup prints them as they are. With escaping off
+		// the value keeps its type, which is what identity() means.
+		if ex.autoescape {
+			v = value.Safe(value.StrFor(v, ex.pyVersion()))
+		}
 	}
 	// nsItem, not nsAttr: a `{% set %}` with a body assigns an *item*, and
 	// does not check for a namespace first. See assignItem.

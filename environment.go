@@ -924,12 +924,19 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	if folder.refusal != nil {
 		return nil, folder.refusal
 	}
-	if derr := e.checkDependencies(tree.Body, name, source); derr != nil {
-		return nil, derr
-	}
+	// Before the dependency check, because jinja2's code generator collects
+	// every block in a pre-pass -- `for block in node.find_all(nodes.Block)`
+	// -- before it generates a line: a template that both defines a block
+	// twice *and* extends from somewhere it may not says "block 'a' defined
+	// twice" there, whatever order the two sit in. The generated
+	// differential found it once the generator could write an `{% extends %}`
+	// inside a block.
 	blocks, berr := collectBlocks(tree.Body, name, source)
 	if berr != nil {
 		return nil, berr
+	}
+	if derr := e.checkDependencies(tree.Body, name, source); derr != nil {
+		return nil, derr
 	}
 	// After the fold, so a handler spelled as constant pieces is a literal
 	// by now, and last, so a template that is broken outright says so

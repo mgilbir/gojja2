@@ -1,0 +1,3 @@
+{}
+---
+{% autoescape false %}{% set v | length %}abc{% endset %}[{{ v + 1 }}]{% endautoescape %}

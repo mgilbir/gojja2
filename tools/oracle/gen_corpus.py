@@ -6651,6 +6651,43 @@ case("dictview/a_view_equals_a_set",
 case("dictview/a_view_against_other_types",
      "{% set e = {} %}{{ e.keys() == [] }}|{{ e.keys() == {} }}|{{ e.items() == 0 }}")
 
+# `{% set v | f %}` wraps the filter's *result* under autoescape --
+# `(Markup if autoescape else identity)(...)` -- so a filter that answers
+# something other than a string leaves a Markup of its str() behind, not the
+# value: `{% set v | length %}abc{% endset %}{{ v + 1 }}` is a TypeError there and
+# was 4 here. With escaping off the value keeps its type, which is what
+# identity() means. Found by teaching the generator to write the form at all.
+for _n, _src in [
+    ("length", "{% set v | length %}abc{% endset %}[{{ v }}][{{ v is string }}]"),
+    ("length_arithmetic", "{% set v | length %}abc{% endset %}[{{ v + 1 }}]"),
+    ("list", "{% set v | list %}a'b{% endset %}[{{ v }}]"),
+    ("int", "{% set v | int %}12{% endset %}[{{ v }}][{{ v is string }}]"),
+    ("first", "{% set v | first %}ab{% endset %}[{{ v }}]"),
+    ("upper", "{% set v | upper %}a'b{% endset %}[{{ v }}]"),
+    ("no_filter", "{% set v %}a'b{% endset %}[{{ v }}]"),
+]:
+    case("escape/set_block_filter_" + _n,
+         "{% autoescape true %}" + _src + "{% endautoescape %}")
+    case("control/set_block_filter_" + _n,
+         "{% autoescape false %}" + _src + "{% endautoescape %}")
+
+# jinja2's code generator collects every block in a pre-pass, before it generates
+# a line, so a template that both defines a block twice *and* extends from
+# somewhere it may not says "block 'a' defined twice" whatever order the two sit
+# in. gojja2 checked the dependencies first.
+case("errors/block_twice_and_extends_in_a_macro",
+     "{% block a %}{% endblock %}{% macro mm(x) %}{% extends 'base.txt' %}"
+     "{% block a %}{% endblock %}{% endmacro %}", __templates__={"base.txt": "B"})
+case("errors/block_twice_and_extends_in_a_block",
+     "{% block a %}{% extends 'base.txt' %}{% block a %}{% endblock %}{% endblock %}",
+     __templates__={"base.txt": "B"})
+case("errors/extends_in_a_macro",
+     "{% macro m() %}{% extends 'base.txt' %}{% endmacro %}",
+     __templates__={"base.txt": "B"})
+case("errors/extends_in_a_loop",
+     "{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}",
+     __templates__={"base.txt": "B"})
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither

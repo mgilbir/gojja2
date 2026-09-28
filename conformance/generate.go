@@ -622,6 +622,11 @@ func (g *generator) stmt(depth int) {
 			// nobody consumes, which is the divergence
 			// docs/divergences.md records rather than matches.
 			"{% include 'inc.txt' with context %}",
+			// A list of candidates, and one whose first entry is
+			// missing: jinja2 takes the first that loads.
+			"{% include ['nope.txt', 'inc.txt'] %}",
+			"{% include ['nope.txt'] ignore missing %}",
+			"{% extends ['nope.txt', 'base.txt'] %}{% block a %}A{% endblock %}",
 			"{% import 'mac.txt' as mm without context %}{{ mm.m(1) }}",
 			"{% from 'mac.txt' import m with context %}{{ m(1) }}",
 		}))
@@ -865,6 +870,17 @@ func (g *generator) macroStmt(depth int) {
 		g.b.WriteString("{% call mm(1) %}called{% endcall %}")
 		return
 	}
+	// A call block with a *signature*: the macro calls caller(...) and the
+	// arguments bind into the block's own frame, which is a scope nothing
+	// else here builds.
+	if g.c.chance(4) {
+		g.b.WriteString("{% macro takes() %}<{{ caller(" +
+			g.c.pick([]string{"1", "1, 2", "'a'", ""}) + ") }}>{% endmacro %}" +
+			"{% call(" + g.c.pick([]string{"p", "p, q", "p=9"}) + ") takes() %}" +
+			g.c.pick([]string{"{{ p }}", "{{ p|default('-') }}", "body"}) +
+			"{% endcall %}")
+		return
+	}
 	// A macro that renders its caller, which is the other half of {% call %}
 	// and reaches jinja2's caller machinery rather than a plain macro call.
 	if g.c.chance(4) {
@@ -882,8 +898,39 @@ func (g *generator) macroStmt(depth int) {
 	}) + ") }}")
 }
 
+// filterStmt writes a `{% filter %}` block, or the `{% set v | f %}` form, which
+// is the same filter applied to a captured body and assigned instead of printed
+// -- and the one where a filter that answers something other than a string keeps
+// its value rather than failing the write.
+//
+// The filters carry arguments half the time. Bare names were all this wrote, so
+// the argument binding of a *block* filter -- which is the same path a `|f(x)`
+// takes and a different call site -- was never generated.
 func (g *generator) filterStmt(depth int) {
-	g.b.WriteString("{% filter " + g.c.pick([]string{"upper", "trim", "lower|trim", "escape"}) + " %}")
+	// A filter that answers something other than a string is only written in
+	// the `{% set %}` form. jinja2 puts a filter *block's* result into its
+	// output buffer as it stands and joins the buffer at the end, so one that
+	// is not a string fails at the join -- naming an index into that buffer,
+	// and after whatever the rest of the template did. Both are artefacts of
+	// jinja2's code generator rather than behaviour to match, and
+	// docs/divergences.md records them; generating it fills a run with the
+	// same known divergence. The assigning form keeps the value and is
+	// compared like anything else.
+	f := g.c.pick([]string{
+		"upper", "trim", "lower|trim", "escape",
+		"replace('a', 'b')", "indent(2, true)", "truncate(5, true)",
+		"center(9)", "wordwrap(4)", "default('d')", "join('-')",
+	})
+	if g.c.chance(3) {
+		g.b.WriteString("{% set fv | " + g.c.pick([]string{
+			f, "length", "list", "map('upper')|list", "int", "round(1)",
+			"count", "first", "last", "wordcount",
+		}) + " %}")
+		g.body(depth - 1)
+		g.b.WriteString("{% endset %}[{{ fv }}]")
+		return
+	}
+	g.b.WriteString("{% filter " + f + " %}")
 	g.body(depth - 1)
 	g.b.WriteString("{% endfilter %}")
 }
