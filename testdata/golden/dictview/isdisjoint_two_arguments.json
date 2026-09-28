@@ -1,0 +1,14 @@
+{
+  "case": "dictview/isdisjoint_two_arguments.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "dict_keys.isdisjoint() takes exactly one argument (2 given)"
+  }
+}

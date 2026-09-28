@@ -85,7 +85,173 @@ func (v *dictView) entries() []value.Value {
 	return out
 }
 
-func (v *dictView) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
+func (v *dictView) GetAttr(name string) (value.Value, bool) {
+	switch name {
+	case "mapping":
+		// Every view carries a read-only proxy of the dict it came from
+		// (3.10). `{{ d.keys().mapping }}` printed nothing here.
+		return value.FromObject(&mappingProxy{d: v.d, py: v.py}), true
+	}
+	// Only the set-like views have a method at all.
+	if v.kind == viewValues {
+		return value.Undefined, false
+	}
+	return boundObjectMethod(dictViewMethods, v.kind.name(), name,
+		value.FromObject(v), v.py)
+}
+
+// boundObjectMethod is builtinMethod for a type of gojja2's own: the table
+// decides which names exist, and the arity table -- keyed by the name CPython
+// calls the type -- decides what the count errors say.
+func boundObjectMethod(table map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error),
+	typeName, name string, recv value.Value, py value.PythonVersion) (value.Value, bool) {
+	fn, ok := table[name]
+	if !ok {
+		return value.Undefined, false
+	}
+	return Func(name, func(s *State, a *value.CallArgs) (value.Value, error) {
+		if err := checkMethodArity(typeName, name, a, py); err != nil {
+			return value.Undefined, err
+		}
+		return fn(s, recv, a)
+	}), true
+}
+
+// isdisjoint walks the argument and asks the view about each element, which is
+// what decides the refusals: a keys view hashes what it is given, so an
+// unhashable element is a TypeError, while an items view unpacks first and a
+// two-element *list* is simply not in it.
+func (v *dictView) isdisjoint(s *State, other value.Value) (value.Value, error) {
+	seq, err := value.Iterate(other)
+	if err != nil {
+		if refusal := value.StrictRefusal(other); refusal != nil {
+			return value.Undefined, refusal
+		}
+		return value.Undefined, err
+	}
+	for item := range seq {
+		if err := s.Step(1); err != nil {
+			return value.Undefined, err
+		}
+		found, _, err := v.ContainsErr(item, v.py)
+		if err != nil {
+			return value.Undefined, err
+		}
+		if found {
+			return value.False, nil
+		}
+	}
+	return value.True, nil
+}
+
+// mappingProxy is types.MappingProxyType: the read-only dict every view carries
+// as `.mapping`. It is a dict in nearly every way a template can observe -- it
+// indexes, iterates, sizes, compares equal to the dict itself and is `is
+// mapping` -- and differs in three: its repr says so, it has only the five
+// read-only methods, and it hashes like the dict, which is to say not at all.
+type mappingProxy struct {
+	// d is the dict itself, so the proxy tracks it, which is the whole
+	// point of a proxy.
+	d  value.Value
+	py value.PythonVersion
+}
+
+// GetAttr: the five read-only methods, keyed to this type because the wording
+// is -- `m.copy(1)` is "mappingproxy.copy() takes no arguments (1 given)" where
+// the dict's own says "dict.copy()". `m.mapping` does not exist: a proxy of a
+// proxy is not a thing.
+func (m *mappingProxy) GetAttr(name string) (value.Value, bool) {
+	return boundObjectMethod(mappingProxyMethods, "mappingproxy", name,
+		value.FromObject(m), m.py)
+}
+
+func (m *mappingProxy) GetItem(key value.Value) (value.Value, bool) {
+	d, ok := m.d.Dict()
+	if !ok {
+		return value.Undefined, false
+	}
+	v, found, err := d.Get(key, m.py)
+	if err != nil || !found {
+		return value.Undefined, false
+	}
+	return v, true
+}
+
+func (m *mappingProxy) Keys() []value.Value {
+	d, ok := m.d.Dict()
+	if !ok {
+		return nil
+	}
+	out := make([]value.Value, 0, d.Len())
+	for _, e := range d.Entries() {
+		out = append(out, e.Key)
+	}
+	return out
+}
+
+func (m *mappingProxy) Len() int {
+	d, ok := m.d.Dict()
+	if !ok {
+		return 0
+	}
+	return d.Len()
+}
+
+func (m *mappingProxy) Iterate() iter.Seq[value.Value] {
+	return func(yield func(value.Value) bool) {
+		for _, k := range m.Keys() {
+			if !yield(k) {
+				return
+			}
+		}
+	}
+}
+
+// Unhashable: a proxy hashes exactly as well as what it wraps, which is to say
+// `{{ m in d }}` is "unhashable type: 'dict'".
+func (m *mappingProxy) Unhashable() bool { return true }
+
+func (m *mappingProxy) TypeName() string { return "mappingproxy" }
+
+// UnhashableAs names what the refusal complains about, which 3.12 changed:
+// before it, the proxy itself. The *outer* name -- 3.14's "cannot use 'X' as a
+// dict key" half -- stays the proxy either way.
+func (m *mappingProxy) UnhashableAs() value.Value {
+	if m.py.ProxyHashNamesTheMapping() {
+		return m.d
+	}
+	return value.FromObject(m)
+}
+
+// Str is the dict's, and Repr is not: `{{ m }}` prints `{'a': 1}` where
+// `{{ m|pprint }}` prints `mappingproxy({'a': 1})`.
+func (m *mappingProxy) Str() string { return value.StrFor(m.d, m.py) }
+
+func (m *mappingProxy) Repr() string {
+	return "mappingproxy(" + value.ReprFor(m.d, m.py) + ")"
+}
+
+// EqualsErr compares what is behind the proxy: `m == d` and `d == m` are both
+// True, because mappingproxy delegates __eq__ to the mapping it wraps.
+func (m *mappingProxy) EqualsErr(other value.Value, py value.PythonVersion) (bool, bool, error) {
+	if o, ok := other.Interface().(*mappingProxy); ok {
+		other = o.d
+	}
+	eq, err := value.EqualErr(m.d, other, py)
+	return eq, true, err
+}
+
+func (m *mappingProxy) ContainsErr(item value.Value, py value.PythonVersion) (found, known bool, err error) {
+	d, ok := m.d.Dict()
+	if !ok {
+		return false, false, nil
+	}
+	if err := value.CheckHashable(item, py, value.AsDictKey); err != nil {
+		return false, true, err
+	}
+	_, got, err := d.Get(item, py)
+	return got, true, err
+}
 
 func (v *dictView) TypeName() string { return v.kind.name() }
 

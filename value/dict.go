@@ -571,7 +571,14 @@ func hashScalar(v, outer Value, py PythonVersion, use HashUse) (hashKey, error) 
 		// report. It has to say so before the identity fallback below,
 		// which would otherwise make `d.keys() in d` a miss.
 		if o, ok := v.obj.(interface{ Unhashable() bool }); ok && o.Unhashable() {
-			return hashKey{}, errUnhashable(outer, v, py, use)
+			// A proxy hashes exactly as badly as what it wraps, and
+			// CPython's message names *that*: hash() of a
+			// mappingproxy is "unhashable type: 'dict'".
+			named := v
+			if n, ok := v.obj.(interface{ UnhashableAs() Value }); ok {
+				named = n.UnhashableAs()
+			}
+			return hashKey{}, errUnhashable(outer, named, py, use)
 		}
 		if o, ok := v.obj.(interface{ HashKey() (string, bool) }); ok {
 			if s, ok := o.HashKey(); ok {

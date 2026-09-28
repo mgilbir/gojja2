@@ -93,6 +93,14 @@ func (v PythonVersion) AtLeast(n PythonVersion) bool { return v >= n }
 // `slice(0, 1, None)`. Corpus: errshape/slice_of_a_dict, errors/truncate_dict.
 func (v PythonVersion) SliceKeysAreHashable() bool { return v.AtLeast(Python312) }
 
+// ProxyHashNamesTheMapping reports whether hashing a read-only proxy complains
+// about the *mapping behind it*. 3.11 named the proxy -- "unhashable type:
+// 'mappingproxy'" -- and 3.12 reaches through to the dict. 3.14 keeps that as
+// the inner half of its longer form, where the outer name is the proxy's:
+// "cannot use 'mappingproxy' as a dict key (unhashable type: 'dict')".
+// Corpus: dictview/mapping_is_unhashable.
+func (v PythonVersion) ProxyHashNamesTheMapping() bool { return v.AtLeast(Python312) }
+
 // BoolArgsAreTruthy reports whether an argument declared as a bool is tested
 // for truth rather than coerced to an integer.
 //

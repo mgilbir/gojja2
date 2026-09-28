@@ -102,6 +102,17 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 		a, b = AsTupleIfPossible(a), AsTupleIfPossible(b)
 	}
 	if a.kind != b.kind {
+		// An object may still state its equality with something of
+		// another kind, which is what a proxy does: mappingproxy
+		// delegates __eq__ to the mapping it wraps, so `m == d` and
+		// `d == m` are both True. An object that has no opinion about
+		// the other operand -- a dict view asked about a dict -- says
+		// so and falls through.
+		if a.kind == KindObject || b.kind == KindObject {
+			if equal, known, err := statedEqual(a, b, py); err != nil || known {
+				return equal, err
+			}
+		}
 		// str and bytes never compare equal, and neither do list and
 		// tuple -- Python keeps those distinct.
 		return false, nil

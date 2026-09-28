@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import inspect
 import re
+import types
 import sys
 from pathlib import Path
 
@@ -45,9 +46,18 @@ RECEIVERS = {
     "dict": {"a": 1, "b": 2},
     "tuple": (3, 1, 2),
     "bytes": b"aBc dEf",
+    # The types a dict's methods *answer*: two set-like views, which have
+    # isdisjoint, and the read-only proxy every view carries as .mapping.
+    "dict_keys": {"a": 1, "b": 2}.keys(),
+    "dict_items": {"a": 1, "b": 2}.items(),
+    "mappingproxy": types.MappingProxyType({"a": 1, "b": 2}),
 }
 
-TYPES = {"str": str, "list": list, "dict": dict, "tuple": tuple, "bytes": bytes}
+TYPES = {
+    "str": str, "list": list, "dict": dict, "tuple": tuple, "bytes": bytes,
+    "dict_keys": type({}.keys()), "dict_items": type({}.items()),
+    "mappingproxy": types.MappingProxyType,
+}
 
 # A value that is wrong for almost every parameter, so a call that gets past
 # the arity check fails for a reason that is visibly not about the count.
@@ -307,6 +317,10 @@ def gojja2_methods() -> dict[str, list[str]]:
         "dict": table(txt, "var dictMethods = map[string]", "\n}\n"),
         "tuple": table(txt, "var tupleMethods = map[string]", "\n}\n"),
         "bytes": table(bytes_txt, "\tm := map[string]fn{", "\n\treturn m\n}"),
+        # Both set-like views share one table: they share the method.
+        "dict_keys": table(txt, "var dictViewMethods = map[string]", "\n}\n"),
+        "dict_items": table(txt, "var dictViewMethods = map[string]", "\n}\n"),
+        "mappingproxy": table(txt, "var mappingProxyMethods = map[string]", "\n}\n"),
     }
 
 

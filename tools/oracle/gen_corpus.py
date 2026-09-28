@@ -7249,6 +7249,61 @@ case("filters/pprint_set_of_integers",
 # (A set short enough to fit on one line is printed by its repr, which is the
 # hash order CPython randomises per process -- so there is no short-set case
 # here. filters/pprint_set_empty is the exception: set() has one spelling.)
+# A view has two attributes, and gojja2 had neither: `isdisjoint`, which only
+# the set-like views have -- a values view is not a set, its elements need be
+# neither unique nor hashable -- and `mapping`, the read-only proxy of the dict
+# every view carries since 3.10. `{{ d.keys().mapping }}` printed nothing.
+#
+# The proxy is a dict in nearly every way a template can observe: it indexes,
+# iterates, sizes, is `is mapping`, and equals the dict in either position
+# because it delegates __eq__ to it. It differs in four: its repr says
+# mappingproxy, it has only the five read-only methods, json.dumps refuses it,
+# and hashing it complains about the *dict* it wraps. Found by coverage --
+# dictView.GetAttr was 0%.
+_DV = "{% set d = {'a': 1, 'b': 2} %}"
+for _n, _src in [
+    ("keys_mapping", "{{ d.keys().mapping }}"),
+    ("items_mapping", "{{ d.items().mapping }}"),
+    ("values_mapping", "{{ d.values().mapping }}"),
+    ("mapping_through_attr", "{{ d.keys()|attr('mapping') }}"),
+    ("mapping_repr", "{{ d.keys().mapping|pprint }}"),
+    ("mapping_str", "{{ d.keys().mapping|string }}"),
+    ("mapping_indexes", "{% set m = d.keys().mapping %}[{{ m['a'] }}][{{ m['z'] }}]"),
+    ("mapping_iterates", "{% for k in d.keys().mapping %}[{{ k }}]{% endfor %}"),
+    ("mapping_length", "{{ d.keys().mapping|length }}"),
+    ("mapping_is_mapping",
+     "{% set m = d.keys().mapping %}{{ m is mapping }}{{ m is sequence }}{{ m is iterable }}"),
+    ("mapping_equals_the_dict",
+     "{% set m = d.keys().mapping %}{{ m == d }}{{ d == m }}{{ m == d.keys().mapping }}"),
+    ("mapping_dictsort", "{{ d.keys().mapping|dictsort }}"),
+    ("mapping_items_filter", "{{ d.keys().mapping|items|list }}"),
+    ("mapping_methods",
+     "{% set m = d.keys().mapping %}{{ m.keys()|list }}{{ m.values()|list }}"
+     "{{ m.items()|list }}{{ m.get('a') }}{{ m.get('z', 9) }}{{ m.copy() }}"),
+    ("mapping_has_no_mapping", "[{{ d.keys().mapping.mapping }}]"),
+    ("mapping_has_no_update", "{{ d.keys().mapping.update({'q': 1}) }}"),
+    ("mapping_copy_is_a_dict", "{{ d.keys().mapping.copy().__class__ }}"),
+    ("mapping_class", "{{ d.keys().mapping.__class__ }}"),
+    ("mapping_tojson", "{{ d.keys().mapping|tojson }}"),
+    ("mapping_is_unhashable", "{{ d.keys().mapping in d }}"),
+    ("mapping_copy_arity", "{{ d.keys().mapping.copy(1) }}"),
+    ("mapping_get_arity", "{{ d.keys().mapping.get() }}"),
+    ("isdisjoint_true", "{{ d.keys().isdisjoint([1]) }}"),
+    ("isdisjoint_false", "{{ d.keys().isdisjoint(['a']) }}"),
+    ("isdisjoint_empty", "{{ d.keys().isdisjoint([]) }}"),
+    ("isdisjoint_a_string", "{{ d.keys().isdisjoint('a') }}"),
+    ("isdisjoint_a_dict", "{{ d.keys().isdisjoint(d) }}"),
+    ("isdisjoint_unhashable", "{{ d.keys().isdisjoint([['x']]) }}"),
+    ("isdisjoint_items_pair", "{{ d.items().isdisjoint([('a', 1)]) }}"),
+    ("isdisjoint_items_list", "{{ d.items().isdisjoint([['a', 1]]) }}"),
+    ("isdisjoint_values_has_none", "{{ d.values().isdisjoint([1]) }}"),
+    ("isdisjoint_no_argument", "{{ d.keys().isdisjoint() }}"),
+    ("isdisjoint_two_arguments", "{{ d.keys().isdisjoint(1, 2) }}"),
+    ("isdisjoint_a_keyword", "{{ d.keys().isdisjoint(x=1) }}"),
+    ("isdisjoint_not_iterable", "{{ d.keys().isdisjoint(5) }}"),
+]:
+    case("dictview/" + _n, _DV + _src)
+
 case("filters/pprint_set_empty", "{% set d = {'a': 1} %}{{ (d.keys() - d.keys())|pprint }}")
 case("filters/pprint_set_in_a_list",
      "{% set d = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, '11': 11, '12': 12, '13': 13, '14': 14, '15': 15, '16': 16, '17': 17, '18': 18, '19': 19, '20': 20, '21': 21, '22': 22, '23': 23, '24': 24, '25': 25, '26': 26, '27': 27, '28': 28, '29': 29, '30': 30, '31': 31, '32': 32, '33': 33, '34': 34, '35': 35, '36': 36, '37': 37, '38': 38, '39': 39} %}{{ [(d.keys() - [])]|pprint }}")

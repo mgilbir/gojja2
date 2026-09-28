@@ -1869,6 +1869,44 @@ func stringPredicate(f func(string, *value.UnicodeOverrides) bool) func(*State, 
 	}
 }
 
+// --- dict view and mappingproxy methods --------------------------------------
+
+// dictViewMethods is the one method a *set-like* view has. A values view is not
+// a set -- its elements need be neither unique nor hashable -- and has none.
+//
+// Here rather than in dictview.go so tools/oracle/gen_methods.py can read the
+// names out of the same file as the rest and ask CPython for their arity.
+var dictViewMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+	"isdisjoint": func(s *State, r value.Value, a *value.CallArgs) (value.Value, error) {
+		v, ok := r.Interface().(*dictView)
+		if !ok {
+			return value.Undefined, nil
+		}
+		return v.isdisjoint(s, a.Pos[0])
+	},
+}
+
+// mappingProxyMethods are the five read-only methods types.MappingProxyType
+// has. Each is the dict's own, over the dict the proxy wraps -- `m.copy()` is a
+// plain dict and `m.keys()` a view of the original.
+var mappingProxyMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+	"copy":   proxyMethod("copy"),
+	"get":    proxyMethod("get"),
+	"items":  proxyMethod("items"),
+	"keys":   proxyMethod("keys"),
+	"values": proxyMethod("values"),
+}
+
+func proxyMethod(name string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(s *State, r value.Value, a *value.CallArgs) (value.Value, error) {
+		m, ok := r.Interface().(*mappingProxy)
+		if !ok {
+			return value.Undefined, nil
+		}
+		return dictMethods[name](s, m.d, a)
+	}
+}
+
 // --- dict methods ------------------------------------------------------------
 
 var dictMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){

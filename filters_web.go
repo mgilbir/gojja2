@@ -766,14 +766,19 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 		// serialised like the dict it stands for. Everything else --
 		// a range, a cycler, a macro -- is not serialisable, which is
 		// what json.dumps says about jinja2's own types too.
-		if m, ok := v.Interface().(value.Mapping); ok {
-			out := value.NewDict()
-			target, _ := out.Dict()
-			for _, k := range m.Keys() {
-				val, _ := m.GetItem(k)
-				_ = target.Set(k, val, st.PythonVersion())
+		// ...but not one of the engine's own. A mappingproxy is a
+		// Mapping so that a template can index and walk it, and
+		// json.dumps refuses one all the same.
+		if _, ours := v.Interface().(*mappingProxy); !ours {
+			if m, ok := v.Interface().(value.Mapping); ok {
+				out := value.NewDict()
+				target, _ := out.Dict()
+				for _, k := range m.Keys() {
+					val, _ := m.GetItem(k)
+					_ = target.Set(k, val, st.PythonVersion())
+				}
+				return writeJSON(st, b, out, indent, depth, path)
 			}
-			return writeJSON(st, b, out, indent, depth, path)
 		}
 		return errs.New(errs.TypeError,
 			"Object of type %s is not JSON serializable", v.TypeName())
