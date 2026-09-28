@@ -345,6 +345,14 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 	//     whatever the call site does.
 	//   - Whether the result is Markup is decided at the *call*, because
 	//     Macro.__call__ takes the caller's eval context and wraps on that.
+	//     That is the *runtime* context -- the one {% autoescape %} moves
+	//     for its dynamic extent -- and not the setting the call site was
+	//     compiled under. The two differ inside a block: jinja2 compiles a
+	//     block against a fresh eval context, so a `{{ m() }}` written in
+	//     one prints with escape(), while the macro it calls wraps by
+	//     whatever the *parent* had in force where the block is rendered.
+	//     A block written inside `{% autoescape false %}` in the base and
+	//     filled by a child therefore escapes what the macro returns.
 	//
 	// The filters inside the body follow the call too, through the render
 	// state that {% autoescape %} moves for the dynamic extent of its body.
@@ -370,7 +378,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 	if err != nil {
 		return value.Undefined, err
 	}
-	return markup(text, ex.autoescape), nil
+	return markup(text, ex.st.autoescape), nil
 }
 
 // execCallBlock runs `{% call %}`: the block body becomes a `caller` macro the

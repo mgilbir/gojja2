@@ -105,6 +105,22 @@ var templateSets = []struct {
 		"inc.txt": "<{{ n|default('?') }}{{ item|default('') }}>",
 		"mac.txt": "{% macro m(x, y=2) %}({{ x }},{{ y }}){% endmacro %}{% set ex = 'E' %}",
 	}},
+	// Blocks a capture or an {% autoescape %} sits around: a block inside a
+	// {% filter %} or a {% set %} body is rendered into a buffer rather than
+	// the stream, and a block compiles against a fresh eval context however
+	// deep in an autoescape block it is written.
+	{"captured", map[string]string{
+		"base.txt": "{% filter upper %}[{% block a %}a{% endblock %}]{% endfilter %}" +
+			"{% set cap %}{% block b %}b{% endblock %}{% endset %}<{{ cap }}>",
+		"inc.txt": "<{{ n|default('?') }}{{ item|default('') }}>",
+		"mac.txt": "{% macro m(x, y=2) %}({{ x }},{{ y }}){% endmacro %}{% set ex = 'E' %}",
+	}},
+	{"escaped", map[string]string{
+		"base.txt": "{% autoescape true %}[{% block a %}<A>{% endblock %}]{% endautoescape %}" +
+			"{% autoescape false %}|{% block b %}<B>{% endblock %}{% endautoescape %}",
+		"inc.txt": "<b>{{ html|default('') }}</b>",
+		"mac.txt": "{% macro m(x, y=2) %}<i>{{ x }}</i>{% endmacro %}{% set ex = '<E>' %}",
+	}},
 	// A template that writes to the caller's names and one that renders
 	// something conditional, which is what a capture around an include has
 	// to carry.

@@ -524,6 +524,48 @@ for _n, _src in [
      "{% extends 'loopbase.txt' %}{% block b %}[{{ super() }}]{% endblock %}"),
 ]:
     case("inherit/" + _n, _src, __templates__=dict(_SCOPED))
+
+# Whether a macro's result is Markup is decided by the *runtime* eval context --
+# the one {% autoescape %} moves for its dynamic extent -- and not by the
+# setting the call site was compiled under. The two differ inside a block:
+# jinja2 compiles a block against a fresh eval context, so `{{ m() }}` written
+# in one prints with escape(), while the macro it calls wraps by whatever the
+# *parent* had in force where the block is rendered. A block written inside
+# `{% autoescape false %}` in the base and filled by a child therefore escapes
+# what the macro returns. gojja2 wrapped by the call site's lexical setting, so
+# the result came back Markup and printed raw. Found by the soak, on the
+# template set whose base wraps its blocks in autoescape.
+_ESCT = {
+    "esc.txt": "{% autoescape true %}[{% block a %}<A>{% endblock %}]{% endautoescape %}"
+               "{% autoescape false %}|{% block b %}<B>{% endblock %}|{% endautoescape %}",
+    "mac.txt": "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}",
+    "macesc.txt": "{% autoescape false %}{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}"
+                  "{% endautoescape %}",
+}
+for _n, _src in [
+    ("macro_in_a_block_the_parent_unescaped",
+     "{% extends 'esc.txt' %}{% block b %}{% import 'mac.txt' as mm without context %}"
+     "{{ mm.m(1) }}{% endblock %}"),
+    ("macro_in_a_block_the_parent_escaped",
+     "{% extends 'esc.txt' %}{% block a %}{% import 'mac.txt' as mm %}{{ mm.m(1) }}{% endblock %}"),
+    ("macro_written_in_the_block",
+     "{% extends 'esc.txt' %}{% block b %}{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}"
+     "{{ m(1) }}{% endblock %}"),
+    ("text_in_a_block_the_parent_unescaped",
+     "{% extends 'esc.txt' %}{% block b %}{{ '<x>' }}{% endblock %}"),
+    ("filter_block_in_a_block_the_parent_unescaped",
+     "{% extends 'esc.txt' %}{% block b %}{% filter upper %}{{ '<x>' }}{% endfilter %}{% endblock %}"),
+    ("include_in_a_block_the_parent_unescaped",
+     "{% extends 'esc.txt' %}{% block b %}{% include 'mac.txt' %}{{ '<i>' }}{% endblock %}"),
+    ("macro_called_in_and_out_of_an_autoescape",
+     "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{{ m(1) }}|"
+     "{% autoescape false %}{{ m(2) }}{% endautoescape %}"),
+    ("call_block_in_an_unescaped_region",
+     "{% macro m() %}[{{ caller() }}]{% endmacro %}"
+     "{% autoescape false %}{% call m() %}<c>{% endcall %}{% endautoescape %}"),
+]:
+    case("escape/runtime_" + _n, _src, __settings__={"autoescape": True},
+         __templates__=dict(_ESCT))
 case("errors/self_super_past_end", "{% block b %}hi{% endblock %}{{ self.b.super() }}")
 case("inherit/self_print_does_not_render",
      "{% block b %}hi{% endblock %}{{ self.b|string|length > 20 }}")
