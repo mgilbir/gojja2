@@ -1448,6 +1448,31 @@ case("numbers/wide_int_no_conversion",
      "{{ (10 ** 400) < 1.5 }}|{{ (10 ** 400) == 1.5 }}|{{ (10 ** 400)|round }}|"
      "{{ (10 ** 400)|int }}|{{ (10 ** 400)|string|length }}|{{ '1e400'|float }}")
 
+# A float power that overflows is an OverflowError, not an infinity -- and `**`
+# is the only operator that does it. CPython's float_pow reads errno from the
+# platform pow(), where the rest of the arithmetic saturates: `1e308 * 10` is
+# inf and `2.0 ** 1024` raises. An *infinite operand* is answered before pow()
+# is reached, so `(1e308 * 10) ** 2` is inf again, and an underflow is not an
+# overflow. gojja2 answered inf for all of it; found by the fuzzer, on
+# `{{ 1e16 ** 3 ** 3 ** 3 ** 0 }}`.
+for _n, _src in [
+    ("float_power_overflows", "{{ 1e16 ** 27 }}"),
+    ("float_power_overflows_by_a_little", "{{ 2.0 ** 1024 }}"),
+    ("float_power_at_the_boundary", "{{ 2.0 ** 1023 }}"),
+    ("float_power_overflows_negative", "{{ (-2.0) ** 1024 }}"),
+    ("float_power_overflows_by_a_float_exponent", "{{ 1.7976931348623157e308 ** 1.0000001 }}"),
+    ("float_power_overflows_an_int_base", "{{ 10 ** 400.0 }}"),
+    ("float_power_overflow_in_a_test", "{% if 1e16 ** 27 %}x{% endif %}"),
+    ("float_power_overflow_in_a_comparison", "{{ 1e16 ** 27 == 0 }}"),
+    ("float_power_overflow_in_a_list", "{{ [1e16 ** 27] }}"),
+    ("float_power_underflows", "{{ 0.5 ** 10000 }}|{{ 1e-300 ** 5 }}"),
+    ("float_power_of_an_infinity", "{{ (1e308 * 10) ** 2 }}|{{ (1e308 * 10) ** 0 }}|"
+     "{{ (1e308 * 10) ** -1 }}|{{ 2 ** (1e308 * 10) }}|{{ 0.5 ** (1e308 * 10) }}"),
+    ("float_power_by_a_name", "{{ 1e16 ** n3 }}|{{ 1e16 ** n3 ** 3 }}", ),
+    ("other_operators_saturate", "{{ 1e300 * 1e300 }}|{{ 1e308 + 1e308 }}|{{ -1e308 - 1e308 }}"),
+]:
+    case("numbers/" + _n, _src, n3=3)
+
 # do_items checks `isinstance(value, Undefined)` and returns before it yields
 # anything, with no class distinction -- the filter is documented as answering
 # an empty iterable for an undefined, and a StrictUndefined is one. Raising for

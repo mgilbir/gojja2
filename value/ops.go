@@ -887,7 +887,18 @@ func Pow(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 		return Undefined, errs.New(errs.ValueError,
 			"a negative number cannot be raised to a fractional power (gojja2 has no complex type)")
 	}
-	return Float(powFloat(x, y)), nil
+	r := powFloat(x, y)
+	// CPython's float_pow reads errno from the platform pow(), and an
+	// overflow there is an OverflowError rather than an infinity: `2.0 **
+	// 1024` raises where `1e308 * 10` renders inf. Only *this* operator
+	// does it -- multiply, add and the rest saturate -- and only from
+	// finite operands, because an infinite one is answered before pow() is
+	// reached. Underflow is not an overflow: `0.5 ** 10000` is 0.0.
+	if math.IsInf(r, 0) && !math.IsInf(x, 0) && !math.IsInf(y, 0) {
+		return Undefined, errs.New(errs.OverflowError,
+			"(34, 'Numerical result out of range')")
+	}
+	return Float(r), nil
 }
 
 // estimatePowBits bounds the width of base**exp without computing it.
