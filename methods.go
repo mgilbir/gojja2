@@ -1021,12 +1021,21 @@ func affixMethod(name string, match func(string, string) bool) func(*State, valu
 		if err != nil {
 			return value.Undefined, err
 		}
-		if !inRange {
-			return value.False, nil
-		}
+		// The candidate is converted before it is matched, so its type
+		// is checked whatever the slice bounds say: `''.startswith(1,
+		// 2)` raises where an empty range used to answer False. In a
+		// tuple each element is converted as it is *reached*, so one
+		// that matches first hides a bad one after it --
+		// `'abc'.startswith(('a', 1))` is True and
+		// `''.startswith(('a', 1))` raises.
 		if s, ok := v.Seq(); ok && v.Kind() == value.KindTuple {
 			for _, cand := range s.Items() {
-				if cand.Kind() == value.KindString && match(within, cand.AsString()) {
+				if cand.Kind() != value.KindString {
+					return value.Undefined, errs.New(errs.TypeError,
+						"tuple for %s must only contain str, not %s",
+						name, cand.TypeName())
+				}
+				if inRange && match(within, cand.AsString()) {
 					return value.True, nil
 				}
 			}
@@ -1036,6 +1045,9 @@ func affixMethod(name string, match func(string, string) bool) func(*State, valu
 			return value.Undefined, errs.New(errs.TypeError,
 				"%s first arg must be str or a tuple of str, not %s",
 				name, v.TypeName())
+		}
+		if !inRange {
+			return value.False, nil
 		}
 		return value.Bool(match(within, v.AsString())), nil
 	}

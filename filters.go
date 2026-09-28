@@ -2738,42 +2738,47 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		if err != nil {
 			return value.Undefined, err
 		}
-		f, ok := scaled.Float64()
-		if !ok {
-			return value.Undefined, errs.New(errs.TypeError,
-				"must be real number, not %s", scaled.TypeName())
+		// math.ceil and math.floor answer a Python *int*, and the
+		// division that follows is int/int when the scale is one too --
+		// so the whole thing is exact until the last step, which
+		// CPython rounds once. Going through a float64 first loses the
+		// value it cannot hold: `9007199254740993|round(2, 'ceil')` is
+		// 9007199254740992.0 there and was ...994.0 here.
+		var rounded value.Value
+		if scaled.IsInteger() {
+			// An integer is already what ceil and floor would answer.
+			rounded = scaled
+		} else {
+			f, ok := scaled.Float64()
+			if !ok {
+				return value.Undefined, errs.New(errs.TypeError,
+					"must be real number, not %s", scaled.TypeName())
+			}
+			// They refuse a value that is not a number -- which is
+			// where an infinity raises, rather than dividing through
+			// as an infinity of its own.
+			if math.IsInf(f, 0) {
+				return value.Undefined, errs.New(errs.OverflowError,
+					"cannot convert float infinity to integer")
+			}
+			if math.IsNaN(f) {
+				return value.Undefined, errs.New(errs.ValueError,
+					"cannot convert float NaN to integer")
+			}
+			g := math.Floor(f)
+			if method == "ceil" {
+				g = math.Ceil(f)
+			}
+			// A Python int has no signed zero, so dividing one
+			// yields +0.0 -- `-0.0|round(1, "floor")` renders "0.0"
+			// there and rendered "-0.0" here.
+			rounded = value.BigInt(new(big.Int).SetInt64(int64(g)))
+			if math.Abs(g) >= 1<<62 {
+				r, _ := new(big.Float).SetFloat64(g).Int(nil)
+				rounded = value.BigInt(r)
+			}
 		}
-		divisor, _ := scale.Float64()
-		if divisor == 0 {
-			// 10**-400 underflows to 0.0, and Python then divides by
-			// it. gojja2 answered NaN, which is not a number any
-			// template asked for.
-			return value.Undefined, value.ErrZeroDivision(s.PythonVersion(), "float division by zero")
-		}
-		// math.ceil and math.floor answer a Python int, so they refuse a
-		// value that is not one -- which is where an infinity raises,
-		// rather than dividing through as an infinity of its own.
-		if math.IsInf(f, 0) {
-			return value.Undefined, errs.New(errs.OverflowError,
-				"cannot convert float infinity to integer")
-		}
-		if math.IsNaN(f) {
-			return value.Undefined, errs.New(errs.ValueError,
-				"cannot convert float NaN to integer")
-		}
-		rounded := math.Floor(f)
-		if method == "ceil" {
-			rounded = math.Ceil(f)
-		}
-		// math.ceil and math.floor return a Python *int*, which has no
-		// signed zero, so dividing it yields +0.0. Go's return a float
-		// and keep the sign, which made `-0.0|round(1, "floor")` render
-		// "-0.0" where jinja2 renders "0.0". Assigning the literal
-		// normalises -0.0 to +0.0 and leaves every other value alone.
-		if rounded == 0 {
-			rounded = 0
-		}
-		return value.Float(rounded / divisor), nil
+		return value.Div(rounded, scale, s.PythonVersion())
 	}
 
 	// round() looks __round__ up on the value, so a type that has none is

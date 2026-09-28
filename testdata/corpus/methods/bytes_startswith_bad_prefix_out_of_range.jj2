@@ -1,0 +1,3 @@
+{}
+---
+{{ ''.encode().startswith(1, 2) }}

@@ -55,6 +55,18 @@ func (h *harness) context() (map[string]value.Value, error) {
 	return conformance.DecodeContext(h.rawCtx)
 }
 
+// contextFor is the case's own values when it drew a set, the shared ones
+// otherwise. Fresh each time: a template that mutates a list must not change
+// what the next one sees.
+func (h *harness) contextFor(c conformance.GeneratedCase) (json.RawMessage, map[string]value.Value, error) {
+	raw := c.Context
+	if raw == nil {
+		raw = h.rawCtx
+	}
+	vars, err := conformance.DecodeContext(raw)
+	return raw, vars, err
+}
+
 // newHarness starts the oracle, or skips when there is none to ask.
 func newHarness(t testing.TB) *harness {
 	t.Helper()
@@ -251,7 +263,7 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var buf strings.Builder
-	vars, err := h.context()
+	_, vars, err := h.contextFor(c)
 	if err != nil {
 		return "", "", err
 	}
@@ -262,10 +274,14 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 // check compares one template, returning nil when the two agree or when the
 // case cannot be graded.
 func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.Divergence {
+	raw, _, err := h.contextFor(c)
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
 	want, err := h.oracle.Render(conformance.OracleRequest{
 		Name:      fuzzTemplateName,
 		Source:    c.Source,
-		Context:   h.rawCtx,
+		Context:   raw,
 		Settings:  caseSettings(c),
 		Templates: h.templatesFor(c),
 	})
@@ -354,6 +370,11 @@ func report(t testing.TB, c conformance.GeneratedCase, d *conformance.Divergence
 	if c.TemplateSet != "" && c.TemplateSet != "flat" {
 		env += ", templates: " + c.TemplateSet
 	}
+	// The values are part of the case too: a divergence on the empty set is
+	// not reproducible against the default one.
+	if c.ContextSet != "" && c.ContextSet != "default" {
+		env += ", context: " + c.ContextSet
+	}
 	t.Errorf("[%s] %s\n%s\n  (context: conformance.FuzzContextJSON%s)",
 		d.Kind, strconv.Quote(c.Source), indent(d.Detail), env)
 }
@@ -404,6 +425,7 @@ func TestDifferential(t *testing.T) {
 
 	var checked, skipped, escaping, selecting int
 	setRuns := map[string]int{}
+	ctxRuns := map[string]int{}
 	var failures int
 	undefinedRuns := map[string]int{}
 	lexRuns := map[string]int{}
@@ -426,6 +448,7 @@ func TestDifferential(t *testing.T) {
 			selecting++
 		}
 		setRuns[c.TemplateSet]++
+		ctxRuns[c.ContextSet]++
 		if c.Undefined != "" {
 			undefinedRuns[c.Undefined]++
 		}
@@ -453,14 +476,14 @@ func TestDifferential(t *testing.T) {
 		"lexer %d trim, %d lstrip, %d keep-newline, %d crlf, %d cr, "+
 		"%d custom delimiters, %d line statements, %d line comments; "+
 		"extensions %d do, %d loopcontrols, writing %d print, %d do, %d break, %d continue; "+
-		"templates %s",
+		"templates %s; context %s",
 		checked, seed, escaping, selecting, skipped,
 		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"],
 		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
 		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"], lexRuns["lineprefix"], lexRuns["linecomment"],
 		tagRuns["ext-do"], tagRuns["ext-loopcontrols"],
 		tagRuns["print"], tagRuns["do"], tagRuns["break"], tagRuns["continue"],
-		templateSetCounts(setRuns))
+		templateSetCounts(setRuns), contextSetCounts(ctxRuns))
 	// An extension that is enabled and never written is an axis that costs a
 	// run and asks nothing, which is what `break` was for as long as the
 	// generator could not emit it. Asserted rather than printed, because a
@@ -478,9 +501,23 @@ func TestDifferential(t *testing.T) {
 			t.Errorf("%d templates and not one drew the %q template set", checked, name)
 		}
 	}
+	for _, name := range conformance.FuzzContextSets() {
+		if checked > 1000 && ctxRuns[name] == 0 {
+			t.Errorf("%d templates and not one drew the %q context", checked, name)
+		}
+	}
 	if checked > 1000 && selecting == 0 {
 		t.Errorf("%d templates and not one drew select_autoescape", checked)
 	}
+}
+
+// contextSetCounts renders the per-context tally for the summary line.
+func contextSetCounts(runs map[string]int) string {
+	parts := make([]string, 0, len(runs))
+	for _, name := range conformance.FuzzContextSets() {
+		parts = append(parts, fmt.Sprintf("%d %s", runs[name], name))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // templateSetCounts renders the per-set tally for the summary line.

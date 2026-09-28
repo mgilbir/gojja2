@@ -405,6 +405,10 @@ type GeneratedCase struct {
 	// loop's `{% else %}` branch, to `loop.index`, and to a filtered loop's
 	// generator is decided by Python and not by jinja2.
 	Extensions []string
+	// Context is the JSON the case renders against and ContextSet names the
+	// draw; nil means FuzzContextJSON. See contextSets.
+	Context    json.RawMessage
+	ContextSet string
 	// Templates are the auxiliary templates this case renders against, and
 	// TemplateSet names the draw. Both engines are handed this map, so what
 	// `{% import 'mac.txt' %}` finds is part of the case rather than a
@@ -587,6 +591,9 @@ func generateCase(input []byte, withEnvironment bool) GeneratedCase {
 	// Weighted toward the flat set, which is what the soak had always used,
 	// so the other four are an addition rather than a replacement.
 	set := templateSets[g.c.intn(len(templateSets)+3)%len(templateSets)]
+	// Weighted toward the default for the same reason: the other two are an
+	// addition to what the soak has always asked, not a replacement.
+	ctx := contextSets[g.c.intn(len(contextSets)+3)%len(contextSets)]
 	var extensions []string
 	if g.do {
 		extensions = append(extensions, "do")
@@ -614,6 +621,8 @@ func generateCase(input []byte, withEnvironment bool) GeneratedCase {
 		LineCommentPrefix:   lineComment,
 		Templates:           set.templates,
 		TemplateSet:         set.name,
+		Context:             json.RawMessage(ctx.json),
+		ContextSet:          ctx.name,
 	}
 }
 
@@ -1971,6 +1980,61 @@ func (g *generator) list(n int) string {
 		parts = append(parts, g.atom())
 	}
 	return strings.Join(parts, ", ")
+}
+
+// contextSets are the values a case renders against, drawn per case.
+//
+// There was one, so every generated template saw a three-element `lst`, a
+// non-empty `s` and a `d` of three string keys -- and a filter's behaviour on
+// the *boundary* values is where it goes wrong: |first of an empty sequence,
+// |join of one element, |groupby over a list whose attribute is missing,
+// |int of a string that is not a number, a dict with no keys to sort. The
+// generator writes literals of every shape, but a name is the only way to
+// reach a value the template did not build, and the set of names is what the
+// arms draw from.
+//
+// Every set binds every name in `names` except "nope", which is absent on
+// purpose, so any draw works with any template.
+var contextSets = []struct {
+	name string
+	json string
+}{
+	{"default", FuzzContextJSON},
+	// Empty and one-element: what a sequence filter does when there is
+	// nothing to do, and when there is exactly one of something.
+	{"empty", `{
+  "n": 0, "m": 1, "neg": -1, "zero": 0, "one": 1,
+  "f": 0.0, "fz": 0.0, "fneg": -0.0,
+  "s": "", "blank": "", "uni": "",
+  "t": " ", "yes": true, "no": false, "nil": null,
+  "lst": [], "mix": [], "e": [],
+  "strs": ["only"], "d": {}, "ed": {},
+  "users": [], "nested": {"x": {"y": []}},
+  "html": "", "pairs": []
+}`},
+	// Wide, deep and awkward: numbers a float cannot hold, keys that are
+	// not strings, text that needs escaping and normalising.
+	{"awkward", `{
+  "n": 9007199254740993, "m": -9007199254740993, "neg": -0.5, "zero": -0, "one": 1.0,
+  "f": 1e308, "fz": 1e-320, "fneg": -1e308,
+  "s": "  <b>&amp;</b>  ", "blank": " ", "uni": "\u00e9\u0301\uff21\ud83d\ude00",
+  "t": "\ttab\nnewline\r\n", "yes": true, "no": false, "nil": null,
+  "lst": [[1, [2]], {"k": "v"}, null], "mix": [true, false, null], "e": [[]],
+  "strs": ["B", "a", "\u00c4", "b"], "d": {"1": "one", "": "empty", "k k": "spaced"},
+  "ed": {"only": null},
+  "users": [{"name": "", "age": 0, "city": null}, {"name": "x", "city": "Y"}],
+  "nested": {"x": {"y": [[1]]}},
+  "html": "<script>alert(1)</script>", "pairs": [[1, 2, 3], []]
+}`},
+}
+
+// FuzzContextSets names the context sets, for the summary line.
+func FuzzContextSets() []string {
+	out := make([]string, len(contextSets))
+	for i, c := range contextSets {
+		out[i] = c.name
+	}
+	return out
 }
 
 // FuzzContext decodes the shared context for handing to gojja2.

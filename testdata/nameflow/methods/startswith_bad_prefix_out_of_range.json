@@ -1,0 +1,4 @@
+{
+  "case": "methods/startswith_bad_prefix_out_of_range.jj2",
+  "variables": {}
+}

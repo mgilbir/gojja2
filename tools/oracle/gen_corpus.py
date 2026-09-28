@@ -640,6 +640,53 @@ for _n, _src in [
 ]:
     case("format/" + _n, _src)
 
+# startswith and endswith convert the candidate *before* they match it, so its
+# type is checked whatever the slice bounds say -- `''.startswith(1, 2)` raises
+# where an empty window used to answer False -- and in a tuple each element is
+# converted as it is *reached*, so one that matches hides a bad one after it.
+# gojja2 had the str form checking too late and the bytes form too early, so
+# each was wrong in the opposite direction. Found by the fuzzer once the context
+# axis could make `s` the empty string.
+for _n, _src in [
+    ("startswith_bad_prefix_out_of_range", "{{ ''.startswith(1, 2) }}"),
+    ("startswith_bad_prefix_in_range", "{{ 'abc'.startswith(1) }}"),
+    ("endswith_bad_prefix_out_of_range", "{{ ''.endswith(1, 2) }}"),
+    ("endswith_bad_prefix_past_the_end", "{{ 'abc'.endswith(1, 5) }}"),
+    ("startswith_tuple_bad_element_reached", "{{ ''.startswith(('a', 1)) }}"),
+    ("startswith_tuple_bad_element_unreached", "{{ 'abc'.startswith(('a', 1)) }}"),
+    ("startswith_tuple_bad_element_out_of_range", "{{ ''.startswith(('a', 1), 9) }}"),
+    ("startswith_empty_tuple", "{{ ''.startswith(()) }}"),
+    ("startswith_tuple_later_match", "{{ 'abc'.startswith(('x', 'b'), 1) }}"),
+    ("bytes_startswith_tuple_bad_element_reached",
+     "{{ ''.encode().startswith(('a'.encode(), 1)) }}"),
+    ("bytes_startswith_tuple_bad_element_unreached",
+     "{{ 'abc'.encode().startswith(('a'.encode(), 1)) }}"),
+    ("bytes_startswith_bad_prefix_out_of_range", "{{ ''.encode().startswith(1, 2) }}"),
+    ("bytes_endswith_bad_prefix_out_of_range", "{{ ''.encode().endswith(1, 2) }}"),
+]:
+    case("methods/" + _n, _src)
+
+# |round(precision, 'ceil'|'floor') is `func(value * 10**precision) /
+# 10**precision`, and every step but the last is exact when the value is an
+# integer: math.ceil of an int *is* that int, and int/int is one correctly
+# rounded division. gojja2 went through a float64 first, so a value that does
+# not fit came back wrong -- `9007199254740993|round(2, 'ceil')` was
+# 9007199254740994.0 where CPython says ...992.0. Found by the soak once the
+# context axis could hold an integer wider than a float.
+for _n, _src in [
+    ("round_wide_int_ceil", "{{ 9007199254740993|round(2, 'ceil') }}"),
+    ("round_wide_int_floor", "{{ 9007199254740993|round(2, 'floor') }}"),
+    ("round_wide_int_zero_precision", "{{ 9007199254740993|round(0, 'floor') }}"),
+    ("round_negative_zero_floor", "{{ -0.0|round(1, 'floor') }}"),
+    ("round_negative_precision_pair", "{{ 5|round(-2, 'ceil') }}|{{ 123456789|round(-3, 'floor') }}"),
+    ("round_huge_int", "{{ (2 ** 100)|round(2, 'ceil') }}"),
+    ("round_float_precision", "{{ 5|round(2.5, 'ceil') }}"),
+    ("round_underflowing_scale", "{{ 5|round(-400, 'ceil') }}"),
+    ("round_not_a_number", "{{ 'x'|round(2, 'ceil') }}|"),
+    ("round_a_list", "{{ [1,2]|round(1, 'ceil') }}"),
+]:
+    case("filters/" + _n, _src)
+
 # jinja2's select_autoescape decides by the template's *name*, so one template
 # escapes and the next does not -- and each was compiled under its own setting.
 # The corpus had no case for it at all: `__settings__={"autoescape": "select"}`

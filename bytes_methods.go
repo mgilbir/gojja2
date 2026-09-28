@@ -451,24 +451,30 @@ func bytesAffix(name string, match func(string, string) bool) func(*State, value
 			window = s[from:to]
 		}
 
-		var candidates []string
-		switch {
-		case v.Kind() == value.KindBytes:
-			candidates = []string{v.AsString()}
-		case v.Kind() == value.KindTuple:
+		// Each tuple element is converted as it is *reached*, so one
+		// that matches hides a bad one after it:
+		// `b'abc'.startswith((b'a', 1))` is True and
+		// `b''.startswith((b'a', 1))` raises. Collecting them all up
+		// front refused the first of those.
+		if v.Kind() == value.KindTuple {
 			seq, _ := v.Seq()
 			for _, item := range seq.Items() {
 				if item.Kind() != value.KindBytes {
 					return value.Undefined, errs.New(errs.TypeError,
 						"a bytes-like object is required, not '%s'", item.TypeName())
 				}
-				candidates = append(candidates, item.AsString())
+				if inRange && match(window, item.AsString()) {
+					return value.True, nil
+				}
 			}
-		default:
+			return value.False, nil
+		}
+		if v.Kind() != value.KindBytes {
 			return value.Undefined, errs.New(errs.TypeError,
 				"%s first arg must be bytes or a tuple of bytes, not %s",
 				name, v.TypeName())
 		}
+		candidates := []string{v.AsString()}
 		if !inRange {
 			// A start past the end matches nothing, not even the
 			// empty prefix.
