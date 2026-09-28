@@ -7301,6 +7301,23 @@ for _n, _src in [
     ("isdisjoint_two_arguments", "{{ d.keys().isdisjoint(1, 2) }}"),
     ("isdisjoint_a_keyword", "{{ d.keys().isdisjoint(x=1) }}"),
     ("isdisjoint_not_iterable", "{{ d.keys().isdisjoint(5) }}"),
+    # The proxy's class *is* constructible, unlike a view's, and what it
+    # accepts is PyMapping_Check minus list and tuple -- so a string is a
+    # mapping here and another proxy is one too.
+    ("proxy_class_constructs", "{% set C = d.keys().mapping.__class__ %}{{ C({'a': 1}) }}"),
+    ("proxy_class_needs_an_argument", "{{ d.keys().mapping.__class__() }}"),
+    ("proxy_class_names_its_argument",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(mapping={'q': 1}) }}"),
+    ("proxy_class_takes_one",
+     "{% set C = d.keys().mapping.__class__ %}{{ C({'a': 1}, {}) }}"),
+    ("proxy_class_refuses_a_list", "{% set C = d.keys().mapping.__class__ %}{{ C([1]) }}"),
+    ("proxy_class_refuses_a_tuple", "{% set C = d.keys().mapping.__class__ %}{{ C((1,)) }}"),
+    ("proxy_class_refuses_an_int", "{% set C = d.keys().mapping.__class__ %}{{ C(5) }}"),
+    ("proxy_class_takes_a_string",
+     "{% set C = d.keys().mapping.__class__ %}{{ C('ab') }}|{{ C('ab')|pprint }}"
+     "|{{ C('ab')|list }}|{{ C('ab')|length }}"),
+    ("proxy_class_nests", "{% set C = d.keys().mapping.__class__ %}{{ C(C({'a': 1}))|pprint }}"),
+    ("view_class_is_not_constructible", "{{ d.keys().__class__() }}"),
 ]:
     case("dictview/" + _n, _DV + _src)
 

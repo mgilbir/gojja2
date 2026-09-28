@@ -165,36 +165,70 @@ func (m *mappingProxy) GetAttr(name string) (value.Value, bool) {
 		value.FromObject(m), m.py)
 }
 
+// The proxy delegates to whatever it wraps. That is nearly always a dict --
+// `.mapping` makes no other kind -- but the constructor accepts what
+// PyMapping_Check does, which includes a *string*, and `mappingproxy('ab')`
+// then indexes, sizes and iterates as the string does.
 func (m *mappingProxy) GetItem(key value.Value) (value.Value, bool) {
-	d, ok := m.d.Dict()
-	if !ok {
-		return value.Undefined, false
+	if d, ok := m.d.Dict(); ok {
+		v, found, err := d.Get(key, m.py)
+		if err != nil || !found {
+			return value.Undefined, false
+		}
+		return v, true
 	}
-	v, found, err := d.Get(key, m.py)
-	if err != nil || !found {
-		return value.Undefined, false
+	if inner, ok := m.d.Interface().(value.Mapping); ok {
+		return inner.GetItem(key)
 	}
-	return v, true
+	if m.d.Kind() == value.KindString {
+		i, ok := key.Int64()
+		if !ok {
+			return value.Undefined, false
+		}
+		runes := []rune(m.d.AsString())
+		if i < 0 {
+			i += int64(len(runes))
+		}
+		if i < 0 || i >= int64(len(runes)) {
+			return value.Undefined, false
+		}
+		return value.String(string(runes[i])), true
+	}
+	return value.Undefined, false
 }
 
 func (m *mappingProxy) Keys() []value.Value {
-	d, ok := m.d.Dict()
-	if !ok {
+	if d, ok := m.d.Dict(); ok {
+		out := make([]value.Value, 0, d.Len())
+		for _, e := range d.Entries() {
+			out = append(out, e.Key)
+		}
+		return out
+	}
+	if inner, ok := m.d.Interface().(value.Mapping); ok {
+		return inner.Keys()
+	}
+	// A string, whose keys are what iterating it yields.
+	seq, err := value.Iterate(m.d)
+	if err != nil {
 		return nil
 	}
-	out := make([]value.Value, 0, d.Len())
-	for _, e := range d.Entries() {
-		out = append(out, e.Key)
+	var out []value.Value
+	for item := range seq {
+		out = append(out, item)
 	}
 	return out
 }
 
 func (m *mappingProxy) Len() int {
-	d, ok := m.d.Dict()
-	if !ok {
+	if d, ok := m.d.Dict(); ok {
+		return d.Len()
+	}
+	n, err := value.Len(m.d)
+	if err != nil {
 		return 0
 	}
-	return d.Len()
+	return n
 }
 
 func (m *mappingProxy) Iterate() iter.Seq[value.Value] {

@@ -226,6 +226,7 @@ func init() {
 		"jinja2.utils.Namespace": globalNamespace,
 		"jinja2.utils.Cycler":    globalCycler,
 		"jinja2.utils.Joiner":    globalJoiner,
+		"mappingproxy":           constructMappingProxy,
 	}
 	// An undefined's class builds another undefined. Which class it was
 	// decides how the result behaves, and the class name is the only thing
@@ -445,6 +446,38 @@ func constructBool(_ *State, args *value.CallArgs) (value.Value, error) {
 		return value.Undefined, err
 	}
 	return value.Bool(ok), nil
+}
+
+// constructMappingProxy is types.MappingProxyType(mapping), which a template
+// can reach through `d.keys().mapping.__class__`. Its one argument may be
+// named, and what it accepts is PyMapping_Check minus list and tuple -- so a
+// *string* is a mapping here, and another proxy is one too.
+func constructMappingProxy(s *State, args *value.CallArgs) (value.Value, error) {
+	if len(args.Pos)+len(args.Kwargs) > 1 {
+		return value.Undefined, errs.New(errs.TypeError,
+			"mappingproxy() takes at most 1 argument (%d given)",
+			len(args.Pos)+len(args.Kwargs))
+	}
+	arg, ok := args.Kwarg("mapping")
+	if !ok {
+		if len(args.Pos) == 0 {
+			// Any other keyword is reported as the missing one:
+			// CPython checks that the argument is there before it
+			// asks what the caller named.
+			return value.Undefined, errs.New(errs.TypeError,
+				"mappingproxy() missing required argument 'mapping' (pos 1)")
+		}
+		arg = args.Pos[0]
+	}
+	switch {
+	case arg.Kind() == value.KindDict, arg.Kind() == value.KindString:
+	default:
+		if _, isMapping := arg.Interface().(value.Mapping); !isMapping {
+			return value.Undefined, errs.New(errs.TypeError,
+				"mappingproxy() argument must be a mapping, not %s", arg.TypeName())
+		}
+	}
+	return value.FromObject(&mappingProxy{d: arg, py: s.PythonVersion()}), nil
 }
 
 func constructNone(_ *State, args *value.CallArgs) (value.Value, error) {
