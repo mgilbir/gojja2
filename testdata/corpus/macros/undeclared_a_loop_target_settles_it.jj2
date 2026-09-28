@@ -1,0 +1,3 @@
+{}
+---
+{% macro takes() %}<{{ caller(1) }}>{% endmacro %}{% macro m(x) %}{% for kwargs in [1] %}{{ kwargs }}{% endfor %}{% endmacro %}[{{ m(1, **{'b': 2}) }}]

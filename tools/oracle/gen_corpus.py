@@ -4018,6 +4018,43 @@ for _n, _src in [
 ]:
     case("macros/" + _n, _src)
 
+# The search that decides all of it is jinja2's find_undeclared, and what it
+# walks is not what a reader would guess: it stops at a `{% block %}` and at
+# nothing else -- not at a nested macro -- and a *parameter* anywhere in what it
+# walks takes that name out of the search for good, while a default that reads
+# one puts it in. So a `{% call(kwargs) %}` block inside a macro settles
+# `kwargs` for the macro around it, and `{% call(p=kwargs) %}` does the
+# opposite. gojja2 walked a call block's body and not its signature, so the
+# enclosing macro swallowed keywords jinja2 refuses. Found by the fuzzer.
+_TAKES = "{% macro takes() %}<{{ caller(1) }}>{% endmacro %}"
+for _n, _src in [
+    ("call_block_param_settles_kwargs",
+     "{% macro m(x) %}{% call(kwargs) takes() %}{{ kwargs }}{% endcall %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+    ("call_block_param_settles_varargs",
+     "{% macro m(x) %}{% call(varargs) takes() %}{{ varargs }}{% endcall %}{% endmacro %}"
+     "[{{ m(1, 2) }}]"),
+    ("call_block_param_settles_caller",
+     "{% macro m(x) %}{% call(caller) takes() %}x{% endcall %}{% endmacro %}"
+     "[{{ m(1) }}]{% call m(1) %}C{% endcall %}"),
+    ("a_read_before_the_call_block_wins",
+     "{% macro m(x) %}{{ kwargs }}{% call(kwargs) takes() %}{% endcall %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+    ("a_call_blocks_default_reads_kwargs",
+     "{% macro m(x) %}{% call(p=kwargs) takes() %}x{% endcall %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+    ("a_nested_macros_param_settles_it",
+     "{% macro m(x) %}{% macro inner(kwargs) %}{{ kwargs }}{% endmacro %}{{ inner(9) }}"
+     "{% endmacro %}[{{ m(1, **{'b': 2}) }}]"),
+    ("a_block_body_is_not_searched",
+     "{% macro m(x) %}{% block bb %}{{ kwargs }}{% endblock %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+    ("a_loop_target_settles_it",
+     "{% macro m(x) %}{% for kwargs in [1] %}{{ kwargs }}{% endfor %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+]:
+    case("macros/undeclared_" + _n, _TAKES + _src)
+
 case("errors/caller_param_used_without_a_default",
      "{% macro m(caller) %}{{ caller }}{% endmacro %}x")
 case("errors/caller_param_used_before_a_default",

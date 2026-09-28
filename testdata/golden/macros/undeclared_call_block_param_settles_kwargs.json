@@ -1,0 +1,14 @@
+{
+  "case": "macros/undeclared_call_block_param_settles_kwargs.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "macro 'm' takes no keyword argument 'b'"
+  }
+}
