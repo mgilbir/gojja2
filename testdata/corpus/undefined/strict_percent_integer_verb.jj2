@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "s": "x"
+}
+---
+[{{ '%d' % (s|attr('nope')) }}]

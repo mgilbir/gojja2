@@ -6328,6 +6328,34 @@ for _n, _src in [
 ]:
     case("filters/pprint_bytes_" + _n, _src)
 
+# The parser runs to completion before CPython sees the module jinja2 generates,
+# so a template that is *both* an unbound break and malformed later reports the
+# malformed part. gojja2 refused at the tag, which made the first of these a
+# complaint about the break where jinja2 names the stray tag.
+case("errors/break_before_a_syntax_error", "{% break %}{% else %}",
+     __settings__={"extensions": ["loopcontrols"]})
+case("errors/break_before_an_unknown_tag", "{% break %}{% nosuchtag %}",
+     __settings__={"extensions": ["loopcontrols"]})
+case("errors/break_before_a_bad_expression", "{% break %}{{ nope. }}",
+     __settings__={"extensions": ["loopcontrols"]})
+
+# `%(name)s` against an *undefined* mapping: the lookup answers the way a
+# subscript of it would, so ChainableUndefined hands back another undefined and
+# the conversion then refuses it by type -- "%b requires a bytes-like object ...
+# not 'ChainableUndefined'" -- while every other class raises its own error
+# naming the variable. gojja2 raised for all four, which the generated
+# differential found under chainable.
+for _kind in ("default", "chainable", "debug", "strict"):
+    _set = {} if _kind == "default" else {"undefined": _kind}
+    case("undefined/%s_percent_mapping_key" % _kind,
+         "[{{ '%(k)s' % nope }}]", __settings__=_set)
+    case("undefined/%s_percent_mapping_from_attr" % _kind,
+         "[{{ '%(k)s' % (s|attr('nope')) }}]", __settings__=_set, s="x")
+    case("undefined/%s_percent_bytes_mapping" % _kind,
+         "[{{ ('%(k)b'.encode()) % (s|attr('nope')) }}]", __settings__=_set, s="x")
+    case("undefined/%s_percent_integer_verb" % _kind,
+         "[{{ '%d' % (s|attr('nope')) }}]", __settings__=_set, s="x")
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither

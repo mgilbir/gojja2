@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_percent_mapping_key.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

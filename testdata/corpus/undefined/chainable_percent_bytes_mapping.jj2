@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  },
+  "s": "x"
+}
+---
+[{{ ('%(k)b'.encode()) % (s|attr('nope')) }}]

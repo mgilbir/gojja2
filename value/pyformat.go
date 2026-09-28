@@ -225,9 +225,16 @@ func lookupFormatKey(mapping Value, key Value) (Value, error) {
 			"byte indices must be integers or slices, not %s", key.TypeName())
 	case KindUndefined:
 		// An undefined passes the subscript check -- it defines
-		// __getitem__ -- and then raises its own error when the key is
-		// actually looked up, which names the variable that was never
-		// set rather than complaining about the operand's type.
+		// __getitem__ -- and then answers the way a subscript of it
+		// would: ChainableUndefined hands back another undefined, which
+		// the conversion then refuses by *type*, and every other class
+		// raises its own error naming the variable that was never set.
+		// Raising for all of them made `b'%(k)b' % (x|attr('nope'))`
+		// under ChainableUndefined an UndefinedError where jinja2 says
+		// "%b requires a bytes-like object ... not 'ChainableUndefined'".
+		if mapping.UndefinedBehavior() == UndefinedChainable {
+			return mapping, nil
+		}
 		return Undefined, mapping.UndefinedError()
 	case KindObject:
 		if m, ok := mapping.Interface().(Mapping); ok {

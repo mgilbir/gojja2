@@ -65,6 +65,16 @@ func Parse(syn lexer.Syntax, opts Options, source, name string) (tmpl *ast.Templ
 	}()
 	body := p.subparse(nil)
 	p.expect(kindRule(lexer.EOF))
+	// Held until the parse has finished, because jinja2's parser runs to
+	// completion before CPython ever sees the module it generates: a
+	// template that is both `{% break %}` outside a loop *and* malformed
+	// later reports the malformed part, which is the parser's error.
+	// Raising at the tag made `{% break %}{% else %}` a refusal about the
+	// break where jinja2 says "Encountered unknown tag 'else'", which the
+	// generated differential found.
+	if p.unbound != nil {
+		panic(parseError{err: p.unbound})
+	}
 	return &ast.Template{Body: body}, nil
 }
 
@@ -89,6 +99,9 @@ type parser struct {
 	lexErr error
 	// depth is the current nesting of the recursive descent.
 	depth int
+	// unbound is the first break or continue that no loop in its generated
+	// function would bind, held until the parse finishes. See Parse.
+	unbound error
 	// loops is how many `for` loops enclose the statement being parsed
 	// *within the function jinja2 would generate* for it, which is what a
 	// break or a continue can bind to. See loopScope.
@@ -731,9 +744,16 @@ func (p *parser) parseContinue() *ast.Continue {
 // with this message, and a line number in that generated source rather than in
 // the template. See docs/divergences.md.
 func (p *parser) requireLoop(msg string, line int) {
-	if p.loops == 0 {
-		p.failKindAt(errs.SyntaxError, line, "%s", msg)
+	if p.loops > 0 || p.unbound != nil {
+		return
 	}
+	// Built here, where the line is known, and raised in Parse. The first
+	// one wins, as CPython reports the first its compiler reaches.
+	e := errs.New(errs.SyntaxError, "%s", msg)
+	e.Line = line
+	e.Name = p.name
+	e.Source = p.source
+	p.unbound = e
 }
 
 // --- failure messages --------------------------------------------------------
