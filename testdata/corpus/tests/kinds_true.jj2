@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is true }}|{{ 0 is true }}|{{ -1 is true }}|{{ 1.5 is true }}|{{ true is true }}|{{ false is true }}|{{ none is true }}|{{ 'a' is true }}|{{ '' is true }}|{{ 'A' is true }}|{{ [1] is true }}|{{ [] is true }}|{{ ((1,)) is true }}|{{ {} is true }}|{{ {'a':1} is true }}|{{ range(3) is true }}|{{ nope is true }}|{{ ('x'|safe) is true }}|{{ dict is true }}|{{ d.keys() is true }}

@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is lower }}|{{ 0 is lower }}|{{ -1 is lower }}|{{ 1.5 is lower }}|{{ true is lower }}|{{ false is lower }}|{{ none is lower }}|{{ 'a' is lower }}|{{ '' is lower }}|{{ 'A' is lower }}|{{ [1] is lower }}|{{ [] is lower }}|{{ ((1,)) is lower }}|{{ {} is lower }}|{{ {'a':1} is lower }}|{{ range(3) is lower }}|{{ nope is lower }}|{{ ('x'|safe) is lower }}|{{ dict is lower }}|{{ d.keys() is lower }}

@@ -6444,6 +6444,117 @@ for _n, _src in [
 ]:
     case("filters/" + _n, _src)
 
+# jinja2's operator tests are `operator.eq` and its neighbours, three of them
+# under two names -- and half of them had no corpus case at all: `is gt`, `is le`
+# and the three aliases were never written. What the aliases share is the
+# *function*, which is why an arity error about `equalto` names eq.
+for _n, _src in [
+    ("eq", "{{ 1 is eq 1 }}|{{ 1 is eq 2 }}|{{ 2 is eq 1 }}|"
+     "{{ 'a' is eq 'b' }}|{{ 1.0 is eq 1 }}|{{ [1] is eq [1] }}|"
+     "{{ none is eq none }}|{{ 1 is eq(1) }}"),
+    ("eq_mismatched", "{{ 1 is eq 'a' }}"),
+    ("eq_undefined", "{{ nope is eq 1 }}"),
+    ("ne", "{{ 1 is ne 1 }}|{{ 1 is ne 2 }}|{{ 2 is ne 1 }}|"
+     "{{ 'a' is ne 'b' }}|{{ 1.0 is ne 1 }}|{{ [1] is ne [1] }}|"
+     "{{ none is ne none }}|{{ 1 is ne(1) }}"),
+    ("ne_mismatched", "{{ 1 is ne 'a' }}"),
+    ("ne_undefined", "{{ nope is ne 1 }}"),
+    ("lt", "{{ 1 is lt 1 }}|{{ 1 is lt 2 }}|{{ 2 is lt 1 }}|"
+     "{{ 'a' is lt 'b' }}|{{ 1.0 is lt 1 }}|{{ [1] is lt [1] }}|"
+     "{{ none is lt none }}|{{ 1 is lt(1) }}"),
+    ("lt_mismatched", "{{ 1 is lt 'a' }}"),
+    ("lt_undefined", "{{ nope is lt 1 }}"),
+    ("le", "{{ 1 is le 1 }}|{{ 1 is le 2 }}|{{ 2 is le 1 }}|"
+     "{{ 'a' is le 'b' }}|{{ 1.0 is le 1 }}|{{ [1] is le [1] }}|"
+     "{{ none is le none }}|{{ 1 is le(1) }}"),
+    ("le_mismatched", "{{ 1 is le 'a' }}"),
+    ("le_undefined", "{{ nope is le 1 }}"),
+    ("gt", "{{ 1 is gt 1 }}|{{ 1 is gt 2 }}|{{ 2 is gt 1 }}|"
+     "{{ 'a' is gt 'b' }}|{{ 1.0 is gt 1 }}|{{ [1] is gt [1] }}|"
+     "{{ none is gt none }}|{{ 1 is gt(1) }}"),
+    ("gt_mismatched", "{{ 1 is gt 'a' }}"),
+    ("gt_undefined", "{{ nope is gt 1 }}"),
+    ("ge", "{{ 1 is ge 1 }}|{{ 1 is ge 2 }}|{{ 2 is ge 1 }}|"
+     "{{ 'a' is ge 'b' }}|{{ 1.0 is ge 1 }}|{{ [1] is ge [1] }}|"
+     "{{ none is ge none }}|{{ 1 is ge(1) }}"),
+    ("ge_mismatched", "{{ 1 is ge 'a' }}"),
+    ("ge_undefined", "{{ nope is ge 1 }}"),
+    ("equalto", "{{ 1 is equalto 1 }}|{{ 1 is equalto 2 }}|{{ 2 is equalto 1 }}|"
+     "{{ 'a' is equalto 'b' }}|{{ 1.0 is equalto 1 }}|{{ [1] is equalto [1] }}|"
+     "{{ none is equalto none }}|{{ 1 is equalto(1) }}"),
+    ("equalto_mismatched", "{{ 1 is equalto 'a' }}"),
+    ("equalto_undefined", "{{ nope is equalto 1 }}"),
+    ("greaterthan", "{{ 1 is greaterthan 1 }}|{{ 1 is greaterthan 2 }}|{{ 2 is greaterthan 1 }}|"
+     "{{ 'a' is greaterthan 'b' }}|{{ 1.0 is greaterthan 1 }}|{{ [1] is greaterthan [1] }}|"
+     "{{ none is greaterthan none }}|{{ 1 is greaterthan(1) }}"),
+    ("greaterthan_mismatched", "{{ 1 is greaterthan 'a' }}"),
+    ("greaterthan_undefined", "{{ nope is greaterthan 1 }}"),
+    ("lessthan", "{{ 1 is lessthan 1 }}|{{ 1 is lessthan 2 }}|{{ 2 is lessthan 1 }}|"
+     "{{ 'a' is lessthan 'b' }}|{{ 1.0 is lessthan 1 }}|{{ [1] is lessthan [1] }}|"
+     "{{ none is lessthan none }}|{{ 1 is lessthan(1) }}"),
+    ("lessthan_mismatched", "{{ 1 is lessthan 'a' }}"),
+    ("lessthan_undefined", "{{ nope is lessthan 1 }}"),
+]:
+    case("tests/operator_" + _n, _src)
+
+# Every type test against twenty operands, because one operand each is what the
+# corpus had: `tests/kinds` asks `1 is integer` and `'a' is string` and stops
+# there, which cannot see the answers that are *surprising* -- a bool is an
+# integer and a number in Python, a str is a sequence and an iterable but a
+# mapping is not a sequence, a range is both, a Markup is a string, and an
+# undefined is falsy for all of them without raising. An even/odd of a non-number
+# raises instead, which is the row that is an error rather than a line of
+# booleans.
+for _n, _src in [
+    ("boolean", "{{ 1 is boolean }}|{{ 0 is boolean }}|{{ -1 is boolean }}|{{ 1.5 is boolean }}|{{ true is boolean }}|{{ false is boolean }}|{{ none is boolean }}|{{ 'a' is boolean }}|{{ '' is boolean }}|{{ 'A' is boolean }}|{{ [1] is boolean }}|{{ [] is boolean }}|{{ ((1,)) is boolean }}|{{ {} is boolean }}|{{ {'a':1} is boolean }}|{{ range(3) is boolean }}|{{ nope is boolean }}|{{ ('x'|safe) is boolean }}|{{ dict is boolean }}|{{ d.keys() is boolean }}"),
+    ("integer", "{{ 1 is integer }}|{{ 0 is integer }}|{{ -1 is integer }}|{{ 1.5 is integer }}|{{ true is integer }}|{{ false is integer }}|{{ none is integer }}|{{ 'a' is integer }}|{{ '' is integer }}|{{ 'A' is integer }}|{{ [1] is integer }}|{{ [] is integer }}|{{ ((1,)) is integer }}|{{ {} is integer }}|{{ {'a':1} is integer }}|{{ range(3) is integer }}|{{ nope is integer }}|{{ ('x'|safe) is integer }}|{{ dict is integer }}|{{ d.keys() is integer }}"),
+    ("float", "{{ 1 is float }}|{{ 0 is float }}|{{ -1 is float }}|{{ 1.5 is float }}|{{ true is float }}|{{ false is float }}|{{ none is float }}|{{ 'a' is float }}|{{ '' is float }}|{{ 'A' is float }}|{{ [1] is float }}|{{ [] is float }}|{{ ((1,)) is float }}|{{ {} is float }}|{{ {'a':1} is float }}|{{ range(3) is float }}|{{ nope is float }}|{{ ('x'|safe) is float }}|{{ dict is float }}|{{ d.keys() is float }}"),
+    ("number", "{{ 1 is number }}|{{ 0 is number }}|{{ -1 is number }}|{{ 1.5 is number }}|{{ true is number }}|{{ false is number }}|{{ none is number }}|{{ 'a' is number }}|{{ '' is number }}|{{ 'A' is number }}|{{ [1] is number }}|{{ [] is number }}|{{ ((1,)) is number }}|{{ {} is number }}|{{ {'a':1} is number }}|{{ range(3) is number }}|{{ nope is number }}|{{ ('x'|safe) is number }}|{{ dict is number }}|{{ d.keys() is number }}"),
+    ("string", "{{ 1 is string }}|{{ 0 is string }}|{{ -1 is string }}|{{ 1.5 is string }}|{{ true is string }}|{{ false is string }}|{{ none is string }}|{{ 'a' is string }}|{{ '' is string }}|{{ 'A' is string }}|{{ [1] is string }}|{{ [] is string }}|{{ ((1,)) is string }}|{{ {} is string }}|{{ {'a':1} is string }}|{{ range(3) is string }}|{{ nope is string }}|{{ ('x'|safe) is string }}|{{ dict is string }}|{{ d.keys() is string }}"),
+    ("sequence", "{{ 1 is sequence }}|{{ 0 is sequence }}|{{ -1 is sequence }}|{{ 1.5 is sequence }}|{{ true is sequence }}|{{ false is sequence }}|{{ none is sequence }}|{{ 'a' is sequence }}|{{ '' is sequence }}|{{ 'A' is sequence }}|{{ [1] is sequence }}|{{ [] is sequence }}|{{ ((1,)) is sequence }}|{{ {} is sequence }}|{{ {'a':1} is sequence }}|{{ range(3) is sequence }}|{{ nope is sequence }}|{{ ('x'|safe) is sequence }}|{{ dict is sequence }}|{{ d.keys() is sequence }}"),
+    ("mapping", "{{ 1 is mapping }}|{{ 0 is mapping }}|{{ -1 is mapping }}|{{ 1.5 is mapping }}|{{ true is mapping }}|{{ false is mapping }}|{{ none is mapping }}|{{ 'a' is mapping }}|{{ '' is mapping }}|{{ 'A' is mapping }}|{{ [1] is mapping }}|{{ [] is mapping }}|{{ ((1,)) is mapping }}|{{ {} is mapping }}|{{ {'a':1} is mapping }}|{{ range(3) is mapping }}|{{ nope is mapping }}|{{ ('x'|safe) is mapping }}|{{ dict is mapping }}|{{ d.keys() is mapping }}"),
+    ("iterable", "{{ 1 is iterable }}|{{ 0 is iterable }}|{{ -1 is iterable }}|{{ 1.5 is iterable }}|{{ true is iterable }}|{{ false is iterable }}|{{ none is iterable }}|{{ 'a' is iterable }}|{{ '' is iterable }}|{{ 'A' is iterable }}|{{ [1] is iterable }}|{{ [] is iterable }}|{{ ((1,)) is iterable }}|{{ {} is iterable }}|{{ {'a':1} is iterable }}|{{ range(3) is iterable }}|{{ nope is iterable }}|{{ ('x'|safe) is iterable }}|{{ dict is iterable }}|{{ d.keys() is iterable }}"),
+    ("callable", "{{ 1 is callable }}|{{ 0 is callable }}|{{ -1 is callable }}|{{ 1.5 is callable }}|{{ true is callable }}|{{ false is callable }}|{{ none is callable }}|{{ 'a' is callable }}|{{ '' is callable }}|{{ 'A' is callable }}|{{ [1] is callable }}|{{ [] is callable }}|{{ ((1,)) is callable }}|{{ {} is callable }}|{{ {'a':1} is callable }}|{{ range(3) is callable }}|{{ nope is callable }}|{{ ('x'|safe) is callable }}|{{ dict is callable }}|{{ d.keys() is callable }}"),
+    ("none", "{{ 1 is none }}|{{ 0 is none }}|{{ -1 is none }}|{{ 1.5 is none }}|{{ true is none }}|{{ false is none }}|{{ none is none }}|{{ 'a' is none }}|{{ '' is none }}|{{ 'A' is none }}|{{ [1] is none }}|{{ [] is none }}|{{ ((1,)) is none }}|{{ {} is none }}|{{ {'a':1} is none }}|{{ range(3) is none }}|{{ nope is none }}|{{ ('x'|safe) is none }}|{{ dict is none }}|{{ d.keys() is none }}"),
+    ("true", "{{ 1 is true }}|{{ 0 is true }}|{{ -1 is true }}|{{ 1.5 is true }}|{{ true is true }}|{{ false is true }}|{{ none is true }}|{{ 'a' is true }}|{{ '' is true }}|{{ 'A' is true }}|{{ [1] is true }}|{{ [] is true }}|{{ ((1,)) is true }}|{{ {} is true }}|{{ {'a':1} is true }}|{{ range(3) is true }}|{{ nope is true }}|{{ ('x'|safe) is true }}|{{ dict is true }}|{{ d.keys() is true }}"),
+    ("false", "{{ 1 is false }}|{{ 0 is false }}|{{ -1 is false }}|{{ 1.5 is false }}|{{ true is false }}|{{ false is false }}|{{ none is false }}|{{ 'a' is false }}|{{ '' is false }}|{{ 'A' is false }}|{{ [1] is false }}|{{ [] is false }}|{{ ((1,)) is false }}|{{ {} is false }}|{{ {'a':1} is false }}|{{ range(3) is false }}|{{ nope is false }}|{{ ('x'|safe) is false }}|{{ dict is false }}|{{ d.keys() is false }}"),
+    ("odd", "{{ 1 is odd }}|{{ 0 is odd }}|{{ -1 is odd }}|{{ 1.5 is odd }}|{{ true is odd }}|{{ false is odd }}|{{ none is odd }}|{{ 'a' is odd }}|{{ '' is odd }}|{{ 'A' is odd }}|{{ [1] is odd }}|{{ [] is odd }}|{{ ((1,)) is odd }}|{{ {} is odd }}|{{ {'a':1} is odd }}|{{ range(3) is odd }}|{{ nope is odd }}|{{ ('x'|safe) is odd }}|{{ dict is odd }}|{{ d.keys() is odd }}"),
+    ("even", "{{ 1 is even }}|{{ 0 is even }}|{{ -1 is even }}|{{ 1.5 is even }}|{{ true is even }}|{{ false is even }}|{{ none is even }}|{{ 'a' is even }}|{{ '' is even }}|{{ 'A' is even }}|{{ [1] is even }}|{{ [] is even }}|{{ ((1,)) is even }}|{{ {} is even }}|{{ {'a':1} is even }}|{{ range(3) is even }}|{{ nope is even }}|{{ ('x'|safe) is even }}|{{ dict is even }}|{{ d.keys() is even }}"),
+    ("lower", "{{ 1 is lower }}|{{ 0 is lower }}|{{ -1 is lower }}|{{ 1.5 is lower }}|{{ true is lower }}|{{ false is lower }}|{{ none is lower }}|{{ 'a' is lower }}|{{ '' is lower }}|{{ 'A' is lower }}|{{ [1] is lower }}|{{ [] is lower }}|{{ ((1,)) is lower }}|{{ {} is lower }}|{{ {'a':1} is lower }}|{{ range(3) is lower }}|{{ nope is lower }}|{{ ('x'|safe) is lower }}|{{ dict is lower }}|{{ d.keys() is lower }}"),
+    ("upper", "{{ 1 is upper }}|{{ 0 is upper }}|{{ -1 is upper }}|{{ 1.5 is upper }}|{{ true is upper }}|{{ false is upper }}|{{ none is upper }}|{{ 'a' is upper }}|{{ '' is upper }}|{{ 'A' is upper }}|{{ [1] is upper }}|{{ [] is upper }}|{{ ((1,)) is upper }}|{{ {} is upper }}|{{ {'a':1} is upper }}|{{ range(3) is upper }}|{{ nope is upper }}|{{ ('x'|safe) is upper }}|{{ dict is upper }}|{{ d.keys() is upper }}"),
+    ("escaped", "{{ 1 is escaped }}|{{ 0 is escaped }}|{{ -1 is escaped }}|{{ 1.5 is escaped }}|{{ true is escaped }}|{{ false is escaped }}|{{ none is escaped }}|{{ 'a' is escaped }}|{{ '' is escaped }}|{{ 'A' is escaped }}|{{ [1] is escaped }}|{{ [] is escaped }}|{{ ((1,)) is escaped }}|{{ {} is escaped }}|{{ {'a':1} is escaped }}|{{ range(3) is escaped }}|{{ nope is escaped }}|{{ ('x'|safe) is escaped }}|{{ dict is escaped }}|{{ d.keys() is escaped }}"),
+    ("defined", "{{ 1 is defined }}|{{ 0 is defined }}|{{ -1 is defined }}|{{ 1.5 is defined }}|{{ true is defined }}|{{ false is defined }}|{{ none is defined }}|{{ 'a' is defined }}|{{ '' is defined }}|{{ 'A' is defined }}|{{ [1] is defined }}|{{ [] is defined }}|{{ ((1,)) is defined }}|{{ {} is defined }}|{{ {'a':1} is defined }}|{{ range(3) is defined }}|{{ nope is defined }}|{{ ('x'|safe) is defined }}|{{ dict is defined }}|{{ d.keys() is defined }}"),
+    ("undefined", "{{ 1 is undefined }}|{{ 0 is undefined }}|{{ -1 is undefined }}|{{ 1.5 is undefined }}|{{ true is undefined }}|{{ false is undefined }}|{{ none is undefined }}|{{ 'a' is undefined }}|{{ '' is undefined }}|{{ 'A' is undefined }}|{{ [1] is undefined }}|{{ [] is undefined }}|{{ ((1,)) is undefined }}|{{ {} is undefined }}|{{ {'a':1} is undefined }}|{{ range(3) is undefined }}|{{ nope is undefined }}|{{ ('x'|safe) is undefined }}|{{ dict is undefined }}|{{ d.keys() is undefined }}"),
+]:
+    case("tests/kinds_" + _n, "{% set d = {'k': 1} %}" + _src)
+
+# Whether a subscript folds is decided by its *argument* before the base's
+# undefinedness decides what the fold answers. jinja2 folds a node only when
+# every part of it is constant -- Name.as_const is Impossible -- so
+# `((3)[-2:])[n]` is left for the render, where a slice bypasses
+# Environment.getitem and raises. Chaining on the base first folded it to an
+# undefined under ChainableUndefined and the comparison above it to False: a
+# TypeError swallowed at compile time, which the coverage-guided fuzzer found.
+#
+# Every shape under every class, because the classes differ exactly here: only
+# chainable reaches through, and only the fold path can swallow.
+for _kind in ("default", "chainable", "debug", "strict"):
+    _set = {} if _kind == "default" else {"undefined": _kind}
+    for _n, _src in [
+    ("slice_of_an_int_by_name", "{{ ((3)[-2:])[n3] == 0 == 0 }}"),
+    ("undefined_by_name", "{{ (nope)[n3] }}"),
+    ("undefined_by_constant", "{{ (nope)[0] }}"),
+    ("chained_undefined_by_name", "{{ (nope.a)[n3] }}"),
+    ("undefined_sliced_by_name", "{{ (nope)[n3:] }}"),
+    ("undefined_sliced_by_constant", "{{ (nope)[0:1] }}"),
+    ("int_sliced_by_name", "{{ ((3)[n3:]) }}"),
+    ("int_sliced_by_name_then_indexed", "{{ ((3)[n3:])[0] }}"),
+    ("folded_undefined_by_name", "{{ (none.missing)[n3] }}"),
+    ("folded_undefined_by_constant", "{{ (none.missing)[1] }}"),
+    ("folded_undefined_attribute", "{{ (none.missing).x }}"),
+    ]:
+        case("fold/%s_%s" % (_kind, _n), _src, __settings__=_set, n3=3)
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither

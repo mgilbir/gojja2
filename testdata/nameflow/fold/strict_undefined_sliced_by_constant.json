@@ -1,0 +1,6 @@
+{
+  "case": "fold/strict_undefined_sliced_by_constant.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

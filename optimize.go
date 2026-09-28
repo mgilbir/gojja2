@@ -534,15 +534,29 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		if !ok {
 			return value.Undefined, false
 		}
-		if base.IsUndefined() {
-			return c.chainOrDefer(base)
-		}
+		// The *argument* decides whether there is a fold at all, before
+		// the base's undefinedness decides what the fold answers.
+		// jinja2 folds a node only when every part of it is constant --
+		// `Name.as_const` is Impossible -- so `((3)[-2:])[n]` is left
+		// for the render, where a slice bypasses Environment.getitem
+		// and raises. Chaining on the base first folded it to an
+		// undefined under ChainableUndefined, and the comparison above
+		// it to False: a TypeError swallowed at compile time.
 		if slice, isSlice := n.Arg.(*ast.Slice); isSlice {
+			if !c.constSliceBounds(slice) {
+				return value.Undefined, false
+			}
+			if base.IsUndefined() {
+				return c.chainOrDefer(base)
+			}
 			return c.constGetSlice(base, slice)
 		}
 		key, ok := c.constEval(n.Arg)
 		if !ok {
 			return value.Undefined, false
+		}
+		if base.IsUndefined() {
+			return c.chainOrDefer(base)
 		}
 		return constGetItem(base, key), true
 
@@ -1182,6 +1196,21 @@ func constIndex(base, key value.Value) (value.Value, bool) {
 		return value.Int(int64(raw[idx])), true
 	}
 	return value.Undefined, false
+}
+
+// constSliceBounds reports whether every bound a slice carries is constant,
+// which is what decides whether the subscript can be folded at all. jinja2's
+// Slice.as_const asks the same of each one.
+func (c *constEvaluator) constSliceBounds(slice *ast.Slice) bool {
+	for _, e := range []ast.Expr{slice.Start, slice.Stop, slice.Step} {
+		if e == nil {
+			continue
+		}
+		if _, ok := c.constEval(e); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *constEvaluator) constGetSlice(base value.Value, slice *ast.Slice) (value.Value, bool) {

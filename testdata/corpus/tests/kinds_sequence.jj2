@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is sequence }}|{{ 0 is sequence }}|{{ -1 is sequence }}|{{ 1.5 is sequence }}|{{ true is sequence }}|{{ false is sequence }}|{{ none is sequence }}|{{ 'a' is sequence }}|{{ '' is sequence }}|{{ 'A' is sequence }}|{{ [1] is sequence }}|{{ [] is sequence }}|{{ ((1,)) is sequence }}|{{ {} is sequence }}|{{ {'a':1} is sequence }}|{{ range(3) is sequence }}|{{ nope is sequence }}|{{ ('x'|safe) is sequence }}|{{ dict is sequence }}|{{ d.keys() is sequence }}

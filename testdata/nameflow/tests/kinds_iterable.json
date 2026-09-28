@@ -1,0 +1,6 @@
+{
+  "case": "tests/kinds_iterable.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

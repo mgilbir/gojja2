@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is float }}|{{ 0 is float }}|{{ -1 is float }}|{{ 1.5 is float }}|{{ true is float }}|{{ false is float }}|{{ none is float }}|{{ 'a' is float }}|{{ '' is float }}|{{ 'A' is float }}|{{ [1] is float }}|{{ [] is float }}|{{ ((1,)) is float }}|{{ {} is float }}|{{ {'a':1} is float }}|{{ range(3) is float }}|{{ nope is float }}|{{ ('x'|safe) is float }}|{{ dict is float }}|{{ d.keys() is float }}

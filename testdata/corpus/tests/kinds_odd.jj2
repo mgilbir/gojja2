@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is odd }}|{{ 0 is odd }}|{{ -1 is odd }}|{{ 1.5 is odd }}|{{ true is odd }}|{{ false is odd }}|{{ none is odd }}|{{ 'a' is odd }}|{{ '' is odd }}|{{ 'A' is odd }}|{{ [1] is odd }}|{{ [] is odd }}|{{ ((1,)) is odd }}|{{ {} is odd }}|{{ {'a':1} is odd }}|{{ range(3) is odd }}|{{ nope is odd }}|{{ ('x'|safe) is odd }}|{{ dict is odd }}|{{ d.keys() is odd }}

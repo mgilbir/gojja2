@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is upper }}|{{ 0 is upper }}|{{ -1 is upper }}|{{ 1.5 is upper }}|{{ true is upper }}|{{ false is upper }}|{{ none is upper }}|{{ 'a' is upper }}|{{ '' is upper }}|{{ 'A' is upper }}|{{ [1] is upper }}|{{ [] is upper }}|{{ ((1,)) is upper }}|{{ {} is upper }}|{{ {'a':1} is upper }}|{{ range(3) is upper }}|{{ nope is upper }}|{{ ('x'|safe) is upper }}|{{ dict is upper }}|{{ d.keys() is upper }}
