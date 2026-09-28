@@ -322,7 +322,7 @@ ever produced?**
 
 It runs the corpus under coverage on every interpreter, intersects the blocks
 that never executed with the lines that build an error, and counts what is left.
-Today that is **45 of 393**.
+Today that is **42 of 398**.
 
 A message nothing produces is not evidence of anything -- it has never been
 compared to CPython. It is worse than untested: it reads as *agreement in every
@@ -416,6 +416,16 @@ dropped, two dict views raised where CPython compares them as sets, and the
 lexer's "unexpected char" offset counted bytes where CPython counts code points.
 **Every one of those was reachable from a template nobody had written**, which is
 what an axis is for.
+
+A sixth pass read the list itself rather than the code around it, and the useful
+finding was not a bug but a *classification*: three of the sites it named were
+the object arms of a lookup -- `'%(k)s' % m` and `m|random` over a Mapping that
+is not a dict -- which nothing could reach until a dict view learned to hand out
+its `mappingproxy`. A site can move from "unreachable from a template" to
+"reachable and never probed" because something else was implemented, so the
+classification is worth redoing rather than remembering. It also found
+int.to_bytes accepting a signed value outside its range, and a class's
+descriptors being answered as methods.
 
 Two habits came out of that pass. **Read the line, not the message**: the same
 words often appear at two or three sites, so a case that produces the message may

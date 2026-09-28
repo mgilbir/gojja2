@@ -1,0 +1,6 @@
+{
+  "case": "format/percent_missing_key.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

@@ -6544,6 +6544,25 @@ case("filters/round_none_is_an_integer", "{{ 2.5|round(none) }}|{{ 3.5|round(non
 # (300 in one byte is errors/to_bytes_too_big.)
 case("methods/to_bytes_wide_int", "{{ (2**100).to_bytes(4,'big') }}")
 case("methods/to_bytes_negative", "{{ (-1).to_bytes(1,'big') }}")
+
+# Messages `make ungraded` said no case reached. Each was already right; what
+# was missing is a case saying so, and a message no case produces reads as
+# agreement in every version column.
+case("filters/random_of_a_dict", "{{ {'a': 1}|random }}")
+case("filters/random_of_an_integer_keyed_dict", "{{ {0: 'z'}|random }}")
+case("filters/random_of_an_empty_sequence", "[{{ []|random }}][{{ ''|random }}]")
+case("format/percent_missing_key", "{{ '%(z)s' % d }}", d={"a": 1})
+case("format/percent_needs_a_mapping", "{{ '%(a)s' % 5 }}")
+case("format/percent_needs_a_mapping_not_a_list", "{{ '%(a)s' % [1] }}")
+# The *object* arms of both lookups, which nothing could reach until a dict view
+# learned to hand out its mappingproxy: a Mapping that is not a dict.
+case("format/percent_key_of_a_mapping_object", "{{ '%(z)s' % d.keys().mapping }}", d={"a": 1})
+case("format/percent_of_a_mapping_object", "{{ '%(a)s' % d.keys().mapping }}", d={"a": 1})
+case("filters/random_of_a_mapping_object", "{{ {'a': 1}.keys().mapping|random }}")
+case("filters/random_of_an_integer_keyed_mapping_object", "{{ {0: 'z'}.keys().mapping|random }}")
+case("loops/cycle_with_no_items", "{% for i in [1] %}{{ loop.cycle() }}{% endfor %}")
+case("include/select_from_an_empty_list", "{% include [] %}")
+case("include/select_from_none", "{% include none %}")
 # ...and the *signed* range is [-2**(8L-1), 2**(8L-1)-1], not "fits in 8L bits
 # once complemented". gojja2 checked the complement, so one byte held -200 and
 # 200 alike -- both of which CPython refuses. Zero bytes hold only zero.
