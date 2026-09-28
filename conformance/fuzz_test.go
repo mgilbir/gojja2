@@ -402,7 +402,8 @@ func TestDifferential(t *testing.T) {
 	seed := uint64(envInt(t, "GOJJA2_FUZZ_SEED", 20260916))
 	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
 
-	var checked, skipped, escaping int
+	var checked, skipped, escaping, selecting int
+	setRuns := map[string]int{}
 	var failures int
 	undefinedRuns := map[string]int{}
 	lexRuns := map[string]int{}
@@ -421,6 +422,10 @@ func TestDifferential(t *testing.T) {
 		if c.Autoescape {
 			escaping++
 		}
+		if c.AutoescapeSelect {
+			selecting++
+		}
+		setRuns[c.TemplateSet]++
 		if c.Undefined != "" {
 			undefinedRuns[c.Undefined]++
 		}
@@ -444,16 +449,18 @@ func TestDifferential(t *testing.T) {
 	// was added after sixty thousand templates a run had all used the
 	// default Undefined without anything saying so.
 	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), "+
-		"%d autoescaping, %d empty; undefined %d strict, %d chainable, %d debug; "+
+		"%d autoescaping, %d by name, %d empty; undefined %d strict, %d chainable, %d debug; "+
 		"lexer %d trim, %d lstrip, %d keep-newline, %d crlf, %d cr, "+
 		"%d custom delimiters, %d line statements, %d line comments; "+
-		"extensions %d do, %d loopcontrols, writing %d print, %d do, %d break, %d continue",
-		checked, seed, escaping, skipped,
+		"extensions %d do, %d loopcontrols, writing %d print, %d do, %d break, %d continue; "+
+		"templates %s",
+		checked, seed, escaping, selecting, skipped,
 		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"],
 		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
 		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"], lexRuns["lineprefix"], lexRuns["linecomment"],
 		tagRuns["ext-do"], tagRuns["ext-loopcontrols"],
-		tagRuns["print"], tagRuns["do"], tagRuns["break"], tagRuns["continue"])
+		tagRuns["print"], tagRuns["do"], tagRuns["break"], tagRuns["continue"],
+		templateSetCounts(setRuns))
 	// An extension that is enabled and never written is an axis that costs a
 	// run and asks nothing, which is what `break` was for as long as the
 	// generator could not emit it. Asserted rather than printed, because a
@@ -464,6 +471,25 @@ func TestDifferential(t *testing.T) {
 				checked, tag)
 		}
 	}
+	// The same question of the auxiliary templates: a set nothing drew is a
+	// family of rules nothing asked about.
+	for _, name := range conformance.FuzzTemplateSets() {
+		if checked > 1000 && setRuns[name] == 0 {
+			t.Errorf("%d templates and not one drew the %q template set", checked, name)
+		}
+	}
+	if checked > 1000 && selecting == 0 {
+		t.Errorf("%d templates and not one drew select_autoescape", checked)
+	}
+}
+
+// templateSetCounts renders the per-set tally for the summary line.
+func templateSetCounts(runs map[string]int) string {
+	parts := make([]string, 0, len(runs))
+	for _, name := range conformance.FuzzTemplateSets() {
+		parts = append(parts, fmt.Sprintf("%d %s", runs[name], name))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // countLexSettings tallies the lexer axis for the summary line, which is the
