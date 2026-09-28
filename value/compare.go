@@ -75,6 +75,14 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 		ord, ok := compareNumbers(a, b)
 		return ok && ord == 0, nil
 	}
+	// Two set-like operands compare as sets here too, and not only under the
+	// orderings: `{}.items() == {}.keys()` is True, and a view equals the
+	// set a difference built from it. The kind check below would call them
+	// different things and stop, and their own Equals methods only know
+	// their own type.
+	if handled, equal, err := equalAsSets(a, b, py); handled {
+		return equal, err
+	}
 	// A tuple subclass equals the tuple it stands for, in either position:
 	// `p == (1, 2)` and `(1, 2) == p` both go through tuple.__eq__. This
 	// has to come before the kind check below, which would otherwise call
@@ -190,6 +198,26 @@ func Ordered(op string, a, b Value, py PythonVersion) (bool, error) {
 		return ord >= 0, nil
 	}
 	return false, errs.New(errs.ValueError, "unknown comparison operator %q", op)
+}
+
+// equalAsSets answers == between two set-like operands, which CPython decides
+// with the same rule as the orderings: the same length, and every element of one
+// in the other. Two *empty* views of different types are equal, which is what a
+// `d.items() == d.keys()` over an empty dict asks.
+//
+// A values view is not set-like in either engine, so two of them are equal only
+// by identity -- which is why `d.values() == d.values()` is False.
+func equalAsSets(a, b Value, py PythonVersion) (handled, equal bool, err error) {
+	left, lok := setLikeElements(a)
+	right, rok := setLikeElements(b)
+	if !lok || !rok {
+		return false, false, nil
+	}
+	if len(left) != len(right) {
+		return true, false, nil
+	}
+	ok, err := allContainedIn(left, b, py)
+	return true, ok, err
 }
 
 // orderedAsSets answers <, <=, > and >= between two set-like operands -- a dict's

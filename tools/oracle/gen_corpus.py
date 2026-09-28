@@ -6582,6 +6582,75 @@ case("filters/min_case_sensitive", "{{ [3,1,2]|min(case_sensitive=true) }}")
 case("filters/slice_with_fill", "{{ range(5)|slice(2)|list }}|{{ range(5)|slice(2, 'x')|list }}")
 case("filters/slice_more_slices_than_items", "{{ [1,2,3]|slice(4)|list }}")
 
+# The same census, per *method*: .copy() had no case at all, .extend(), .lower()
+# and .reverse() one each. A method with one case is a method whose *refusals*
+# are ungraded -- list.reverse() takes no arguments, .extend() wants an iterable,
+# .fromkeys() likewise -- and its edges with them.
+case("methods/list_copy_is_a_copy",
+     "{% set l = [1,2] %}{% set c = l.copy() %}{% do l.append(3) %}{{ c }}|{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("methods/dict_copy_is_a_copy",
+     "{% set d = {'a':1} %}{% set c = d.copy() %}{% do d.update(b=2) %}{{ c }}|{{ d }}",
+     __settings__={"extensions": ["do"]})
+case("methods/copy_of_a_literal", "{{ [1,2].copy() }}|{{ {'a':1}.copy() }}")
+case("errors/str_has_no_copy", "{{ 'ab'.copy() }}")
+case("methods/list_extend",
+     "{% set l = [1] %}{% do l.extend([2,3]) %}{{ l }}|{% do l.extend('ab') %}{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("errors/list_extend_an_int", "{% set l = [1] %}{% do l.extend(1) %}{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("methods/list_reverse",
+     "{% set l = [3,1,2] %}{% do l.reverse() %}{{ l }}|{% do l.reverse(1) %}{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("methods/str_lower_cases",
+     "{{ 'AB'.lower() }}|{{ '\u00c9'.lower() }}|{{ '\u00df'.lower() }}|[{{ ''.lower() }}]")
+case("methods/str_capitalize_cases",
+     "{{ 'aB c'.capitalize() }}|[{{ ''.capitalize() }}]|{{ '\u00df'.capitalize() }}")
+case("methods/isascii",
+     "{{ 'ab'.isascii() }}|{{ '\u00e9'.isascii() }}|{{ ''.isascii() }}|"
+     "{{ 'ab'.encode().isascii() }}")
+case("methods/str_rindex", "{{ 'abc'.rindex('b') }}|{{ 'abcb'.rindex('b') }}")
+case("errors/str_rindex_missing", "{{ 'abc'.rindex('z') }}")
+case("methods/str_rfind", "{{ 'abc'.rfind('z') }}|{{ 'abcb'.rfind('b') }}")
+case("methods/str_expandtabs",
+     "{{ 'a\tb'.expandtabs() }}|{{ 'a\tb'.expandtabs(4) }}|{{ 'a\tb'.expandtabs(0) }}")
+# (setdefault, popitem and fromkeys already had a case each under these names;
+# what was missing was the refusal below.)
+case("errors/dict_fromkeys_an_int", "{{ {}.fromkeys(1) }}")
+case("methods/list_insert_clamps",
+     "{% set l = [1,3] %}{% do l.insert(1, 2) %}{{ l }}|{% do l.insert(99, 9) %}{{ l }}|"
+     "{% do l.insert(-99, 0) %}{{ l }}", __settings__={"extensions": ["do"]})
+case("methods/str_istitle",
+     "{{ 'A b'.istitle() }}|{{ 'A B'.istitle() }}|{{ ''.istitle() }}|{{ '1a'.istitle() }}")
+case("methods/str_zfill",
+     "{{ '5'.zfill(3) }}|{{ '-5'.zfill(3) }}|{{ '+5'.zfill(3) }}|{{ 'ab'.zfill(1) }}|"
+     "[{{ ''.zfill(2) }}]")
+
+# ...and `==` is decided the same way: the same length, and every element of one
+# in the other. Two *empty* views of different types are equal, and a view equals
+# the set a difference built from it -- where the kind check would call them
+# different things and stop. A values view is set-like in neither engine, so two
+# of them are equal only by identity. Found by the coverage-guided fuzzer, on
+# `{{ ed.items() == ed.keys() != 0 }}`.
+case("dictview/empty_views_are_equal",
+     "{% set e = {} %}{{ e.items() == e.keys() }}|{{ e.keys() == e.items() }}|"
+     "{{ e.items() != e.keys() }}|{{ e.items() == e.keys() != 0 }}")
+case("dictview/views_of_different_kinds",
+     "{% set d = {'a':1} %}{{ d.items() == d.keys() }}|{{ d.keys() == d.items() }}")
+case("dictview/views_of_the_same_kind",
+     "{% set d = {'a':1} %}{% set e = {'a':1} %}{% set f = {'a':2} %}"
+     "{{ d.keys() == e.keys() }}|{{ d.items() == e.items() }}|"
+     "{{ d.keys() == f.keys() }}|{{ d.items() == f.items() }}")
+case("dictview/values_are_equal_only_by_identity",
+     "{% set d = {'a':1} %}{% set e = {} %}{{ d.values() == d.values() }}|"
+     "{{ e.values() == e.values() }}|{{ e.values() == e.keys() }}")
+case("dictview/a_view_equals_a_set",
+     "{% set d = {'a':1} %}{% set e = {} %}{{ d.keys() == (d.keys() - []) }}|"
+     "{{ d.items() == (d.keys() - []) }}|{{ e.keys() == (e.keys() - []) }}|"
+     "{{ (e.keys() - []) == e.keys() }}")
+case("dictview/a_view_against_other_types",
+     "{% set e = {} %}{{ e.keys() == [] }}|{{ e.keys() == {} }}|{{ e.items() == 0 }}")
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither
