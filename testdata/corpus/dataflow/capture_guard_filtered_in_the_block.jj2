@@ -1,0 +1,5 @@
+{
+  "c": 1
+}
+---
+{% set fv | last %}{% if c %}xx{% endif %}{% endset %}[{{ fv }}]

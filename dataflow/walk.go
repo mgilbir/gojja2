@@ -245,16 +245,29 @@ func (a *analyzer) callMacro(sym *syntax.Symbol, call *syntax.Node) symset {
 		}
 		a.depend(p, srcs)
 	}
+	// What steered the macro's body steers this call's result. The result
+	// is not a symbol, so the choice is between saying nothing and saying
+	// it here: a call can be handed to anything, so Required is the answer
+	// that cannot be wrong in the direction that matters.
+	if steers := a.macroSteers[sym]; len(steers) > 0 {
+		a.apply(steers, Required)
+		a.steerEmit(steers)
+	}
 	return a.macroOut[sym]
 }
 
 // captureBody is what a block set's or filter block's body would have printed.
-func (a *analyzer) captureBody(n *syntax.Node) symset {
+// captureBody collects a body into a value instead of the document: what the
+// text is made of, and what decided how much of it there is.
+func (a *analyzer) captureBody(n *syntax.Node) (out, steers symset) {
 	a.capture = append(a.capture, symset{})
+	a.steered = append(a.steered, symset{})
 	a.stmts(n)
-	out := a.capture[len(a.capture)-1]
+	out = a.capture[len(a.capture)-1]
+	steers = a.steered[len(a.steered)-1]
 	a.capture = a.capture[:len(a.capture)-1]
-	return out
+	a.steered = a.steered[:len(a.steered)-1]
+	return out, steers
 }
 
 func (a *analyzer) stmts(n *syntax.Node) {
@@ -320,6 +333,11 @@ func (a *analyzer) ifStmt(n *syntax.Node, chainFails bool) {
 	if chainFails {
 		a.apply(test, Required)
 	}
+	// Inside a captured body the arm decides what the *value* is, and what
+	// consumes that value can fail for one string and not another --
+	// `{% set v | last %}{% if t %}xx{% endif %}{% endset %}` is "x" or an
+	// undefined that the wrap prints. Outside one this is the Steers above.
+	a.steerEmit(test)
 	a.stmts(n)
 	for _, c := range n.Children(syntax.RoleElif) {
 		a.ifStmt(c, chainFails)
@@ -368,6 +386,11 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		}
 		loopTest := a.expr(n.Child(syntax.RoleTest))
 		a.apply(loopTest, Steers)
+		// How many times the body runs decides what a capture around it
+		// holds, exactly as a branch does. The iterable is already
+		// Required above, for the same reason and one step earlier.
+		a.steerEmit(loopTest)
+		a.steerEmit(srcs)
 		for _, guarded := range n.Children(syntax.RoleBody) {
 			if a.canFailIn(guarded) {
 				a.apply(loopTest, Required)
@@ -388,14 +411,26 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		a.bind(target, a.expr(value))
 
 	case syntax.KindAssignBlk:
-		srcs := a.captureBody(n)
+		srcs, steers := a.captureBody(n)
 		srcs.add(a.expr(n.Child(syntax.RoleFilter)))
 		a.bind(n.Child(syntax.RoleTarget), srcs)
+		// What steered the body steers the variable, so a later use that
+		// can fail -- `{{ v|last }}` -- reaches back to it.
+		a.steerTarget(n.Child(syntax.RoleTarget), steers)
+		if n.Child(syntax.RoleFilter) != nil {
+			// ...and a filter here runs whether or not the variable is
+			// ever used, so it can fail on the spot.
+			a.apply(steers, Required)
+		}
 
 	case syntax.KindFilterBlk:
-		srcs := a.captureBody(n)
+		srcs, steers := a.captureBody(n)
 		srcs.add(a.expr(n.Child(syntax.RoleFilter)))
 		a.emit(srcs)
+		// The filter runs over whatever the body left, so what decided
+		// that can decide whether it fails.
+		a.apply(steers, Required)
+		a.steerEmit(steers)
 
 	case syntax.KindMacro:
 		// Looked up outside the macro's own scope. A macro binds its name
@@ -425,7 +460,16 @@ func (a *analyzer) stmt(n *syntax.Node) {
 				a.expr(d)
 			}
 		}
-		out := a.captureBody(n)
+		out, steers := a.captureBody(n)
+		// A macro's body is captured here and emitted where it is
+		// called, so what steered it steers the call's result. There is
+		// no symbol for that result to hang an edge on, so the names are
+		// recorded against the macro and applied at the call.
+		if sym != nil {
+			a.macroSteers[sym] = steers
+		} else {
+			a.steerEmit(steers)
+		}
 		if sym != nil {
 			a.macroOut[sym] = out
 		} else {

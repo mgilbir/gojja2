@@ -1,0 +1,7 @@
+{
+  "case": "dataflow/capture_loop_test_steers.jj2",
+  "variables": {
+    "c": "fr",
+    "seq": "fr"
+  }
+}

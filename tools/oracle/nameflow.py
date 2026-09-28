@@ -59,6 +59,19 @@ REQUIRED = 4
 OWNS = ("param", "undefined")
 
 
+def steered_roles(roles: int) -> int:
+    """What a value's roles mean for a name that decided what it held.
+
+    OUTPUT becomes FLOW -- the name changed the document without appearing in
+    it -- and FLOW and REQUIRED carry over as they are.
+    """
+    out = 0
+    if roles & (OUTPUT | FLOW):
+        out |= FLOW
+    out |= roles & REQUIRED
+    return out
+
+
 @dataclass
 class Sym:
     """One storage location: a context variable, or a binding in some frame."""
@@ -67,6 +80,10 @@ class Sym:
     context: bool = False          # resolved from the caller's variables
     roles: int = 0                 # roles attached directly to this symbol
     deps: set[int] = field(default_factory=set)   # symbols its value came from
+    # Symbols that decided what this one holds without being part of it: a
+    # branch inside a block-set body changes the captured string while putting
+    # nothing of its own in it. Only FLOW and REQUIRED travel back along these.
+    steers: set[int] = field(default_factory=set)
     unknown: bool = False          # something about it could not be followed
 
 
@@ -104,12 +121,16 @@ class Analysis:
         # A stack of block-set captures: while one is open, output is collected
         # rather than emitted, because it becomes a value instead of a document.
         self.capture: list[set[int]] = []
+        # The same stack again, holding what *decided* how much of each body is
+        # emitted rather than what the text is made of.
+        self.steered: list[set[int]] = []
         # Macros by name, so a call can bind arguments to parameters instead of
         # giving up. Only macros defined in this template and called by their
         # own name; anything else is an opaque call.
         self.in_macro: set[int] = set()
         self.macro_params: dict[int, list] = {}
         self.macro_out: dict[int, set[int]] = {}
+        self.macro_steers: dict[int, set[int]] = {}
 
     # --- symbols ---------------------------------------------------------
 
@@ -336,6 +357,35 @@ class Analysis:
             return
         self.apply(srcs, OUTPUT)
 
+    def steer_emit(self, srcs):
+        """These decide how much of the surrounding body is emitted.
+
+        Into the capture collecting it, or -- with none open -- into the
+        document, where it is the FLOW the caller already applied.
+        """
+        if not srcs:
+            return
+        if self.steered:
+            self.steered[-1] |= srcs
+            return
+        self.apply(srcs, FLOW)
+
+    def steer_bind(self, target, srcs):
+        """Record that `srcs` decided what `target` holds, without being in it."""
+        if not srcs:
+            return
+        if isinstance(target, (nodes.Name, nodes.NSRef)):
+            sym = self.node_sym(target)
+            if isinstance(target, nodes.NSRef):
+                field_sym = self.namespace_field(sym, target.attr)
+                if field_sym is not None:
+                    field_sym.steers |= srcs
+                    return
+            sym.steers |= srcs
+        elif isinstance(target, (nodes.Tuple, nodes.List)):
+            for item in target.items:
+                self.steer_bind(item, srcs)
+
     def apply(self, srcs, roles):
         for sid in srcs:
             self.syms[sid].roles |= roles
@@ -532,11 +582,13 @@ class Analysis:
         else:
             self.taint(srcs)
 
-    def capture_body(self, body) -> set[int]:
-        """What a block-set or filter block's body would have printed."""
+    def capture_body(self, body) -> tuple[set[int], set[int]]:
+        """What a block-set or filter block's body would have printed, and what
+        decided how much of it there was."""
         self.capture.append(set())
+        self.steered.append(set())
         self.stmts(body)
-        return self.capture.pop()
+        return self.capture.pop(), self.steered.pop()
 
     def call_macro(self, sym, call) -> set[int]:
         """Bind a call's arguments to the macro's parameters, and return what
@@ -556,6 +608,13 @@ class Analysis:
             if srcs and param is not None:
                 param.deps |= srcs
         self.in_macro.discard(sym.id)
+        # What steered the macro's body steers this call's result, which is not
+        # a symbol -- so the choice is between saying nothing and saying it
+        # here. A call can be handed to anything that raises.
+        steers = self.macro_steers.get(sym.id) or set()
+        if steers:
+            self.apply(steers, REQUIRED)
+            self.steer_emit(steers)
         return self.macro_out[sym.id]
 
     def if_stmt(self, n, chain_fails):
@@ -563,6 +622,9 @@ class Analysis:
         self.apply(test, FLOW)
         if chain_fails:
             self.apply(test, REQUIRED)
+        # Inside a captured body the arm decides what the *value* is, and what
+        # consumes that value can fail for one string and not another.
+        self.steer_emit(test)
         self.stmts(n.body)
         for elif_ in getattr(n, "elif_", None) or ():
             self.if_stmt(elif_, chain_fails)
@@ -601,6 +663,10 @@ class Analysis:
             self.apply(loop_test, FLOW)
             if can_fail_in(n.body, self.strict):
                 self.apply(loop_test, REQUIRED)
+            # How many times the body runs decides what a capture around it
+            # holds, exactly as a branch does.
+            self.steer_emit(loop_test)
+            self.steer_emit(srcs)
             self.stmts(n.body)
             self.stmts(n.else_)
             self.pop()
@@ -616,18 +682,29 @@ class Analysis:
 
         elif isinstance(n, nodes.AssignBlock):
             self.push(n)
-            srcs = self.capture_body(n.body)
+            srcs, steers = self.capture_body(n.body)
             self.pop()
             if n.filter is not None:
                 srcs |= self.expr(n.filter)
             self.bind(n.target, srcs)
+            # What steered the body steers the variable, so a later use that
+            # can fail -- `{{ v|last }}` -- reaches back to it...
+            self.steer_bind(n.target, steers)
+            if n.filter is not None:
+                # ...and a filter here runs whether or not the variable is ever
+                # used, so it can fail on the spot.
+                self.apply(steers, REQUIRED)
 
         elif isinstance(n, nodes.FilterBlock):
             self.push(n)
-            srcs = self.capture_body(n.body)
+            srcs, steers = self.capture_body(n.body)
             self.pop()
             srcs |= self.expr(n.filter)
             self.emit(srcs)
+            # The filter runs over whatever the body left, so what decided that
+            # can decide whether it fails.
+            self.apply(steers, REQUIRED)
+            self.steer_emit(steers)
 
         elif isinstance(n, nodes.Macro):
             self.push(n)
@@ -638,12 +715,14 @@ class Analysis:
             for param, default in zip(n.args[len(n.args) - len(n.defaults):],
                                       n.defaults):
                 self.bind(param, self.expr(default))
-            out = self.capture_body(n.body)
+            out, steers = self.capture_body(n.body)
             self.pop()
             if sym is not None:
                 self.macro_params[sym.id] = params
                 self.macro_out[sym.id] = out
+                self.macro_steers[sym.id] = steers
             else:
+                self.steer_emit(steers)
                 # The macro's name is not a binding in any scope: jinja2's
                 # first-mention rule resolved it outward to the caller's
                 # variables, which is what a dead `{% if %}` mentioning the
@@ -754,6 +833,13 @@ class Analysis:
                 for dep in s.deps:
                     d = self.syms[dep]
                     roles = d.roles | s.roles
+                    unknown = d.unknown or s.unknown
+                    if roles != d.roles or unknown != d.unknown:
+                        d.roles, d.unknown = roles, unknown
+                        changed = True
+                for dep in s.steers:
+                    d = self.syms[dep]
+                    roles = d.roles | steered_roles(s.roles)
                     unknown = d.unknown or s.unknown
                     if roles != d.roles or unknown != d.unknown:
                         d.roles, d.unknown = roles, unknown

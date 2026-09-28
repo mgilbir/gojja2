@@ -7089,6 +7089,48 @@ case("dataflow/guard_over_a_name_default", "{% if c %}{{ nope }}{% endif %}ok", 
 case("dataflow/loop_guard_over_getattr",
      "{% for i in seq %}{% if c %}{{ nope.attr }}{% endif %}{% endfor %}ok", c=0, **SEQ)
 
+# --- a guard over a body that becomes a value ---------------------------------
+# A branch inside a `{% set %}` with a body puts nothing of its own in the
+# document, and the analysis said so -- but it decides what the *captured
+# string* is, and whatever consumes that string can fail for one branch and not
+# the other. `{% set v | last %}{% if c %}xx{% endif %}{% endset %}` is "x" when
+# c is truthy and an undefined when it is not, which raises the moment it is
+# printed under StrictUndefined and raises in `{% filter last %}` under every
+# class. The analysis said "the render cannot fail because of c", which is the
+# one answer it must never give; the syntax differential found it by rendering
+# that negative with two values of c.
+#
+# The fix is an edge of its own, not a data edge: c decides what v holds without
+# being part of it, so FLOW and REQUIRED travel back along it and OUTPUT does
+# not. Each case pins which of the three the guard gets.
+case("dataflow/capture_guard_filtered_in_the_block",
+     "{% set fv | last %}{% if c %}xx{% endif %}{% endset %}[{{ fv }}]", c=1)
+case("dataflow/capture_guard_filtered_at_the_use",
+     "{% set fv %}{% if c %}xx{% endif %}{% endset %}[{{ fv|last }}]", c=1)
+case("dataflow/capture_guard_printed_plainly",
+     "{% set fv %}{% if c %}xx{% endif %}{% endset %}[{{ fv }}]", c=1)
+case("dataflow/capture_guard_never_used",
+     "{% set fv | last %}{% if c %}xx{% endif %}{% endset %}ok", c=1)
+case("dataflow/capture_guard_strict",
+     "{% set fv | last %}{% if c %}xx{% endif %}{% endset %}[{{ fv }}]",
+     __settings__={"undefined": "strict"}, c=1)
+case("dataflow/capture_guard_in_a_filter_block",
+     "{% filter last %}{% if c %}xx{% endif %}{% endfilter %}", c=1)
+case("dataflow/capture_guard_in_a_macro",
+     "{% macro m() %}{% if c %}xx{% endif %}{% endmacro %}[{{ m()|last }}]", c=1)
+case("dataflow/capture_guard_in_a_macro_printed",
+     "{% macro m() %}{% if c %}xx{% endif %}{% endmacro %}[{{ m() }}]", c=1)
+case("dataflow/capture_loop_test_steers",
+     "{% set fv | last %}{% for i in seq if c %}x{% endfor %}{% endset %}[{{ fv }}]",
+     c=1, **SEQ)
+case("dataflow/capture_loop_length_steers",
+     "{% set fv | last %}{% for i in seq %}x{% endfor %}{% endset %}[{{ fv }}]", **SEQ)
+case("dataflow/capture_guard_nested",
+     "{% set outer %}{% set inner | last %}{% if c %}xx{% endif %}{% endset %}"
+     "[{{ inner }}]{% endset %}{{ outer }}", c=1)
+case("dataflow/capture_guard_in_an_else",
+     "{% set fv | last %}{% if c %}{% else %}yy{% endif %}{% endset %}[{{ fv }}]", c=1)
+
 # --- newline_sequence, which nothing had ever graded -------------------------
 # jinja2 normalises the newlines it finds in the *template* -- both in data and
 # inside a string literal -- to the environment's newline_sequence, before the

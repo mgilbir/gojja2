@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/capture_guard_never_used.jj2",
+  "variables": {
+    "c": "fr"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/capture_guard_in_a_macro_printed.jj2",
+  "variables": {
+    "c": "fr"
+  }
+}
