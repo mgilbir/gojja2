@@ -1875,6 +1875,14 @@ var strMethods = []string{
 	"zfill(10)", "zfill(0)", "zfill(-1)",
 	"expandtabs()", "expandtabs(4)", "expandtabs(0)",
 	"center(20)", "center(20, '-')", "ljust(20, '.')", "rjust(3)",
+	// The two integer widths CPython narrows: a width at math.MinInt64
+	// wrapped the `width - len(s)` subtraction to a large positive margin,
+	// and a tabsize past 2**31 is a C int rather than a Py_ssize_t. Both are
+	// cheap -- neither asks for a single byte of padding -- so they cost the
+	// soak nothing and a budget refusal hides neither.
+	"center(-9223372036854775808)", "ljust(-9223372036854775808)",
+	"rjust(-9223372036854775808)", "zfill(-9223372036854775808)",
+	"expandtabs(2147483648)", "expandtabs(-2147483649)",
 	"partition(' ')", "rpartition(' ')", "partition('zz')",
 	"removeprefix('He')", "removesuffix('ld')",
 	"isascii()", "isprintable()", "istitle()", "isidentifier()",
@@ -1969,6 +1977,11 @@ var bytesMethods = []string{
 	"removeprefix('a'.encode())", "removesuffix('c'.encode())",
 	"center(10)", "center(10, '-'.encode())", "ljust(10)", "rjust(10)",
 	"zfill(10)", "expandtabs()", "expandtabs(4)",
+	// As in strMethods: the width that wraps, and the tabsize and the
+	// bytes_per_sep that are C ints.
+	"center(-9223372036854775808)", "ljust(-9223372036854775808)",
+	"rjust(-9223372036854775808)", "zfill(-9223372036854775808)",
+	"expandtabs(2147483648)", "hex('-', 2147483648)", "hex('-', 2147483647)",
 	"isalpha()", "isdigit()", "isalnum()", "isspace()", "isascii()",
 	"islower()", "isupper()", "istitle()",
 	"hex()", "hex('-')", "fromhex('4142')", "fromhex('zz')",
