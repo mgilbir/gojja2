@@ -280,6 +280,9 @@ type GeneratedCase struct {
 	Trim                bool
 	Lstrip              bool
 	KeepTrailingNewline bool
+	// LineStatementPrefix, when set, is the prefix that makes a whole line a
+	// statement -- jinja2's line_statement_prefix. See asLineStatements.
+	LineStatementPrefix string
 	// Delimiters is a non-default set of tag delimiters, or nil for jinja2's
 	// own. See Delimiters.
 	Delimiters *Delimiters
@@ -320,6 +323,57 @@ type Delimiters struct {
 	BlockStart, BlockEnd     string
 	VarStart, VarEnd         string
 	CommentStart, CommentEnd string
+}
+
+// asLineStatements rewrites every `{% ... %}` tag as a line statement, which is
+// the form the setting makes available: `{% if x %}` becomes "\n# if x\n".
+//
+// Two things stay as they were. A `{% raw %}` block, because jinja2 handles raw
+// in its block scanner and `# raw` is an unknown tag there -- and everything
+// inside one, because that is data. And the whitespace-control markers go with
+// the tag they were on: a line statement has nowhere to put them. That costs
+// this case the interaction between a marker and the setting, which is one
+// reason the axis is drawn rather than always on.
+//
+// Rewriting the finished template rather than teaching every arm to write two
+// forms, for the same reason the delimiters are: both engines are handed the
+// same bytes.
+func asLineStatements(text, prefix string) string {
+	if prefix == "" {
+		return text
+	}
+	var b strings.Builder
+	raw := false
+	for i := 0; i < len(text); {
+		if !strings.HasPrefix(text[i:], "{%") {
+			b.WriteByte(text[i])
+			i++
+			continue
+		}
+		end := strings.Index(text[i:], "%}")
+		if end < 0 {
+			b.WriteString(text[i:])
+			break
+		}
+		tag := text[i : i+end+2]
+		inner := strings.TrimSpace(strings.Trim(strings.TrimSuffix(
+			strings.TrimPrefix(tag, "{%"), "%}"), "-+ \t"))
+		name, _, _ := strings.Cut(inner, " ")
+		switch {
+		case raw:
+			b.WriteString(tag)
+			raw = name != "endraw"
+		case name == "raw":
+			b.WriteString(tag)
+			raw = true
+		case inner == "":
+			b.WriteString(tag)
+		default:
+			b.WriteString("\n" + prefix + " " + inner + "\n")
+		}
+		i += end + 2
+	}
+	return b.String()
 }
 
 // delimiterSets are drawn against, weighted toward jinja2's own: a custom set
@@ -386,6 +440,10 @@ func GenerateCase(input []byte) GeneratedCase {
 	// the world runs under.
 	newline := g.c.pick([]string{"", "", "", "", "\r\n", "\r"})
 	delims := delimiterSets[g.c.intn(len(delimiterSets))]
+	// The line-statement prefix is the other lexer mode jinja2 has, and the
+	// one the soak reached last: a whole line is a statement, which changes
+	// where a tag ends and what the whitespace settings have to work with.
+	linePrefix := g.c.pick([]string{"", "", "", "", "", "#", "%"})
 	var extensions []string
 	if g.do {
 		extensions = append(extensions, "do")
@@ -395,7 +453,7 @@ func GenerateCase(input []byte) GeneratedCase {
 	}
 	g.template()
 	return GeneratedCase{
-		Source:              delims.Rewrite(g.b.String()),
+		Source:              delims.Rewrite(asLineStatements(g.b.String(), linePrefix)),
 		Autoescape:          autoescape,
 		Undefined:           undefined,
 		Trim:                trim,
@@ -404,6 +462,7 @@ func GenerateCase(input []byte) GeneratedCase {
 		Extensions:          extensions,
 		NewlineSequence:     newline,
 		Delimiters:          delims,
+		LineStatementPrefix: linePrefix,
 	}
 }
 

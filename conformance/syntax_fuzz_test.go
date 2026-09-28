@@ -70,10 +70,10 @@ func TestSyntaxDifferential(t *testing.T) {
 	t.Logf("syntax differential: %d generated templates compared against "+
 		"CPython jinja2 (seed %d), %d empty; %d of the analysis's negatives "+
 		"checked by rendering; lexer %d trim, %d lstrip, %d keep-newline, "+
-		"%d crlf, %d cr, %d custom delimiters",
+		"%d crlf, %d cr, %d custom delimiters, %d line statements",
 		checked, seed, skipped, claims,
 		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
-		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"])
+		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"], lexRuns["lineprefix"])
 }
 
 // compareSyntax returns a description of the first divergence, or "".

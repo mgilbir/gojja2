@@ -290,7 +290,11 @@ threading six strings through every arm of the generator; both engines are hande
 the identical bytes, which is all the comparison needs, and the *auxiliary*
 templates are rewritten with it, because an environment's delimiters apply to
 every template it loads and an `{% extends %}` would not otherwise parse.
-`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as a ninth axis,
+The other lexer mode goes with them: a drawn **line-statement prefix** turns
+every tag into `# if x` on a line of its own, which changes where a tag ends and
+what the whitespace settings have to work with. `{% raw %}` is left alone there,
+because jinja2 handles raw in its block scanner and `# raw` is an unknown tag.
+`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as a tenth axis,
 configuring both sides to match.
 
 Both engines are handed the same settings from one function, because there were
