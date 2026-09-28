@@ -1,0 +1,16 @@
+{
+  "case": "errors/unclosed_line_comment_on_its_own_line.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateSyntaxError",
+    "message": "Unexpected end of template. Jinja was looking for the following tags: 'elif' or 'else' or 'endif'. The innermost block that needs to be closed is 'if'.",
+    "lineno": 2,
+    "name": "errors/unclosed_line_comment_on_its_own_line.jj2"
+  }
+}

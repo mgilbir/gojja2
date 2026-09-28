@@ -2969,6 +2969,37 @@ for _n, _src in _FILTERIDX:
 
 # --- errors -------------------------------------------------------------------
 case("errors/syntax_unclosed", "{% if x %}")
+# "Unexpected end of template" is reported at the line the *last token* began
+# on, not at the line the source ends on: jinja2's TokenStream.close() builds
+# the EOF token from `self.current.lineno`, and a run of template data that
+# spans five lines is one token that began on the first of them. gojja2 gave
+# the EOF the line its scanner had reached, so every template whose tail was
+# multi-line was reported one or more lines late -- and `{% if x %}`, the only
+# case here before, is a single line and could not tell the two apart.
+#
+# Found by the fuzzer on `{% set d.v %}not nested // nested`, where a line
+# comment splits the tail into two data runs and the second one starts at the
+# newline that ends the first line.
+for _n, _src in [
+    ("tail_is_one_data_run", "{% if 1 %}a\nb\nc"),
+    ("tail_after_a_print", "{% set x %}\n{{ 1 }}\nmore\ntext"),
+    ("tail_is_blank_lines", "{% for i in [1] %}\n\n\n"),
+    ("tail_after_a_comment", "{% macro m() %}x\n{# c #}\ny\nz"),
+    ("tail_is_a_tag", "{% if 1 %}\n\n{% if 2 %}"),
+    ("tail_spans_a_multiline_tag", "{% block b %}{{\n1\n}}"),
+    ("nothing_after_the_tag", "{% filter upper %}"),
+    ("raw_tail_is_multiline", "{% raw %}a\nb\nc"),
+]:
+    case(f"errors/unclosed_{_n}", _src)
+# The same rule with a line comment, which is what the fuzzer drew: the comment
+# ends the first data run, and the run after it starts on the newline that
+# closes that same line -- so the report stays on line 1.
+for _n, _src in [
+    ("line_comment_splits_the_tail", "{% set x %}body // c\nmore\n"),
+    ("line_comment_on_its_own_line", "{% if 1 %}x\n// c\ny\n"),
+]:
+    case(f"errors/unclosed_{_n}", _src,
+         __settings__={"line_comment_prefix": "//", "keep_trailing_newline": True})
 case("errors/syntax_unexpected", "{{ 1 + }}")
 case("errors/unknown_tag", "{% nope %}")
 case("errors/unknown_filter", "{{ 1|nosuch }}")
@@ -4725,6 +4756,15 @@ for _n, _src in [
     ("grouped_from_the_right", "{{ 'abcdef'.encode().hex('_', 2) }}"),
     ("grouped_from_the_left", "{{ 'abcdef'.encode().hex('_', -2) }}"),
     ("group_of_zero", "{{ b.hex('-', 0) }}"),
+    # bytes_per_sep is declared `int` in Argument Clinic, not Py_ssize_t, so it
+    # gives up at 2**31 and the OverflowError names a C int. gojja2 read it as
+    # an ssize_t: it accepted 2**31 outright and misnamed the type for anything
+    # past a C long.
+    ("group_at_the_c_int_ceiling", "{{ b.hex('-', 2147483647) }}"),
+    ("group_past_a_c_int", "{{ b.hex('-', 2147483648) }}"),
+    ("group_at_the_c_int_floor", "{{ b.hex('-', -2147483648) }}"),
+    ("group_below_the_c_int_floor", "{{ b.hex('-', -2147483649) }}"),
+    ("group_past_an_ssize_t", "{{ b.hex('-', 2 ** 70) }}"),
     ("group_not_an_integer", "{{ b.hex('-', 'x') }}"),
     ("empty_receiver", "{{ ''.encode().hex('-') }}"),
     ("empty_receiver_bad_sep", "{{ ''.encode().hex(1) }}"),

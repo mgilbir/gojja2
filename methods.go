@@ -215,10 +215,11 @@ var (
 	// cSSizeT is Py_ssize_t, which every length, width, index and count
 	// converts to. It is the common case.
 	cSSizeT = cIntType{"ssize_t", math.MinInt64, math.MaxInt64}
-	// cInt is a plain C int. Only three arguments use it: expandtabs'
-	// tabsize, and the two declared `bool(accept={int})` in Argument
-	// Clinic -- splitlines' keepends and sorted's reverse -- which are
-	// integers rather than truth tests and so carry a range.
+	// cInt is a plain C int. Only four arguments use it: expandtabs'
+	// tabsize, bytes.hex's bytes_per_sep, and the two declared
+	// `bool(accept={int})` in Argument Clinic -- splitlines' keepends and
+	// sorted's reverse -- which are integers rather than truth tests and so
+	// carry a range.
 	cInt = cIntType{"int", math.MinInt32, math.MaxInt32}
 )
 

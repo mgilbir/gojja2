@@ -956,7 +956,9 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 	}
 	perSep := 1
 	if v, ok := arg(args, 1, "bytes_per_sep"); ok {
-		n, err := indexOf(v, cSSizeT)
+		// Argument Clinic declares this one `int`, not Py_ssize_t, so it
+		// gives up at 2**31 and the OverflowError names a C int.
+		n, err := indexOf(v, cInt)
 		if err != nil {
 			return value.Undefined, err
 		}

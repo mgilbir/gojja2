@@ -33,6 +33,15 @@ func Tokenize(syn Syntax, source, name string) ([]Token, error) {
 	// far -- `{{ 'a': b }}` fails on the colon there, not on the brace
 	// after it. Returning the prefix lets the parser reproduce that order.
 	err := l.run()
+	// jinja2's TokenStream.close() builds the EOF token from the *last*
+	// token's lineno rather than from where the source ends, and
+	// "Unexpected end of template" reports that line. So a template whose
+	// last token spans several lines is reported at the line that token
+	// began on: `{% set x %}body\n` is line 1, not 2.
+	l.line = 1
+	if n := len(l.out); n > 0 {
+		l.line = l.out[n-1].Line
+	}
 	l.emit(EOF, "")
 	return l.out, err
 }

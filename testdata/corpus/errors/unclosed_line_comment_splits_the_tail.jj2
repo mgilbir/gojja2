@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "line_comment_prefix": "//",
+    "keep_trailing_newline": true
+  }
+}
+---
+{% set x %}body // c
+more
