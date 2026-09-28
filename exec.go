@@ -242,11 +242,20 @@ func (ex *exec) renderPrint(v value.Value) (string, error) {
 }
 
 // renderValue turns a value into the text that reaches the output.
-func (ex *exec) renderValue(v value.Value) (string, error) {
+// renderValueRaw is str(v) with the Undefined class applied and no escaping:
+// what Python's str() does to a value, including raising for a StrictUndefined.
+func (ex *exec) renderValueRaw(v value.Value) (string, error) {
 	if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
 		return "", v.UndefinedError()
 	}
-	text := value.StrFor(v, ex.pyVersion())
+	return value.StrFor(v, ex.pyVersion()), nil
+}
+
+func (ex *exec) renderValue(v value.Value) (string, error) {
+	text, err := ex.renderValueRaw(v)
+	if err != nil {
+		return "", err
+	}
 	if ex.autoescape && !v.IsSafe() {
 		// Output is str(x) plainly and escape(x) when autoescaping, so
 		// a value that carries its own escaped form hands that over
@@ -640,7 +649,16 @@ func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 		// jinja2's Markup prints them as they are. With escaping off
 		// the value keeps its type, which is what identity() means.
 		if ex.autoescape {
-			v = value.Safe(value.StrFor(v, ex.pyVersion()))
+			// Markup(x) stringifies, so a StrictUndefined raises here
+			// rather than being assigned: `{% set v | first %}{%
+			// endset %}` over an empty body is "No first item" under
+			// strict *and* autoescape, and nothing at all without
+			// escaping, where identity() keeps the undefined.
+			text, err := ex.renderValueRaw(v)
+			if err != nil {
+				return err
+			}
+			v = value.Safe(text)
 		}
 	}
 	// nsItem, not nsAttr: a `{% set %}` with a body assigns an *item*, and

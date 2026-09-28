@@ -6671,6 +6671,30 @@ for _n, _src in [
     case("control/set_block_filter_" + _n,
          "{% autoescape false %}" + _src + "{% endautoescape %}")
 
+# ...and that Markup() *stringifies*, so a filter that answers an undefined
+# raises there under StrictUndefined -- `{% set v | first %}{% endset %}` over
+# an empty body is "No first item, sequence was empty." with escaping on and
+# assigns quietly with it off, where identity() keeps the undefined whole. The
+# wrap used the plain str(), which renders a strict undefined as "", so the
+# refusal only arrived if something later printed v -- and these shapes never
+# do. Graded under all four classes: the wrap must not make the default class
+# refuse, and it must not swallow the debug class's message either.
+for _n, _src in [
+    ("first_empty", "{% set v | first %}{% endset %}"),
+    ("last_empty", "{% set v | last %}{% endset %}"),
+    ("first_empty_printed", "{% set v | first %}{% endset %}[{{ v }}]"),
+    ("first_empty_length", "{% set v | first %}{% endset %}[{{ v|length }}]"),
+    ("map_attribute", "{% set v | map(attribute='x')|first %}{% endset %}"),
+    ("groupby_first", "{% set v | groupby('x')|first %}{% endset %}"),
+]:
+    for _kind in ("chainable", "default", "debug", "strict"):
+        case(f"escape/set_block_filter_undefined_{_n}_{_kind}",
+             "{% autoescape true %}" + _src + "{% endautoescape %}",
+             __settings__={"undefined": _kind})
+        case(f"control/set_block_filter_undefined_{_n}_{_kind}",
+             "{% autoescape false %}" + _src + "{% endautoescape %}",
+             __settings__={"undefined": _kind})
+
 # jinja2's code generator collects every block in a pre-pass, before it generates
 # a line, so a template that both defines a block twice *and* extends from
 # somewhere it may not says "block 'a' defined twice" whatever order the two sit
@@ -6687,6 +6711,7 @@ case("errors/extends_in_a_macro",
 case("errors/extends_in_a_loop",
      "{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}",
      __templates__={"base.txt": "B"})
+
 
 # A macro parameter that was not provided binds to an undefined carrying a
 # *hint* -- jinja2's `undefined(f"parameter {name!r} was not provided")` -- not

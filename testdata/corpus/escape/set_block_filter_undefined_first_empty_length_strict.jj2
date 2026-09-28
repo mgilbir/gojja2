@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% autoescape true %}{% set v | first %}{% endset %}[{{ v|length }}]{% endautoescape %}

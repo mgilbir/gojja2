@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{% autoescape true %}{% set v | groupby('x')|first %}{% endset %}{% endautoescape %}
