@@ -129,6 +129,16 @@ func (s *Set) Iterate() iter.Seq[Value] {
 // consulted. Removing it left the whole suite green; it was the last function
 // whole-suite coverage had never executed.
 func (s *Set) ContainsErr(item Value, py PythonVersion) (found, known bool, err error) {
+	if _, isSet := item.Interface().(*Set); isSet {
+		// A set is unhashable, and `x in s` is the one place CPython
+		// does not stop there: set_contains catches the TypeError, makes
+		// a *frozenset* of the key and looks that up instead, so
+		// `{1} in {2}` is False rather than a refusal. Nothing here can
+		// build a frozenset, so the answer is always False -- but it is
+		// an answer, which is what a chained `a not in s not in s`
+		// needs. A dict does not do this: `{1} in d.keys()` refuses.
+		return false, true, nil
+	}
 	if err := CheckHashable(item, py, AsSetElement); err != nil {
 		return false, true, err
 	}

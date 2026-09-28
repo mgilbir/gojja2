@@ -6356,6 +6356,29 @@ for _kind in ("default", "chainable", "debug", "strict"):
     case("undefined/%s_percent_integer_verb" % _kind,
          "[{{ '%d' % (s|attr('nope')) }}]", __settings__=_set, s="x")
 
+# A set as the *item* of a containment test. It is unhashable, and this is the
+# one place CPython does not stop there: set_contains catches the TypeError,
+# makes a frozenset of the key and looks that up, so `{1} in {2}` is False
+# rather than a refusal. A dict does not -- `{1} in d.keys()` refuses -- and
+# neither does anything else. Found by the coverage-guided fuzzer, on a chained
+# `html not in (d.keys() - []) not in (d.keys() - [])`, where the refusal
+# reached a template that renders under CPython.
+case("dictview/set_in_a_set",
+     "{% set d = {'a': 1, 'b': 2} %}{% set e = {} %}"
+     "{{ (d.keys() - []) in (d.keys() - []) }}|{{ (e.keys() - []) in (d.keys() - []) }}|"
+     "{{ (d.keys() - []) not in (d.keys() - []) }}")
+case("dictview/set_in_a_view",
+     "{% set d = {'a': 1} %}{{ (d.keys() - []) in d.keys() }}")
+case("dictview/set_in_an_items_view",
+     "{% set d = {'a': 1} %}{{ (d.keys() - []) in d.items() }}|{{ (d.keys() - []) in d.values() }}")
+case("dictview/set_in_a_list", "{% set d = {'a': 1} %}{{ (d.keys() - []) in [1] }}")
+case("dictview/set_in_a_dict", "{% set d = {'a': 1} %}{{ (d.keys() - []) in {} }}")
+case("dictview/unhashable_in_a_set",
+     "{% set d = {'a': 1} %}{{ [1] in (d.keys() - []) }}")
+case("dictview/chained_containment_over_sets",
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{{ html not in (d.keys() - []) not in (d.keys() - []) }}",
+     html="<b>a &amp; b</b>")
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither

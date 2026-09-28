@@ -1,0 +1,5 @@
+{
+  "html": "<b>a &amp; b</b>"
+}
+---
+{% set d = {'b': 2, 'a': 1, 'C': 3} %}{{ html not in (d.keys() - []) not in (d.keys() - []) }}
