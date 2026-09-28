@@ -970,7 +970,7 @@ func (ex *exec) execImport(n *ast.Import) error {
 	ex.sc.set(n.Target, module)
 	if ex.sc == ex.st.ctx {
 		ex.st.contextVars.set(n.Target, module)
-		ex.st.export(n.Target)
+		ex.st.unexport(n.Target)
 	}
 	return nil
 }
@@ -998,7 +998,7 @@ func (ex *exec) execFromImport(n *ast.FromImport) error {
 		ex.sc.set(entry.Alias, v)
 		if ex.sc == ex.st.ctx {
 			ex.st.contextVars.set(entry.Alias, v)
-			ex.st.export(entry.Alias)
+			ex.st.unexport(entry.Alias)
 		}
 	}
 	return nil
@@ -1055,6 +1055,16 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 //
 // jinja2 does not export a name beginning with an underscore, which is the one
 // rule here; the set is what moduleObject answers from.
+// unexport removes a name from the exports, which is what binding it with an
+// {% import %} does: jinja2's generator writes `context.exported_vars.discard`
+// for every top-level import target, so a module that imports another does not
+// re-export it -- `{% import 'inner' as sub %}` leaves `m.sub` undefined in the
+// template that imports *it*, and discards the name even where an earlier
+// `{% set sub = ... %}` had exported it. A later `{% set %}` adds it back.
+func (s *State) unexport(name string) {
+	delete(s.exports, name)
+}
+
 func (s *State) export(name string) {
 	if strings.HasPrefix(name, "_") {
 		return

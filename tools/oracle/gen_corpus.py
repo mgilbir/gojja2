@@ -749,6 +749,38 @@ case("include/filter_with_context", "{% filter escape %}{% include 'inc.txt' %}{
      __templates__=BYPASS)
 case("include/filter_bypass_order", "{% filter upper %}a{% include 'inc.txt' without context %}b{% endfilter %}",
      __templates__=BYPASS)
+# An {% import %} target is *removed* from the template's exports, which is one
+# line of jinja2's generator -- `context.exported_vars.discard(target)` -- and
+# the opposite of what gojja2 did. So a module that imports another does not
+# re-export it, and the discard undoes an earlier `{% set %}` of that name while
+# a later one puts it back. Nothing observes it except a template that imports
+# the importer, which is why it went unnoticed.
+_EXPMOD = {
+    "inner.txt": "{% set q = 9 %}{% macro im() %}IM{% endmacro %}",
+    "imp.txt": "{% import 'inner.txt' as sub %}{% set a = 1 %}",
+    "fromimp.txt": "{% from 'inner.txt' import q %}{% set a = 1 %}",
+    "reset.txt": "{% set sub = 'first' %}{% import 'inner.txt' as sub %}",
+    "reimp.txt": "{% import 'inner.txt' as sub %}{% set sub = 'after' %}",
+    "under.txt": "{% import 'inner.txt' as _sub %}{% set a = 1 %}",
+}
+for _n, _src in [
+    ("import_target_is_not_exported",
+     "{% import 'imp.txt' as m %}[{{ m.sub is defined }}][{{ m.a }}]"),
+    ("import_target_is_undefined",
+     "{% import 'imp.txt' as m %}[{{ m.sub.q }}]"),
+    ("from_import_target_is_not_exported",
+     "{% import 'fromimp.txt' as m %}[{{ m.q is defined }}][{{ m.a }}]"),
+    ("import_discards_an_earlier_set",
+     "{% import 'reset.txt' as m %}[{{ m.sub is defined }}]"),
+    ("a_later_set_exports_again",
+     "{% import 'reimp.txt' as m %}[{{ m.sub is defined }}][{{ m.sub }}]"),
+    ("an_underscore_import_target",
+     "{% import 'under.txt' as m %}[{{ m._sub is defined }}][{{ m.a }}]"),
+    ("what_a_module_does_export",
+     "{% import 'inner.txt' as m %}[{{ m.q is defined }}][{{ m.im is defined }}]"),
+]:
+    case("modules/" + _n, _src, __templates__=dict(_EXPMOD))
+
 case("include/setblock_bypass", "{% set v %}{% include 'inc.txt' without context %}{% endset %}[{{ v }}]",
      __templates__=BYPASS)
 
