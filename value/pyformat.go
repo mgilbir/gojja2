@@ -595,7 +595,10 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 				return formatted{}, errs.New(errs.OverflowError,
 					"%%c arg not in range(256)")
 			}
-			return formatted{body: text(string(rune(n)))}, nil
+			// One byte, not the code point's encoding: `b'%c' % 205`
+			// is b'\xcd' where the str form is 'Í'. Writing the rune
+			// put two bytes in for everything over 127.
+			return formatted{body: text(string([]byte{byte(n)}))}, nil
 		}
 		// Precision is accepted and ignored, as in Python.
 		if v.kind == KindString {

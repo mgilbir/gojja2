@@ -416,11 +416,14 @@ func (ex *exec) execCallBlock(n *ast.CallBlock) error {
 	if err != nil {
 		return err
 	}
-	text, err := ex.renderValue(v)
-	if err != nil {
-		return err
-	}
-	return ex.write(text)
+	// Written as it stands, not escaped and not finalized: jinja2's
+	// visit_CallBlock uses start_write/end_write, which yield the value
+	// with none of the wrapping `{{ ... }}` gets. It shows wherever the
+	// macro answers a plain string under escaping -- a `{% call %}` in a
+	// block the parent wrapped in `{% autoescape false %}` printed
+	// `&gt;` here and `>` there. The same rule as a {% filter %} block's
+	// result; see execFilterBlock.
+	return ex.write(value.Str(v))
 }
 
 // --- filters and tests -------------------------------------------------------

@@ -566,6 +566,47 @@ for _n, _src in [
 ]:
     case("escape/runtime_" + _n, _src, __settings__={"autoescape": True},
          __templates__=dict(_ESCT))
+
+# A {% call %} block's result is written *as it stands*: jinja2's
+# visit_CallBlock uses start_write/end_write, which yield the value with none
+# of the escaping, finalizing or str() that `{{ ... }}` gets. It shows wherever
+# the macro answers a plain string under escaping -- a call block inside a
+# block the parent wrapped in `{% autoescape false %}` printed `&gt;` here and
+# `>` there. Found by the soak, beside the wrap above.
+for _n, _src in [
+    ("call_block_result_is_written_raw",
+     "{% extends 'esc.txt' %}{% block b %}{% macro takes() %}{{ caller(1) }}>{% endmacro %}"
+     "{% call(p) takes() %}{% endcall %}{% endblock %}"),
+    ("call_block_result_in_an_escaped_block",
+     "{% extends 'esc.txt' %}{% block a %}{% macro takes() %}{{ caller(1) }}>{% endmacro %}"
+     "{% call(p) takes() %}<c>{% endcall %}{% endblock %}"),
+    ("call_block_result_at_template_level",
+     "{% macro m() %}[{{ caller() }}]<x>{% endmacro %}{% call m() %}<c>{% endcall %}"),
+    ("call_block_result_unescaped_region",
+     "{% autoescape false %}{% macro m() %}[{{ caller() }}]<x>{% endmacro %}"
+     "{% call m() %}<c>{% endcall %}{% endautoescape %}"),
+    ("call_block_body_is_escaped",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}{{ '<c>' }}{% endcall %}"),
+]:
+    case("escape/" + _n, _src, __settings__={"autoescape": True},
+         __templates__=dict(_ESCT))
+
+# bytes `%c` writes one *byte*, where the str form writes the code point:
+# `b'%c' % 205` is b'\xcd' and `'%c' % 205` is 'Í'. gojja2 wrote the rune's
+# encoding, so everything over 127 came out two bytes wide. Found by the soak,
+# on `('[%c]'.encode()) % 'ab'.encode()|sum(start=10)`.
+for _n, _src in [
+    ("bytes_percent_c_high", "{{ '[%c]'.encode() % 205 }}"),
+    ("bytes_percent_c_max", "{{ '[%c]'.encode() % 255 }}"),
+    ("bytes_percent_c_ascii", "{{ '[%c]'.encode() % 65 }}"),
+    ("bytes_percent_c_bool", "{{ '[%c]'.encode() % true }}"),
+    ("bytes_percent_c_pair", "{{ '[%c%c]'.encode() % (200, 66) }}"),
+    ("bytes_percent_c_over", "{{ '[%c]'.encode() % 256 }}"),
+    ("bytes_percent_c_negative", "{{ '[%c]'.encode() % -1 }}"),
+    ("bytes_percent_c_single_byte", "{{ '[%c]'.encode() % 'a'.encode() }}"),
+    ("str_percent_c_high", "{{ '[%c]' % 205 }}"),
+]:
+    case("format/" + _n, _src)
 case("errors/self_super_past_end", "{% block b %}hi{% endblock %}{{ self.b.super() }}")
 case("inherit/self_print_does_not_render",
      "{% block b %}hi{% endblock %}{{ self.b|string|length > 20 }}")
