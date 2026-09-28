@@ -266,34 +266,39 @@ error, and a mutation changes one choice rather than corrupting a tag. A
 divergence is shrunk against the same check before it is reported, so findings
 arrive minimal.
 
-A case is an *environment* as well as a template, and the settings are drawn
-alongside it: autoescaping, the Undefined class -- all four of them, including
-`StrictUndefined`, which was excluded for as long as a folded constant
-disagreed about *when* it raises -- and the lexer's `trim_blocks`,
-`lstrip_blocks` and `keep_trailing_newline`. Those last three change what a
-template means rather than what it prints, and they were the last dimension the
-run left fixed -- sixty thousand templates a run all lexed under jinja2's
-defaults while the generator wrote `{%- ... -%}` constantly, and the interaction
-between an explicit marker and an implicit setting is exactly where a whitespace
-rule goes wrong. The optional extensions are drawn too -- `do` and
-`loopcontrols` -- because the tags they add are not tags without them: the
-parser knows `{% break %}`, `{% continue %}` and `{% do %}`, all three need an
-extension, and for as long as the run enabled none of them those statements were
-graded by two hand-written corpus cases and nothing else.
-`newline_sequence` is drawn too -- the setting that had no case at all, and the
-one that changes what a string *literal is*, because jinja2 normalises the
-newlines it finds in the template before the parser sees them -- and so are the
-six **tag delimiters**, which is the lexer's whole job: a custom set changes what
-is data, where whitespace control attaches, and which of three openings a `{`
-starts. A drawn set is applied by rewriting the finished template rather than
-threading six strings through every arm of the generator; both engines are handed
-the identical bytes, which is all the comparison needs, and the *auxiliary*
-templates are rewritten with it, because an environment's delimiters apply to
-every template it loads and an `{% extends %}` would not otherwise parse.
-The other lexer mode goes with them: a drawn **line-statement prefix** turns
-every tag into `# if x` on a line of its own, which changes where a tag ends and
-what the whitespace settings have to work with. `{% raw %}` is left alone there,
-because jinja2 handles raw in its block scanner and `# raw` is an unknown tag.
+A case is an *environment* as well as a template, and **ten settings are drawn
+alongside it**. Every one of them was fixed at jinja2's default once, and each
+turned out to hide something.
+
+*What the engine does with a value:* **autoescaping**, and the **Undefined
+class** -- all four, `StrictUndefined` included, which was excluded for as long
+as a folded constant disagreed about *when* it raises.
+
+*What the template means:* the lexer's **`trim_blocks`**, **`lstrip_blocks`**
+and **`keep_trailing_newline`**. Sixty thousand templates a run all lexed under
+jinja2's defaults while the generator wrote `{%- ... -%}` constantly, and the
+interaction between an explicit marker and an implicit setting is exactly where a
+whitespace rule goes wrong. **`newline_sequence`** is the fourth: it had no
+corpus case at all, and it changes what a string *literal is*, because jinja2
+normalises the newlines it finds in the template before the parser sees them.
+
+*What counts as a tag:* the six **delimiters** and the **line-statement
+prefix**, which is the lexer's whole job -- a custom set changes what is data,
+where whitespace control attaches, and which of three openings a `{` starts;
+a prefix turns every tag into `# if x` on a line of its own. Both are applied by
+rewriting the finished template rather than threading the strings through every
+arm of the generator: both engines are handed the identical bytes, which is all
+the comparison needs. Two details make that work -- the *auxiliary* templates are
+rewritten with the delimiters, because an environment's apply to every template
+it loads and an `{% extends %}` would not otherwise parse; and `{% raw %}` keeps
+its braces, because jinja2 handles raw in its block scanner and `# raw` is an
+unknown tag.
+
+*What tags exist at all:* the optional **extensions**, `do` and `loopcontrols`.
+The parser knows `{% break %}`, `{% continue %}` and `{% do %}`, all three need
+an extension, and for as long as the run enabled none of them those statements
+were graded by two hand-written corpus cases and nothing else.
+
 `GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as a tenth axis,
 configuring both sides to match.
 
