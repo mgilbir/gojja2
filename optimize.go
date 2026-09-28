@@ -119,6 +119,7 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 // alone.
 func foldConstantExpressions(c *constEvaluator, body []ast.Stmt, blocks []*ast.Block) {
 	f := &constFolder{
+		dep:           &depChecker{env: c.env, name: c.name, source: c.source},
 		c:             c,
 		envAutoescape: c.st.autoescape,
 		// jinja2's have_extends: the flag is armed by an {% extends %}
@@ -177,40 +178,72 @@ type constFolder struct {
 	// statements are compiled into the template's own function, which is
 	// the one thing {% extends %} requires.
 	toplevel bool
+	// soft is jinja2's soft_frame: inside an {% if %} an unknown filter
+	// name is left for the render rather than refused here. It belongs to
+	// the dependency check, which this walk drives -- see check.
+	soft bool
+	// dep looks up the filter and test names in each expression this walk
+	// has just folded. jinja2 does both from its code generator, node by
+	// node, so a template with two faults names the one the generator
+	// reaches first: `{{ 1|nosuch }}{{ (0 ** 0)[7] and 0 }}` names the
+	// filter and the two swapped name the subscript. Two passes could not
+	// do that, however carefully their walks were kept in step.
+	dep *depChecker
+}
+
+// check looks up the filter and test names in one expression, at the point the
+// generator would have written it out. A refusal joins the fold's own in the
+// single slot the compile reads, so the first in this walk is the one reported.
+func (f *constFolder) check(e ast.Expr) {
+	if e == nil || f.c.refusal != nil {
+		return
+	}
+	f.dep.expr(e, f.soft)
+	if f.dep.err != nil {
+		f.c.refusal = f.dep.err
+	}
+}
+
+// foldCheck is what the generator does to an expression it writes: fold it,
+// which may refuse, and then look up the names left in it, which may refuse.
+func (f *constFolder) foldCheck(e ast.Expr) ast.Expr {
+	e = f.fold(e)
+	f.check(e)
+	return e
+}
+
+// foldCheckAll is foldCheck over a list, in order.
+func (f *constFolder) foldCheckAll(list []ast.Expr) {
+	for i, e := range list {
+		list[i] = f.foldCheck(e)
+	}
+}
+
+// fail records a refusal the walk itself raises, rather than a fold or a name.
+func (f *constFolder) fail(err error) {
+	if err != nil && f.c.refusal == nil {
+		f.c.refusal = err
+	}
 }
 
 // soft folds a branch's body: jinja2's Frame.soft(), which clears rootlevel
 // and keeps toplevel. That is what makes `{% if x %}{% extends %}{% endif %}`
 // legal while leaving the print tags below it compiled.
-func (f *constFolder) soft(body []ast.Stmt) {
-	saved := f.rootlevel
-	f.rootlevel = false
+func (f *constFolder) softBody(body []ast.Stmt) {
+	savedRoot, savedSoft := f.rootlevel, f.soft
+	f.rootlevel, f.soft = false, true
 	f.stmts(body)
-	f.rootlevel = saved
+	f.rootlevel, f.soft = savedRoot, savedSoft
 }
 
 // nested folds the body of a construct that opens a scope: jinja2's
 // Frame.inner(), which clears toplevel too, so an {% extends %} inside one is
 // refused rather than obeyed.
 func (f *constFolder) nested(body []ast.Stmt) {
-	savedTop := f.toplevel
-	f.toplevel = false
-	f.soft(body)
-	f.toplevel = savedTop
-}
-
-// refuseExtendsScope records the refusal jinja2's generator raises when it
-// meets an {% extends %} outside the template's own function. It is not a fold
-// refusal, so the volatile rule does not apply: an unknowable escaping does
-// not make the tag legal.
-func (f *constFolder) refuseExtendsScope(n *ast.Extends) {
-	if f.c.refusal != nil {
-		return
-	}
-	e := errs.New(errs.TemplateAssertionError,
-		"cannot use extend from a non top-level scope")
-	e.Line, e.Name, e.Source = n.Line(), f.c.name, f.c.source
-	f.c.refusal = e
+	savedTop, savedRoot, savedSoft := f.toplevel, f.rootlevel, f.soft
+	f.toplevel, f.rootlevel, f.soft = false, false, false
+	f.stmts(body)
+	f.toplevel, f.rootlevel, f.soft = savedTop, savedRoot, savedSoft
 }
 
 // block folds one {% block %} body.
@@ -447,76 +480,125 @@ func (f *constFolder) stmts(body []ast.Stmt) {
 }
 
 func (f *constFolder) stmt(stmt ast.Stmt) {
+	if f.c.refusal != nil {
+		// The compile is going to fail with what is already recorded;
+		// walking on could only spend time.
+		return
+	}
 	switch n := stmt.(type) {
 	case *ast.Output:
 		if f.outputChecked && f.knownExtends {
 			// Below an {% extends %} at the root, the child's own
 			// body prints nothing, and jinja2's generator leaves
 			// the whole tag out rather than guarding it -- so its
-			// expressions are never folded, and an error a fold
-			// would have raised at compile time never happens.
-			// Run time already agrees: see execOutput.
+			// expressions are neither folded nor looked up, and an
+			// error either would have raised never happens. Run
+			// time already agrees: see execOutput.
 			return
 		}
 		for i, node := range n.Nodes {
 			if _, isData := node.(*ast.TemplateData); isData {
 				continue
 			}
-			n.Nodes[i] = f.fold(node)
+			n.Nodes[i] = f.foldCheck(node)
 		}
 	case *ast.For:
-		n.Iter, n.Test = f.fold(n.Iter), f.fold(n.Test)
+		// `loop` is bound by the loop itself, so assigning it anywhere
+		// inside would leave the two fighting over one name.
+		if line, found := findLoopStore(n); found {
+			f.dep.failAt(line, "Can't assign to special loop variable in for-loop target")
+			f.fail(f.dep.err)
+			return
+		}
+		// The test first: it becomes a function of its own, written
+		// before the loop that calls it, so
+		// `{% for i in [1]|nosuchA if 1|nosuchB %}` names nosuchB. It
+		// is part of that function, so it is refused even inside a
+		// branch that cannot be taken; the iterable is evaluated where
+		// the loop is written, and softens with everything there.
+		savedSoft := f.soft
+		f.soft = false
+		n.Test = f.foldCheck(n.Test)
+		f.soft = savedSoft
+		n.Iter = f.foldCheck(n.Iter)
 		f.nested(n.Body)
 		f.nested(n.Else)
 	case *ast.If:
-		n.Test = f.fold(n.Test)
-		f.soft(n.Body)
+		// An if softens its whole subtree, condition and body alike.
+		savedSoft := f.soft
+		f.soft = true
+		n.Test = f.foldCheck(n.Test)
+		f.soft = savedSoft
+		f.softBody(n.Body)
 		for _, elif := range n.Elif {
 			// An elif is an If of its own and softens its own body;
 			// wrapping it here would clear a flag twice.
 			f.stmt(elif)
 		}
-		f.soft(n.Else)
+		f.softBody(n.Else)
 	case *ast.Assign:
-		n.Node = f.fold(n.Node)
+		n.Node = f.foldCheck(n.Node)
 	case *ast.AssignBlock:
-		n.Filter = f.fold(n.Filter)
+		// The body is buffered first and the filter applied to what it
+		// left, in that order -- so `{% set q | nosuchA %}{{ 1|nosuchC
+		// }}{% endset %}` names nosuchC. The filter is resolved with
+		// the buffer's frame rather than the one the block sits in.
 		f.detached(n.Body)
+		f.unsoftened(func() { n.Filter = f.foldCheck(n.Filter) })
 	case *ast.With:
-		f.exprs(n.Values)
+		f.foldCheckAll(n.Values)
 		f.nested(n.Body)
 	case *ast.Macro:
-		f.exprs(n.Defaults)
+		f.dep.checkCallerDefault(n.Args, n.Defaults, n.Line())
+		f.fail(f.dep.err)
+		// Defaults are part of the macro's signature, generated with
+		// the body rather than at the point of definition.
+		f.unsoftened(func() { f.foldCheckAll(n.Defaults) })
 		f.detached(n.Body)
 	case *ast.CallBlock:
-		f.exprs(n.Defaults)
+		f.dep.checkCallerDefault(n.Args, n.Defaults, n.Line())
+		f.fail(f.dep.err)
+		// The block becomes a macro -- signature, then body -- and only
+		// then is the call itself written, so `{% call m(1|nosuchA) %}
+		// {{ 1|nosuchC }}{% endcall %}` names nosuchC. The call is made
+		// where the block is written, so it softens; the block's own
+		// parameters belong to its signature.
+		f.unsoftened(func() { f.foldCheckAll(n.Defaults) })
 		f.detached(n.Body)
+		// The call cannot fold to a constant -- its callee is a name --
+		// but its arguments can, and a refusal inside one belongs here.
+		if call, ok := f.foldCheck(n.Call).(*ast.Call); ok {
+			n.Call = call
+		}
 	case *ast.FilterBlock:
-		n.Filter = f.fold(n.Filter)
+		// The body is buffered first and the filter applied to what it
+		// left. The filter naming the block is resolved where the block
+		// is generated, which happens whether or not the branch runs.
 		f.nested(n.Body)
+		f.unsoftened(func() { n.Filter = f.foldCheck(n.Filter) })
 	case *ast.Block:
 		// Nothing: where a block is *written* the generator only calls
 		// it. Its body is folded by block, after the root body.
 	case *ast.ExprStmt:
-		n.Node = f.fold(n.Node)
+		n.Node = f.foldCheck(n.Node)
 	case *ast.Include:
-		n.Template = f.fold(n.Template)
+		n.Template = f.foldCheck(n.Template)
 	case *ast.Import:
-		n.Template = f.fold(n.Template)
+		n.Template = f.foldCheck(n.Template)
 	case *ast.FromImport:
-		n.Template = f.fold(n.Template)
+		n.Template = f.foldCheck(n.Template)
 	case *ast.Extends:
+		// Which template a render extends has to be settled once, for
+		// the whole render. Reached from a frame, it would depend on
+		// control flow: gojja2 let `{% for i in [] %}{% extends %}`
+		// through, so an empty sequence silently skipped the
+		// inheritance and a non-empty one applied it.
 		if !f.toplevel {
-			// The dependency check refuses this too, and says the
-			// same thing -- but it runs after the whole fold, so
-			// `{% macro m() %}{% extends 'b' %}{% endmacro %}
-			// {{ (0 ** 0)[0] and 0 }}` named the subscript where
-			// jinja2's generator fails at the extends it reaches
-			// first. Refusing here puts the two in source order.
-			f.refuseExtendsScope(n)
+			f.dep.failAt(n.Line(), "cannot use extend from a non top-level scope")
+			f.fail(f.dep.err)
 			return
 		}
-		n.Template = f.fold(n.Template)
+		n.Template = f.foldCheck(n.Template)
 		// Only an extends the root body reaches unconditionally is
 		// known: one inside an {% if %} leaves the print tags below it
 		// compiled, and guarded at run time instead.
@@ -526,9 +608,19 @@ func (f *constFolder) stmt(stmt ast.Stmt) {
 	case *ast.Scope:
 		f.nested(n.Body)
 	case *ast.AutoescapeBlock:
-		n.Value = f.fold(n.Value)
+		n.Value = f.foldCheck(n.Value)
 		f.autoescapeBody(n)
 	}
+}
+
+// unsoftened runs one slot outside any branch's softening: what a {% filter %}
+// names, and what a macro's signature holds, is generated whether or not the
+// branch around it can be taken.
+func (f *constFolder) unsoftened(fn func()) {
+	saved := f.soft
+	f.soft = false
+	fn()
+	f.soft = saved
 }
 
 // autoescapeBody folds the body of an {% autoescape %} block under the

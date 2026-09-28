@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "__templates__": {
+    "base.txt": "B"
+  }
+}
+---
+{% if true %}{{ 1|nosuchA }}{% endif %}{{ (0 ** 0)[7] and 0 }}

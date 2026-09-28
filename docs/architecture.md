@@ -57,8 +57,8 @@ flowchart TD
         P1["parser.Parse<br/><i>lexer.Tokenize: whole source, all tokens up front</i><br/><i>then recursive descent, jinja2 precedence</i>"]
         P2["collectBlocks<br/><i>the pre-pass: index by name, refuse duplicates,<br/>and fix the order the bodies are folded in</i>"]
         P3["foldConstantPrints<br/><i>print tags only; also accepts undefined results</i>"]
-        P4["foldConstantExpressions<br/><i>the general fold, as jinja2's optimizer does;<br/>root body first, then each block</i>"]
-        P5["checkDependencies<br/><i>unknown filter/test names</i>"]
+        P4["foldConstantExpressions<br/><i>the general fold, as jinja2's optimizer does,<br/>and the filter and test lookups with it;<br/>root body first, then each block</i>"]
+        P5["findUnsupported<br/><i>constructs gojja2 diverges on</i>"]
         P1 --> P2 --> P3 --> P4 --> P5
     end
     CO --> T(["*Template — tree + blocks"])
@@ -70,7 +70,7 @@ flowchart TD
 
 Four things about this path catch people out.
 
-**The order of those boxes is observable.** A fold that refuses ends the
+**The order of what those boxes do is observable.** A fold that refuses ends the
 compile, and so does an unknown filter name, so which of two broken expressions
 is named depends on which is reached first — and jinja2 does both from its *code
 generator*, node by node, rather than in passes of its own. Three consequences
@@ -82,11 +82,16 @@ rather than guarding it — `{% extends 'base.txt' %}{{ 1|nosuch }}` renders the
 parent; and a duplicate block name, collected before a line is generated, beats
 both. `fold/order_*` and `fold/generated_*` in the corpus grade each one.
 
-What is *not* reproduced is the interleaving of the two: jinja2 folds an
-expression and looks its filters up in one walk, so
-`{{ 1|nosuch }}{{ (0 ** 0)[7] and 0 }}` names the filter and the same two
-swapped name the subscript. Both are refusals of a template that is broken
-either way, and gojja2 names the fold's.
+That is also why the fold and the dependency check are one walk rather than
+two. jinja2 folds an expression and looks its filters up as it writes that one
+node out, so `{{ 1|nosuch }}{{ (0 ** 0)[7] and 0 }}` names the filter and the
+same two swapped name the subscript; two passes cannot do that, however
+carefully their walks are kept in step. The order inside a statement is the
+generator's too, and it is not the order the tag is written in: a loop's test
+becomes a function of its own, written before the loop that calls it, and a
+`{% filter %}`, a `{% set %}` with a body and a `{% call %}` all buffer their
+body first and write what consumes it afterwards. `fold/order_within_*` and
+`fold/order_mixed_*` grade those.
 
 **Compilation takes no `context.Context` and has no budget.** The bounds in
 [limits.md](limits.md) are *render* bounds. What protects compile time instead is

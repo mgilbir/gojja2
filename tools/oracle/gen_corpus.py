@@ -6862,6 +6862,65 @@ for _n, _src in [
 ]:
     case("fold/order_lookup_" + _n, _src)
 
+# ...and the two are one walk, not two: jinja2 folds an expression and looks the
+# names in it up as it writes that one node out, so a template with a fold that
+# refuses and a filter that does not exist names whichever the generator reaches
+# first. Two passes cannot do that however carefully their walks are kept in
+# step, which is why there is one here.
+def _bad(k=7):
+    return "(0 ** 0)[%d] and 0" % k
+
+
+for _n, _src in [
+    ("a_lookup_before_a_fold", "{{ 1|nosuchA }}{{ @B@ }}"),
+    ("a_fold_before_a_lookup", "{{ @B@ }}{{ 1|nosuchA }}"),
+    ("a_lookup_in_an_assignment_before_a_fold", "{% set q = 1|nosuchA %}{{ @B@ }}"),
+    ("a_fold_before_a_lookup_in_an_assignment", "{{ @B@ }}{% set q = 1|nosuchA %}"),
+    ("a_block_fold_after_a_root_lookup",
+     "{% block a %}{{ @B@ }}{% endblock %}{{ 1|nosuchA }}"),
+    ("a_block_lookup_after_a_root_fold",
+     "{% block a %}{{ 1|nosuchA }}{% endblock %}{{ @B@ }}"),
+    ("a_macro_lookup_before_a_fold",
+     "{% macro m() %}{{ 1|nosuchA }}{% endmacro %}{{ @B@ }}"),
+    ("a_branch_defers_its_lookup", "{% if true %}{{ 1|nosuchA }}{% endif %}{{ @B@ }}"),
+    ("a_lookup_before_a_bad_extends",
+     "{{ 1|nosuchA }}{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}"),
+    ("a_bad_extends_before_a_lookup",
+     "{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}{{ 1|nosuchA }}"),
+]:
+    case("fold/order_mixed_" + _n, _src.replace("@B@", _bad()),
+         __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
+
+# The order inside one statement is the generator's too, and it is not the
+# order the tag is written in: a loop's test becomes a function of its own,
+# written before the loop that calls it, and a {% filter %}, a {% set %} with a
+# body and a {% call %} all buffer their body first and write what consumes it
+# afterwards.
+for _n, _src in [
+    ("a_loops_test_before_its_iterable", "{% for i in [1]|nosuchA if 1|nosuchB %}x{% endfor %}"),
+    ("a_loops_test_folds_first", "{% for i in [1]|nosuchA if @B@ %}x{% endfor %}"),
+    ("a_loops_iterable_before_its_body",
+     "{% for i in [1]|nosuchA %}{{ 1|nosuchC }}{% endfor %}"),
+    ("a_loops_body_before_its_else",
+     "{% for i in [1] %}{{ 1|nosuchC }}{% else %}{{ 1|nosuchD }}{% endfor %}"),
+    ("a_filter_blocks_body_before_its_filter",
+     "{% filter nosuchA %}{{ 1|nosuchC }}{% endfilter %}"),
+    ("a_set_blocks_body_before_its_filter",
+     "{% set q | nosuchA %}{{ 1|nosuchC }}{% endset %}"),
+    ("a_call_blocks_body_before_its_call",
+     "{% call m(1|nosuchA) %}{{ 1|nosuchC }}{% endcall %}"),
+    ("a_call_blocks_signature_before_its_body",
+     "{% call(x=1|nosuchA) m() %}{{ 1|nosuchC }}{% endcall %}"),
+    ("a_macros_signature_before_its_body",
+     "{% macro m(a=1|nosuchA) %}{{ 1|nosuchC }}{% endmacro %}"),
+    ("a_withs_values_before_its_body",
+     "{% with x = 1|nosuchA %}{{ 1|nosuchC }}{% endwith %}"),
+    ("a_filter_blocks_fold_before_a_later_lookup",
+     "{% filter upper %}{{ @B@ }}{% endfilter %}{{ 1|nosuchA }}"),
+]:
+    case("fold/order_within_" + _n, _src.replace("@B@", _bad()),
+         __settings__={"undefined": "strict"})
+
 # A macro parameter that was not provided binds to an undefined carrying a
 # *hint* -- jinja2's `undefined(f"parameter {name!r} was not provided")` -- not
 # to one named after the parameter. The difference only speaks when the undefined

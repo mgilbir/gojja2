@@ -935,9 +935,6 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	if folder.refusal != nil {
 		return nil, folder.refusal
 	}
-	if derr := e.checkDependencies(tree.Body, order, name, source); derr != nil {
-		return nil, derr
-	}
 	// After the fold, so a handler spelled as constant pieces is a literal
 	// by now, and last, so a template that is broken outright says so
 	// before it is told about a construct that merely diverges.

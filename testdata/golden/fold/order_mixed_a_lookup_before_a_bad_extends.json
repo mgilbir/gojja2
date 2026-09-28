@@ -1,0 +1,16 @@
+{
+  "case": "fold/order_mixed_a_lookup_before_a_bad_extends.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateAssertionError",
+    "message": "No filter named 'nosuchA'.",
+    "lineno": 1,
+    "name": "fold/order_mixed_a_lookup_before_a_bad_extends.jj2"
+  }
+}

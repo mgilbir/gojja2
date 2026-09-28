@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% macro m(a=1|nosuchA) %}{{ 1|nosuchC }}{% endmacro %}
