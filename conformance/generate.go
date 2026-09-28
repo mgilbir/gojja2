@@ -339,6 +339,17 @@ type generator struct {
 type GeneratedCase struct {
 	Source     string
 	Autoescape bool
+	// AutoescapeSelect asks for jinja2's select_autoescape over the "html"
+	// extension instead of a flat setting, so the *name* decides -- and the
+	// auxiliary templates are .txt while the case's own is .html. That puts
+	// a template that escapes and one that does not on either side of every
+	// extends, include and import, which is where each template's own eval
+	// context shows: a block compiled under one setting rendered inside a
+	// parent with the other, a macro written in one and called from the
+	// other. Both of the escaping bugs the soak found were on that seam,
+	// and it took a base that wrapped its blocks in {% autoescape %} to get
+	// there.
+	AutoescapeSelect bool
 	// Undefined names the Undefined class the case renders under: "" for
 	// jinja2's default, or "strict", "chainable" or "debug".
 	//
@@ -551,6 +562,8 @@ func generateCase(input []byte, withEnvironment bool) GeneratedCase {
 	// the same bytes after it generate the same template either way --
 	// which is what makes shrinking a diverging case keep its setting.
 	autoescape := g.c.chance(3)
+	// A sixth of cases let the template's *name* decide instead.
+	autoescapeSelect := g.c.chance(6)
 	undefined := g.c.pick(undefinedKinds)
 	// Each is drawn on its own rather than as one of eight combinations, so
 	// that a run holds every pair of them and not just the pairs a table
@@ -589,6 +602,7 @@ func generateCase(input []byte, withEnvironment bool) GeneratedCase {
 		Source: delims.Rewrite(
 			asLineStatements(g.b.String(), linePrefix, lineComment)),
 		Autoescape:          autoescape,
+		AutoescapeSelect:    autoescapeSelect,
 		Undefined:           undefined,
 		Trim:                trim,
 		Lstrip:              lstrip,

@@ -639,8 +639,16 @@ func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 		return err
 	}
 
-	v := markup(text, ex.autoescape)
+	// Two wraps, and jinja2 uses a different context for each. The filter's
+	// *input* is `Markup(concat(buf))` when the frame this tag was compiled
+	// in escapes -- visit_Filter decides that at compile time -- while the
+	// *result* is `(Markup if context.eval_ctx.autoescape else identity)`,
+	// which is the runtime context. With no filter there is only the
+	// second. The two differ inside a block, whose own eval context is
+	// fresh while the context's is whatever the parent has in force.
+	v := markup(text, ex.st.autoescape)
 	if n.Filter != nil {
+		v = markup(text, ex.autoescape)
 		// The filter chain was parsed with a nil input; the captured
 		// body is what flows into it.
 		v, err = ex.applyFilterChain(n.Filter, v)
@@ -655,7 +663,15 @@ func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 		// here, and `{% set v | list %}` printed escaped quotes where
 		// jinja2's Markup prints them as they are. With escaping off
 		// the value keeps its type, which is what identity() means.
-		if ex.autoescape {
+		// The *runtime* eval context decides, not the setting this tag
+		// was compiled under: jinja2 writes `(Markup if
+		// context.eval_ctx.autoescape else identity)(...)`, and the two
+		// differ inside a block, whose own eval context is fresh while
+		// the context's is whatever the parent has in force. A `{% set
+		// v | list %}` in a block the base wrapped in `{% autoescape
+		// false %}` keeps a plain string, which the block's own print
+		// then escapes.
+		if ex.st.autoescape {
 			// Markup(x) stringifies, so a StrictUndefined raises here
 			// rather than being assigned: `{% set v | first %}{%
 			// endset %}` over an empty body is "No first item" under

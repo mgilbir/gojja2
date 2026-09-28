@@ -60,10 +60,49 @@ type Settings struct {
 	LstripBlocks        bool   `json:"lstrip_blocks"`
 	NewlineSequence     string `json:"newline_sequence"`
 	KeepTrailingNewline bool   `json:"keep_trailing_newline"`
-	Autoescape          bool   `json:"autoescape"`
-	Undefined           string `json:"undefined"`
+	// Autoescape is true, false, or the name of a *rule*: "select" is
+	// jinja2's select_autoescape over the "html" extension, which decides
+	// by the template's name rather than for the whole environment. A JSON
+	// setting cannot carry the callable jinja2 wants, so both sides build
+	// it from the name.
+	Autoescape Autoescape `json:"autoescape"`
+	Undefined  string     `json:"undefined"`
 	// Extensions names the optional tags the case needs, e.g. "do".
 	Extensions []string `json:"extensions"`
+}
+
+// Autoescape is a case's escaping setting: a bool, or the name of a rule.
+type Autoescape struct {
+	On   bool
+	Rule string
+}
+
+// UnmarshalJSON accepts `true`, `false` and `"select"`.
+func (a *Autoescape) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var name string
+		if err := json.Unmarshal(b, &name); err != nil {
+			return err
+		}
+		if name != "select" {
+			return fmt.Errorf("unknown autoescape rule %q", name)
+		}
+		a.Rule = name
+		return nil
+	}
+	return json.Unmarshal(b, &a.On)
+}
+
+func (a Autoescape) option() gojja2.Option {
+	if a.Rule == "select" {
+		// Spelled out rather than defaulted: gojja2's default set adds
+		// xhtml, which is a documented divergence and not what
+		// select_autoescape(enabled_extensions=("html",)) asks for.
+		return gojja2.WithAutoescapeSelection(gojja2.SelectAutoescapeConfig{
+			Enabled: []string{"html"},
+		})
+	}
+	return gojja2.WithAutoescape(a.On)
 }
 
 // Golden is the oracle's recorded answer for a case.
@@ -349,7 +388,7 @@ func (c *Case) EnvironmentFor(py gojja2.PythonVersion) (*gojja2.Environment, err
 		gojja2.WithTrimBlocks(s.TrimBlocks),
 		gojja2.WithLstripBlocks(s.LstripBlocks),
 		gojja2.WithKeepTrailingNewline(s.KeepTrailingNewline),
-		gojja2.WithAutoescape(s.Autoescape),
+		s.Autoescape.option(),
 		gojja2.WithUndefined(undefinedBehavior(s.Undefined)),
 	)
 	if len(s.Extensions) > 0 {

@@ -591,6 +591,38 @@ for _n, _src in [
     case("escape/" + _n, _src, __settings__={"autoescape": True},
          __templates__=dict(_ESCT))
 
+# A `{% set %}` with a body has *two* wraps and jinja2 uses a different context
+# for each: the filter's input is `Markup(concat(buf))` when the frame the tag
+# was compiled in escapes -- a compile-time question -- while the result is
+# `(Markup if context.eval_ctx.autoescape else identity)`, which is the runtime
+# one. With no filter there is only the second. Inside a block the two differ,
+# and gojja2 used the compile-time setting for both: `{% set v | list %}` in a
+# block the base wrapped in `{% autoescape false %}` came back Markup and
+# printed its quotes raw where jinja2 escapes them. Found by the fuzzer, on the
+# escaping axis.
+for _n, _src in [
+    ("set_block_filtered_in_an_unescaped_block",
+     "{% extends 'esc.txt' %}{% block b %}{% set fv | list %}x{% endset %}"
+     "[{{ fv }}]{% endblock %}"),
+    ("set_block_filtered_in_an_escaped_block",
+     "{% extends 'esc.txt' %}{% block a %}{% set fv | list %}x{% endset %}"
+     "[{{ fv }}]{% endblock %}"),
+    ("set_block_plain_in_an_unescaped_block",
+     "{% extends 'esc.txt' %}{% block b %}{% set fv %}<x>{% endset %}[{{ fv }}]{% endblock %}"),
+    ("set_block_filter_input_keeps_markup",
+     "{% extends 'esc.txt' %}{% block b %}{% set fv | upper %}<x>{% endset %}"
+     "[{{ fv }}]{% endblock %}"),
+    ("set_block_length_in_an_unescaped_block",
+     "{% extends 'esc.txt' %}{% block b %}{% set fv | length %}abc{% endset %}"
+     "[{{ fv + 1 }}]{% endblock %}"),
+    ("set_block_at_template_level",
+     "{% set fv | list %}x{% endset %}[{{ fv }}]"),
+    ("set_block_in_an_unescaped_region",
+     "{% autoescape false %}{% set fv | upper %}<x>{% endset %}[{{ fv }}]{% endautoescape %}"),
+]:
+    case("escape/" + _n, _src, __settings__={"autoescape": True},
+         __templates__=dict(_ESCT))
+
 # bytes `%c` writes one *byte*, where the str form writes the code point:
 # `b'%c' % 205` is b'\xcd' and `'%c' % 205` is 'Í'. gojja2 wrote the rune's
 # encoding, so everything over 127 came out two bytes wide. Found by the soak,
@@ -607,6 +639,41 @@ for _n, _src in [
     ("str_percent_c_high", "{{ '[%c]' % 205 }}"),
 ]:
     case("format/" + _n, _src)
+
+# jinja2's select_autoescape decides by the template's *name*, so one template
+# escapes and the next does not -- and each was compiled under its own setting.
+# The corpus had no case for it at all: `__settings__={"autoescape": "select"}`
+# is the rule over the "html" extension, which the oracle builds as the callable
+# a JSON setting cannot carry. A case's own name ends in .jj2, so the auxiliary
+# .html templates are the escaping half.
+_SELT = {
+    "base.html": "H[{% block a %}<A>{% endblock %}|{{ '<p>' }}]",
+    "base.txt": "B[{% block a %}<A>{% endblock %}|{{ '<p>' }}]",
+    "mac.html": "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{% set ex = '<E>' %}",
+    "mac.txt": "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{% set ex = '<E>' %}",
+    "inc.html": "<inc {{ '<x>' }}>",
+    "inc.txt": "<inc {{ '<x>' }}>",
+}
+for _n, _src in [
+    ("select_include_of_an_escaping_template", "{% include 'inc.html' %}|{{ '<t>' }}"),
+    ("select_include_of_a_plain_template", "{% include 'inc.txt' %}|{{ '<t>' }}"),
+    ("select_extends_an_escaping_base",
+     "{% extends 'base.html' %}{% block a %}{{ '<c>' }}{% endblock %}"),
+    ("select_extends_a_plain_base",
+     "{% extends 'base.txt' %}{% block a %}{{ '<c>' }}{% endblock %}"),
+    ("select_macro_from_an_escaping_template",
+     "{% import 'mac.html' as mm %}{{ mm.m(1) }}|{{ mm.ex }}"),
+    ("select_macro_from_a_plain_template",
+     "{% import 'mac.txt' as mm %}{{ mm.m(1) }}|{{ mm.ex }}"),
+    ("select_macro_in_a_block_of_an_escaping_base",
+     "{% extends 'base.html' %}{% block a %}{% import 'mac.txt' as mm %}"
+     "{{ mm.m(1) }}{% endblock %}"),
+    ("select_filter_block_in_a_block",
+     "{% extends 'base.html' %}{% block a %}{% filter upper %}{{ '<f>' }}"
+     "{% endfilter %}{% endblock %}"),
+]:
+    case("escape/" + _n, _src, __settings__={"autoescape": "select"},
+         __templates__=dict(_SELT))
 case("errors/self_super_past_end", "{% block b %}hi{% endblock %}{{ self.b.super() }}")
 case("inherit/self_print_does_not_render",
      "{% block b %}hi{% endblock %}{{ self.b|string|length > 20 }}")

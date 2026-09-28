@@ -88,8 +88,18 @@ func newHarness(t testing.TB) *harness {
 // side. The oracle is handed the same settings; they have to be applied to both
 // or the comparison is between two environments rather than two engines.
 func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
+	escaping := gojja2.WithAutoescape(c.Autoescape)
+	if c.AutoescapeSelect {
+		// jinja2's select_autoescape(enabled_extensions=("html",)),
+		// spelled out rather than defaulted: gojja2's default set adds
+		// xhtml, which is a documented divergence and not what the
+		// oracle is being asked for.
+		escaping = gojja2.WithAutoescapeSelection(gojja2.SelectAutoescapeConfig{
+			Enabled: []string{"html"},
+		})
+	}
 	opts := []gojja2.Option{
-		gojja2.WithAutoescape(c.Autoescape),
+		escaping,
 		gojja2.WithTrimBlocks(c.Trim),
 		gojja2.WithLstripBlocks(c.Lstrip),
 		gojja2.WithKeepTrailingNewline(c.KeepTrailingNewline),
@@ -134,7 +144,9 @@ func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
 // looks exactly like a divergence.
 func caseSettings(c conformance.GeneratedCase) map[string]any {
 	settings := map[string]any{}
-	if c.Autoescape {
+	if c.AutoescapeSelect {
+		settings["autoescape"] = "select"
+	} else if c.Autoescape {
 		settings["autoescape"] = true
 	}
 	if c.Undefined != "" {
@@ -175,7 +187,9 @@ func caseSettings(c conformance.GeneratedCase) map[string]any {
 	return settings
 }
 
-const fuzzTemplateName = "fuzz.txt"
+// The case's own name ends in .html and the auxiliary templates in .txt, so
+// GeneratedCase.AutoescapeSelect puts the two on opposite sides of the rule.
+const fuzzTemplateName = "fuzz.html"
 
 // templatesFor are the auxiliary templates a case can reach, in *its* own
 // delimiters: the environment's delimiters apply to every template it loads, so
