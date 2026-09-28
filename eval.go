@@ -113,6 +113,7 @@ func (ex *exec) evalName(n *ast.Name) (value.Value, error) {
 			// currently being rendered, one step toward the base.
 			return value.FromObject(&blockReference{
 				st: ex.st, name: ex.blockName, index: ex.blockIndex + 1,
+				sc: ex.blockScope,
 			}), nil
 		}
 	}

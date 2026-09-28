@@ -1,0 +1,6 @@
+{
+  "case": "inherit/super_in_a_scoped_block_is_truthy.jj2",
+  "variables": {
+    "super": "fr"
+  }
+}

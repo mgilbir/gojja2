@@ -489,6 +489,41 @@ case("inherit/super_outside_block_is_undefined",
 # is everything around them.
 case("inherit/self_call", "{% block b %}hi{% endblock %}|{{ self.b() }}")
 case("inherit/self_super_undefined", "{% block b %}hi{% endblock %}[{{ self.b.super }}]")
+
+# super() inside a `scoped` block renders the *parent's* body, and has to render
+# it with what the block itself was given: jinja2 builds the BlockReference from
+# the current context, so the loop variable the parent bound is there. gojja2
+# built it from the template context, so `{% block a scoped %}{{ super() }}`
+# inside the parent's `{% for %}` rendered nothing at all -- and, because an
+# empty string is falsy, `{% if super() %}` took the other branch. Found by the
+# soak once the auxiliary templates became a drawn axis: a block inside a loop
+# in base.txt is not something the old fixed set could hold.
+_SCOPED = {
+    "loopbase.txt": "[{% for i in [1, 2] %}{% block a scoped %}{{ i }}{% endblock %}"
+                    "{% endfor %}|{% block b %}B{% endblock %}]",
+    "plainbase.txt": "[{% for i in [1, 2] %}{% block a %}x{% endblock %}{% endfor %}]",
+    "grand.txt": "G[{% for i in [1, 2] %}{% block a scoped %}{{ i }}{% endblock %}{% endfor %}]",
+    "mid.txt": "{% extends 'grand.txt' %}{% block a %}M{{ super() }}{% endblock %}",
+}
+for _n, _src in [
+    ("super_in_a_scoped_block", "{% extends 'loopbase.txt' %}{% block a %}[{{ super() }}]{% endblock %}"),
+    ("super_in_a_scoped_block_is_truthy",
+     "{% extends 'loopbase.txt' %}{% block a %}{% if super() %}T{% else %}F{% endif %}{% endblock %}"),
+    ("super_in_a_scoped_block_has_length",
+     "{% extends 'loopbase.txt' %}{% block a %}{{ super()|length }}{% endblock %}"),
+    ("a_scoped_block_sees_the_loop_variable",
+     "{% extends 'loopbase.txt' %}{% block a %}{{ i }}{% endblock %}"),
+    ("super_in_an_unscoped_block",
+     "{% extends 'plainbase.txt' %}{% block a %}[{{ super() }}]{% endblock %}"),
+    ("super_twice_through_a_scoped_block",
+     "{% extends 'mid.txt' %}{% block a %}C{{ super() }}{% endblock %}"),
+    ("super_from_a_macro_in_a_scoped_block",
+     "{% extends 'loopbase.txt' %}{% block a %}{% macro s() %}[{{ super() }}]{% endmacro %}"
+     "{{ s() }}{% endblock %}"),
+    ("super_in_a_sibling_block",
+     "{% extends 'loopbase.txt' %}{% block b %}[{{ super() }}]{% endblock %}"),
+]:
+    case("inherit/" + _n, _src, __templates__=dict(_SCOPED))
 case("errors/self_super_past_end", "{% block b %}hi{% endblock %}{{ self.b.super() }}")
 case("inherit/self_print_does_not_render",
      "{% block b %}hi{% endblock %}{{ self.b|string|length > 20 }}")

@@ -183,11 +183,17 @@ const fuzzTemplateName = "fuzz.txt"
 // too or an `{% extends %}` would not parse. Shared, and unmodified, for the
 // default set.
 func (h *harness) templatesFor(c conformance.GeneratedCase) map[string]string {
-	if c.Delimiters == nil {
-		return h.templates
+	// The case's own set when it drew one -- what `{% import 'mac.txt' %}`
+	// finds is part of the case, not a constant of the harness.
+	aux := c.Templates
+	if aux == nil {
+		aux = h.templates
 	}
-	out := make(map[string]string, len(h.templates))
-	for name, text := range h.templates {
+	if c.Delimiters == nil {
+		return aux
+	}
+	out := make(map[string]string, len(aux))
+	for name, text := range aux {
 		out[name] = c.Delimiters.Rewrite(text)
 	}
 	return out
@@ -328,6 +334,11 @@ func report(t testing.TB, c conformance.GeneratedCase, d *conformance.Divergence
 			parts = append(parts, fmt.Sprintf("%s=%v", k, s[k]))
 		}
 		env = ", settings: " + strings.Join(parts, " ")
+	}
+	// The auxiliary templates are part of the case, so a divergence that
+	// needs a particular set is not reproducible without its name.
+	if c.TemplateSet != "" && c.TemplateSet != "flat" {
+		env += ", templates: " + c.TemplateSet
 	}
 	t.Errorf("[%s] %s\n%s\n  (context: conformance.FuzzContextJSON%s)",
 		d.Kind, strconv.Quote(c.Source), indent(d.Detail), env)

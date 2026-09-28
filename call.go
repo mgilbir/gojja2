@@ -363,6 +363,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 		// and one defined inside a block keeps that block's super()
 		// wherever it travels to.
 		sub.blockName, sub.blockIndex = m.blockName, m.blockIndex
+		sub.blockScope = m.blockScope
 		return sub.execBody(m.node.Body)
 	})
 	ex.st.tmpl = prevTmpl

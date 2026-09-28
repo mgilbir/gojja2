@@ -57,6 +57,74 @@ func FuzzTemplates() map[string]string {
 	}
 }
 
+// templateSets are the auxiliary templates a case can be given, drawn per case.
+//
+// They were one fixed map, so `base.txt` was always two flat blocks and
+// `mac.txt` always one macro and one `{% set %}` -- and a whole family of rules
+// lives in what a *pulled-in* template contains rather than in the template
+// doing the pulling. An {% import %} target is discarded from the importer's
+// exports, a base that itself extends makes a three-level chain, a block inside
+// a loop is registered once and rendered where it stands, and a name beginning
+// with an underscore is never exported at all. None of it could be generated.
+//
+// Every set defines the three names the generator writes -- base.txt, inc.txt
+// and mac.txt -- so any draw works with any template; the extra names are
+// reached only from inside the set.
+var templateSets = []struct {
+	name      string
+	templates map[string]string
+}{
+	{"flat", map[string]string{
+		"base.txt": "[{% block a %}A{% endblock %}|{% block b %}B{% endblock %}]",
+		"inc.txt":  "<{{ n|default('?') }}{{ item|default('') }}>",
+		"mac.txt":  "{% macro m(x, y=2) %}({{ x }},{{ y }}){% endmacro %}{% set ex = 'E' %}",
+	}},
+	// A module that imports another, and one that hides a name: what a
+	// template sees through `{% import 'mac.txt' as mm %}` is the exports,
+	// and both of those change them.
+	{"modules", map[string]string{
+		"base.txt": "[{% block a %}A{% endblock %}|{% block b %}B{% endblock %}]",
+		"inc.txt":  "<{{ n|default('?') }}{{ ex|default('') }}>",
+		"mac.txt": "{% import 'inner.txt' as sub %}{% set _hidden = 'h' %}" +
+			"{% macro m(x, y=2) %}({{ x }},{{ sub.q }}){% endmacro %}{% set ex = 'E' %}",
+		"inner.txt": "{% set q = 9 %}{% macro im(z) %}I{{ z }}{% endmacro %}",
+	}},
+	// A base that extends its own base, so `{% extends 'base.txt' %}` is a
+	// three-level chain and super() has two levels to walk.
+	{"chain", map[string]string{
+		"grand.txt": "G[{% block a %}GA{% endblock %}|{% block b %}GB{% endblock %}]",
+		"base.txt":  "{% extends 'grand.txt' %}{% block a %}B{{ super() }}{% endblock %}",
+		"inc.txt":   "<{{ n|default('?') }}>",
+		"mac.txt":   "{% macro m(x, y=2) %}({{ x }},{{ y }}){% endmacro %}{% set ex = 'E' %}",
+	}},
+	// Blocks where a reader would not put them: inside a loop, inside
+	// another block, and one that is scoped.
+	{"blocks", map[string]string{
+		"base.txt": "[{% for i in [1, 2] %}{% block a scoped %}{{ i }}{% endblock %}{% endfor %}|" +
+			"{% block b %}B{% block inner %}I{% endblock %}{% endblock %}]",
+		"inc.txt": "<{{ n|default('?') }}{{ item|default('') }}>",
+		"mac.txt": "{% macro m(x, y=2) %}({{ x }},{{ y }}){% endmacro %}{% set ex = 'E' %}",
+	}},
+	// A template that writes to the caller's names and one that renders
+	// something conditional, which is what a capture around an include has
+	// to carry.
+	{"stateful", map[string]string{
+		"base.txt": "[{% block a %}A{% endblock %}|{% block b %}B{% endblock %}]",
+		"inc.txt":  "{% set item = 'from-inc' %}<{{ item }}{{ n|default('?') }}>",
+		"mac.txt": "{% macro m(x, y=2) %}{% filter upper %}({{ x }},{{ y }}){% endfilter %}" +
+			"{% endmacro %}{% set ex = 'E' %}{% macro caller_user() %}{{ caller() }}{% endmacro %}",
+	}},
+}
+
+// FuzzTemplateSets is the list above, for a caller that wants to name one.
+func FuzzTemplateSets() []string {
+	out := make([]string, len(templateSets))
+	for i, s := range templateSets {
+		out[i] = s.name
+	}
+	return out
+}
+
 // names are the context bindings a generated expression may reference.
 // "nope" is deliberately absent from the context so undefined paths are
 // reached as often as defined ones.
@@ -310,6 +378,12 @@ type GeneratedCase struct {
 	// loop's `{% else %}` branch, to `loop.index`, and to a filtered loop's
 	// generator is decided by Python and not by jinja2.
 	Extensions []string
+	// Templates are the auxiliary templates this case renders against, and
+	// TemplateSet names the draw. Both engines are handed this map, so what
+	// `{% import 'mac.txt' %}` finds is part of the case rather than a
+	// constant of the harness. See templateSets.
+	Templates   map[string]string
+	TemplateSet string
 }
 
 // Delimiters is what opens and closes a tag. jinja2 lets all six be configured,
@@ -481,6 +555,9 @@ func generateCase(input []byte, withEnvironment bool) GeneratedCase {
 	// where a tag ends and what the whitespace settings have to work with.
 	linePrefix := g.c.pick([]string{"", "", "", "", "", "#", "%"})
 	lineComment := g.c.pick([]string{"", "", "", "", "", "##", "//"})
+	// Weighted toward the flat set, which is what the soak had always used,
+	// so the other four are an addition rather than a replacement.
+	set := templateSets[g.c.intn(len(templateSets)+3)%len(templateSets)]
 	var extensions []string
 	if g.do {
 		extensions = append(extensions, "do")
@@ -505,6 +582,8 @@ func generateCase(input []byte, withEnvironment bool) GeneratedCase {
 		Delimiters:          delims,
 		LineStatementPrefix: linePrefix,
 		LineCommentPrefix:   lineComment,
+		Templates:           set.templates,
+		TemplateSet:         set.name,
 	}
 }
 

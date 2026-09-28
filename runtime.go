@@ -573,6 +573,7 @@ type macroObject struct {
 	// called. Lexical, like defScope and volatileEscape.
 	blockName  string
 	blockIndex int
+	blockScope *scope
 	// catchKwargs, catchVarargs and caller record whether the body reads
 	// `kwargs`, `varargs` or `caller`. jinja2 decides this when the macro
 	// is compiled and refuses the corresponding arguments otherwise, so a
@@ -797,6 +798,7 @@ func (b *blockReference) render() (value.Value, error) {
 		autoescape: b.st.escapeDefault,
 		blockName:  b.name,
 		blockIndex: b.index,
+		blockScope: b.sc,
 	}
 	prev := b.st.tmpl
 	b.st.tmpl = entry.tmpl

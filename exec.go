@@ -45,8 +45,15 @@ type exec struct {
 	volatileEscape bool
 
 	// blockName and blockIndex locate the block being rendered, for super().
+	// blockScope is the scope it was entered with -- the loop variable and
+	// `loop` for a `scoped` block, nil otherwise -- which super() has to
+	// render the parent with: jinja2 builds its BlockReference from the
+	// *current* context, so a scoped block's super() sees what the block
+	// itself sees. Without it `{% block a scoped %}{{ super() }}` inside a
+	// parent's `{% for %}` rendered nothing.
 	blockName  string
 	blockIndex int
+	blockScope *scope
 	// loop is the innermost `loop` value, for recursive loop() calls.
 	loop value.Value
 	// chunks counts the pieces written into this frame's output, which is
@@ -763,6 +770,7 @@ func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaul
 		volatileEscape: ex.volatileEscape,
 		blockName:      ex.blockName,
 		blockIndex:     ex.blockIndex,
+		blockScope:     ex.blockScope,
 		catchVarargs:   undeclared["varargs"] && !declared["varargs"],
 		catchKwargs:    undeclared["kwargs"] && !declared["kwargs"],
 		// The attribute jinja2 exposes as `accesses_caller`, which is
