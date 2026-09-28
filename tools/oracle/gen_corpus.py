@@ -6555,6 +6555,33 @@ for _kind in ("default", "chainable", "debug", "strict"):
     ]:
         case("fold/%s_%s" % (_kind, _n), _src, __settings__=_set, n3=3)
 
+# The filter *aliases*, which are the same function under a second name and had
+# almost no cases: `|d` had none at all, `|e` four, `|count` two. What an alias
+# shares is the function, so its arity error names the original -- do_default(),
+# escape(), len() -- and `|count` is Python's len rather than a filter of its
+# own.
+case("filters/alias_default", "{{ nope|d('x') }}|{{ 1|d('x') }}|{{ ''|d('x', true) }}|{{ none|d('x') }}")
+case("filters/alias_default_bare", "[{{ nope|d }}]|[{{ nope|d(boolean=true) }}]")
+case("filters/alias_escape", "{{ '<b>'|e }}|{{ ('<b>'|safe)|e }}|{{ 1|e }}|{{ none|e }}")
+case("filters/alias_count", "{{ [1,2]|count }}|{{ 'ab'|count }}|{{ {}|count }}|{{ range(5)|count }}")
+case("errors/alias_count_of_an_int", "{{ 1|count }}")
+case("errors/alias_default_too_many", "{{ nope|d('x', 1, 2) }}")
+case("errors/alias_escape_with_an_argument", "{{ 'a'|e(1) }}")
+case("errors/alias_count_with_an_argument", "{{ [1]|count(1) }}")
+
+# ...and the sequence filters the corpus had two or five cases for.
+case("filters/rejectattr_with_a_test", "{{ users|rejectattr('age', 'eq', 30)|list }}", **USERS)
+case("filters/rejectattr_bare", "{{ users|rejectattr('name')|list }}", **USERS)
+case("filters/selectattr_with_a_test",
+     "{{ users|selectattr('age', 'gt', 25)|map(attribute='name')|list }}", **USERS)
+case("filters/min_max_by_attribute",
+     "{{ users|min(attribute='age') }}|{{ users|max(attribute='age') }}", **USERS)
+case("filters/min_max_of_an_empty_sequence", "[{{ []|min }}]|[{{ []|max }}]")
+case("errors/min_takes_no_default", "{{ []|min(default='d') }}")
+case("filters/min_case_sensitive", "{{ [3,1,2]|min(case_sensitive=true) }}")
+case("filters/slice_with_fill", "{{ range(5)|slice(2)|list }}|{{ range(5)|slice(2, 'x')|list }}")
+case("filters/slice_more_slices_than_items", "{{ [1,2,3]|slice(4)|list }}")
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither

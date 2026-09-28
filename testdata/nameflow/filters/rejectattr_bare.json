@@ -1,0 +1,6 @@
+{
+  "case": "filters/rejectattr_bare.jj2",
+  "variables": {
+    "users": "or"
+  }
+}
