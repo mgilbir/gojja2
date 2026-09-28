@@ -1243,7 +1243,7 @@ func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 			// -- which are resolved against the same arguments before
 			// the spec is read.
 			if strings.IndexByte(spec, '{') >= 0 {
-				spec, err = expandSpec(spec, base, &auto, st.PythonVersion())
+				spec, err = expandSpec(st, spec, base, &auto)
 				if err != nil {
 					return value.Undefined, err
 				}
@@ -1368,7 +1368,16 @@ func splitReplacement(s string, start int) (field, conv, spec string, next int, 
 
 // expandSpec resolves the replacement fields inside a format spec, so the width
 // and precision in `{:{w}.{p}f}` can come from the arguments.
-func expandSpec(spec string, base fieldBase, auto *int, py value.PythonVersion) (string, error) {
+//
+// A nested field is a field: it is read by the same parser, and its own
+// conversion and spec apply. Reading it as a name up to the next '}' ignored
+// both, so `'{0:{1:x}}'.format('y', 15)` used 15 as the width where CPython
+// formats it as hex first and makes the *spec* "f".
+//
+// One level, and no more: CPython's build_string carries a recursion budget of
+// two, so a spec inside a nested field's spec is "Max string recursion
+// exceeded" rather than another round.
+func expandSpec(st *State, spec string, base fieldBase, auto *int) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(spec); {
 		if spec[i] != '{' {
@@ -1376,16 +1385,23 @@ func expandSpec(spec string, base fieldBase, auto *int, py value.PythonVersion) 
 			i++
 			continue
 		}
-		end := strings.IndexByte(spec[i:], '}')
-		if end < 0 {
-			return "", errs.New(errs.ValueError, "unmatched '{' in format spec")
-		}
-		v, err := resolveFormatField(spec[i+1:i+end], base, auto, py)
+		field, conv, inner, next, err := splitReplacement(spec, i)
 		if err != nil {
 			return "", err
 		}
-		b.WriteString(value.StrFor(v, py))
-		i += end + 1
+		if strings.IndexByte(inner, '{') >= 0 {
+			return "", errs.New(errs.ValueError, "Max string recursion exceeded")
+		}
+		v, err := resolveFormatField(field, base, auto, st.PythonVersion())
+		if err != nil {
+			return "", err
+		}
+		text, err := convertAndFormat(st, v, conv, inner)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(text)
+		i = next
 	}
 	return b.String(), nil
 }

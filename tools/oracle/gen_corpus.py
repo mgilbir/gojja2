@@ -6379,6 +6379,31 @@ case("dictview/chained_containment_over_sets",
      "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{{ html not in (d.keys() - []) not in (d.keys() - []) }}",
      html="<b>a &amp; b</b>")
 
+# A nested field is a *field*, not a name read up to the next brace: its own
+# conversion and spec apply, so `'{0:{1:x}}'.format('y', 15)` formats 15 as hex
+# and the outer spec becomes "f" -- an error for a str -- where ignoring the
+# nested spec would use 15 as a width. One level and no more: CPython's
+# build_string carries a recursion budget of two.
+for _n, _src in [
+    ("nested_spec_applies", "{{ '{0:{1:x}}'.format('y', 15) }}"),
+    ("nested_spec_plain", "{{ '{0:{1:d}}'.format('y', 5) }}"),
+    ("nested_conversion", "{{ '{0:{1!r}}'.format('y', 5) }}"),
+    ("nested_field_plain", "{{ '{0:{1}}'.format('y', 5) }}"),
+    ("nested_spec_in_a_nested_spec", "{{ '{0:{1:{2}}}'.format(1,2,3) }}"),
+    ("brace_in_a_nested_name", "{{ '{0:{a{b}}}'.format(1) }}"),
+    ("nested_index", "{% set d = {'a': 2} %}{{ '{0:{1[a]}}'.format(1, d) }}"),
+    ("nested_attribute", "{{ '{0:{1.real}}'.format(1,2) }}"),
+    ("nested_after_align", "{{ '{0:>{1}}'.format(1,5) }}"),
+    ("two_nested", "{{ '{:{}{}}'.format(1,'>',5) }}"),
+    ("nested_automatic", "{{ '{0:{}}'.format(1,5) }}"),
+]:
+    case("methods/format_" + _n, _src)
+
+# The object.__format__ fall-back, which accepts only the empty spec.
+case("methods/format_none_with_a_spec", "{{ '{:x}'.format(none) }}")
+case("methods/format_list_with_a_spec", "{{ '{:x}'.format([1]) }}")
+case("methods/format_none_empty_spec", "[{{ '{}'.format(none) }}]|[{{ '{:}'.format(none) }}]")
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither
