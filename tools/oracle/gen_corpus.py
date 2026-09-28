@@ -3447,6 +3447,19 @@ case("methods/float_attributes",
      "{{ (2.5).as_integer_ratio() }}{{ (-1.5).as_integer_ratio() }}|{{ (2.5).conjugate() }}")
 case("methods/float_hex",
      "{{ (2.5).hex() }}|{{ (1.0).hex() }}|{{ (0.0).hex() }}|{{ (-1.5).hex() }}|{{ (-0.5).hex() }}")
+# A subnormal is where float.hex() stops looking like Go's %x. CPython takes
+# frexp and shifts only as far as DBL_MIN_EXP, so the exponent is pinned at
+# -1022 and the digit before the point is 0; Go normalises instead and writes a
+# leading 1 with an exponent below -1022. Same value, different spelling, and
+# the fuzzer found it because the awkward context carries 1e-320. The last two
+# straddle the boundary: 2.2250738585072014e-308 is the smallest normal.
+case("methods/float_hex_subnormal",
+     "{{ (1e-320).hex() }}|{{ (5e-324).hex() }}|{{ (-5e-324).hex() }}|"
+     "{{ (1.1125369292536007e-308).hex() }}|"
+     "{{ (2.225073858507201e-308).hex() }}|{{ (2.2250738585072014e-308).hex() }}")
+case("methods/float_hex_subnormal_roundtrip",
+     "{{ (0.0).fromhex((1e-320).hex()) }}|{{ (0.0).fromhex((5e-324).hex()) == 5e-324 }}|"
+     "{{ (1e-320).hex()|float }}")
 case("errors/to_bytes_negative", "{{ (-1).to_bytes(2,'big') }}")
 case("errors/to_bytes_too_big", "{{ (300).to_bytes(1,'big') }}")
 

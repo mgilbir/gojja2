@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"slices"
@@ -234,8 +235,11 @@ func boundNumeric(s *State, name string, fn func(*State, *value.CallArgs) (value
 }
 
 // floatHex is float.hex(): a leading hex digit, thirteen after the point, and a
-// binary exponent with no leading zeros. Go writes the same form but trims the
-// mantissa and pads the exponent, so both are adjusted.
+// binary exponent with a sign and no leading zeros. The fifty-two fraction bits
+// are exactly those thirteen digits, so this is written from the bits rather
+// than through Go -- Go's %x normalises a subnormal to a leading 1 and an
+// exponent below -1022, where CPython's frexp/ldexp pair stops at DBL_MIN_EXP
+// and writes the leading digit as 0.
 func floatHex(x float64) (string, error) {
 	switch {
 	case math.IsNaN(x):
@@ -252,17 +256,13 @@ func floatHex(x float64) (string, error) {
 	if x == 0 {
 		return sign + "0x0.0p+0", nil
 	}
-	s := strconv.FormatFloat(x, 'x', 13, 64)
-	mant, exp, found := strings.Cut(s, "p")
-	if !found {
-		return sign + s, nil
+	bits := math.Float64bits(x)
+	frac := bits & (1<<52 - 1)
+	lead, exp := 1, int(bits>>52&0x7ff)-1023
+	if exp == -1023 {
+		lead, exp = 0, -1022
 	}
-	// Go writes the exponent with a sign and at least two digits.
-	signCh, digits := exp[:1], strings.TrimLeft(exp[1:], "0")
-	if digits == "" {
-		digits = "0"
-	}
-	return sign + mant + "p" + signCh + digits, nil
+	return fmt.Sprintf("%s0x%d.%013xp%+d", sign, lead, frac, exp), nil
 }
 
 // floatRatio is float.as_integer_ratio(): the exact ratio, since every finite

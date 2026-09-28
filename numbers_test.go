@@ -105,6 +105,11 @@ func TestNumericAttributes(t *testing.T) {
 		{`{{ (2.5).hex() }}|{{ (1.0).hex() }}|{{ (0.0).hex() }}`,
 			`0x1.4000000000000p+1|0x1.0000000000000p+0|0x0.0p+0`},
 		{`{{ (-1.5).hex() }}|{{ (-0.5).hex() }}`, `-0x1.8000000000000p+0|-0x1.0000000000000p-1`},
+		// A subnormal has no leading 1: CPython's frexp/ldexp pair stops
+		// at DBL_MIN_EXP, so the exponent stays -1022 and the digit
+		// before the point is 0. Go's own %x normalises instead.
+		{`{{ (1e-320).hex() }}|{{ (5e-324).hex() }}`,
+			`0x0.00000000007e8p-1022|0x0.0000000000001p-1022`},
 		// A name that is not an attribute is still undefined, so it
 		// renders as nothing rather than raising.
 		{`[{{ (3).bogus }}]|[{{ (2.5).bogus }}]`, `[]|[]`},
