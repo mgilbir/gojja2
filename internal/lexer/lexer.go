@@ -650,7 +650,12 @@ func (l *lexer) lexExprToken() error {
 		return nil
 	}
 	r, _ := utf8.DecodeRuneInString(l.src[l.pos:])
-	return l.errorf(l.line, "unexpected char %s at %d", value.Repr(value.String(string(r))), l.pos)
+	// The offset is in *code points*, because CPython counts them in a str:
+	// jinja2 says 4 for `é{{ $ }}` where the byte offset is 5. Reporting
+	// bytes agreed for every ASCII template, which is every template in the
+	// corpus until the generated differential wrote one with 'Ɤꟍ' in it.
+	return l.errorf(l.line, "unexpected char %s at %d",
+		value.Repr(value.String(string(r))), utf8.RuneCountInString(l.src[:l.pos]))
 }
 
 // trackBalance maintains the bracket stack that decides whether an end

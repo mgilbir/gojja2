@@ -6404,6 +6404,17 @@ case("methods/format_none_with_a_spec", "{{ '{:x}'.format(none) }}")
 case("methods/format_list_with_a_spec", "{{ '{:x}'.format([1]) }}")
 case("methods/format_none_empty_spec", "[{{ '{}'.format(none) }}]|[{{ '{:}'.format(none) }}]")
 
+# The offset in "unexpected char" is in *code points*, because CPython counts
+# them in a str: `é{{ $ }}` is 4 there and 5 bytes here. Every template in the
+# corpus was ASCII, so the two agreed until the generated differential wrote one
+# with 'Ɤꟍ' in it.
+case("errors/unexpected_char_after_ascii", "aa{{ $ }}")
+case("errors/unexpected_char_after_latin1", "\u00e9{{ $ }}")
+case("errors/unexpected_char_after_three_bytes", "\u4e2d\u6587{{ $ }}")
+case("errors/unexpected_char_after_astral", "\U0001f600{{ $ }}")
+case("errors/unexpected_char_after_a_literal", "{{ '\u00e9' }}{{ $ }}")
+case("errors/unexpected_char_inside_a_tag", "{{ 1 }}\u00e9{{ 2 $ }}")
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither
