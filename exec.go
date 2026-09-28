@@ -740,6 +740,16 @@ func (ex *exec) execMacro(n *ast.Macro) error {
 
 func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaults []ast.Expr) (*macroObject, error) {
 	undeclared := findUndeclared(node.Body, "varargs", "kwargs", "caller")
+	// A parameter of that name is the macro's own, and jinja2 leaves the
+	// special out rather than binding over it: `{% macro m(kwargs) %}
+	// {{ kwargs }}{% endmacro %}{{ m(1) }}` prints 1, not an empty dict.
+	// It is jinja2's skip_special_params, and `caller` works the same way
+	// one line further down -- the declared parameter takes the argument,
+	// and its default if there is none.
+	declared := map[string]bool{}
+	for _, p := range args {
+		declared[p.Name] = true
+	}
 	m := &macroObject{
 		name:       name,
 		node:       node,
@@ -753,14 +763,13 @@ func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaul
 		volatileEscape: ex.volatileEscape,
 		blockName:      ex.blockName,
 		blockIndex:     ex.blockIndex,
-		catchVarargs:   undeclared["varargs"],
-		catchKwargs:    undeclared["kwargs"],
+		catchVarargs:   undeclared["varargs"] && !declared["varargs"],
+		catchKwargs:    undeclared["kwargs"] && !declared["kwargs"],
+		// The attribute jinja2 exposes as `accesses_caller`, which is
+		// set for a declared `caller` too; what it must not do is add a
+		// second parameter of that name. See bindMacroArgs.
 		caller:         undeclared["caller"],
-	}
-	for _, p := range args {
-		if p.Name == "caller" {
-			m.explicitCaller = true
-		}
+		explicitCaller: declared["caller"],
 	}
 	return m, nil
 }

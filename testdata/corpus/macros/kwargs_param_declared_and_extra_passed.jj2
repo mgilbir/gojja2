@@ -1,0 +1,3 @@
+{}
+---
+{% macro m(kwargs) %}{{ kwargs }}{% endmacro %}[{{ m(1, x=2) }}]

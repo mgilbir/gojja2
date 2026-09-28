@@ -56,7 +56,16 @@ func (c *depChecker) failAt(line int, format string, args ...any) {
 // checkCallerDefault enforces that a declared `caller` parameter has a
 // default. Without one, a macro invoked outside a {% call %} block would leave
 // it unbound, and jinja2 refuses the definition rather than the call.
-func (c *depChecker) checkCallerDefault(params []*ast.Name, defaults []ast.Expr, line int) {
+func (c *depChecker) checkCallerDefault(body []ast.Stmt, params []*ast.Name,
+	defaults []ast.Expr, line int) {
+	// Only when the body actually reads `caller`. The whole check sits
+	// under jinja2's `if "caller" in undeclared`, so a macro that merely
+	// names a parameter `caller` and never uses it is an ordinary macro:
+	// `{% macro m(caller) %}x{% endmacro %}{{ m(1) }}` renders "x" there
+	// and did not compile here.
+	if !findUndeclared(body, "caller")["caller"] {
+		return
+	}
 	// Defaults align with the tail of the parameter list, so a parameter
 	// before that tail has none.
 	firstDefault := len(params) - len(defaults)

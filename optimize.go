@@ -549,14 +549,14 @@ func (f *constFolder) stmt(stmt ast.Stmt) {
 		f.foldCheckAll(n.Values)
 		f.nested(n.Body)
 	case *ast.Macro:
-		f.dep.checkCallerDefault(n.Args, n.Defaults, n.Line())
+		f.dep.checkCallerDefault(n.Body, n.Args, n.Defaults, n.Line())
 		f.fail(f.dep.err)
 		// Defaults are part of the macro's signature, generated with
 		// the body rather than at the point of definition.
 		f.unsoftened(func() { f.foldCheckAll(n.Defaults) })
 		f.detached(n.Body)
 	case *ast.CallBlock:
-		f.dep.checkCallerDefault(n.Args, n.Defaults, n.Line())
+		f.dep.checkCallerDefault(n.Body, n.Args, n.Defaults, n.Line())
 		f.fail(f.dep.err)
 		// The block becomes a macro -- signature, then body -- and only
 		// then is the call itself written, so `{% call m(1|nosuchA) %}

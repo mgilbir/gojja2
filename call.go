@@ -244,7 +244,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 		foundCaller = m.explicitCaller
 	}
 
-	if m.caller && !foundCaller {
+	if m.caller && !m.explicitCaller && !foundCaller {
 		caller, ok := take("caller")
 		if !ok || caller.IsNone() {
 			caller = ex.st.Undefined(value.UndefinedHint("No caller defined"))

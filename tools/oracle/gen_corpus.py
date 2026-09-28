@@ -3943,6 +3943,59 @@ case("errors/caller_too_many",
      "{% macro m() %}{{ caller(1) }}{% endmacro %}{% call m() %}x{% endcall %}")
 case("errors/caller_keyword",
      "{% macro m() %}{{ caller(a=1) }}{% endmacro %}{% call m() %}x{% endcall %}")
+
+# --- the three special parameters, and the word "undeclared" ------------------
+# A macro gets `caller`, `kwargs` or `varargs` only when its *body* reads one
+# without binding it first, and only when it has not declared a parameter of
+# that name itself. jinja2 spells both halves in macro_body: the refusal for a
+# `caller` parameter without a default sits under `if "caller" in undeclared`,
+# and skip_special_params keeps a declared `kwargs` or `varargs` from being
+# bound over. gojja2 had the first half for the runtime flags and neither for
+# the rest, so it refused `{% macro m(caller) %}x{% endmacro %}` -- which jinja2
+# renders -- ignored a `caller` parameter's default, and handed a macro that
+# declared `kwargs` an empty dict instead of the argument it was passed.
+for _n, _src in [
+    ("caller_param_unused", "{% macro m(caller) %}x{% endmacro %}[{{ m(1) }}]"),
+    ("caller_param_unused_after_another",
+     "{% macro m(a, caller) %}{{ a }}{% endmacro %}[{{ m(1, 2) }}]"),
+    ("caller_param_defaulted", "{% macro m(caller=1) %}{{ caller }}{% endmacro %}[{{ m() }}]"),
+    ("caller_param_defaulted_given",
+     "{% macro m(caller=1) %}{{ caller }}{% endmacro %}[{{ m(2) }}]"),
+    ("caller_param_defaulted_attribute",
+     "{% macro m(caller=1) %}{{ caller }}{% endmacro %}[{{ m.caller }}]"),
+    ("caller_param_defaulted_in_a_call_block",
+     "{% macro m(caller=1) %}[{{ caller() }}]{% endmacro %}{% call m() %}C{% endcall %}"),
+    ("caller_param_stored_first",
+     "{% macro m(caller) %}{% set caller = 1 %}{{ caller }}{% endmacro %}[{{ m(3) }}]"),
+    ("caller_param_is_a_loop_target",
+     "{% macro m(caller) %}{% for caller in [1] %}{{ caller }}{% endfor %}{% endmacro %}[{{ m(3) }}]"),
+    ("caller_param_in_a_call_blocks_signature",
+     "{% macro m() %}{{ caller(5) }}{% endmacro %}{% call(caller) m() %}x{% endcall %}"),
+    ("kwargs_param_declared", "{% macro m(kwargs) %}{{ kwargs }}{% endmacro %}[{{ m(1) }}]"),
+    ("kwargs_param_declared_attribute",
+     "{% macro m(kwargs) %}{{ kwargs }}{% endmacro %}[{{ m.catch_kwargs }}]"),
+    ("varargs_param_declared", "{% macro m(varargs) %}{{ varargs }}{% endmacro %}[{{ m(1) }}]"),
+    ("varargs_param_declared_attribute",
+     "{% macro m(varargs) %}{{ varargs }}{% endmacro %}[{{ m.catch_varargs }}]"),
+    ("kwargs_param_declared_and_extra_passed",
+     "{% macro m(kwargs) %}{{ kwargs }}{% endmacro %}[{{ m(1, x=2) }}]"),
+    ("varargs_param_declared_and_extra_passed",
+     "{% macro m(varargs) %}{{ varargs }}{% endmacro %}[{{ m(1, 2) }}]"),
+    ("kwargs_param_declared_but_unused",
+     "{% macro m(kwargs) %}x{% endmacro %}[{{ m(1) }}]"),
+]:
+    case("macros/" + _n, _src)
+
+case("errors/caller_param_used_without_a_default",
+     "{% macro m(caller) %}{{ caller }}{% endmacro %}x")
+case("errors/caller_param_used_before_a_default",
+     "{% macro m(caller, a=1) %}{{ caller }}{% endmacro %}x")
+case("errors/caller_param_used_after_another",
+     "{% macro m(a, caller) %}{{ caller }}{% endmacro %}x")
+case("errors/caller_param_called_without_a_default",
+     "{% macro m(caller) %}{{ caller() }}{% endmacro %}x")
+case("errors/caller_param_used_in_a_call_blocks_signature",
+     "{% macro m() %}{{ caller(5) }}{% endmacro %}{% call(caller) m() %}{{ caller }}{% endcall %}")
 case("runtime/loop_call_keyword",
      "{% for i in [[1],[2]] recursive %}{{ loop(iterable=i) if i is sequence else i }}{% endfor %}")
 case("runtime/macro_repr",

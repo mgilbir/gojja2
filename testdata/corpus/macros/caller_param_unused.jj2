@@ -1,0 +1,3 @@
+{}
+---
+{% macro m(caller) %}x{% endmacro %}[{{ m(1) }}]
