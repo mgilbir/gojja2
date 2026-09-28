@@ -496,6 +496,14 @@ test, the truthiness, the equality, and `|list|sort`. Only the multi-element
 repr is unreproducible, and `conformance.Comparable` screens it out of the
 generated differential for the same reason it screens an address.
 
+`|pprint` is the exception, and it is graded. pprint does not use the repr's
+order: it sorts with `pprint._safe_key`, which is the elements' own ordering
+wherever they have one, so a set of integers pretty-prints as `0, 1, 2` and a
+set of strings in string order -- both reproducible, and both matched here
+exactly. A set holding *mixed* types is not: `_safe_key` falls back to
+`(type name, id(obj))`, and an address is an address. gojja2 keeps its repr
+order for that case, which is at least the same one twice.
+
 Of the two answers gojja2's is the reproducible one, which is a reason to prefer
 it rather than a claim that CPython is wrong: an unordered collection has no
 order to be right about.

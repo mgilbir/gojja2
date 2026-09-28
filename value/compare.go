@@ -165,6 +165,13 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 // every comparison involving it is false, including NaN <= NaN, which no
 // -1/0/1 result can express.
 func Ordered(op string, a, b Value, py PythonVersion) (bool, error) {
+	// Two set-like operands compare as *sets*, which is a subset test and
+	// not an ordering at all: neither `a < b` nor `a > b` need hold. So it
+	// is answered here rather than through compare, whose -1/0/1 cannot say
+	// "unrelated".
+	if handled, res, err := orderedAsSets(op, a, b, py); handled {
+		return res, err
+	}
 	ord, ok, err := compare(op, a, b, 0, py)
 	if err != nil {
 		return false, err
@@ -183,6 +190,91 @@ func Ordered(op string, a, b Value, py PythonVersion) (bool, error) {
 		return ord >= 0, nil
 	}
 	return false, errs.New(errs.ValueError, "unknown comparison operator %q", op)
+}
+
+// orderedAsSets answers <, <=, > and >= between two set-like operands -- a dict's
+// keys or items view, or a set built from one -- the way CPython's
+// dictview_richcompare does: as the subset relation.
+//
+// The lengths decide first, and that is not an optimisation. A longer view
+// cannot be a proper subset, so CPython answers False without looking at an
+// element, which is why `{'x': [1]}.items() > {}.keys()` is False rather than a
+// complaint about the unhashable list. The containment that follows is the
+// view's own -- an items view looks its key up and compares the value, where a
+// set hashes -- so the error a template sees is the one the container makes.
+//
+// A values view is not set-like, in CPython or here: its elements need be
+// neither unique nor hashable, so `d.values() < e.values()` is the ordinary
+// type error. Found by the generated differential, on a chained comparison that
+// reached `nested.items() < ed.keys()`.
+func orderedAsSets(op string, a, b Value, py PythonVersion) (handled, result bool, err error) {
+	left, lok := setLikeElements(a)
+	right, rok := setLikeElements(b)
+	if !lok || !rok {
+		return false, false, nil
+	}
+	var subset, of []Value
+	var container Value
+	switch op {
+	case "<":
+		if len(left) < len(right) {
+			subset, of, container = left, right, b
+		}
+	case "<=":
+		if len(left) <= len(right) {
+			subset, of, container = left, right, b
+		}
+	case ">":
+		if len(left) > len(right) {
+			subset, of, container = right, left, a
+		}
+	case ">=":
+		if len(left) >= len(right) {
+			subset, of, container = right, left, a
+		}
+	default:
+		return false, false, nil
+	}
+	if of == nil {
+		// The lengths already settle it.
+		return true, false, nil
+	}
+	ok, err := allContainedIn(subset, container, py)
+	return true, ok, err
+}
+
+// setLikeElements are the elements of an operand that compares as a set: a keys
+// or items view, or a set. A values view answers false, as PyDictViewSet_Check
+// does for one.
+func setLikeElements(v Value) ([]Value, bool) {
+	switch o := v.Interface().(type) {
+	case *Set:
+		return o.items, true
+	case SetOperand:
+		return o.SetElements()
+	}
+	return nil, false
+}
+
+// allContainedIn asks the container itself about each element, so the lookup --
+// and any refusal it makes -- is the one `x in container` would have made.
+func allContainedIn(items []Value, container Value, py PythonVersion) (bool, error) {
+	holder, ok := container.obj.(interface {
+		ContainsErr(Value, PythonVersion) (bool, bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	for _, item := range items {
+		found, known, err := holder.ContainsErr(item, py)
+		if err != nil {
+			return false, err
+		}
+		if !known || !found {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // compare returns the ordering of a and b. The second result is false when the

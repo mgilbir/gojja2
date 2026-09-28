@@ -6328,6 +6328,106 @@ for _n, _src in [
 ]:
     case("filters/pprint_bytes_" + _n, _src)
 
+# --- a dict view compares as a set --------------------------------------------
+# `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
+# ordering: CPython's dictview_richcompare answers containment, and neither
+# `a < b` nor `a > b` need hold. The lengths decide first, which is why a longer
+# view is not a proper subset without an element ever being looked at -- so
+# `{'x': [1]}.items() > {}.keys()` is False rather than a complaint about the
+# unhashable list.
+#
+# A values view is not set-like in either engine: its elements need be neither
+# unique nor hashable, so the four raise for it. gojja2 raised for *every* pair
+# of views, which the generated differential found through a chained comparison
+# -- `[0o17] not in nested.items() < ed.keys()` -- where CPython answers False
+# and carries on to fail somewhere else entirely.
+_VIEWS = "{% set a = {'x': 1, 'y': 2} %}{% set b = {'x': 1} %}{% set e = {} %}"
+for _n, _src in [
+    ("keys_lt_keys", "{{ a.keys() < b.keys() }}|{{ b.keys() < a.keys() }}"),
+    ("keys_le_keys", "{{ a.keys() <= b.keys() }}|{{ b.keys() <= a.keys() }}"),
+    ("keys_gt_keys", "{{ a.keys() > b.keys() }}|{{ b.keys() > a.keys() }}"),
+    ("keys_ge_keys", "{{ a.keys() >= b.keys() }}|{{ b.keys() >= a.keys() }}"),
+    ("keys_lt_itself", "{{ a.keys() < a.keys() }}|{{ a.keys() <= a.keys() }}"),
+    ("empty_keys", "{{ e.keys() < a.keys() }}|{{ e.keys() <= e.keys() }}|{{ a.keys() > e.keys() }}"),
+    ("items_lt_items", "{{ a.items() < b.items() }}|{{ b.items() < a.items() }}"),
+    ("items_le_items_same_key_other_value",
+     "{% set c = {'x': 9} %}{{ b.items() <= c.items() }}|{{ b.items() <= b.items() }}"),
+    ("items_across_views", "{{ a.keys() < b.items() }}|{{ a.items() < b.keys() }}"),
+    ("values_are_not_a_set", "{{ a.values() < b.values() }}"),
+    ("values_on_the_right", "{{ a.keys() < b.values() }}"),
+    ("values_on_the_left", "{{ a.values() < b.keys() }}"),
+    ("keys_against_a_list", "{{ a.keys() < [1] }}"),
+    ("keys_against_a_string", "{{ a.keys() < 'x' }}"),
+    ("set_against_a_view", "{{ (b.keys() - []) < a.keys() }}|{{ (a.keys() - []) < a.keys() }}"),
+    ("view_against_a_set", "{{ a.keys() < (a.keys() - []) }}|{{ b.keys() <= (a.keys() - []) }}"),
+    ("set_against_a_set", "{{ (b.keys() - []) < (a.keys() - []) }}"),
+]:
+    case("dictview/" + _n, _VIEWS + _src)
+# An unhashable value in an items view: the lengths answer before anything is
+# hashed one way, and the containment looks the key up rather than hashing the
+# pair the other.
+case("dictview/items_with_an_unhashable_value",
+     "{% set a = {'x': [1]} %}{% set b = {'x': [1], 'y': 2} %}"
+     "{{ a.items() <= b.items() }}|{{ a.items() < b.items() }}|{{ b.items() < a.items() }}")
+case("dictview/unhashable_against_empty_keys",
+     "{% set a = {'x': [1]} %}{% set e = {} %}{{ a.items() > e.keys() }}|{{ a.items() <= e.keys() }}")
+
+# --- how a replacement field ends ---------------------------------------------
+# CPython's parse_field reads the *name* up to the first '}', ':' or '!', then a
+# conversion of exactly one character, then a spec whose braces it counts. Each
+# of those three stages has its own complaint when the string runs out, and
+# gojja2 had one message for all of them past the name: `'{:d'` and `'{0!r'`
+# hold no nested field and CPython still calls them an unmatched brace.
+#
+# The conversion is one character and whatever character it is -- `'{!}'` takes
+# '}' as the conversion and then finds nothing closing the field, which is why it
+# reports the unmatched brace rather than the missing conversion. Found by the
+# generated differential once the soak could draw custom delimiters, on
+# `${- '{:z#]'.format(1e20) -}$`.
+for _n, _src in [
+    ("spec_ends_the_string", "{{ '{:z'.format(1) }}"),
+    ("empty_spec_ends_the_string", "{{ '{:'.format(1) }}"),
+    ("numbered_spec_ends_the_string", "{{ '{0:'.format(1) }}"),
+    ("align_ends_the_string", "{{ '{0:>'.format(1) }}"),
+    ("width_ends_the_string", "{{ '{0:>5'.format(1) }}"),
+    ("type_ends_the_string", "{{ '{:d'.format(1) }}"),
+    ("conversion_ends_the_string", "{{ '{!r'.format(1) }}"),
+    ("numbered_conversion_ends_the_string", "{{ '{0!r'.format(1) }}"),
+    ("bang_ends_the_string", "{{ '{0!'.format(1) }}"),
+    ("conversion_then_junk", "{{ '{0!rr}'.format(1) }}"),
+    ("conversion_then_bracket", "{{ '{0![a'.format(1) }}"),
+    ("brace_is_the_conversion", "{{ '{!}'.format(1) }}"),
+    ("colon_is_the_conversion", "{{ '{!:}'.format(1) }}"),
+    ("brace_in_the_name", "{{ '{a{b}'.format() }}"),
+    ("field_in_the_name", "{{ '{0{1}}'.format(1,2) }}"),
+    ("brace_in_an_index", "{% set d = {'a{b': 1} %}{{ '{0[a{b]}'.format(d) }}"),
+    ("name_ends_the_string", "{{ '{ '.format(1) }}"),
+    ("index_ends_the_string", "{% set d = {'a': 1} %}{{ '{0[a'.format(d) }}"),
+    ("attribute_ends_the_string", "{{ '{0.a'.format(1) }}"),
+]:
+    case("methods/format_field_" + _n, _src)
+
+# pprint has an arm for a set too, and it is the same layout a list gets: one
+# element per line in braces. What is different is the order -- CPython sorts
+# with pprint._safe_key, the values' own ordering where they have one, so a set
+# of integers pprints as 0, 1, 2 where this set's *repr* order (which is by
+# repr, for a total order over mixed types) would give 0, 1, 10. Only the
+# homogeneous case is gradable: _safe_key falls back to the object's id, which no
+# other process can reproduce. See docs/divergences.md.
+case("filters/pprint_set_of_strings",
+     "{% set d = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, '11': 11, '12': 12, '13': 13, '14': 14, '15': 15, '16': 16, '17': 17, '18': 18, '19': 19, '20': 20, '21': 21, '22': 22, '23': 23, '24': 24, '25': 25, '26': 26, '27': 27, '28': 28, '29': 29, '30': 30, '31': 31, '32': 32, '33': 33, '34': 34, '35': 35, '36': 36, '37': 37, '38': 38, '39': 39} %}{{ (d.keys() - [])|pprint }}")
+case("filters/pprint_set_of_integers",
+     "{% set d = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12, 13: 13, 14: 14, 15: 15, 16: 16, 17: 17, 18: 18, 19: 19, 20: 20, 21: 21, 22: 22, 23: 23, 24: 24, 25: 25, 26: 26, 27: 27, 28: 28, 29: 29, 30: 30, 31: 31, 32: 32, 33: 33, 34: 34, 35: 35, 36: 36, 37: 37, 38: 38, 39: 39} %}{{ (d.keys() - [])|pprint }}")
+# (A set short enough to fit on one line is printed by its repr, which is the
+# hash order CPython randomises per process -- so there is no short-set case
+# here. filters/pprint_set_empty is the exception: set() has one spelling.)
+case("filters/pprint_set_empty", "{% set d = {'a': 1} %}{{ (d.keys() - d.keys())|pprint }}")
+case("filters/pprint_set_in_a_list",
+     "{% set d = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, '11': 11, '12': 12, '13': 13, '14': 14, '15': 15, '16': 16, '17': 17, '18': 18, '19': 19, '20': 20, '21': 21, '22': 22, '23': 23, '24': 24, '25': 25, '26': 26, '27': 27, '28': 28, '29': 29, '30': 30, '31': 31, '32': 32, '33': 33, '34': 34, '35': 35, '36': 36, '37': 37, '38': 38, '39': 39} %}{{ [(d.keys() - [])]|pprint }}")
+case("filters/pprint_set_long_strings",
+     "{% set d = {'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': 1,"
+     " 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': 2} %}{{ (d.keys() - [])|pprint }}")
+
 # --- a guard over an arm that can fail ----------------------------------------
 # The dataflow analysis answers whether a variable can stop the render, and a
 # *guard* decides whether whatever it guards runs at all. Two shapes had it

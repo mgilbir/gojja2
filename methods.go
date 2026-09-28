@@ -1278,97 +1278,92 @@ func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 // its own, so `{:{w}}` ends at the second one. Nesting is one level deep in
 // Python, which is what the depth counter here allows.
 func splitReplacement(s string, start int) (field, conv, spec string, next int, err error) {
-	depth, i, nested := 0, start, false
-	// While the *field name* is being read, a `[` opens an index that runs
-	// to the next `]` and may hold anything at all: `{0[a}b]}` is the key
-	// "a}b", and `{0[x}` never closes the field, so it is "expected '}'
-	// before end of string" rather than a lookup of "x". Scanning for `}`
-	// alone made the first a parse error and the second a type error.
-	//
-	// Only while reading the name. Once that ends at a `:` or a `!`, a `[`
-	// is an ordinary character -- `{0:[^5}` fills with one -- and the spec
-	// counts braces like any other.
-	bracket, inName := 0, true
-	for ; i < len(s); i++ {
+	fail := func(msg string) (string, string, string, int, error) {
+		return "", "", "", 0, errs.New(errs.ValueError, "%s", msg)
+	}
+
+	// The field *name* first, which ends at the first '}', ':' or '!' --
+	// except inside the [] of an index, which runs to the next ']' and may
+	// hold anything at all: `{0[a}b]}` is the key "a}b", `{a[1:2]}` indexes
+	// rather than formats, and `{0[x}` never closes the field.
+	i, bracket := start+1, 0
+	var term byte
+	for ; i < len(s) && term == 0; i++ {
 		c := s[i]
-		if inName && bracket == 0 && (c == ':' || c == '!') {
-			inName = false
-		}
-		if inName {
-			if c == '[' {
-				bracket++
-				continue
-			}
+		if bracket > 0 {
 			if c == ']' {
-				if bracket > 0 {
-					bracket--
-				}
-				continue
-			}
-			if bracket > 0 {
-				continue
-			}
-		}
-		if c == '{' {
-			depth++
-			if depth > 1 {
-				nested = true
+				bracket--
 			}
 			continue
 		}
-		if c == '}' {
-			depth--
-			if depth == 0 {
-				break
-			}
-		}
-	}
-	if depth != 0 {
-		// Three different complaints, depending on how far it got: a
-		// lone brace, a field that named something and never closed,
-		// and a spec whose own nested field never closed.
-		switch {
-		case nested:
-			return "", "", "", 0, errs.New(errs.ValueError,
-				"unmatched '{' in format spec")
-		case i > start+1:
-			return "", "", "", 0, errs.New(errs.ValueError,
-				"expected '}' before end of string")
-		default:
-			return "", "", "", 0, errs.New(errs.ValueError,
-				"Single '{' encountered in format string")
-		}
-	}
-	body := s[start+1 : i]
-	next = i + 1
-
-	// The spec starts at the first ':' that is not inside the [] of a field
-	// name -- `{a[1:2]}` indexes, it does not format.
-	bracket = 0
-	for j := 0; j < len(body); j++ {
-		switch body[j] {
+		switch c {
 		case '[':
 			bracket++
-		case ']':
-			bracket--
+		case '{':
+			// CPython refuses a second opening inside a name rather
+			// than reading it: `{0{1}}` is an error there and was a
+			// lookup of the key "0{1}" here.
+			return fail("unexpected '{' in field name")
+		case '}', ':', '!':
+			term = c
+		}
+	}
+	if term == 0 {
+		// A lone brace at the end of the string is the outer scanner's
+		// complaint; a name that was started and never closed is this
+		// one's.
+		if i > start+1 {
+			return fail("expected '}' before end of string")
+		}
+		return fail("Single '{' encountered in format string")
+	}
+	// i already points past the terminator: the loop's own post statement
+	// ran before the condition saw term set.
+	field = s[start+1 : i-1]
+
+	// Then the conversion, which is *one* character and whatever character
+	// it is -- `{!}` takes '}' as the conversion and then finds no closing
+	// brace, which is why it reports an unmatched one. What follows it must
+	// be the closing brace or the ':' that starts a spec.
+	if term == '!' {
+		if i >= len(s) {
+			return fail("end of string while looking for conversion specifier")
+		}
+		conv, i = s[i:i+1], i+1
+		if i >= len(s) {
+			return fail("unmatched '{' in format spec")
+		}
+		c := s[i]
+		i++
+		switch c {
+		case '}':
+			return field, conv, "", i, nil
 		case ':':
-			if bracket == 0 {
-				field, spec = body[:j], body[j+1:]
-				goto split
+			term = ':'
+		default:
+			return fail("expected ':' after conversion specifier")
+		}
+	}
+	if term == '}' {
+		return field, conv, "", i, nil
+	}
+
+	// And the spec, which runs to the brace that matches the field's own.
+	// It may hold replacement fields of its own -- `{:{w}}` ends at the
+	// second one -- so the braces are counted rather than searched for.
+	specStart, depth := i, 1
+	for ; i < len(s); i++ {
+		switch s[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return field, conv, s[specStart:i], i + 1, nil
 			}
 		}
 	}
-	field = body
-split:
-	// The conversion sits between the name and the spec, and only there.
-	if k := strings.IndexByte(field, '!'); k >= 0 {
-		field, conv = field[:k], field[k+1:]
-		if conv == "" {
-			return "", "", "", 0, errs.New(errs.ValueError,
-				"unmatched '{' in format spec")
-		}
-	}
-	return field, conv, spec, next, nil
+	return fail("unmatched '{' in format spec")
 }
 
 // expandSpec resolves the replacement fields inside a format spec, so the width

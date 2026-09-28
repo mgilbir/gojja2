@@ -1840,9 +1840,56 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, cyclic bool, inde
 		b.WriteString("}")
 
 	default:
-		b.WriteString(rep)
+		set, ok := v.Interface().(*value.Set)
+		if !ok {
+			b.WriteString(rep)
+			break
+		}
+		// pprint's _pprint_set: the elements one per line in braces,
+		// laid out exactly as a list's are in brackets. CPython sorts
+		// them first and so does this set, which is what makes the two
+		// agree here where their *reprs* do not -- see
+		// docs/divergences.md, "The order a set prints in".
+		items := make([]value.Value, 0, set.Len())
+		for item := range set.Iterate() {
+			items = append(items, item)
+		}
+		// CPython sorts with pprint._safe_key, which is the values' own
+		// ordering wherever they have one and (type name, id) where they
+		// do not. The set arrives here in *repr* order, which is a total
+		// order over mixed types and is what the set's own repr uses --
+		// but it is not CPython's here: a set of integers pprints as
+		// 0, 1, 2 there and 0, 1, 10 in repr order. So the copy this
+		// prints is re-sorted by value, and falls back to the order it
+		// came in where two elements cannot be compared. That last case
+		// is the one CPython keys on id(), which no other process can
+		// reproduce; see docs/divergences.md.
+		sortForPPrint(st, items)
+		b.WriteString("{")
+		err := pformatItems(st, b, items, indent, allowance+1,
+			func(b *strings.Builder, item value.Value, at, room int) error {
+				return pformatSeen(st, b, item, cyclic, at, room, level+1, seen)
+			})
+		if err != nil {
+			return err
+		}
+		b.WriteString("}")
 	}
 	return nil
+}
+
+// sortForPPrint orders a set's elements the way pprint._safe_key does: by value
+// where the two can be compared, and leaving them as they came where they
+// cannot. Stable, so the incomparable pairs keep the set's own total order
+// rather than an arbitrary one.
+func sortForPPrint(st *State, items []value.Value) {
+	sort.SliceStable(items, func(i, j int) bool {
+		less, err := value.Ordered("<", items[i], items[j], st.PythonVersion())
+		if err != nil {
+			return false
+		}
+		return less
+	})
 }
 
 // safeRepr is the repr pprint measures with when the value contains itself.
