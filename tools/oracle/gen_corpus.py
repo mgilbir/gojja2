@@ -6712,6 +6712,105 @@ case("errors/extends_in_a_loop",
      "{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}",
      __templates__={"base.txt": "B"})
 
+# Constant folding is not a pass over the tree -- it is something jinja2's code
+# *generator* does to each node it writes out, so a node the generator never
+# writes is never folded, and an error the fold would have raised never
+# happens. Three rules follow, and gojja2 had none of them.
+#
+# The first: below an {% extends %} the child's own body prints nothing, and
+# the generator leaves those print tags out entirely (`if self.has_known_
+# extends: return`) rather than guarding them. So a fold that refuses -- here a
+# subscript of an int, which is undefined, and `and` asks an undefined for its
+# truth -- refuses only where the tag is still written. A {% block %}, a macro
+# and a {% set %} body are written whatever the extends says, because none of
+# them writes to the template's own stream.
+_EXT = "{% extends 'base.txt' %}"
+
+
+def _refuses(k=0):
+    # A subscript of an int is undefined, and `and` asks an undefined for its
+    # truth -- which a StrictUndefined answers with an error, out of the fold.
+    # The index names the position, so a case can say *which* fold refused.
+    return "{{ (0 ** 0)[%d] and 0 }}" % k
+
+
+for _n, _src in [
+    ("below_extends", _EXT + "@X@"),
+    ("above_extends", "@X@" + _EXT),
+    ("below_extends_in_a_branch", _EXT + "{% if true %}@X@{% endif %}"),
+    ("below_extends_in_a_loop", _EXT + "{% for i in [1] %}@X@{% endfor %}"),
+    ("below_extends_in_a_block", _EXT + "{% block a %}@X@{% endblock %}"),
+    ("below_extends_in_a_macro", _EXT + "{% macro m() %}@X@{% endmacro %}"),
+    ("below_extends_in_a_set_block", _EXT + "{% set q %}@X@{% endset %}"),
+    ("below_extends_in_a_filter_block",
+     _EXT + "{% filter upper %}@X@{% endfilter %}"),
+    ("below_extends_in_a_with", _EXT + "{% with %}@X@{% endwith %}"),
+    ("below_extends_in_an_autoescape",
+     _EXT + "{% autoescape true %}@X@{% endautoescape %}"),
+    ("below_a_conditional_extends", "{% if true %}" + _EXT + "{% endif %}@X@"),
+    ("below_an_extends_a_branch_skips", "{% if false %}" + _EXT + "{% endif %}@X@"),
+    ("below_extends_beside_a_literal", _EXT + "{{ 'a' }}@X@"),
+    ("below_extends_after_a_block", _EXT + "{% block a %}{% endblock %}@X@"),
+    ("in_a_block_above_extends", "{% block a %}@X@{% endblock %}" + _EXT),
+    ("below_extends_in_an_assignment", _EXT + "{% set q = (0 ** 0)[0] and 0 %}"),
+    ("below_extends_in_a_condition", _EXT + "{% if (0 ** 0)[0] and 0 %}x{% endif %}"),
+    ("below_extends_in_a_loops_iterable",
+     _EXT + "{% for i in [(0 ** 0)[0] and 0] %}x{% endfor %}"),
+]:
+    case("fold/" + _n, _src.replace("@X@", _refuses()),
+         __settings__={"undefined": "strict"},
+         __templates__={"base.txt": "B[{% block a %}{% endblock %}]"})
+
+# The second: a {% block %} body is generated *after* the whole root body, from
+# the flat list the generator collects up front -- so of two folds that refuse,
+# the one in the root body wins however late it stands, and between two blocks
+# the list's order decides. The list is find_all's, which is a pre-order walk,
+# so a block nested inside another comes after its parent's own body rather
+# than where it is written. Each case names a different subscript in each
+# position, because what is being graded is *which* of the two refused.
+for _n, _src in [
+    ("root_after_a_block", "{% block a %}@7@{% endblock %}{% set q = (0 ** 0)[9] and 0 %}"),
+    ("root_before_a_block", "{% set q = (0 ** 0)[9] and 0 %}{% block a %}@7@{% endblock %}"),
+    ("a_macro_stays_where_it_is",
+     "{% macro m() %}@7@{% endmacro %}{% set q = (0 ** 0)[9] and 0 %}"),
+    ("a_block_loses_to_a_macro",
+     "{% block a %}@7@{% endblock %}{% macro m() %}@9@{% endmacro %}"),
+    ("a_block_loses_to_an_include",
+     "{% block a %}@7@{% endblock %}{% include (0 ** 0)[9] and 0 %}"),
+    ("a_nested_block_is_last",
+     "{% block a %}{% block b %}@8@{% endblock %}@6@{% endblock %}{% block c %}@7@{% endblock %}"),
+    ("a_nested_block_before_a_later_one",
+     "{% block a %}{% block b %}@8@{% endblock %}{% endblock %}{% block c %}@7@{% endblock %}"),
+]:
+    _t = _src
+    for _k in (6, 7, 8, 9):
+        _t = _t.replace("@%d@" % _k, _refuses(_k))
+    case("fold/order_" + _n, _t, __settings__={"undefined": "strict"},
+         __templates__={"base.txt": "B"})
+
+# The third: the two refusals the generator raises *before* it folds anything,
+# and the one it raises in the middle. Collecting the blocks is a pre-pass, so
+# a name defined twice is reported wherever the second definition stands; the
+# non-top-level {% extends %} is a failure of the generator's own walk, so it
+# beats a fold below it and loses to one above.
+case("fold/order_block_twice_beats_a_fold",
+     "{% block a %}{% endblock %}{% block a %}{% endblock %}" + _refuses(7),
+     __settings__={"undefined": "strict"})
+case("fold/order_block_twice_beats_an_earlier_fold",
+     _refuses(7) + "{% block a %}{% endblock %}{% block a %}{% endblock %}",
+     __settings__={"undefined": "strict"})
+case("fold/order_a_macros_extends_beats_a_fold",
+     "{% macro m() %}" + _EXT + "{% endmacro %}" + _refuses(7),
+     __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
+case("fold/order_a_fold_beats_a_macros_extends",
+     _refuses(7) + "{% macro m() %}" + _EXT + "{% endmacro %}",
+     __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
+case("fold/order_a_blocks_extends_beats_a_fold_in_a_later_block",
+     "{% block a %}" + _EXT + "{% endblock %}{% block b %}" + _refuses(7) + "{% endblock %}",
+     __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
+case("fold/order_a_root_fold_beats_a_blocks_extends",
+     "{% block a %}" + _EXT + "{% endblock %}" + _refuses(7),
+     __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
 
 # A macro parameter that was not provided binds to an undefined carrying a
 # *hint* -- jinja2's `undefined(f"parameter {name!r} was not provided")` -- not

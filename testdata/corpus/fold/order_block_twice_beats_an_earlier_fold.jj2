@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{{ (0 ** 0)[7] and 0 }}{% block a %}{% endblock %}{% block a %}{% endblock %}

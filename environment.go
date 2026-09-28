@@ -905,6 +905,17 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	if terr != nil {
 		return nil, terr
 	}
+	// The block pre-pass comes first, because jinja2's generator collects
+	// every block -- and refuses a name defined twice -- before it
+	// generates a line: `{% block a %}{% endblock %}{% block a %}{% endblock
+	// %}{{ (0 ** 0)[7] and 0 }}` says "block 'a' defined twice" there, where
+	// the fold's own refusal would have named the subscript. The order it
+	// returns is the order the bodies are generated in, which decides which
+	// of two folds inside two blocks refuses first.
+	blocks, order, berr := collectBlocks(tree.Body, name, source)
+	if berr != nil {
+		return nil, berr
+	}
 	// Order matters, and it is jinja2's: a printed expression is tried as a
 	// constant *first*, with any failure deferring it to the render, and the
 	// general fold only ever sees what that left behind. jinja2 spells it as
@@ -914,26 +925,15 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	// never handed to the optimizer at all. That is why
 	// `{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}` prints 1 while the same
 	// expression in a {% set %} does not compile.
-	folder := newConstEvaluator(e, name, fromString)
+	folder := newConstEvaluator(e, name, source, fromString)
 	foldConstantPrints(folder, tree.Body)
-	foldConstantExpressions(folder, tree.Body)
+	foldConstantExpressions(folder, tree.Body, order)
 	// A fold that asked a StrictUndefined for its truthiness or its text
 	// got an error, and jinja2 lets that error out of from_string rather
 	// than leaving the expression for the render. So does this: the
 	// template does not compile.
 	if folder.refusal != nil {
 		return nil, folder.refusal
-	}
-	// Before the dependency check, because jinja2's code generator collects
-	// every block in a pre-pass -- `for block in node.find_all(nodes.Block)`
-	// -- before it generates a line: a template that both defines a block
-	// twice *and* extends from somewhere it may not says "block 'a' defined
-	// twice" there, whatever order the two sit in. The generated
-	// differential found it once the generator could write an `{% extends %}`
-	// inside a block.
-	blocks, berr := collectBlocks(tree.Body, name, source)
-	if berr != nil {
-		return nil, berr
 	}
 	if derr := e.checkDependencies(tree.Body, name, source); derr != nil {
 		return nil, derr
@@ -957,13 +957,16 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	}, nil
 }
 
-// collectBlocks indexes a template's blocks by name.
+// collectBlocks indexes a template's blocks by name, and lists them in the
+// order jinja2's `node.find_all(nodes.Block)` yields them -- which is the
+// order their bodies are generated in, and so folded in.
 //
 // The walk descends into every construct, because `{% block %}` is legal
 // inside a loop or a condition: the block is still registered at template
 // level, and only its rendering is affected by where it sits.
-func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block, error) {
+func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block, []*ast.Block, error) {
 	blocks := make(map[string]*ast.Block)
+	var order []*ast.Block
 	var dup error
 	var walk func([]ast.Stmt)
 	walk = func(stmts []ast.Stmt) {
@@ -979,6 +982,7 @@ func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block,
 					dup = e
 				}
 				blocks[n.Name] = n
+				order = append(order, n)
 				walk(n.Body)
 			case *ast.For:
 				walk(n.Body)
@@ -1008,7 +1012,7 @@ func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block,
 	}
 	walk(body)
 	if dup != nil {
-		return nil, dup
+		return nil, nil, dup
 	}
-	return blocks, nil
+	return blocks, order, nil
 }

@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "__templates__": {
+    "base.txt": "B"
+  }
+}
+---
+{% macro m() %}{% extends 'base.txt' %}{% endmacro %}{{ (0 ** 0)[7] and 0 }}

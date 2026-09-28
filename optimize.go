@@ -117,9 +117,39 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 // sharing one list between every render of a template is a bug rather than a
 // behaviour -- and it is not one any template can observe through folding
 // alone.
-func foldConstantExpressions(c *constEvaluator, body []ast.Stmt) {
-	f := &constFolder{c: c, envAutoescape: c.st.autoescape}
+func foldConstantExpressions(c *constEvaluator, body []ast.Stmt, blocks []*ast.Block) {
+	f := &constFolder{
+		c:             c,
+		envAutoescape: c.st.autoescape,
+		// jinja2's have_extends: the flag is armed by an {% extends %}
+		// anywhere in the tree, and only fires once one has been seen
+		// at the root. See stmt's Output and Extends arms.
+		outputChecked: containsExtends(body),
+		rootlevel:     true,
+		toplevel:      true,
+	}
 	f.stmts(body)
+	// A {% block %} body is generated after the whole root body, from the
+	// flat list the pre-pass collected -- so a fold that refuses inside one
+	// loses to any refusal in the root body, however late it stands, and to
+	// one in an earlier block. Walking the bodies where they are written
+	// named the block's subscript where jinja2 names the {% set %} below it.
+	for _, blk := range blocks {
+		f.block(blk)
+	}
+}
+
+// containsExtends reports whether the tree holds an {% extends %}, wherever it
+// stands -- jinja2's `node.find(nodes.Extends) is not None`.
+func containsExtends(body []ast.Stmt) bool {
+	found := false
+	ast.InspectStmts(body, func(n ast.Node) bool {
+		if _, ok := n.(*ast.Extends); ok {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 // constFolder walks a template folding constant expressions, carrying the
@@ -136,6 +166,77 @@ type constFolder struct {
 	// envAutoescape is the template's own setting, which a {% block %}
 	// body returns to; see stmt.
 	envAutoescape bool
+	// outputChecked and knownExtends are jinja2's require_output_check
+	// and has_known_extends, which decide whether a print tag reaches the
+	// code generator at all -- and so whether its expression is folded.
+	// rootlevel is the frame flag that arms the second one.
+	outputChecked bool
+	knownExtends  bool
+	rootlevel     bool
+	// toplevel is jinja2's frame flag of that name: whether these
+	// statements are compiled into the template's own function, which is
+	// the one thing {% extends %} requires.
+	toplevel bool
+}
+
+// soft folds a branch's body: jinja2's Frame.soft(), which clears rootlevel
+// and keeps toplevel. That is what makes `{% if x %}{% extends %}{% endif %}`
+// legal while leaving the print tags below it compiled.
+func (f *constFolder) soft(body []ast.Stmt) {
+	saved := f.rootlevel
+	f.rootlevel = false
+	f.stmts(body)
+	f.rootlevel = saved
+}
+
+// nested folds the body of a construct that opens a scope: jinja2's
+// Frame.inner(), which clears toplevel too, so an {% extends %} inside one is
+// refused rather than obeyed.
+func (f *constFolder) nested(body []ast.Stmt) {
+	savedTop := f.toplevel
+	f.toplevel = false
+	f.soft(body)
+	f.toplevel = savedTop
+}
+
+// refuseExtendsScope records the refusal jinja2's generator raises when it
+// meets an {% extends %} outside the template's own function. It is not a fold
+// refusal, so the volatile rule does not apply: an unknowable escaping does
+// not make the tag legal.
+func (f *constFolder) refuseExtendsScope(n *ast.Extends) {
+	if f.c.refusal != nil {
+		return
+	}
+	e := errs.New(errs.TemplateAssertionError,
+		"cannot use extend from a non top-level scope")
+	e.Line, e.Name, e.Source = n.Line(), f.c.name, f.c.source
+	f.c.refusal = e
+}
+
+// block folds one {% block %} body.
+//
+// It is compiled on its own, against a fresh eval context built from the
+// environment -- so a constant folded inside one does not see an enclosing
+// {% autoescape %}, even though the same expression left unfolded sees it at
+// run time. That split is jinja2's, and the two halves are observable against
+// each other, so both are reproduced. A nested block is not folded from here
+// either: it has its own entry in the list.
+func (f *constFolder) block(n *ast.Block) {
+	savedEsc, savedVol := f.c.st.autoescape, f.c.volatile
+	f.c.st.autoescape, f.c.volatile = f.envAutoescape, false
+	f.detached(n.Body)
+	f.c.st.autoescape, f.c.volatile = savedEsc, savedVol
+}
+
+// detached folds a body that is compiled on its own: a {% block %}, a macro,
+// and the body of a {% set %} with one. jinja2 clears require_output_check for
+// each of the three, because none of them writes to the template's own stream
+// -- so what they print is compiled, and folded, even below a known extends.
+func (f *constFolder) detached(body []ast.Stmt) {
+	saved := f.outputChecked
+	f.outputChecked = false
+	f.nested(body)
+	f.outputChecked = saved
 }
 
 // foldable reports whether a constant result can stand in for the expression
@@ -348,6 +449,15 @@ func (f *constFolder) stmts(body []ast.Stmt) {
 func (f *constFolder) stmt(stmt ast.Stmt) {
 	switch n := stmt.(type) {
 	case *ast.Output:
+		if f.outputChecked && f.knownExtends {
+			// Below an {% extends %} at the root, the child's own
+			// body prints nothing, and jinja2's generator leaves
+			// the whole tag out rather than guarding it -- so its
+			// expressions are never folded, and an error a fold
+			// would have raised at compile time never happens.
+			// Run time already agrees: see execOutput.
+			return
+		}
 		for i, node := range n.Nodes {
 			if _, isData := node.(*ast.TemplateData); isData {
 				continue
@@ -356,43 +466,37 @@ func (f *constFolder) stmt(stmt ast.Stmt) {
 		}
 	case *ast.For:
 		n.Iter, n.Test = f.fold(n.Iter), f.fold(n.Test)
-		f.stmts(n.Body)
-		f.stmts(n.Else)
+		f.nested(n.Body)
+		f.nested(n.Else)
 	case *ast.If:
 		n.Test = f.fold(n.Test)
-		f.stmts(n.Body)
+		f.soft(n.Body)
 		for _, elif := range n.Elif {
+			// An elif is an If of its own and softens its own body;
+			// wrapping it here would clear a flag twice.
 			f.stmt(elif)
 		}
-		f.stmts(n.Else)
+		f.soft(n.Else)
 	case *ast.Assign:
 		n.Node = f.fold(n.Node)
 	case *ast.AssignBlock:
 		n.Filter = f.fold(n.Filter)
-		f.stmts(n.Body)
+		f.detached(n.Body)
 	case *ast.With:
 		f.exprs(n.Values)
-		f.stmts(n.Body)
+		f.nested(n.Body)
 	case *ast.Macro:
 		f.exprs(n.Defaults)
-		f.stmts(n.Body)
+		f.detached(n.Body)
 	case *ast.CallBlock:
 		f.exprs(n.Defaults)
-		f.stmts(n.Body)
+		f.detached(n.Body)
 	case *ast.FilterBlock:
 		n.Filter = f.fold(n.Filter)
-		f.stmts(n.Body)
+		f.nested(n.Body)
 	case *ast.Block:
-		// A {% block %} body is compiled on its own, against a fresh
-		// eval context built from the environment -- so a constant
-		// folded inside one does not see an enclosing {% autoescape %},
-		// even though the same expression left unfolded sees it at run
-		// time. That split is jinja2's, and the two halves are
-		// observable against each other, so both are reproduced.
-		savedEsc, savedVol := f.c.st.autoescape, f.c.volatile
-		f.c.st.autoescape, f.c.volatile = f.envAutoescape, false
-		f.stmts(n.Body)
-		f.c.st.autoescape, f.c.volatile = savedEsc, savedVol
+		// Nothing: where a block is *written* the generator only calls
+		// it. Its body is folded by block, after the root body.
 	case *ast.ExprStmt:
 		n.Node = f.fold(n.Node)
 	case *ast.Include:
@@ -402,9 +506,25 @@ func (f *constFolder) stmt(stmt ast.Stmt) {
 	case *ast.FromImport:
 		n.Template = f.fold(n.Template)
 	case *ast.Extends:
+		if !f.toplevel {
+			// The dependency check refuses this too, and says the
+			// same thing -- but it runs after the whole fold, so
+			// `{% macro m() %}{% extends 'b' %}{% endmacro %}
+			// {{ (0 ** 0)[0] and 0 }}` named the subscript where
+			// jinja2's generator fails at the extends it reaches
+			// first. Refusing here puts the two in source order.
+			f.refuseExtendsScope(n)
+			return
+		}
 		n.Template = f.fold(n.Template)
+		// Only an extends the root body reaches unconditionally is
+		// known: one inside an {% if %} leaves the print tags below it
+		// compiled, and guarded at run time instead.
+		if f.rootlevel {
+			f.knownExtends = true
+		}
 	case *ast.Scope:
-		f.stmts(n.Body)
+		f.nested(n.Body)
 	case *ast.AutoescapeBlock:
 		n.Value = f.fold(n.Value)
 		f.autoescapeBody(n)
@@ -424,7 +544,7 @@ func (f *constFolder) autoescapeBody(n *ast.AutoescapeBlock) {
 	if !ok {
 		saved := f.c.volatile
 		f.c.volatile = true
-		f.stmts(n.Body)
+		f.nested(n.Body)
 		f.c.volatile = saved
 		return
 	}
@@ -432,13 +552,13 @@ func (f *constFolder) autoescapeBody(n *ast.AutoescapeBlock) {
 	if err != nil {
 		saved := f.c.volatile
 		f.c.volatile = true
-		f.stmts(n.Body)
+		f.nested(n.Body)
 		f.c.volatile = saved
 		return
 	}
 	saved := f.c.st.autoescape
 	f.c.st.autoescape = truth
-	f.stmts(n.Body)
+	f.nested(n.Body)
 	f.c.st.autoescape = saved
 }
 
@@ -805,6 +925,10 @@ func (c *constEvaluator) pyVersion() value.PythonVersion { return c.env.pyVersio
 type constEvaluator struct {
 	env *Environment
 	st  *State
+	// name and source place a refusal in the template, the way the
+	// dependency check places its own.
+	name   string
+	source string
 	// volatile means the escaping where this fold sits is not known until
 	// the render, which is what `{% autoescape x %}` produces. jinja2
 	// refuses to fold a filter or a test in such a context -- see
@@ -868,7 +992,7 @@ const (
 )
 
 // newConstEvaluator builds an evaluator for a template being compiled.
-func newConstEvaluator(env *Environment, name string, fromString bool) *constEvaluator {
+func newConstEvaluator(env *Environment, name, source string, fromString bool) *constEvaluator {
 	placeholder := &Template{env: env, name: name, fromString: fromString}
 	globals := &scope{vars: env.globals}
 	st := &State{
@@ -890,7 +1014,7 @@ func newConstEvaluator(env *Environment, name string, fromString bool) *constEva
 			maxIntBits: env.maxIntBits,
 		},
 	}
-	return &constEvaluator{env: env, st: st}
+	return &constEvaluator{env: env, st: st, name: name, source: source}
 }
 
 // tryConstEval is the only way a fold may begin.
