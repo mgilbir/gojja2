@@ -6415,6 +6415,35 @@ case("errors/unexpected_char_after_astral", "\U0001f600{{ $ }}")
 case("errors/unexpected_char_after_a_literal", "{{ '\u00e9' }}{{ $ }}")
 case("errors/unexpected_char_inside_a_tag", "{{ 1 }}\u00e9{{ 2 $ }}")
 
+# An `attribute=` that is an *index* reaches Environment.getitem like every other
+# lookup, so it indexes whatever the item is -- a list, a tuple, a str, a bytes,
+# and an object that presents a sequence. That last arm was missing: a range
+# answered undefined, which a `default=` then covered up and `|sum` turned into
+# an error. Found by the coverage-guided fuzzer, on
+# `[range(3)]|groupby(1, 2, 3)`.
+for _n, _src in [
+    ("groupby_index_of_a_range", "{{ [range(3)]|groupby(1)|list }}"),
+    ("groupby_index_with_a_default", "{{ [range(3)]|groupby(1, 2, 3)|list }}"),
+    ("map_index_of_a_range", "{{ [range(3)]|map(attribute=1)|list }}"),
+    ("map_index_of_a_range_as_a_string", "{{ [range(3)]|map(attribute='1')|list }}"),
+    ("map_negative_index_of_a_range", "{{ [range(3)]|groupby(-1)|list }}"),
+    ("map_index_past_a_range", "{{ [range(3)]|map(attribute=9)|list }}"),
+    ("map_index_past_a_range_with_a_default",
+     "{{ [range(3)]|map(attribute=9, default='d')|list }}"),
+    ("sum_index_of_a_range", "{{ [range(3)]|sum(attribute=1) }}"),
+    ("min_index_of_a_range", "{{ [range(3)]|min(attribute=1) }}"),
+    ("sort_index_of_a_range", "{{ [range(3)]|sort(attribute=1)|list }}"),
+    ("selectattr_index_of_a_range", "{{ [range(3)]|selectattr(1)|list }}"),
+    ("map_index_of_a_batch", "{{ ['ab'|batch(1)|list]|map(attribute=0)|list }}"),
+    ("map_index_of_an_empty_range", "{{ [range(0)]|map(attribute=0)|list }}"),
+    # ...and the objects that are *not* sequences still answer undefined.
+    ("map_index_of_a_cycler", "{{ [cycler('a','b')]|map(attribute=0)|list }}"),
+    ("map_index_of_a_namespace", "{{ [namespace(v=1)]|map(attribute=0)|list }}"),
+    ("map_index_of_a_dict", "{{ [{'a':1}]|map(attribute=0)|list }}"),
+    ("map_path_through_a_range", "{{ [[range(3)]]|map(attribute='0.1')|list }}"),
+]:
+    case("filters/" + _n, _src)
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither

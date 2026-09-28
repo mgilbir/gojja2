@@ -1128,6 +1128,23 @@ func constIndex(base, key value.Value) (value.Value, bool) {
 		return value.Undefined, false
 	}
 	switch base.Kind() {
+	case value.KindObject:
+		// A range, or a groupby group: an object that presents a
+		// sequence is indexed like one. jinja2 reaches these through
+		// Environment.getitem like everything else, so
+		// `[range(3)]|map(attribute=1)` is 1 -- where this knew only the
+		// built-in kinds and answered undefined, which a `default=` then
+		// covered up. Found by the coverage-guided fuzzer, on
+		// `[range(3)]|groupby(1, 2, 3)`.
+		seq, ok := base.Interface().(value.Sequence)
+		if !ok {
+			return value.Undefined, false
+		}
+		idx := int(i)
+		if idx < 0 {
+			idx += seq.Len()
+		}
+		return seq.GetIndex(idx)
 	case value.KindList, value.KindTuple:
 		s, _ := base.Seq()
 		idx := int(i)
