@@ -322,7 +322,7 @@ ever produced?**
 
 It runs the corpus under coverage on every interpreter, intersects the blocks
 that never executed with the lines that build an error, and counts what is left.
-Today that is **50 of 396**.
+Today that is **45 of 393**.
 
 A message nothing produces is not evidence of anything -- it has never been
 compared to CPython. It is worse than untested: it reads as *agreement in every
@@ -406,6 +406,16 @@ is refused by `checkArity` before its body runs, on every route a test can be
 called by, so the "divisibleby requires an argument" fallbacks inside them
 answered something else and could not be reached to say it. `tests.go` no longer
 imports `errs`.
+
+A fifth pass came out of the *soak* rather than out of the list, once the
+generated differential could draw custom delimiters and line statements: reading
+the sites those findings landed near took it to 45 of 393. What that pass is
+worth recording for is the shape of what it found -- `str.format`'s field parser
+had one complaint where CPython has three, a nested field's own spec was being
+dropped, two dict views raised where CPython compares them as sets, and the
+lexer's "unexpected char" offset counted bytes where CPython counts code points.
+**Every one of those was reachable from a template nobody had written**, which is
+what an axis is for.
 
 Two habits came out of that pass. **Read the line, not the message**: the same
 words often appear at two or three sites, so a case that produces the message may
