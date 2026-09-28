@@ -2338,6 +2338,29 @@ for _n, _src, _ctx in [
 # The two globals whose type object is built rather than converted; a call is
 # not constant, so these are not folded away.
 case("classes/subscript_namespace", "{{ namespace().__class__[1:] }}")
+
+# A name a class carries as a *descriptor* rather than a method: `int.real` is
+# a getset_descriptor and `range.start` a member one. Neither is callable, and
+# the repr says "attribute" or "member" -- gojja2 made an unbound method of
+# every name, so `{{ n.__class__.real }}` printed "<method 'real' ...>" and
+# calling it answered the method's complaint about a missing receiver. bool
+# inherits int's four, and the repr names the owner.
+for _n, _src in [
+    ("int_properties", "{{ n3.__class__.real }}|{{ n3.__class__.imag }}|"
+     "{{ n3.__class__.numerator }}|{{ n3.__class__.denominator }}"),
+    ("float_properties", "{{ (1.5).__class__.real }}|{{ (1.5).__class__.imag }}"),
+    ("bool_properties", "{{ true.__class__.real }}|{{ true.__class__.numerator }}"),
+    ("range_members", "{{ range(3).__class__.start }}|{{ range(3).__class__.stop }}|"
+     "{{ range(3).__class__.step }}"),
+    ("property_is_not_callable", "{{ n3.__class__.real() }}"),
+    ("property_is_not_callable_with_a_receiver", "{{ n3.__class__.real(5) }}"),
+    ("member_is_not_callable", "{{ range(3).__class__.start(range(3)) }}"),
+    ("property_class", "{{ n3.__class__.real.__class__ }}|{{ range(3).__class__.start.__class__ }}"),
+    ("property_is_not_a_method", "{{ n3.__class__.conjugate }}|{{ n3.__class__.conjugate(5) }}"),
+    ("property_on_an_instance", "{{ n3.real }}|{{ n3.imag }}|{{ (1.5).real }}|{{ true.numerator }}"),
+    ("property_has_no_attributes", "[{{ n3.__class__.real.nope }}]|{{ n3.__class__.real is callable }}"),
+]:
+    case("classes/" + _n, _src, n3=3)
 case("classes/subscript_range_global", "{{ range(3).__class__[1:] }}")
 
 # The AttributeError for a type object is worded specially too -- `type object

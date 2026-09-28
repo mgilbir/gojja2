@@ -1,0 +1,5 @@
+{
+  "n3": 3
+}
+---
+{{ range(3).__class__.start(range(3)) }}

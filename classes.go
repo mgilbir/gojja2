@@ -73,6 +73,13 @@ var classProbes = map[string]value.Value{
 // Everything past the first argument is the method's own, so an arity error
 // comes from the method rather than from here.
 func (c *classObject) unboundMethod(name string) (value.Value, bool) {
+	// A descriptor is a property of the class itself and needs no probe --
+	// range has three and no instance to find them on here.
+	if kind, isDescriptor := classDescriptors[c.qualified][name]; isDescriptor {
+		return value.FromObject(&descriptorObject{
+			kind: kind, class: methodOwner(c.qualified), name: name,
+		}), true
+	}
 	probe, ok := classProbes[c.qualified]
 	if !ok {
 		return value.Undefined, false
@@ -129,6 +136,40 @@ func selfMatches(self value.Value, class string) bool {
 
 // unboundMethodObject is what `T.m` evaluates to, and it is a value in its own
 // right: it prints, it is defined, and it is callable.
+// classDescriptors are the names a class carries as a *descriptor* rather than
+// a method: `int.real` is a getset_descriptor and `range.start` a member one.
+// Neither is callable, and the repr says "attribute" or "member" rather than
+// "method" -- `{{ n.__class__.real() }}` is "'getset_descriptor' object is not
+// callable" where gojja2 answered the unbound method's own complaint.
+//
+// bool inherits all four of int's, and the repr names the owner: `True
+// .__class__.real` is "<attribute 'real' of 'int' objects>".
+var classDescriptors = map[string]map[string]string{
+	"int":   {"real": "attribute", "imag": "attribute", "numerator": "attribute", "denominator": "attribute"},
+	"bool":  {"real": "attribute", "imag": "attribute", "numerator": "attribute", "denominator": "attribute"},
+	"float": {"real": "attribute", "imag": "attribute"},
+	"range": {"start": "member", "stop": "member", "step": "member"},
+}
+
+// descriptorObject is one of those: a value that prints itself and refuses to
+// be called.
+type descriptorObject struct{ kind, class, name string }
+
+func (d *descriptorObject) GetAttr(string) (value.Value, bool) {
+	return value.Undefined, false
+}
+
+func (d *descriptorObject) TypeName() string {
+	if d.kind == "member" {
+		return "member_descriptor"
+	}
+	return "getset_descriptor"
+}
+
+func (d *descriptorObject) Repr() string {
+	return "<" + d.kind + " '" + d.name + "' of '" + d.class + "' objects>"
+}
+
 type unboundMethodObject struct{ class, name string }
 
 func (m *unboundMethodObject) GetAttr(string) (value.Value, bool) {
