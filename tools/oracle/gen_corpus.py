@@ -6688,6 +6688,50 @@ case("errors/extends_in_a_loop",
      "{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}",
      __templates__={"base.txt": "B"})
 
+# A macro parameter that was not provided binds to an undefined carrying a
+# *hint* -- jinja2's `undefined(f"parameter {name!r} was not provided")` -- not
+# to one named after the parameter. The difference only speaks when the undefined
+# does: the message under StrictUndefined, the hint's own rendering under
+# DebugUndefined. Found by the generated differential once it could write a
+# `{% call(p) %}` signature, where the caller supplies no argument at all.
+for _kind in ("default", "chainable", "debug", "strict"):
+    _set = {} if _kind == "default" else {"undefined": _kind}
+    for _n, _src in [
+        ("missing_parameter", "{% macro m(x) %}[{{ x }}]{% endmacro %}{{ m() }}"),
+        ("missing_second_parameter", "{% macro m(x, y) %}[{{ y }}]{% endmacro %}{{ m(1) }}"),
+        ("missing_parameter_reached_through",
+         "{% macro m(x) %}[{{ x.attr }}]{% endmacro %}{{ m() }}"),
+        ("missing_parameter_is_defined",
+         "{% macro m(x) %}[{{ x is defined }}]{% endmacro %}{{ m() }}"),
+        ("missing_parameter_default",
+         "{% macro m(x) %}[{{ x|default('d') }}]{% endmacro %}{{ m() }}"),
+        ("caller_argument_not_provided",
+         "{% macro takes() %}<{{ caller() }}>{% endmacro %}"
+         "{% call(p) takes() %}{{ p }}{% endcall %}"),
+    ]:
+        case("macro/%s_%s" % (_kind, _n), _src, __settings__=_set)
+
+# A `{% filter %}` block's result is appended to jinja2's buffer rather than
+# emitted, so it is neither escaped nor finalized. It usually makes no difference
+# -- a filter over a Markup answers Markup -- but `|join` answers a plain str
+# holding the body's escapes, and escaping it again turned `&#39;` into
+# `&amp;#39;`.
+for _n, _src in [
+    ("join", "{% filter join('-') %}{{ \"it's\" }}{% endfilter %}"),
+    ("join_include", "{% filter wordwrap(4) %}{% include 'inc.txt' %}{% endfilter %}"),
+    ("upper_literal", "{% filter upper %}<b>{% endfilter %}"),
+    ("upper_printed", "{% filter upper %}{{ '<b>' }}{% endfilter %}"),
+    ("replace_ampersand", "{% filter replace('a','&') %}a{% endfilter %}"),
+    ("trim", "{% filter trim %} <b> {% endfilter %}"),
+    ("safe", "{% filter safe %}<b>{% endfilter %}"),
+]:
+    case("escape/filter_block_" + _n,
+         "{% autoescape true %}" + _src + "{% endautoescape %}",
+         __templates__={"inc.txt": "<{{ n|default('?') }}>"}, n=3)
+    case("control/filter_block_" + _n,
+         "{% autoescape false %}" + _src + "{% endautoescape %}",
+         __templates__={"inc.txt": "<{{ n|default('?') }}>"}, n=3)
+
 # --- a dict view compares as a set --------------------------------------------
 # `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
 # ordering: CPython's dictview_richcompare answers containment, and neither

@@ -1,0 +1,6 @@
+{
+  "case": "escape/filter_block_join_include.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

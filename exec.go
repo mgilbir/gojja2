@@ -777,11 +777,13 @@ func (ex *exec) execFilterBlock(n *ast.FilterBlock) error {
 		return errs.New(errs.TypeError,
 			"sequence item %d: expected str instance, %s found", ex.chunkCount(), v.TypeName())
 	}
-	out, err := ex.renderValue(v)
-	if err != nil {
-		return err
-	}
-	if err := ex.write(out); err != nil {
+	// Written as it stands, *not* through the output path: jinja2 appends the
+	// filter's result to the buffer rather than emitting it, so it is neither
+	// escaped nor finalized. It usually makes no difference, because a filter
+	// over a Markup answers Markup -- but `{% filter join('-') %}` answers a
+	// plain str holding the body's escapes, and escaping it again turned
+	// `&#39;` into `&amp;#39;`.
+	if err := ex.write(value.Str(v)); err != nil {
 		return err
 	}
 	return nil

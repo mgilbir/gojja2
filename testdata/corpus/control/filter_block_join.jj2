@@ -1,0 +1,8 @@
+{
+  "__templates__": {
+    "inc.txt": "<{{ n|default('?') }}>"
+  },
+  "n": 3
+}
+---
+{% autoescape false %}{% filter join('-') %}{{ "it's" }}{% endfilter %}{% endautoescape %}

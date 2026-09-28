@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% macro takes() %}<{{ caller() }}>{% endmacro %}{% call(p) takes() %}{{ p }}{% endcall %}

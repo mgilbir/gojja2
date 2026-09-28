@@ -305,7 +305,15 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 			sc.set(param.Name, v)
 			continue
 		}
-		sc.set(param.Name, ex.st.Undefined(value.NewUndefined(param.Name)))
+		// jinja2 binds a missing parameter to an undefined carrying a
+		// *hint* -- `undefined(f"parameter {name!r} was not provided")`
+		// -- not to one named after the parameter. The difference shows
+		// wherever an undefined speaks: "parameter 'x' was not provided"
+		// under StrictUndefined, and the hint's own rendering under
+		// DebugUndefined.
+		sc.set(param.Name, ex.st.Undefined(value.UndefinedHint(
+			"parameter %s was not provided",
+			value.ReprFor(value.String(param.Name), ex.pyVersion()))))
 	}
 
 	if err := declareFrameLocals(sc, ex.st, m.node, m.node.Body, sc.parent); err != nil {
