@@ -881,6 +881,36 @@ func (g *generator) macroStmt(depth int) {
 			"{% endcall %}")
 		return
 	}
+	// A parameter named after one of the three specials. A macro gets
+	// `caller`, `kwargs` or `varargs` only when its body reads one without
+	// binding it first, and never when it has declared a parameter of that
+	// name -- two rules that were both missing here, and that nothing could
+	// write: every macro this wrote took `x` and `y`. The shapes that do not
+	// compile are as much of the family as the ones that do, so they are
+	// written too.
+	if g.c.chance(5) {
+		name := g.c.pick([]string{"caller", "kwargs", "varargs"})
+		param := name
+		if g.c.chance(2) {
+			param += "=" + g.c.pick(smallInts)
+		}
+		body := g.c.pick([]string{
+			"{{ " + name + " }}", "body",
+			"{% set " + name + " = 1 %}{{ " + name + " }}",
+			"{{ " + name + "|default('-') }}",
+			"{% for " + name + " in [1] %}{{ " + name + " }}{% endfor %}",
+		})
+		if g.c.chance(3) {
+			// The same names in a {% call %} block's signature, where
+			// the block is the macro and the rule is the same one.
+			g.b.WriteString("{% macro takes() %}<{{ caller(1) }}>{% endmacro %}" +
+				"{% call(" + param + ") takes() %}" + body + "{% endcall %}")
+			return
+		}
+		g.b.WriteString("{% macro sp(" + param + ") %}" + body + "{% endmacro %}" +
+			"[{{ sp(" + g.c.pick([]string{"1", "", "1, 2", "1, z=2"}) + ") }}]")
+		return
+	}
 	// A macro that renders its caller, which is the other half of {% call %}
 	// and reaches jinja2's caller machinery rather than a plain macro call.
 	if g.c.chance(4) {
