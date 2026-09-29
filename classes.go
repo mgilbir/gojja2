@@ -510,15 +510,52 @@ func constructMappingProxy(s *State, args *value.CallArgs) (value.Value, error) 
 		}
 		arg = args.Pos[0]
 	}
-	switch {
-	case arg.Kind() == value.KindDict, arg.Kind() == value.KindString:
-	default:
-		if _, isMapping := arg.Interface().(value.Mapping); !isMapping {
-			return value.Undefined, errs.New(errs.TypeError,
-				"mappingproxy() argument must be a mapping, not %s", arg.TypeName())
-		}
+	if !mappingCheck(arg) {
+		return value.Undefined, errs.New(errs.TypeError,
+			"mappingproxy() argument must be a mapping, not %s", arg.TypeName())
 	}
 	return value.FromObject(&mappingProxy{d: arg, py: s.PythonVersion()}), nil
+}
+
+// mappingCheck is PyMapping_Check minus list and tuple, which is the whole of
+// what mappingproxy() asks of its argument.
+//
+// PyMapping_Check is `tp_as_mapping->mp_subscript != NULL`, which is to say
+// "defines __getitem__" -- str, bytes and range do, and so does jinja2's
+// Undefined, which is why `mappingproxy(nope)` is a proxy rather than a
+// TypeError. list and tuple define it too and are excluded by name, in
+// CPython's own code and here. A dict view, a set, a namespace, a cycler and a
+// bound method do not define it, and are refused with their type's name.
+//
+// Only a dict was accepted before, plus anything whose Go type happened to
+// implement Mapping -- which let `mappingproxy(range(2))` and
+// `mappingproxy('ab'.encode())` be TypeErrors where CPython builds a proxy that
+// indexes, sizes and iterates as the wrapped value does.
+func mappingCheck(v value.Value) bool {
+	switch v.Kind() {
+	case value.KindDict, value.KindString, value.KindBytes, value.KindUndefined:
+		return true
+	case value.KindList, value.KindTuple:
+		return false
+	case value.KindObject:
+		// A tuple subclass -- a |groupby pair -- is a tuple to
+		// PyTuple_Check, so the exclusion catches it as well.
+		if _, ok := v.Interface().(value.TupleView); ok {
+			return false
+		}
+		if _, ok := v.Interface().(value.Mapping); ok {
+			return true
+		}
+		// `self` defines __getitem__ -- `self['body']` is the block --
+		// even though gojja2 answers it through the attribute path
+		// rather than a Mapping, so PyMapping_Check passes on it.
+		if _, ok := v.Interface().(*templateReference); ok {
+			return true
+		}
+		_, ok := v.Interface().(value.Sequence)
+		return ok
+	}
+	return false
 }
 
 func constructNone(_ *State, args *value.CallArgs) (value.Value, error) {

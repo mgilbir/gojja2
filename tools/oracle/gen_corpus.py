@@ -8390,6 +8390,76 @@ for _n, _src in [
      "|{{ C('ab')|list }}|{{ C('ab')|length }}"),
     ("proxy_class_nests", "{% set C = d.keys().mapping.__class__ %}{{ C(C({'a': 1}))|pprint }}"),
     ("view_class_is_not_constructible", "{{ d.keys().__class__() }}"),
+    # What the proxy accepts is PyMapping_Check -- "defines __getitem__" --
+    # minus list and tuple, which CPython excludes by name. So bytes, a range
+    # and jinja2's own Undefined are mappings here, and a view, a set, a
+    # namespace and a class are not. Only a dict and a string were taken.
+    ("proxy_class_takes_bytes", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ C('ab'.encode())|pprint }}|{{ C('ab'.encode())[0] }}|"
+     "{{ C('ab'.encode())|length }}|{{ C('ab'.encode())|list }}"),
+    ("proxy_class_takes_a_range", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ C(range(2))|pprint }}|{{ C(range(2))[0] }}|{{ C(range(2))|length }}|"
+     "{{ C(range(2))|list }}"),
+    ("proxy_class_takes_an_undefined", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(nope) }}]|{{ C(nope)|pprint }}|{{ C(nope)|length }}|{{ C(nope)|list }}"),
+    ("proxy_class_takes_self",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}"
+     "{{ C(self)|pprint }}|{{ C(self)['b']() }}"),
+    ("proxy_class_refuses_a_view", "{% set C = d.keys().mapping.__class__ %}{{ C(d.keys()) }}"),
+    ("proxy_class_refuses_an_items_view",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(d.items()) }}"),
+    ("proxy_class_refuses_a_set",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(d.keys() - 'a') }}"),
+    ("proxy_class_refuses_a_namespace",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(namespace(a=1)) }}"),
+    ("proxy_class_refuses_a_class", "{% set C = d.keys().mapping.__class__ %}{{ C(C) }}"),
+    ("proxy_class_refuses_none", "{% set C = d.keys().mapping.__class__ %}{{ C(none) }}"),
+    # The five read-only methods are an attribute lookup on whatever is
+    # wrapped, not dict's methods applied to it: CPython's mappingproxy_keys is
+    # PyObject_CallMethodNoArgs(pp->mapping, "keys"). Over a string there is no
+    # such method. keys, items and values answered an empty view here, and get
+    # and copy *panicked*, both unwrapping a dict that was not there.
+    ("proxy_keys_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').keys() }}"),
+    ("proxy_items_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').items() }}"),
+    ("proxy_values_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').values() }}"),
+    ("proxy_get_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').get(0, 'no') }}"),
+    ("proxy_copy_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').copy() }}"),
+    ("proxy_keys_over_bytes",
+     "{% set C = d.keys().mapping.__class__ %}{{ C('ab'.encode()).keys() }}"),
+    ("proxy_get_over_a_range", "{% set C = d.keys().mapping.__class__ %}{{ C(range(2)).get(0) }}"),
+    ("proxy_copy_over_a_range", "{% set C = d.keys().mapping.__class__ %}{{ C(range(2)).copy() }}"),
+    # ...and over another proxy it delegates twice, which is the arm that says
+    # the lookup is a lookup and not a special case for dicts.
+    ("proxy_methods_over_a_proxy", "{% set C = d.keys().mapping.__class__ %}"
+     "{% set m = C(d.keys().mapping) %}{{ m.keys()|list }}|{{ m.items()|list }}|"
+     "{{ m.values()|list }}|{{ m.get('a') }}|{{ m.copy() }}"),
+    # An undefined raises from __getattr__ before the name is looked for, and
+    # from __getitem__ whatever the key is -- including the key an attribute
+    # falls back to.
+    ("proxy_keys_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(nope).keys() }}"),
+    ("proxy_copy_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(nope).copy() }}"),
+    ("proxy_index_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(nope)[0] }}"),
+    ("proxy_attr_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(nope).mapping }}"),
+    # `in` is PySequence_Contains on the wrapped object, so a proxy over a
+    # string is a string here: an int on the left is the string's TypeError and
+    # a substring is found. Hashing the key and looking it up as a dict key
+    # made the first True and the second False.
+    ("proxy_contains_over_a_string", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ 'a' in C('ab') }}|{{ 'ab' in C('ab') }}|{{ 'z' in C('ab') }}"),
+    ("proxy_contains_an_int_over_a_string",
+     "{% set C = d.keys().mapping.__class__ %}{{ 0 in C('ab') }}"),
+    ("proxy_contains_over_bytes", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ 97 in C('ab'.encode()) }}|{{ 0 in C('ab'.encode()) }}"),
+    ("proxy_contains_a_string_over_bytes",
+     "{% set C = d.keys().mapping.__class__ %}{{ 'a' in C('ab'.encode()) }}"),
+    ("proxy_contains_over_a_range", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ 0 in C(range(2)) }}|{{ 5 in C(range(2)) }}|{{ 'a' in C(range(2)) }}"),
+    ("proxy_contains_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ 0 in C(nope) }}"),
 ]:
     case("dictview/" + _n, _DV + _src)
 

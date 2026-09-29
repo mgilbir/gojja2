@@ -1954,13 +1954,36 @@ var mappingProxyMethods = map[string]func(*State, value.Value, *value.CallArgs) 
 	"values": proxyMethod("values"),
 }
 
+// proxyMethod is one of mappingproxy's five read-only methods.
+//
+// CPython implements all five by *calling the wrapped object's own method*:
+// mappingproxy_keys is `PyObject_CallMethodNoArgs(pp->mapping, &_Py_ID(keys))`
+// and the rest follow. So they are not dict methods applied to whatever is
+// inside -- they are an attribute lookup on it, and a proxy over something that
+// is not a dict answers whatever that lookup does. `mappingproxy('ab').keys()`
+// is "'str' object has no attribute 'keys'", `mappingproxy(nope).keys()` is the
+// undefined's own error, and a proxy of a proxy delegates twice.
+//
+// Reaching for dict's method regardless answered an empty view for keys, items
+// and values, and *panicked* for get and copy: both start by unwrapping a dict
+// that is not there.
 func proxyMethod(name string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(s *State, r value.Value, a *value.CallArgs) (value.Value, error) {
 		m, ok := r.Interface().(*mappingProxy)
 		if !ok {
 			return value.Undefined, nil
 		}
-		return dictMethods[name](s, m.d, a)
+		// An undefined raises from __getattr__ before the name is even
+		// looked for, which is a different error from not having it.
+		if m.d.IsUndefined() {
+			return value.Undefined, m.d.UndefinedError()
+		}
+		fn, ok := lookupAttr(s, m.d, name)
+		if !ok {
+			return value.Undefined, errs.New(errs.AttributeError,
+				"'%s' object has no attribute '%s'", m.d.TypeName(), name)
+		}
+		return s.invoke(fn, a)
 	}
 }
 

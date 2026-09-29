@@ -419,7 +419,21 @@ func (ex *exec) getAttr(base value.Value, name string) (value.Value, error) {
 		}
 		return v, nil
 	}
-	if v, ok := lookupItem(base, value.String(name), ex.pyVersion()); ok {
+	// The item fallback, which is what Environment.getattr does when
+	// getattr raises AttributeError -- and it can raise in its own right:
+	// `mappingproxy(nope).mapping` finds no attribute, looks for the key,
+	// and the undefined refuses that.
+	if obj, ok := base.Interface().(interface {
+		GetItemErr(value.Value) (value.Value, bool, error)
+	}); ok {
+		v, found, err := obj.GetItemErr(value.String(name))
+		if err != nil {
+			return value.Undefined, err
+		}
+		if found {
+			return v, nil
+		}
+	} else if v, ok := lookupItem(base, value.String(name), ex.pyVersion()); ok {
 		return v, nil
 	}
 	return ex.st.Undefined(value.UndefinedAttr(base, name)), nil
@@ -527,6 +541,20 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 		}
 	case value.KindObject:
 		switch obj := base.Interface().(type) {
+		// A mapping whose lookup can raise says so through the
+		// sibling, as a container whose containment can raise does
+		// through ContainsErr. Only mappingproxy has one, and only for
+		// an undefined inside it.
+		case interface {
+			GetItemErr(value.Value) (value.Value, bool, error)
+		}:
+			v, ok, err := obj.GetItemErr(key)
+			if err != nil {
+				return value.Undefined, err
+			}
+			if ok {
+				return v, nil
+			}
 		case value.Mapping:
 			if v, ok := obj.GetItem(key); ok {
 				return v, nil

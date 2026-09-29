@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"iter"
+	"math"
 	"strings"
 
 	"github.com/mgilbir/gojja2/value"
@@ -165,10 +166,11 @@ func (m *mappingProxy) GetAttr(name string) (value.Value, bool) {
 		value.FromObject(m), m.py)
 }
 
-// The proxy delegates to whatever it wraps. That is nearly always a dict --
-// `.mapping` makes no other kind -- but the constructor accepts what
-// PyMapping_Check does, which includes a *string*, and `mappingproxy('ab')`
-// then indexes, sizes and iterates as the string does.
+// The proxy delegates to whatever it wraps, because mappingproxy_subscript is
+// `PyObject_GetItem(pp->mapping, key)` and nothing more. The constructor takes
+// what PyMapping_Check does minus list and tuple, so that is a dict, a string,
+// a bytes, a range, another proxy or an undefined -- and each indexes here as
+// it would on its own.
 func (m *mappingProxy) GetItem(key value.Value) (value.Value, bool) {
 	if d, ok := m.d.Dict(); ok {
 		v, found, err := d.Get(key, m.py)
@@ -180,7 +182,14 @@ func (m *mappingProxy) GetItem(key value.Value) (value.Value, bool) {
 	if inner, ok := m.d.Interface().(value.Mapping); ok {
 		return inner.GetItem(key)
 	}
-	if m.d.Kind() == value.KindString {
+	// An undefined raises from its own __getitem__, whatever the key is.
+	// This interface has nowhere to put that, so it answers a miss and
+	// GetItemErr below is what the evaluator asks.
+	if m.d.IsUndefined() {
+		return value.Undefined, false
+	}
+	switch m.d.Kind() {
+	case value.KindString:
 		i, ok := key.Int64()
 		if !ok {
 			return value.Undefined, false
@@ -193,8 +202,57 @@ func (m *mappingProxy) GetItem(key value.Value) (value.Value, bool) {
 			return value.Undefined, false
 		}
 		return value.String(string(runes[i])), true
+	case value.KindBytes:
+		// A bytes indexes to the integer byte, as everywhere else.
+		i, ok := key.Int64()
+		if !ok {
+			return value.Undefined, false
+		}
+		raw := m.d.AsString()
+		if i < 0 {
+			i += int64(len(raw))
+		}
+		if i < 0 || i >= int64(len(raw)) {
+			return value.Undefined, false
+		}
+		return value.Int(int64(raw[i])), true
+	}
+	if seq, ok := m.d.Interface().(value.Sequence); ok {
+		i, ok := key.Int64()
+		if !ok {
+			return value.Undefined, false
+		}
+		if i < 0 {
+			i += int64(seq.Len())
+		}
+		if i < 0 || i > math.MaxInt32 {
+			return value.Undefined, false
+		}
+		return seq.GetIndex(int(i))
+	}
+	// An object whose __getitem__ gojja2 answers through the attribute
+	// path -- `self['body']` is the one -- indexes through the proxy the
+	// same way, because the proxy only forwards the subscript.
+	if key.Kind() == value.KindString {
+		return lookupAttr(nil, m.d, key.AsString())
 	}
 	return value.Undefined, false
+}
+
+// GetItemErr is [mappingProxy.GetItem] for the one wrapped value whose
+// subscript raises rather than answering.
+//
+// `mappingproxy(nope)[0]` is the undefined's own error, because
+// mappingproxy_subscript is PyObject_GetItem and Undefined.__getitem__ is
+// _fail_with_undefined_error. Reported through a sibling with somewhere to put
+// it, as ContainsErr is: the plain Mapping interface can only say "no such
+// key", and that renders as nothing.
+func (m *mappingProxy) GetItemErr(key value.Value) (value.Value, bool, error) {
+	if m.d.IsUndefined() {
+		return value.Undefined, true, m.d.UndefinedError()
+	}
+	v, ok := m.GetItem(key)
+	return v, ok, nil
 }
 
 func (m *mappingProxy) Keys() []value.Value {
@@ -275,15 +333,21 @@ func (m *mappingProxy) EqualsErr(other value.Value, py value.PythonVersion) (boo
 	return eq, true, err
 }
 
+// ContainsErr delegates, because mappingproxy_check_key is
+// `PySequence_Contains(pp->mapping, key)` -- the wrapped object answers, with
+// its own rules and its own refusals. A proxy over a string is a string here:
+// `0 in mappingproxy('ab')` is "'in <string>' requires string as left operand"
+// and `'a' in mappingproxy('ab')` is True, where hashing the key and looking it
+// up as a dict would made the first True and the second False.
 func (m *mappingProxy) ContainsErr(item value.Value, py value.PythonVersion) (found, known bool, err error) {
-	d, ok := m.d.Dict()
-	if !ok {
-		return false, false, nil
+	if d, ok := m.d.Dict(); ok {
+		if err := value.CheckHashable(item, py, value.AsDictKey); err != nil {
+			return false, true, err
+		}
+		_, got, err := d.Get(item, py)
+		return got, true, err
 	}
-	if err := value.CheckHashable(item, py, value.AsDictKey); err != nil {
-		return false, true, err
-	}
-	_, got, err := d.Get(item, py)
+	got, err := value.Contains(item, m.d, nil, py)
 	return got, true, err
 }
 
