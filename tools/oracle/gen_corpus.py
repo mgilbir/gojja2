@@ -8796,6 +8796,32 @@ for _n, _src in [
 ]:
     case("methods/list_index_bounds_" + _n, _src)
 
+# |tojson's string writer and its non-finite floats had no case at all: a quote,
+# a backslash, the five short escapes, a control character, an astral
+# character as a surrogate pair, and Infinity, -Infinity and NaN -- which
+# json.dumps writes because allow_nan is on. The infinities are computed at run
+# time: a literal one folds, and jinja2 writes it into its generated code as
+# `inf`, which is a divergence of its own.
+for _n, _src in [
+    ("short_escapes", "{{ 'a\"b'|tojson }}|{{ 'a\\\\b'|tojson }}|{{ 'a\\tb'|tojson }}|"
+     "{{ 'a\\bb'|tojson }}|{{ 'a\\fb'|tojson }}|{{ 'a\\nb\\rc'|tojson }}"),
+    ("control", "{{ '\\x00\\x01\\x1f\\x7f'|tojson }}"),
+    ("astral", "{{ '\U0001f600'|tojson }}|{{ '\u00e9\u4e2d'|tojson }}|{{ '\\U0010ffff'|tojson }}|"
+     "{{ {'\U0001f600': '\\t'}|tojson }}"),
+    ("keys_escaped", "{{ {'k\"': 'v\\\\'}|tojson }}"),
+    ("non_finite", "{% set b = 1e308 %}{% set a = b * 10 %}{{ a|tojson }}|{{ (-a)|tojson }}|"
+     "{{ (a - a)|tojson }}|{{ [a, -a, a - a]|tojson }}|{{ {'x': a}|tojson(indent=2) }}"),
+    ("floats", "{{ 1.5|tojson }}|{{ 1e16|tojson }}|{{ 1e-7|tojson }}|{{ (0.1 + 0.2)|tojson }}|"
+     "{{ -0.0|tojson }}|{{ (2**70)|tojson }}|{{ 1e22|tojson }}|{{ 5e-324|tojson }}"),
+    # A key json.dumps accepts is written as a string of what it is, and a
+    # non-finite float key is spelled as the value would be.
+    ("non_finite_keys", "{% set b = 1e308 %}{% set a = b * 10 %}{{ {a: 1}|tojson }}|{{ {-a: 2}|tojson }}|"
+     "{{ {a - a: 3}|tojson }}"),
+    ("scalar_keys", "{{ {1.5: 'x'}|tojson }}|{{ {true: 1}|tojson }}|{{ {false: 1}|tojson }}|"
+     "{{ {none: 1}|tojson }}|{{ {2**70: 1}|tojson }}|{{ {-0.0: 1, 1e16: 2}|tojson }}"),
+]:
+    case("filters/tojson_writes_" + _n, _src)
+
 # A loop over a proxy that stops early stops the wrapped object's iteration.
 case("dictview/proxy_iteration_stops_early",
      _DV + "{% set C = d.keys().mapping.__class__ %}{% for k in C('ab') %}{{ k }}{% break %}{% endfor %}",

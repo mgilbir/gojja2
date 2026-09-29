@@ -1,0 +1,3 @@
+{}
+---
+{{ '😀'|tojson }}|{{ 'é中'|tojson }}|{{ '\U0010ffff'|tojson }}|{{ {'😀': '\t'}|tojson }}

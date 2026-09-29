@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 1e308 %}{% set a = b * 10 %}{{ {a: 1}|tojson }}|{{ {-a: 2}|tojson }}|{{ {a - a: 3}|tojson }}

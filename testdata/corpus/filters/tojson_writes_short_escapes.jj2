@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a"b'|tojson }}|{{ 'a\\b'|tojson }}|{{ 'a\tb'|tojson }}|{{ 'a\bb'|tojson }}|{{ 'a\fb'|tojson }}|{{ 'a\nb\rc'|tojson }}

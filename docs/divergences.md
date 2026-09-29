@@ -43,6 +43,7 @@ are safety controls rather than behavioural choices, and they live in
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
 | [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | Only `self is iterable`, which answers differently |
 | [`\N{...}` escapes](#n-escapes-in-string-literals) | refused; needs the Unicode name database | Only if you write `\N{...}` |
+| [A lone surrogate in a string literal](#a-lone-surrogate-in-a-string-literal) | `'\ud800'` is U+FFFD here | Only if you write a surrogate escape that is not half of a pair |
 | [Which codecs and handlers are known](#which-codecs-and-error-handlers-encode-and-decode-know) | utf-8, ascii, latin-1; jinja2 has ~100. Three error handlers are missing too | Only outside those three, or with `namereplace` or a surrogate handler on a decode |
 | [Objects whose repr carries an address](#objects-whose-repr-carries-an-address) | a different address | No -- unreproducible in CPython too |
 | [`\|pprint` of a value that contains itself](#pprint-of-a-value-that-contains-itself) | a different address | No -- likewise |
@@ -367,6 +368,30 @@ Every other escape -- `\xNN`, `\uNNNN`, `\UNNNNNNNN`, octal, and the
 single-character escapes -- is exact, including CPython's quirk that `"\é"`
 decodes to the four characters `\xe9`.
 
+
+### A lone surrogate in a string literal
+
+```jinja
+{{ '\ud800' == '\ufffd' }}     False on CPython, True here
+```
+
+A `\u` or `\U` escape can name a UTF-16 surrogate, U+D800 to U+DFFF, and in
+Python that is a one-character string like any other. Two of them written side
+by side are two such characters, not the one they would encode in UTF-16:
+`'\ud83d\ude00'` has length 2 and is not the emoji. A Go string is UTF-8,
+which has no encoding for a surrogate at all, so the lexer writes U+FFFD for
+each. The length agrees, and so does everything that only counts or compares
+lengths. What differs is everything that looks at the character: equality,
+`|tojson` (`"\ud800"` there, `"\ufffd"` here), `|pprint`, and every encoder --
+`'\ud800'.encode()` and `|urlencode` are "surrogates not allowed" on CPython
+and three bytes of U+FFFD here.
+
+Carrying one would mean a string representation that is not a Go string, for a
+value no text source can contain: nothing read from a file, a context or a
+decode is a lone surrogate, only an escape written for the purpose. The codec
+entry above is the same limit reached from the other side. It is pinned by
+`TestLoneSurrogateLiteral` rather than by corpus cases, because the corpus's
+reference files are UTF-8 too and cannot hold CPython's answer.
 ### Which codecs and error handlers `.encode()` and `.decode()` know
 
 ```jinja
