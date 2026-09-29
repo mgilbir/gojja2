@@ -569,8 +569,14 @@ func translateLookup(table value.Value, c rune, py value.PythonVersion) (value.V
 		}
 		return value.Undefined, false, nil
 	}
-	// An undefined defines __getitem__ and raises its own error from it.
+	// An undefined defines __getitem__ and raises its own error from it --
+	// except a ChainableUndefined, whose __getitem__ answers itself. That is
+	// then a found replacement of the wrong type, which the caller refuses:
+	// "character mapping must return integer, None or str".
 	if table.IsUndefined() {
+		if table.UndefinedBehavior() == value.UndefinedChainable {
+			return table, true, nil
+		}
 		return value.Undefined, false, table.UndefinedError()
 	}
 	// An object is a table only if it defines __getitem__: a mapping is

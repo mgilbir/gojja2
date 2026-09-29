@@ -9240,6 +9240,14 @@ for _n, _tbl in [
 ]:
     case("methods/translate_table_" + _n, "{{ 'abc'.translate(" + _tbl + ") }}")
 case("methods/translate_undefined_table_of_nothing", "{{ ''.translate(nope) }}")
+# Each Undefined class answers __getitem__ its own way: the default, debug and
+# strict ones raise, and a ChainableUndefined answers itself -- a replacement
+# of the wrong type, which translate refuses as such.
+for _kind in ["default", "chainable", "debug", "strict"]:
+    case(f"methods/translate_undefined_table_{_kind}", "{{ 'abc'.translate(nope) }}",
+         __settings__={"undefined": _kind})
+    case(f"methods/translate_undefined_attribute_table_{_kind}", "{{ 'abc'.translate([1].nope) }}",
+         __settings__={"undefined": _kind})
 
 # A replacement field's `[key]` is followed by `.`, `[` or the end. Anything
 # else is refused when the iterator reaches it, so a failure among the steps
