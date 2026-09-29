@@ -98,6 +98,17 @@ type IterableErr interface {
 	IterateErr() (iter.Seq[Value], error)
 }
 
+// OrderDelegate is an Object whose ordering comparisons are another value's:
+// CPython's mappingproxy_richcompare is `PyObject_RichCompare(pp->mapping, w,
+// op)` and nothing else. So a proxy on the left is its wrapped object, refusal
+// and all, and one on the right answers the reflected operator the same way:
+// `1e3 >= mappingproxy(d)` is "'<=' not supported between instances of 'dict'
+// and 'float'", and a proxy over a string orders as the string.
+type OrderDelegate interface {
+	Object
+	OrderDelegate() Value
+}
+
 // Equaler lets an Object decide == for itself. The second result reports
 // whether it has an opinion; without one, objects compare by identity.
 //

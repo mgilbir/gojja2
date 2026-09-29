@@ -377,6 +377,12 @@ func compare(op string, a, b Value, depth int, py PythonVersion) (int, bool, err
 	if b.IsUndefined() {
 		return 0, false, b.UndefinedError()
 	}
+	// An object whose rich comparison is another value's is that value when
+	// it is on the left -- its own method is tried first and never declines.
+	// On the right it is asked below, only where the left side declined.
+	if d, ok := a.obj.(OrderDelegate); ok && a.kind == KindObject {
+		return compare(op, d.OrderDelegate(), b, depth+1, py)
+	}
 	// A tuple subclass orders as the tuple it stands for, so |min and |max
 	// over |groupby results compare pair by pair. The originals are kept
 	// for the error, which names the class the template actually has.
@@ -414,6 +420,13 @@ func compare(op string, a, b Value, depth int, py PythonVersion) (int, bool, err
 			bs, _ := b.Seq()
 			return compareSeq(op, as.items, bs.items, depth, py)
 		}
+	}
+	// The left side declined, so Python asks the right one with the operator
+	// reflected -- and a delegating object answers by comparing what it
+	// wraps, whose refusal is then the one that is raised.
+	if d, ok := b.obj.(OrderDelegate); ok && b.kind == KindObject {
+		ord, ok, err := compare(swappedOp(op), d.OrderDelegate(), a, depth+1, py)
+		return -ord, ok, err
 	}
 	return 0, false, errs.New(errs.TypeError,
 		"'%s' not supported between instances of '%s' and '%s'",

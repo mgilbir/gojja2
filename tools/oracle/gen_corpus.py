@@ -8822,6 +8822,29 @@ for _n, _src in [
 ]:
     case("filters/tojson_writes_" + _n, _src)
 
+# <, <=, > and >= on a proxy are the wrapped object's: mappingproxy_richcompare
+# is PyObject_RichCompare(pp->mapping, w, op). On the left it delegates; on the
+# right the left side declines first and the reflected operator reaches it --
+# so the refusal names the wrapped type, with the operator as the innermost
+# comparison saw it, and a proxy over a string orders as the string. Found by
+# the render soak, once the generator wrote proxies:
+# `{{ ... <= 1e3 >= (ed.values().mapping) }}`.
+_PM = "{% set C = d.keys().mapping.__class__ %}{% set m = C({'a': 1}) %}"
+for _n, _src in [
+    ("left_refused", "{{ m < 1 }}"),
+    ("right_refused", "{{ 1e3 >= m }}"),
+    ("both_sides", "{{ m < m }}"),
+    ("against_a_dict", "{{ m <= {'a': 1} }}"),
+    ("dict_on_the_left", "{{ {'a': 1} > m }}"),
+    ("list_on_the_left", "{{ [1] < m }}"),
+    ("over_a_string", "{{ C('ab') < 'b' }}|{{ C('ab') >= 'ab' }}|{{ 'b' > C('ab') }}|{{ C(C('ab')) < 'b' }}"),
+    ("over_a_range", "{{ C(range(3)) < range(2) }}"),
+    ("over_an_undefined", "{{ C(nope) < 1 }}"),
+    ("sorted", "{{ [C('b'), C('a')]|sort|map('list')|list }}|{{ C('b')|min }}|{{ [C('b'), C('a')]|max|list }}"),
+    ("chained", "{{ ['A b-c'] is not callable <= 1e3 >= (ed.values().mapping) }}"),
+]:
+    case("dictview/proxy_orders_" + _n, _DV + _PM + _src, ed={})
+
 # A loop over a proxy that stops early stops the wrapped object's iteration.
 case("dictview/proxy_iteration_stops_early",
      _DV + "{% set C = d.keys().mapping.__class__ %}{% for k in C('ab') %}{{ k }}{% break %}{% endfor %}",

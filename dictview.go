@@ -402,6 +402,10 @@ func (m *mappingProxy) EqualsErr(other value.Value, py value.PythonVersion) (boo
 	return eq, true, err
 }
 
+// OrderDelegate makes <, <=, > and >= the wrapped object's, as
+// mappingproxy_richcompare makes them. See value.OrderDelegate.
+func (m *mappingProxy) OrderDelegate() value.Value { return m.d }
+
 // ContainsErr delegates, because mappingproxy_check_key is
 // `PySequence_Contains(pp->mapping, key)` -- the wrapped object answers, with
 // its own rules and its own refusals. A proxy over a string is a string here:

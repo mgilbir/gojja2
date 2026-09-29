@@ -1,0 +1,5 @@
+{
+  "ed": {}
+}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}{% set m = C({'a': 1}) %}{{ {'a': 1} > m }}
