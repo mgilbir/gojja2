@@ -187,6 +187,14 @@ const overrunShare = 0.6
 // stops at 13% when it is right, so 30% is more than twice the correct answer
 // and well under the defect.
 //
+// |tojson is the same shape and was found by `make mutate`, which reported
+// writeJSONString's block charge as a site nothing constrained. It is not: this
+// case measures it, and the loose bar could not decide. Taking the charge out
+// stops the render at 57%, 67% and 64% over three runs -- the escaping walk is
+// about half the work and the deadline then lands on the charge that follows it
+// -- against a 60% bar, so the defect was caught two times in three. It stops at
+// 13% with the charge, on every run.
+//
 // Keyed by the workload's own name, passed in rather than read back out of
 // the subtest, which has its spaces rewritten as underscores.
 var tightBar = map[string]float64{
@@ -195,6 +203,7 @@ var tightBar = map[string]float64{
 	"str.split on sep": 0.30,
 	"bytes.split":      0.30,
 	"bytes.rsplit":     0.30,
+	"tojson":           0.30,
 }
 
 // deadlineRuns is how many times the deadline is measured, the best standing

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mgilbir/gojja2"
+	"github.com/mgilbir/gojja2/errs"
 )
 
 // One charge site, one template that reaches it and nothing else.
@@ -40,13 +41,10 @@ import (
 //     same twice. The loop cases break on the first pass so the second walk
 //     costs one.
 //
-// One charge is deliberately left unmeasured: methods.go's pad, which adds the
-// two halves of a centre together before building either. Every bound that
-// would tell it from the repeat it guards needs the halves to be individually
-// legal and jointly over the *allocation ceiling*, which is two gigabytes -- so
-// the mutated build would have to allocate three of them to prove the point.
-// It is belt-and-braces over a charge repeatString makes anyway, and that is
-// the honest description rather than a case that pretends to measure it.
+// methods.go's pad is not in the table: no *budget* can tell its charge from
+// the ones repeatString makes anyway, because whatever the halves cost
+// together they cost separately too. It is measured, by the gate a budget is
+// not -- see TestPadChargesTheWholeCentreBeforeBuildingEitherHalf below.
 func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 	// Every receiver comes from the context, never from a literal: an
 	// expression whose operands are all constant is folded at compile time
@@ -261,5 +259,47 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 					"write can be what refused", tc.src, sb.Len())
 			}
 		})
+	}
+}
+
+// TestPadChargesTheWholeCentreBeforeBuildingEitherHalf measures methods.go's
+// pad, the charge the table above cannot reach.
+//
+// A budget cannot tell it from the charges `repeatString` makes anyway: two
+// halves cost together exactly what they cost apart, so whichever refuses, one
+// of them does. ChargeBytes has a second gate that does not work that way. It
+// refuses anything over maxAllocBytes outright, *before* the budget is
+// consulted, and that ceiling is per charge rather than per render -- which is
+// the whole reason pad adds the halves up before building either. Charge them
+// separately and each one is legal while their sum is not.
+//
+// So: a width a little over twice the ceiling. With the charge the render is
+// refused with an OverflowError naming the sum, and nothing is built. Without
+// it, the first half passes the ceiling and the budget is what refuses, one
+// gate later and a gigabyte and a half further down the road. The two errors
+// are what tells the versions apart, so this asserts the kind and not just that
+// something failed.
+func TestPadChargesTheWholeCentreBeforeBuildingEitherHalf(t *testing.T) {
+	// Between the ceiling and twice it, so that the sum is over and each
+	// half is under -- 5,000,000,000 would put *both* halves over on their
+	// own and the mutated build would refuse for the wrong reason. The
+	// receiver comes from the context rather than a literal, which would
+	// fold.
+	const width = 3000000000
+	env := mustEnv(gojja2.WithMaxOutputBytes(4096))
+	tmpl, err := env.FromString(fmt.Sprintf(`{%% set v = x.center(%d) %%}`, width))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var sb strings.Builder
+	err = tmpl.Render(context.Background(), &sb, map[string]any{"x": "x"})
+	if kind := errs.KindOf(err); kind != errs.OverflowError {
+		t.Errorf("center(%d): got %v (%v), want an OverflowError: the sum of "+
+			"the two halves is over the allocation ceiling even though "+
+			"neither half is", width, kind, err)
+	}
+	if sb.Len() != 0 {
+		t.Errorf("center(%d) wrote %d bytes; the result is bound to a name, "+
+			"so nothing should reach the output", width, sb.Len())
 	}
 }
