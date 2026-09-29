@@ -6475,30 +6475,67 @@ case("loops/filter_not_forced_by_index",
 # *end* of the body, so a break on the first iteration reads as "never ran".
 _LC = {"extensions": ["loopcontrols"]}
 case("loops/last_looks_ahead_by_one",
-     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.last }}{{ d|length }}"
-     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.last }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
 case("loops/last_then_break",
-     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]"
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]"
      "{% if loop.last == 0 %}{% break %}{% endif %}{% endfor %}",
-     __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+     __settings__=_LC)
 case("loops/last_then_break_recursive",
-     "{% for i in 'abcdef' if d.popitem() recursive %}[{{ i }}]"
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() recursive %}[{{ i }}]"
      "{% if loop.last == 0 %}{% break %}{% endif %}{% else %}empty{% endfor %}",
-     __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+     __settings__=_LC)
 case("loops/nextitem_looks_ahead_by_one",
-     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.nextitem }}{{ d|length }}"
-     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.nextitem }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
 # The neighbours that *do* need the total, so the lookahead cannot be widened
 # back into one: both of these run the test over the rest even under a break.
 case("loops/length_needs_the_total_under_break",
-     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.length }}{{ d|length }}"
-     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.length }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
 case("loops/revindex_needs_the_total_under_break",
-     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.revindex }}{{ d|length }}"
-     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.revindex }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
+# Consuming the loop *object* pulls through the same source, and a `{% break %}`
+# would then leave the filter's failure sitting in it unreported. jinja2 raises
+# where the consumption happened, so the loop reports it even after a break --
+# which is a different rule from the one below, where a break stops the walk
+# *before* the pull that would have failed and there is nothing to report.
+#
+# `{{ loop|string }}` is here because LoopContext.__repr__ asks for the length,
+# so even printing the loop consumes the rest of a filtered one.
+for _n, _src in [
+    ("length_filter", "{{ loop|length }}"),
+    ("count_filter", "{{ loop|count }}"),
+    ("list_filter", "{{ loop|list|length }}"),
+    ("first_filter", "{{ loop|first }}"),
+    ("string_filter", "{{ loop|string }}"),
+    ("dict_of_it", "{{ dict(loop, extra=2)|length }}"),
+    ("walked_again", "{% for a, b in loop %}{% endfor %}"),
+    ("membership", "{{ 1 in loop }}"),
+    ("set_from_it", "{% set x = loop|list %}"),
+    ("mapped", "{{ loop|map('string')|list|length }}"),
+]:
+    # The dictionary is built in the template rather than passed in: a
+    # context dict of more than one key makes the case unreadable to
+    # TestBothRenderPathsAgree, which has to hand the context over as a Go map
+    # and so cannot carry its order. A dict display is ordered in both engines,
+    # so this grades the same rule and is checked by both render paths.
+    case(f"loops/consumed_then_break_{_n}",
+         "{% set d = {'e': 5, 'd': 4, 'c': 3, 'b': 2, 'a': 1} %}{% for i in 'abcdef' if d.popitem() %}" + _src +
+         "[{{ d|length }}]{% break %}{% endfor %}", __settings__=_LC)
+# The two that do *not* consume it, so the rule cannot be widened into "a break
+# always reports": `is iterable` asks the type and `[loop]` only holds it.
+case("loops/not_consumed_by_a_test",
+     "{% set d = {'e': 5, 'd': 4, 'c': 3, 'b': 2, 'a': 1} %}{% for i in 'abcdef' if d.popitem() %}"
+     "[{{ loop is iterable }}][{{ d|length }}]{% break %}{% endfor %}", __settings__=_LC)
+case("loops/not_consumed_by_a_list_literal",
+     "{% set d = {'e': 5, 'd': 4, 'c': 3, 'b': 2, 'a': 1} %}{% for i in 'abcdef' if d.popitem() %}"
+     "[{{ [loop]|length }}][{{ d|length }}]{% break %}{% endfor %}", __settings__=_LC)
+
 case("loops/first_does_not_look_ahead",
-     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.first }}{{ d|length }}"
-     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.first }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
 
 # ...and a filtered loop whose test does not raise still answers the totals.
 case("loops/revindex_under_a_working_filter",

@@ -3,12 +3,7 @@
     "extensions": [
       "loopcontrols"
     ]
-  },
-  "d": {
-    "b": 2,
-    "a": 1,
-    "C": 3
   }
 }
 ---
-{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.first }}{{ d|length }}{% break %}{% endfor %}
+{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.first }}{{ d|length }}{% break %}{% endfor %}

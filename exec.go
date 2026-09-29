@@ -531,6 +531,15 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 			break
 		}
 	}
+	// A body that consumed the loop *object* pulls through this same source
+	// -- `{{ loop|length }}`, `{{ dict(loop) }}`, `{% for a, b in loop %}`,
+	// even `{{ loop|string }}`, whose repr asks for the length -- and a
+	// `{% break %}` would then leave the failure unreported. jinja2 raises it
+	// where the consumption happened, so it is taken here rather than left to
+	// the check below, which a break deliberately skips.
+	if err := ex.st.takeLoopFailure(); err != nil {
+		return err
+	}
 	// A filter that failed part way stops the loop rather than ending it.
 	// A break stops it *before* that pull, so there is nothing to report.
 	if err := src.err(); err != nil && !broke {
@@ -611,7 +620,7 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 			}
 		}
 	}
-	return &filteredSource{next: next}, nil
+	return &filteredSource{next: next, report: ex.st.noteLoopFailure}, nil
 }
 
 func (ex *exec) execAssign(n *ast.Assign) error {

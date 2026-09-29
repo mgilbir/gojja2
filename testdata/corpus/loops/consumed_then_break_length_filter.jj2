@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "loopcontrols"
+    ]
+  }
+}
+---
+{% set d = {'e': 5, 'd': 4, 'c': 3, 'b': 2, 'a': 1} %}{% for i in 'abcdef' if d.popitem() %}{{ loop|length }}[{{ d|length }}]{% break %}{% endfor %}

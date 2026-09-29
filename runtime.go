@@ -140,6 +140,11 @@ type filteredSource struct {
 	items []value.Value
 	done  bool
 	fail  error
+	// report tells the render that a pull failed, so that a *body* which
+	// consumed the loop object -- `{{ loop|length }}`, `dict(loop)`,
+	// `{% for a, b in loop %}` -- cannot leave the failure sitting here for
+	// a `{% break %}` to discard. See runLoop.
+	report func(error)
 }
 
 func (s *filteredSource) pull() bool {
@@ -150,6 +155,9 @@ func (s *filteredSource) pull() bool {
 	switch {
 	case err != nil:
 		s.fail, s.done = err, true
+		if s.report != nil {
+			s.report(err)
+		}
 		return false
 	case !ok:
 		s.done = true

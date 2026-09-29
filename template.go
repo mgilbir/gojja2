@@ -268,6 +268,12 @@ type State struct {
 	// root frame has shadowed but not yet assigned.
 	contextVars *scope
 
+	// loopFailure is a loop filter's failure, recorded by the source it
+	// happened in so that the loop can report it even after a break. Shared
+	// across the nested execs of one render, which is what lets a failure
+	// inside a body reach the loop that owns the source.
+	loopFailure error
+
 	blocks map[string][]blockEntry
 	// autoescape is the escaping in force *now*: {% autoescape %} moves it
 	// for the dynamic extent of its body, so a filter called from inside
@@ -289,6 +295,24 @@ type State struct {
 	// budget bounds the work of the whole render. It is shared with every
 	// nested render, so an {% include %} cannot start a fresh allowance.
 	budget *budget
+}
+
+// noteLoopFailure records a loop filter's failure so that runLoop can report it
+// even when a `{% break %}` ended the walk. See the call in runLoop.
+func (s *State) noteLoopFailure(err error) {
+	if s != nil && s.loopFailure == nil {
+		s.loopFailure = err
+	}
+}
+
+// takeLoopFailure returns a recorded loop-filter failure once.
+func (s *State) takeLoopFailure() error {
+	if s == nil {
+		return nil
+	}
+	err := s.loopFailure
+	s.loopFailure = nil
+	return err
 }
 
 // Context returns the context the render was started with. A filter or global
