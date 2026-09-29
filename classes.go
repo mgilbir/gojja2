@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"math/big"
 	"slices"
 	"strings"
 
@@ -60,6 +61,21 @@ var classProbes = map[string]value.Value{
 	"int":   value.Int(0),
 	"float": value.Float(0),
 	"bool":  value.Bool(false),
+	// The classes of gojja2's own objects, whose methods are found the same
+	// way. `{{ range(3).__class__.index(range(3), 2) }}` is 2 in CPython and
+	// was "'type object' has no attribute 'index'" here.
+	"range":        value.FromObject(newRange(big.NewInt(0), big.NewInt(0), big.NewInt(1))),
+	"set":          value.FromObject(emptySet()),
+	"dict_keys":    value.FromObject(&dictView{d: value.NewDict(), kind: viewKeys}),
+	"dict_values":  value.FromObject(&dictView{d: value.NewDict(), kind: viewValues}),
+	"dict_items":   value.FromObject(&dictView{d: value.NewDict(), kind: viewItems}),
+	"mappingproxy": value.FromObject(&mappingProxy{d: value.NewDict()}),
+}
+
+// emptySet is a set with nothing in it, which cannot fail to build.
+func emptySet() *value.Set {
+	s, _ := value.NewSet(nil, value.DefaultPythonVersion, nil)
+	return s
 }
 
 // unboundMethod is `T.m`: the method with self supplied at the call.
@@ -73,8 +89,9 @@ var classProbes = map[string]value.Value{
 // Everything past the first argument is the method's own, so an arity error
 // comes from the method rather than from here.
 func (c *classObject) unboundMethod(name string) (value.Value, bool) {
-	// A descriptor is a property of the class itself and needs no probe --
-	// range has three and no instance to find them on here.
+	// A descriptor is a property of the class itself and needs no probe, and
+	// it must be answered before one: the range probe would find `start` and
+	// hand back its value, 0, where the class has a member descriptor.
 	if kind, isDescriptor := classDescriptors[c.qualified][name]; isDescriptor {
 		return value.FromObject(&descriptorObject{
 			kind: kind, class: methodOwner(c.qualified), name: name,
@@ -149,6 +166,11 @@ var classDescriptors = map[string]map[string]string{
 	"bool":  {"real": "attribute", "imag": "attribute", "numerator": "attribute", "denominator": "attribute"},
 	"float": {"real": "attribute", "imag": "attribute"},
 	"range": {"start": "member", "stop": "member", "step": "member"},
+	// Every view carries its dict as a proxy (3.10), and the class says so:
+	// `<attribute 'mapping' of 'dict_items' objects>`.
+	"dict_keys":   {"mapping": "attribute"},
+	"dict_values": {"mapping": "attribute"},
+	"dict_items":  {"mapping": "attribute"},
 }
 
 // descriptorObject is one of those: a value that prints itself and refuses to

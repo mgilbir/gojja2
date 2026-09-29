@@ -2894,6 +2894,79 @@ for _n, _src in [
     case("classes/" + _n, _src, n3=3)
 case("classes/subscript_range_global", "{{ range(3).__class__[1:] }}")
 
+# range has two methods, count and index, and both answered "'range object' has
+# no attribute". They are arithmetic for an int or a bool and a generic search
+# for anything else, and the two paths word a miss differently: "5 is not in
+# range" against "sequence.index(x): x not in sequence". An integral float takes
+# the search and still finds its element. The wide range is the reason for the
+# arithmetic: its index does not fit a machine integer.
+for _n, _src, _ctx in [
+    ("index_hit", "{{ range(3).index(2) }}|{{ range(10, 0, -3).index(4) }}", {}),
+    ("index_bool", "{{ range(3).index(true) }}|{{ range(3).index(false) }}", {}),
+    ("index_miss_int", "{{ range(3).index(5) }}", {}),
+    ("index_miss_negative", "{{ range(3).index(-1) }}", {}),
+    ("index_miss_off_step", "{{ range(10, 0, -3).index(5) }}", {}),
+    ("index_miss_bool", "{{ range(5, 9).index(true) }}", {}),
+    ("index_float_hit", "{{ range(3).index(1.0) }}|{{ range(10, 0, -3).index(4.0) }}", {}),
+    ("index_float_miss", "{{ range(3).index(1.5) }}", {}),
+    ("index_str_miss", "{{ range(3).index('a') }}", {}),
+    ("index_none_miss", "{{ range(3).index(none) }}", {}),
+    ("index_list_miss", "{{ range(3).index([1]) }}", {}),
+    ("index_undefined_miss", "{{ range(3).index(nope) }}", {}),
+    ("index_empty_range", "{{ range(0).index(0) }}", {}),
+    ("index_context_int", "{{ range(n).index(n - 1) }}", {"n": 4}),
+    ("index_wide", "{{ range(2**70).index(2**69) }}|{{ range(0, 2**70, 3).index(9) }}", {}),
+    ("count", "{{ range(3).count(1) }}|{{ range(3).count(5) }}|{{ range(3).count(true) }}|"
+     "{{ range(3).count(1.0) }}|{{ range(3).count(1.5) }}|{{ range(3).count('a') }}|"
+     "{{ range(3).count(nope) }}", {}),
+    ("count_wide", "{{ range(2**70).count(2**69) }}|{{ range(2**70).count(-1) }}", {}),
+    ("index_no_args", "{{ range(3).index() }}", {}),
+    ("index_two_args", "{{ range(3).index(1, 2) }}", {}),
+    ("index_keyword", "{{ range(3).index(x=1) }}", {}),
+    ("count_no_args", "{{ range(3).count() }}", {}),
+    ("count_two_args", "{{ range(3).count(1, 2) }}", {}),
+    ("method_repr", "{{ range(3).count.__name__ }}|{{ range(3).count.__qualname__ }}|"
+     "{{ range(3).index is callable }}", {}),
+    ("method_held", "{% set f = range(3).index %}{{ f(2) }}", {}),
+]:
+    case(f"methods/range_{_n}", _src, **_ctx)
+# A StrictUndefined is compared against the first element and refuses there, so
+# it raises from a range with elements and is simply absent from an empty one.
+case("methods/range_index_strict", "{{ range(3).index(nope) }}", __settings__={"undefined": "strict"})
+case("methods/range_count_strict", "{{ range(3).count(nope) }}", __settings__={"undefined": "strict"})
+case("methods/range_count_strict_empty", "{{ range(0).count(nope) }}", __settings__={"undefined": "strict"})
+
+# The type objects of range, set, the three dict views and mappingproxy carry
+# their methods unbound, as the built-in scalars' and containers' do, and the
+# views carry `mapping` as a getset descriptor. All of it answered "'type
+# object' has no attribute". A set is reached as a view minus an iterable.
+_V = "{% set d = {'a': 1, 'b': 2} %}{% set s = d.keys() - ['b'] %}"
+for _n, _src in [
+    ("range_methods", "{{ range(3).__class__.index }}|{{ range(3).__class__.count }}"),
+    ("range_index_unbound", "{{ range(3).__class__.index(range(3), 2) }}|"
+     "{{ range(3).__class__.count(range(5), 4) }}"),
+    ("range_unbound_no_receiver", "{{ range(3).__class__.index() }}"),
+    ("range_unbound_wrong_receiver", "{{ range(3).__class__.index([1, 2], 2) }}"),
+    ("range_unbound_arity", "{{ range(3).__class__.index(range(3)) }}"),
+    ("range_unknown_name", "[{{ range(3).__class__.nope }}]"),
+    ("set_methods", _V + "{{ s.__class__.add }}|{{ s.__class__.union }}|{{ s.__class__.isdisjoint }}"),
+    ("set_unbound_call", _V + "{{ s.__class__.union(s, ['z'])|sort }}|{% set _ = s.__class__.add(s, 'q') %}{{ s|sort }}"),
+    ("set_unbound_wrong_receiver", _V + "{{ s.__class__.add(d, 1) }}"),
+    ("view_methods", _V + "{{ d.keys().__class__.isdisjoint }}|{{ d.items().__class__.isdisjoint }}"),
+    ("view_unbound_call", _V + "{{ d.keys().__class__.isdisjoint(d.keys(), 'z') }}|"
+     "{{ d.items().__class__.isdisjoint(d.items(), [('a', 1)]) }}"),
+    ("view_unbound_wrong_view", _V + "{{ d.keys().__class__.isdisjoint(d.items(), 'z') }}"),
+    ("values_view_has_no_methods", _V + "[{{ d.values().__class__.isdisjoint }}]"),
+    ("view_mapping_descriptor", _V + "{{ d.keys().__class__.mapping }}|{{ d.values().__class__.mapping }}|"
+     "{{ d.items().__class__.mapping }}"),
+    ("view_mapping_descriptor_not_callable", _V + "{{ d.keys().__class__.mapping(d.keys()) }}"),
+    ("mappingproxy_methods", _V + "{% set m = d.keys().mapping %}{{ m.__class__.get }}|{{ m.__class__.keys }}"),
+    ("mappingproxy_unbound_call", _V + "{% set m = d.keys().mapping %}{{ m.__class__.get(m, 'a') }}|"
+     "{{ m.__class__.items(m) }}"),
+    ("mappingproxy_unbound_wrong_receiver", _V + "{% set m = d.keys().mapping %}{{ m.__class__.get(d, 'a') }}"),
+]:
+    case("classes/" + _n, _src)
+
 # The AttributeError for a type object is worded specially too -- `type object
 # 'int' has no attribute 'items'` -- and eight filters reach it by asking a
 # value for a method it does not have. The render differential found it as
@@ -5471,6 +5544,20 @@ for _n, _src in [
 ]:
     case(f"divergence/class_unbound_dunder_{_n}", _src,
          d={"a": 1}, s="x", lst=[1], n=1, f=1.5)
+
+# The classes jinja2 writes in Python -- Cycler, LoopContext, Joiner, Macro --
+# carry their methods as plain functions, and a plain function takes any self:
+# `Cycler.next(1)` is "'int' object has no attribute 'current'", raised from
+# inside the method body. The type objects here carry none of them, so the name
+# is undefined. Only the address-free shapes are pinned; the function's repr
+# carries one. Listed in known_failures.txt.
+for _n, _src in [
+    ("cycler_next_is_defined", "{{ cycler(1).__class__.next is defined }}"),
+    ("cycler_next_with_self", "{% set c = cycler(1, 2) %}{{ c.__class__.next(c) }}{{ c.__class__.next(c) }}"),
+    ("cycler_reset_with_self", "{% set c = cycler(1, 2) %}{{ c.next() }}{{ c.__class__.reset(c) }}{{ c.current }}"),
+    ("loop_cycle_with_self", "{% for i in [1, 2] %}{{ loop.__class__.cycle(loop, 'a', 'b') }}{% endfor %}"),
+]:
+    case(f"divergence/class_python_method_{_n}", _src)
 
 # bool's descriptors are int's, and so are their arity messages: CPython says
 # "int.conjugate()" where the same method reached through the *value* says

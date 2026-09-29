@@ -6,6 +6,7 @@ package gojja2
 import (
 	"errors"
 	"math"
+	"math/big"
 	"slices"
 	"strings"
 	"unicode"
@@ -60,6 +61,11 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 		// are CPython's own, probed per method.
 		if _, ok := recv.Interface().(*value.Set); ok {
 			table = setMethods
+			break
+		}
+		// range's two, for the same reason.
+		if _, ok := recv.Interface().(*rangeObject); ok {
+			table = rangeMethods
 			break
 		}
 		return value.Undefined, false
@@ -1948,6 +1954,64 @@ var dictViewMethods = map[string]func(*State, value.Value, *value.CallArgs) (val
 		}
 		return v.isdisjoint(s, a.Pos[0])
 	},
+}
+
+// rangeMethods are range's two methods, which a range answered with "'range
+// object' has no attribute" -- and so did its type object, since that finds a
+// class's methods on an instance of it.
+//
+// Both decide membership by arithmetic, as ContainsErr does and for its reason:
+// CPython takes the arithmetic path only for an exact int or bool and scans for
+// anything else, but nothing that is not an integral number equals an element,
+// so the scan can only find what the arithmetic finds -- and a scan of
+// `range(10**12)` is one no budget would let finish. What the two paths do
+// leave behind is the wording of the refusal, which is read off the operand's
+// type below.
+var rangeMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+	"count": methodRangeCount,
+	"index": methodRangeIndex,
+}
+
+func methodRangeCount(st *State, recv value.Value, args *value.CallArgs) (value.Value, error) {
+	r, _ := recv.Interface().(*rangeObject)
+	found, _, err := r.ContainsErr(args.Pos[0], st.PythonVersion())
+	if err != nil || !found {
+		return value.Int(0), err
+	}
+	return value.Int(1), nil
+}
+
+// methodRangeIndex is range.index: the position is (x - start) // step, which
+// is exact for a range too long to walk -- `range(2**70).index(2**69)` is
+// 590295810358705651712.
+//
+// A miss is worded by the path CPython took: range_index's own "5 is not in
+// range" for an int or a bool (3.14: "range.index(x): x not in range"), and the
+// generic sequence search's "x not in sequence" for everything else, a float
+// with an integral value included.
+func methodRangeIndex(st *State, recv value.Value, args *value.CallArgs) (value.Value, error) {
+	r, _ := recv.Interface().(*rangeObject)
+	x := args.Pos[0]
+	found, _, err := r.ContainsErr(x, st.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
+	}
+	if !found {
+		if x.IsInteger() {
+			if st.PythonVersion().IndexMessageIsGeneric() {
+				return value.Undefined, errs.New(errs.ValueError,
+					"range.index(x): x not in range")
+			}
+			return value.Undefined, errs.New(errs.ValueError, "%s is not in range",
+				value.ReprFor(x, st.PythonVersion()))
+		}
+		return value.Undefined, errs.New(errs.ValueError,
+			"sequence.index(x): x not in sequence")
+	}
+	n, _ := integerOf(x)
+	start, _, step := r.bounds()
+	pos := new(big.Int).Sub(n, start)
+	return value.BigInt(pos.Quo(pos, step)), nil
 }
 
 // mappingProxyMethods are the five read-only methods types.MappingProxyType

@@ -778,7 +778,16 @@ class does not have is undefined rather than an error, which is what makes
 while `{{ d.__class__|dictsort }}` reaches the descriptor and reports the
 unbound-method call, matching CPython in both directions.
 
-Three corners of it are not implemented, and each is in
+The same holds for the type objects of gojja2's own objects that stand for
+built-in types -- `range`, `set`, the three dict views and `mappingproxy`:
+
+```jinja
+{{ range(3).__class__.index(range(3), 2) }}    "2"
+{{ d.keys().__class__.isdisjoint(d.keys(), 'z') }}  "True"
+{{ d.items().__class__.mapping }}  "<attribute 'mapping' of 'dict_items' objects>"
+```
+
+Five corners of it are not implemented, and each is in
 `testdata/known_failures.txt`:
 
 ```jinja
@@ -787,6 +796,7 @@ Three corners of it are not implemented, and each is in
                                    "requires a 'int' object but received a 'list'"
 {{ lst.__class__.nope }}           the generic alias list['nope'] on CPython
 {{ yes.__class__.conjugate(yes, 1) }}  "int.conjugate()" there, "bool" here
+{{ c.__class__.next(c) }}          Cycler.next on CPython, undefined here
 ```
 
 The first two are dunders, which gojja2 does not expose on a value either, so
@@ -796,6 +806,17 @@ instead of through a subscript -- and the reason a name a class does not have is
 undefined here. The fourth is an arity message: bool defines no methods of its
 own, so CPython's descriptor is int's and says so, where gojja2's delegates to
 the receiver's own bound method and words it after the receiver.
+
+The fifth is the classes jinja2 writes in Python -- `Cycler`, `LoopContext`,
+`Joiner` and `Macro`. Their methods are plain Python functions, which is a
+different object from a built-in's method descriptor: its repr is `<function
+Cycler.next at 0x...>`, and it accepts any `self` at all and fails *inside the
+body* -- `Cycler.next(1)` is "'int' object has no attribute 'current'", because
+that is the first thing the body asks of its receiver. Reproducing that means
+reproducing each method's body line by line against an arbitrary receiver, for
+a spelling (`loop.__class__.cycle(loop, 'a')`) nothing writes in place of
+`loop.cycle('a')`. The type objects for these classes carry no methods, and the
+name is undefined.
 
 A markupsafe `Markup` is left out of the same feature for a different reason:
 the methods it inherits from str are str's descriptors, but the ones it

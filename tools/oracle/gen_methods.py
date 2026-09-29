@@ -56,12 +56,14 @@ RECEIVERS = {
     # A set, which a template reaches as the difference of a view with an
     # iterable, and whose seventeen methods are set_methods.go's.
     "set": {"a", "b"},
+    # A range, whose count and index are arithmetic rather than a walk.
+    "range": range(3),
 }
 
 TYPES = {
     "str": str, "list": list, "dict": dict, "tuple": tuple, "bytes": bytes,
     "dict_keys": type({}.keys()), "dict_items": type({}.items()),
-    "mappingproxy": types.MappingProxyType, "set": set,
+    "mappingproxy": types.MappingProxyType, "set": set, "range": range,
 }
 
 # A value that is wrong for almost every parameter, so a call that gets past
@@ -339,6 +341,7 @@ def gojja2_methods() -> dict[str, list[str]]:
         "dict_items": table(txt, "var dictViewMethods = map[string]", "\n}\n"),
         "mappingproxy": table(txt, "var mappingProxyMethods = map[string]", "\n}\n"),
         "set": table(set_txt, "var setMethods = map[string]", "\n}\n"),
+        "range": table(txt, "var rangeMethods = map[string]", "\n}\n"),
     }
 
 

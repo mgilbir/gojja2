@@ -174,6 +174,16 @@ own/divergence/class_unbound_dunder_abs_with_self.jj2
 own/divergence/class_unbound_dunder_abs_wrong_self.jj2
 own/divergence/class_unbound_bool_arity_names_int.jj2
 
+# --- a Python-written class's methods, through its type object ---
+# jinja2's own classes (Cycler, LoopContext) carry their methods as plain Python
+# functions, which accept any self and fail inside the body. gojja2's type
+# objects for them carry no methods, so the name is undefined. See
+# docs/divergences.md, "Python object introspection".
+own/divergence/class_python_method_cycler_next_is_defined.jj2
+own/divergence/class_python_method_cycler_next_with_self.jj2
+own/divergence/class_python_method_cycler_reset_with_self.jj2
+own/divergence/class_python_method_loop_cycle_with_self.jj2
+
 # --- an unpack count over a lazy filter's result ---------------------------------
 # The @3.14 suffix means "agrees with the pin, diverges on that one". 3.14 names
 # the count in "too many values to unpack" for a list, a tuple or a

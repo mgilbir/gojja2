@@ -276,9 +276,11 @@ func (v PythonVersion) UnhashableNamesTheUse() bool { return v.AtLeast(Python314
 func (v PythonVersion) ContainerMessageIsLonger() bool { return v.AtLeast(Python314) }
 
 // IndexMessageIsGeneric reports whether list.index reads "list.index(x): x not
-// in list" rather than naming the value that was missing.
+// in list" rather than naming the value that was missing -- and range.index,
+// on its arithmetic path, "range.index(x): x not in range".
 //
-// 3.14. Corpus: errors/list_index_missing, errors/seq_index_window_empty.
+// 3.14. Corpus: errors/list_index_missing, errors/seq_index_window_empty,
+// methods/range_index_miss_int and its four neighbours.
 func (v PythonVersion) IndexMessageIsGeneric() bool { return v.AtLeast(Python314) }
 
 // PercentCNamesTheType reports whether %c against the wrong type names it.
