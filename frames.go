@@ -197,20 +197,27 @@ func (v *frameVisitor) stmt(stmt ast.Stmt) {
 // Two things happen. A name merely *mentioned* in a branch settles at this
 // level, so a later assignment no longer claims it -- which is why
 // `{% if m %}{{ m }}{% endif %}{% from "x" import m %}` still sees the
-// argument m. And a name *assigned* in a branch only counts as bound here when
-// every branch binds it; jinja2 always counts three -- body, elifs and else --
-// so an if/else pair alone is not enough.
+// argument m. And a name *assigned* in any branch is written at this level
+// too, which is what gives it a binding of its own: an alias to the enclosing
+// one when there is one, a resolve from the context when there is not.
+//
+// jinja2 3.1's `Symbols.branch_update` takes the union of what the branches
+// wrote and does not care how many of them wrote it. jinja2 2.x did count, and
+// skipped the binding for a name *every* branch bound; this carried that rule
+// until it was measured, and the count it asked for turned out to be one no
+// template can reach. An `{% elif %}` is a nested If, and a nested If records
+// what it writes through the second loop below rather than through store(), so
+// the elif arm never reports a name as bound -- which leaves two arms out of
+// the three, every time. `control/branch_binding_*` grades the rule that is
+// actually in force; planting the arithmetic the old rule wanted
+// (`counts[name] >= 2`) fails four of them.
 func (v *frameVisitor) ifStmt(n *ast.If) {
 	v.expr(n.Test)
 
-	branch := func(body []ast.Stmt) (mentioned, bound, written map[string]bool) {
+	branch := func(body []ast.Stmt) (mentioned, written map[string]bool) {
 		sub := &frameVisitor{seen: map[string]bool{}, stores: map[string]bool{}}
 		sub.stmts(body)
-		bound = make(map[string]bool, len(sub.locals))
-		for _, name := range sub.locals {
-			bound[name] = true
-		}
-		return sub.seen, bound, sub.stores
+		return sub.seen, sub.stores
 	}
 
 	var elifBody []ast.Stmt
@@ -220,22 +227,18 @@ func (v *frameVisitor) ifStmt(n *ast.If) {
 	bodies := [][]ast.Stmt{n.Body, elifBody, n.Else}
 
 	mentioned := map[string]bool{}
-	counts := map[string]int{}
 	written := map[string]bool{}
 	for _, body := range bodies {
-		seen, bound, stores := branch(body)
+		seen, stores := branch(body)
 		for name := range seen {
 			mentioned[name] = true
 		}
-		for name := range bound {
-			counts[name]++
-		}
 		// A write inside a branch is still a write at this level, whether
 		// or not every branch makes it, which is what decides whether a
-		// nested frame gets its own copy. Held back until the sorted loop
-		// below has run: setting v.stores here would make store() treat
-		// the name as already written and skip recording where it falls
-		// in this frame's write order.
+		// nested frame gets its own copy. Collected rather than applied:
+		// the loop that records them takes v.stores to mean "already has
+		// a place in this frame's write order", so setting it here would
+		// make every one of these names skip that loop and never get one.
 		for name := range stores {
 			written[name] = true
 		}
@@ -249,10 +252,6 @@ func (v *frameVisitor) ifStmt(n *ast.If) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if counts[name] == len(bodies) {
-			v.store(name)
-			continue
-		}
 		v.settle(name)
 	}
 	// ...and now the writes a branch made without every branch making them.

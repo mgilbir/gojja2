@@ -1,0 +1,6 @@
+{
+  "case": "control/branch_binding_every_arm_in_a_block.jj2",
+  "variables": {
+    "x": "o"
+  }
+}

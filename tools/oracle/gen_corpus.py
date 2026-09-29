@@ -175,6 +175,45 @@ case("subscript/attr_fallback", "{{ d.items is callable }}|{{ d['items'] }}|{{ d
 # --- control flow -------------------------------------------------------------
 case("control/if", "{% if a %}A{% elif b %}B{% else %}C{% endif %}", a=False, b=True)
 case("control/if_no_scope", "{% set x = 1 %}{% if true %}{% set x = 2 %}{% endif %}{{ x }}")
+# What a branch binds, and where that name then lives. jinja2 3.1's
+# `Symbols.branch_update` gives *every* name any arm writes a load -- an alias
+# to the enclosing binding when there is one, a resolve from the context when
+# there is not -- and it does not care how many arms wrote it. (jinja2 2.x
+# counted, and skipped the load for a name every arm bound; gojja2 carried that
+# counting rule until it was measured and found unreachable.) The symbol tables
+# are what these grade: the renders agree either way, because a name every arm
+# assigns is assigned before it is read.
+case("control/branch_binding_every_arm_in_a_loop",
+     "{% for i in [1,2,3] %}{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}{% set x = 'b' %}"
+     "{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endfor %}")
+case("control/branch_binding_every_arm_over_an_outer",
+     "{% set x = 'o' %}{% for i in [1,2] %}{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}"
+     "{% set x = 'b' %}{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endfor %}[{{ x }}]")
+case("control/branch_binding_every_arm_read_first",
+     "{% for i in [1,2] %}<{{ x }}>{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}"
+     "{% set x = 'b' %}{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endfor %}", x="ctx")
+case("control/branch_binding_every_arm_at_the_root",
+     "{% if 1 %}{% set x = 'a' %}{% elif 1 %}{% set x = 'b' %}{% else %}{% set x = 'c' %}"
+     "{% endif %}[{{ x }}]")
+case("control/branch_binding_every_arm_in_a_macro",
+     "{% macro m(i) %}{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}{% set x = 'b' %}"
+     "{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endmacro %}{{ m(1) }}{{ m(9) }}")
+case("control/branch_binding_every_arm_in_a_block",
+     "{% block b %}{% if 1 %}{% set x = 'a' %}{% elif 1 %}{% set x = 'b' %}{% else %}"
+     "{% set x = 'c' %}{% endif %}[{{ x }}]{% endblock %}")
+case("control/branch_binding_every_arm_in_a_filter_block",
+     "{% filter upper %}{% if 1 %}{% set x = 'a' %}{% elif 1 %}{% set x = 'b' %}{% else %}"
+     "{% set x = 'c' %}{% endif %}[{{ x }}]{% endfilter %}")
+# Two names an arm-counting rule would order differently: `b` is bound by every
+# arm and sorts after `a`, which only one arm binds, so counting lists b first
+# and not counting lists them in the order they are written.
+case("control/branch_binding_write_order",
+     "{% for i in [1] %}{% if i %}{% set a = 1 %}{% set b = 2 %}{% elif i %}{% set b = 3 %}"
+     "{% else %}{% set b = 4 %}{% endif %}{{ a }}{{ b }}{% endfor %}")
+# Only two arms bind it, which the counting rule never claimed either way.
+case("control/branch_binding_two_arms_only",
+     "{% for i in [1,2] %}{% if i == 1 %}{% set x = 'a' %}{% else %}{% set x = 'b' %}"
+     "{% endif %}[{{ x }}]{% endfor %}")
 case("control/for", "{% for x in seq %}{{ x }}{% endfor %}", **SEQ)
 case("control/for_scope", "{% set x = 1 %}{% for i in [1,2] %}[{{ x }}]{% set x = x + 1 %}{% endfor %}[{{ x }}]")
 case("control/for_else", "{% for x in [] %}a{% else %}empty{% endfor %}")
