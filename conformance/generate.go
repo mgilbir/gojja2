@@ -1798,12 +1798,22 @@ func (g *generator) unboundMethod() string {
 		{"n", []string{"bit_length", "to_bytes", "conjugate", "from_bytes"}},
 		{"f", []string{"is_integer", "hex", "conjugate", "fromhex"}},
 		{"yes", []string{"bit_length", "conjugate"}},
+		// The classes a template builds rather than finds. Only methods
+		// that answer something other than a set are drawn -- a set's
+		// order is its hashes' in CPython -- and none that mutate.
+		{"range(3)", []string{"index", "count"}},
+		{"(d.keys() - [])", []string{"isdisjoint", "issubset", "issuperset"}},
+		{"d.keys()", []string{"isdisjoint"}},
+		{"d.items()", []string{"isdisjoint"}},
+		{"d.keys().mapping", []string{"get", "keys", "values", "items", "copy"}},
 	}
 	class := classes[g.c.intn(len(classes))]
 	recv := g.c.pick([]string{
 		"", "d", "s", "lst", "n", "f", "'x'", "[1]", "{}", "((1, 2))",
 		"('ab'.encode())", "d, 'a'", "s, 'x'", "lst, 1", "s, 1, 2",
 		"d, 'a', 0", "n, 2",
+		"range(3), 2", "range(3), 1.5", "(d.keys() - []), ['a']",
+		"d.keys(), 'z'", "d.items(), pairs", "d.keys().mapping, 'a'",
 	})
 	return class.subject + ".__class__." +
 		class.methods[g.c.intn(len(class.methods))] + "(" + recv + ")"
@@ -1823,7 +1833,9 @@ func (g *generator) unboundMethod() string {
 // context per render; before that, one `lst.append(9)` poisoned every later
 // comparison in the run.
 func (g *generator) methodCall(depth int) string {
-	switch g.c.intn(11) {
+	switch g.c.intn(13) {
+	case 11, 12:
+		return g.objectMethod()
 	case 0, 1, 2:
 		return g.c.pick(strReceivers) + "." + g.c.pick(strMethods)
 	case 3:
@@ -1845,6 +1857,67 @@ func (g *generator) methodCall(depth int) string {
 		// that gets from a str to a bytes at all.
 		return g.c.pick(bytesReceivers) + "." + g.c.pick(bytesMethods)
 	}
+}
+
+// objectMethod writes a method call on one of the objects a template builds
+// rather than finds in its context: a range, a set, a dict view and the
+// mappingproxy a view carries. None of them is JSON, so methodCall's receivers
+// never were one, and every method they have was graded by the corpus alone.
+//
+// Three constraints, each from something that bit before:
+//
+//   - A set's order is its hashes' in CPython and sorted here, so a result
+//     that is a set is printed through |map('string')|sort. The elements are
+//     strings throughout -- a dict's keys always are, and the arguments are
+//     drawn to match -- because sorting a mix names the operand order, which
+//     is the set's order again.
+//   - A range too long to walk takes only integer arguments. CPython decides
+//     an int by arithmetic and scans for anything else, and a scan of
+//     range(2**70) runs the oracle into its alarm on every case. `n` is
+//     9007199254740993 in the awkward context, so range(n) is one of those.
+//   - The whole call is parenthesised: an arm is re-parsed in its caller's
+//     context, and a trailing filter chain would otherwise bind to whatever
+//     the caller puts after it.
+func (g *generator) objectMethod() string {
+	set := g.c.pick([]string{"(d.keys() - [])", "(d.keys() - ['a'])", "(ed.keys() - [])"})
+	strs := []string{"()", "(['a'])", "(['a', 'z'])", "('ab')", "(d)", "(strs)",
+		"([[1]])", "(1)", "(nope)", "(x=1)", "(['a'], ['z'])"}
+	var call string
+	switch g.c.intn(6) {
+	case 0:
+		recv := g.c.pick([]string{"range(3)", "range(1, 10, 3)", "range(10, 0, -3)",
+			"range(0)", "range(-2, 2)"})
+		call = recv + "." + g.c.pick([]string{"index", "count"}) + g.c.pick([]string{
+			"(2)", "(4)", "(5)", "(-1)", "(1.0)", "(1.5)", "(true)", "(no)",
+			"('a')", "(nil)", "(nope)", "(lst)", "(f)", "(n)", "()", "(1, 2)", "(x=1)",
+		})
+	case 1:
+		recv := g.c.pick([]string{"range(2**70)", "range(0, 2**70, 3)", "range(n)", "range(-n, n)"})
+		call = recv + "." + g.c.pick([]string{"index", "count"}) + g.c.pick([]string{
+			"(2**69)", "(9)", "(-1)", "(true)", "(0)", "(n - 1)", "(2**70)",
+		})
+	case 2:
+		// The methods that answer a set, sorted for the reason above.
+		call = set + "." + g.c.pick([]string{"union", "intersection", "difference",
+			"symmetric_difference", "copy"}) + g.c.pick(strs) + "|map('string')|sort"
+	case 3:
+		// The ones that answer a bool or None, printed as they are. The
+		// receiver is built in the template, so a mutation edits nothing a
+		// later arm reads.
+		call = set + "." + g.c.pick([]string{"issubset", "issuperset", "isdisjoint",
+			"add", "discard", "remove", "update", "difference_update",
+			"intersection_update", "symmetric_difference_update", "clear"}) + g.c.pick(strs)
+	case 4:
+		call = g.c.pick([]string{"d.keys()", "d.items()", "d.values()", "ed.keys()"}) +
+			".isdisjoint" + g.c.pick([]string{"(['a'])", "('ab')", "(d)", "(pairs)",
+			"([('a', 1)])", "([[1]])", "(1)", "(nope)", "()", "(d, d)"})
+	default:
+		proxy := g.c.pick([]string{"d.keys().mapping", "d.items().mapping", "ed.values().mapping"})
+		call = proxy + g.c.pick([]string{"", ".get('a')", ".get('a', 0)", ".get('zz', 'x')",
+			".get()", ".get([1])", ".get(x=1)", ".keys()", ".values()|list", ".items()",
+			".copy()", ".copy(1)", "['a']", "|length", ".nope"})
+	}
+	return "(" + call + ")"
 }
 
 // formatCall writes a str.format or str.format_map, whose field parser and
