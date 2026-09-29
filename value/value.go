@@ -215,6 +215,12 @@ func newNaN(f float64) Value {
 	return Value{kind: KindFloat, num: math.Float64bits(f), obj: new(nanIdentity)}
 }
 
+// HasIdentity reports whether this value is an object with an identity of its
+// own -- a container, an object, a function, or a NaN. Everything else is a
+// scalar that gojja2 stores by value, so two of them can be equal without
+// anything being able to say whether they were one object or two.
+func HasIdentity(v Value) bool { return SameObject(v, v) }
+
 // SameObject is Python's `is` for the values whose identity a template can
 // observe: containers and functions, which are their own object, and NaNs,
 // which are the only scalars whose identity is not their value.

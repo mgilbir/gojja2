@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{{ cycler('a').next.__name__ }}|{{ cycler('a').next.__qualname__ }}|{{ cycler('a').next.__module__ }}

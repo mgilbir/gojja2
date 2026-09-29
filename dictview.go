@@ -110,7 +110,7 @@ func boundObjectMethod(table map[string]func(*State, value.Value, *value.CallArg
 	if !ok {
 		return value.Undefined, false
 	}
-	return Func(name, func(s *State, a *value.CallArgs) (value.Value, error) {
+	return Method(name, typeName, "", recv, func(s *State, a *value.CallArgs) (value.Value, error) {
 		if err := checkMethodArity(typeName, name, a, py); err != nil {
 			return value.Undefined, err
 		}

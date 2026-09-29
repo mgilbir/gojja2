@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{% for i in [1] %}{{ loop.cycle.__class__ }}|{{ loop.cycle.__qualname__ }}{% endfor %}

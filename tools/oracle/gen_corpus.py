@@ -981,6 +981,53 @@ case("tests/callable_globals",
      "{{ namespace is callable }}|{{ cycler('a','b').next is callable }}|"
      "{{ 'x'.upper is callable }}|{{ 1 is callable }}")
 
+# What Python calls a callable reached as an attribute. There are three kinds
+# and gojja2 had one: `d.get` is a builtin_function_or_method, `cycler(..).next`
+# is a method of a class written in Python, and lipsum is a function -- and
+# every one of them answered "function", which is also what the *type* in every
+# message about one said.
+#
+# The reprs carry an address and cannot be corpus cases; runtime_test.go holds
+# their shape. Everything else about them is here.
+_FN = "{% set d = {'a': 1} %}"
+for _n, _src in [
+    ("builtin_method_class", "{{ d.get.__class__ }}"),
+    ("builtin_method_class_name", "{{ d.get.__class__.__name__ }}|{{ d.get.__class__.__module__ }}"),
+    ("builtin_method_name", "{{ d.get.__name__ }}|{{ d.get.__qualname__ }}|{{ d.get.__module__ }}"),
+    ("str_method_name", "{{ 'ab'.upper.__name__ }}|{{ 'ab'.upper.__qualname__ }}"),
+    ("list_method_class", "{{ [1].append.__class__ }}"),
+    ("int_method_class", "{{ (1).to_bytes.__class__ }}|{{ (1).to_bytes.__qualname__ }}"),
+    ("view_method_class", "{{ d.keys().isdisjoint.__class__ }}|{{ d.keys().isdisjoint.__qualname__ }}"),
+    ("set_method_class", "{{ (d.keys() - 'a').union.__class__ }}|{{ (d.keys() - 'a').union.__qualname__ }}"),
+    ("proxy_method_class", "{{ d.keys().mapping.copy.__class__ }}"),
+    # A method of a Python class is a `method`, and its qualified name carries
+    # the class's *bare* name where its module carries the rest.
+    ("python_method_class", "{{ cycler('a').next.__class__ }}"),
+    ("python_method_name", "{{ cycler('a').next.__name__ }}|{{ cycler('a').next.__qualname__ }}|"
+     "{{ cycler('a').next.__module__ }}"),
+    ("loop_method_class", "{% for i in [1] %}{{ loop.cycle.__class__ }}|"
+     "{{ loop.cycle.__qualname__ }}{% endfor %}"),
+    # lipsum is the one global that is a function, and it is reached under a
+    # name that is not its own.
+    ("function_class", "{{ lipsum.__class__ }}"),
+    ("function_name", "{{ lipsum.__name__ }}|{{ lipsum.__qualname__ }}|{{ lipsum.__module__ }}"),
+    # The type name shows up wherever a message names it.
+    ("builtin_method_is_not_subscriptable", "{{ d.get[0] }}"),
+    ("builtin_method_has_no_length", "{{ d.get|length }}"),
+    ("builtin_method_does_not_add", "{{ d.get + 1 }}"),
+    ("builtin_method_class_is_not_constructible", "{{ d.get.__class__() }}"),
+    ("python_method_is_not_subscriptable", "{{ cycler('a').next[0] }}"),
+    ("function_has_no_length", "{{ lipsum|length }}"),
+    # Two bound methods of the same receiver are equal, although each `.get`
+    # builds one: CPython compares the receiver and the slot rather than the
+    # object. A free function has no such rule.
+    ("builtin_methods_are_equal", "{{ d.get == d.get }}|{{ d.get == d.pop }}|"
+     "{{ d.get == {'a': 1}.get }}"),
+    ("functions_are_equal", "{{ lipsum == lipsum }}"),
+    ("builtin_method_is_not_sameas", "{{ d.get is sameas d.get }}"),
+]:
+    case(f"tests/callable_{_n}", _FN + _src)
+
 # |xmlattr asks its subject for `items`, and what a subject without one says is
 # the subject's own AttributeError: a Namespace raises `AttributeError(name)`, so
 # the message is the bare word "items" with no explanation around it, where every

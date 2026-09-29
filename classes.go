@@ -268,6 +268,7 @@ func init() {
 		"jinja2.utils.Cycler":    globalCycler,
 		"jinja2.utils.Joiner":    globalJoiner,
 		"mappingproxy":           constructMappingProxy,
+		"set":                    constructSet,
 	}
 	// An undefined's class builds another undefined. Which class it was
 	// decides how the result behaves, and the class name is the only thing
@@ -647,6 +648,26 @@ func constructTuple(s *State, args *value.CallArgs) (value.Value, error) {
 		return value.Undefined, err
 	}
 	return value.NewTuple(items...), nil
+}
+
+// constructSet is set(), set(iterable) -- reachable because a view difference
+// hands a template a set and every object's `__class__` is its constructor.
+//
+// It takes what list and tuple take, with one more rule on top: the elements
+// are hashed, so `set([[1]])` is "unhashable type: 'list'" where `list([[1]])`
+// is a list of one list. The arity and keyword wordings are the shared ones --
+// "set expected at most 1 argument, got 2", "set() takes no keyword arguments"
+// -- which is what CPython says here as well.
+func constructSet(s *State, args *value.CallArgs) (value.Value, error) {
+	items, err := constructSeq(s, "set", args)
+	if err != nil {
+		return value.Undefined, err
+	}
+	out, err := value.NewSet(items, s.PythonVersion(), s)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.FromObject(out), nil
 }
 
 // constructBytes is bytes(), bytes(count), bytes(iterable of ints) and

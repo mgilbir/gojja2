@@ -19,7 +19,10 @@ func registerDefaultGlobals(env *Environment) {
 	env.AddGlobal("namespace", Class("namespace", "jinja2.utils.Namespace", globalNamespace))
 	env.AddGlobal("cycler", Class("cycler", "jinja2.utils.Cycler", globalCycler))
 	env.AddGlobal("joiner", Class("joiner", "jinja2.utils.Joiner", globalJoiner))
-	env.AddGlobal("lipsum", Func("lipsum", globalLipsum))
+	// lipsum is the one global that is a *function* rather than a class, and
+	// it is jinja2.utils.generate_lorem_ipsum reached under another name:
+	// `{{ lipsum.__name__ }}` is that name and not "lipsum".
+	env.AddGlobal("lipsum", pyFunc("lipsum", "generate_lorem_ipsum", "jinja2.utils", globalLipsum))
 }
 
 // rangeObject is Python's range: a sequence with a known length that holds no
@@ -389,20 +392,22 @@ func (c *cyclerObject) GetAttr(name string) (value.Value, bool) {
 		}
 		return c.items[c.pos], true
 	case "next":
-		return Func("next", func(_ *State, a *value.CallArgs) (value.Value, error) {
-			if err := bindArgs(runtimeSignatures["Cycler.next"], a, 1); err != nil {
-				return value.Undefined, err
-			}
-			return c.next()
-		}), true
+		return Method("next", "Cycler", "jinja2.utils.Cycler", value.FromObject(c),
+			func(_ *State, a *value.CallArgs) (value.Value, error) {
+				if err := bindArgs(runtimeSignatures["Cycler.next"], a, 1); err != nil {
+					return value.Undefined, err
+				}
+				return c.next()
+			}), true
 	case "reset":
-		return Func("reset", func(_ *State, a *value.CallArgs) (value.Value, error) {
-			if err := bindArgs(runtimeSignatures["Cycler.reset"], a, 1); err != nil {
-				return value.Undefined, err
-			}
-			c.pos = 0
-			return value.None, nil
-		}), true
+		return Method("reset", "Cycler", "jinja2.utils.Cycler", value.FromObject(c),
+			func(_ *State, a *value.CallArgs) (value.Value, error) {
+				if err := bindArgs(runtimeSignatures["Cycler.reset"], a, 1); err != nil {
+					return value.Undefined, err
+				}
+				c.pos = 0
+				return value.None, nil
+			}), true
 	}
 	return value.Undefined, false
 }

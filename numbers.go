@@ -90,7 +90,7 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 			return value.NewTuple(value.BigInt(asBig(base)), value.Int(1)), nil
 		}), true
 	case "to_bytes":
-		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+		return boundNumeric(s, base, name, func(st *State, args *value.CallArgs) (value.Value, error) {
 			if err := clinicCall(st.PythonVersion(), "to_bytes", args,
 				[]string{"length", "byteorder", "signed"}, 2, 3); err != nil {
 				return value.Undefined, err
@@ -100,7 +100,7 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 	case "from_bytes":
 		// A classmethod, so the receiver contributes nothing but the
 		// route to it: a template cannot name int, only an int.
-		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+		return boundNumeric(s, base, name, func(st *State, args *value.CallArgs) (value.Value, error) {
 			if err := clinicCall(st.PythonVersion(), "from_bytes", args,
 				[]string{"bytes", "byteorder", "signed"}, 2, 3); err != nil {
 				return value.Undefined, err
@@ -142,7 +142,7 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 	case "fromhex":
 		// A classmethod, reached through a float for the same reason
 		// from_bytes is reached through an int.
-		return boundNumeric(s, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+		return boundNumeric(s, base, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
 			if len(args.Kwargs) > 0 {
 				return value.Undefined, errs.New(errs.TypeError,
 					"float.fromhex() takes no keyword arguments")
@@ -178,7 +178,7 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 // methods showed up when their neighbours were probed.
 func boundNoArgs(s *State, base value.Value, name string,
 	fn func() (value.Value, error)) value.Value {
-	return boundNumeric(s, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+	return boundNumeric(s, base, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
 		if len(args.Kwargs) > 0 {
 			return value.Undefined, errs.New(errs.TypeError,
 				"%s.%s() takes no keyword arguments", base.TypeName(), name)
@@ -225,8 +225,8 @@ func clinicCall(py value.PythonVersion, name string, args *value.CallArgs,
 	return nil
 }
 
-func boundNumeric(s *State, name string, fn func(*State, *value.CallArgs) (value.Value, error)) value.Value {
-	return Func(name, func(callState *State, args *value.CallArgs) (value.Value, error) {
+func boundNumeric(s *State, recv value.Value, name string, fn func(*State, *value.CallArgs) (value.Value, error)) value.Value {
+	return Method(name, recv.TypeName(), "", recv, func(callState *State, args *value.CallArgs) (value.Value, error) {
 		if callState == nil {
 			callState = s
 		}

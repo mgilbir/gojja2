@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{{ 'ab'.upper.__name__ }}|{{ 'ab'.upper.__qualname__ }}

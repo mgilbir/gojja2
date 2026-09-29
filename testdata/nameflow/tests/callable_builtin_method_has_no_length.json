@@ -1,0 +1,4 @@
+{
+  "case": "tests/callable_builtin_method_has_no_length.jj2",
+  "variables": {}
+}

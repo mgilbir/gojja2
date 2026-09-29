@@ -71,7 +71,7 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 		return value.Undefined, false
 	}
 	typeName := recv.TypeName()
-	return Func(name, func(callState *State, args *value.CallArgs) (value.Value, error) {
+	return Method(name, typeName, "", recv, func(callState *State, args *value.CallArgs) (value.Value, error) {
 		// Prefer the state of the call over the state of the lookup:
 		// they are the same render, but a bound method can outlive the
 		// expression that produced it.
