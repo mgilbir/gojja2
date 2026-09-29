@@ -4266,6 +4266,23 @@ case("filters/urlize", "{{ 'see http://example.com/a?b=1, and www.x.org. mail me
 case("filters/urlize_args", "{{ 'go to http://example.com now'|urlize(10, target='_blank') }}")
 case("filters/tojson", "{{ {'b':1,'a':[1,2],'c':'<x>'}|tojson }}|{{ [1,2]|tojson(indent=2) }}")
 case("filters/xmlattr", "{{ {'class':'a b','id':none,'data-x':1}|xmlattr }}")
+# do_xmlattr escapes both halves with markupsafe's escape(), which leaves a value
+# that is already safe alone. gojja2 escaped the text unconditionally, so
+# `{'y': '&amp;'|safe}|xmlattr` came out double-escaped as ` y="&amp;amp;"`. The
+# mixed pair is the one that tells the rule from "never escape".
+for _n, _src in [
+    ("safe_value", "{{ {'y': '&amp;'|safe}|xmlattr }}"),
+    ("safe_markup_value", "{{ {'y': '<i>'|safe}|xmlattr }}"),
+    ("unsafe_value", "{{ {'y': '<i>'}|xmlattr }}"),
+    ("safe_and_unsafe", "{{ {'y': '&amp;'|safe, 'z': '&amp;'}|xmlattr }}"),
+    ("safe_key", "{% set k = 'a<b'|safe %}{{ {k: 'v'}|xmlattr }}"),
+    ("unsafe_key", "{{ {'a<b': 'v'}|xmlattr }}"),
+    ("escaped_value", "{{ {'y': '<i>'|escape}|xmlattr }}"),
+    ("quote_in_value", "{{ {'y': '\"q\"'}|xmlattr }}"),
+    ("apostrophe_in_value", "{{ {'y': \"'q'\"}|xmlattr }}"),
+    ("list_value", "{{ {'y': ['<i>']}|xmlattr }}"),
+]:
+    case(f"filters/xmlattr_escape_{_n}", _src)
 case("filters/pprint", "{{ map|pprint }}|{{ 'a'|pprint }}", **MAP)
 case("filters/attr", "{{ d|attr('a') }}|{{ d|attr('missing') }}", d={"a": 1})
 case("filters/items", "{{ map|items|list }}", **MAP)

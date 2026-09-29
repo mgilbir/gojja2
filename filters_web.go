@@ -460,8 +460,14 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 				"Invalid character in attribute name: %s",
 				value.ReprFor(value.String(key), s.PythonVersion()))
 		}
-		parts = append(parts, fmt.Sprintf(`%s="%s"`, escapeHTML(key),
-			escapeHTML(value.StrFor(e.Value, s.PythonVersion()))))
+		// escape(), not escapeHTML: markupsafe's escape leaves a value
+		// that is already safe alone, so `{'y': '&amp;'|safe}|xmlattr`
+		// is ` y="&amp;"` and not the double-escaped ` y="&amp;amp;"`.
+		// Both halves go through it, as do_xmlattr's two escape() calls
+		// do -- a Markup key is left alone too.
+		parts = append(parts, fmt.Sprintf(`%s="%s"`,
+			value.Str(escapeIfNeeded(e.Key, s.PythonVersion())),
+			value.Str(escapeIfNeeded(e.Value, s.PythonVersion()))))
 	}
 
 	out := strings.Join(parts, " ")
