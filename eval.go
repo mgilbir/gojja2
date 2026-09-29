@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"math"
+	"math/big"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -741,15 +742,54 @@ func sliceIndex(v value.Value) (*int, error) {
 	return &idx, nil
 }
 
-// sliceBounds converts all three operands together.
+// bigSliceBounds is sliceBounds without the saturation, for a base that slices
+// in arbitrary precision. The order and the zero check are the same.
+func bigSliceBounds(start, stop, step value.Value) (a, b, c *big.Int, err error) {
+	one := func(v value.Value) (*big.Int, error) {
+		if v.IsNone() {
+			return nil, nil
+		}
+		if n, whole := v.BigInt(); whole {
+			return n, nil
+		}
+		return nil, errs.New(errs.TypeError,
+			"slice indices must be integers or None or have an __index__ method")
+	}
+	if c, err = one(step); err != nil {
+		return nil, nil, nil, err
+	}
+	if c != nil && c.Sign() == 0 {
+		return nil, nil, nil, errs.New(errs.ValueError, "slice step cannot be zero")
+	}
+	if a, err = one(start); err != nil {
+		return nil, nil, nil, err
+	}
+	if b, err = one(stop); err != nil {
+		return nil, nil, nil, err
+	}
+	return a, b, c, nil
+}
+
+// sliceBounds converts all three operands, in PySlice_Unpack's order.
+//
+// The step is converted *first* and its zero refused there, before start and
+// stop are looked at at all. The order is observable because the two refusals
+// are not alike: a bound that is not an integer is a TypeError, which jinja2's
+// getitem catches and turns into an undefined, while a zero step is a
+// ValueError it does not catch. Converting start and stop first therefore made
+// `{{ "abcde"[:1.5:0] }}` print nothing where CPython fails the render with
+// "slice step cannot be zero".
 func sliceBounds(start, stop, step value.Value) (a, b, c *int, err error) {
+	if c, err = sliceIndex(step); err != nil {
+		return nil, nil, nil, err
+	}
+	if c != nil && *c == 0 {
+		return nil, nil, nil, errs.New(errs.ValueError, "slice step cannot be zero")
+	}
 	if a, err = sliceIndex(start); err != nil {
 		return nil, nil, nil, err
 	}
 	if b, err = sliceIndex(stop); err != nil {
-		return nil, nil, nil, err
-	}
-	if c, err = sliceIndex(step); err != nil {
 		return nil, nil, nil, err
 	}
 	return a, b, c, nil
@@ -824,6 +864,16 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.Python
 		}
 		return value.Undefined, base.UndefinedError()
 	case value.KindObject:
+		// BigSlicer first: a range's positions can exceed an int, and
+		// converting the bounds through sliceIndexOf saturates all three
+		// parts of the result.
+		if sl, ok := base.Interface().(value.BigSlicer); ok {
+			start, stop, step, err := bigSliceBounds(startV, stopV, stepV)
+			if err != nil {
+				return value.Undefined, err
+			}
+			return sl.BigSlice(start, stop, step)
+		}
 		if sl, ok := base.Interface().(value.Slicer); ok {
 			start, stop, step, err := indices()
 			if err != nil {

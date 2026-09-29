@@ -51,6 +51,18 @@ type Slicer interface {
 	Slice(start, stop, step *int) (Value, error)
 }
 
+// BigSlicer lets an Object answer a slice in arbitrary precision, beside Slicer.
+//
+// It exists for the same reason BigSequence does, and for the same one type: the
+// slice of a range is another range, and CPython computes every part of it from
+// PyLongs -- `range(2**70)[::-1]` is `range(1180591620717411303423, -1, -1)`,
+// which no int can hold. An Object implementing this must agree with its Slicer
+// wherever both answer.
+type BigSlicer interface {
+	Object
+	BigSlice(start, stop, step *big.Int) (Value, error)
+}
+
 // TupleView is an Object that stands for a Python tuple subclass, so it is
 // serialised and treated as the tuple it represents. A range is a sequence but
 // not a tuple, which is why this is opt-in rather than inferred from Sequence.

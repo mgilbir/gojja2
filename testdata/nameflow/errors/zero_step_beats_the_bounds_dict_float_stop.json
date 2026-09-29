@@ -1,0 +1,6 @@
+{
+  "case": "errors/zero_step_beats_the_bounds_dict_float_stop.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

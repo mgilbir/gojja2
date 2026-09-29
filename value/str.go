@@ -4,6 +4,7 @@
 package value
 
 import (
+	"math/big"
 	"strings"
 	"unicode/utf8"
 
@@ -206,6 +207,62 @@ func SliceBounds(length int, start, stop, step *int) (begin, end, st int, err er
 	}
 	if stop != nil {
 		end = clamp(*stop)
+	}
+	return begin, end, st, nil
+}
+
+// BigSliceBounds is SliceBounds in arbitrary precision.
+//
+// CPython has both too: _PySlice_GetLongIndices is what range.__getitem__ uses,
+// because a range's positions can exceed a Py_ssize_t and the slice of a range
+// is another range whose parts must be exact. `range(2**70)[::-1]` is
+// `range(1180591620717411303423, -1, -1)`, and the int version saturated all
+// three of those.
+//
+// nil means the bound was omitted, as in SliceBounds.
+func BigSliceBounds(length, start, stop, step *big.Int) (begin, end, st *big.Int, err error) {
+	one := big.NewInt(1)
+	st = new(big.Int).Set(one)
+	if step != nil {
+		st = new(big.Int).Set(step)
+	}
+	if st.Sign() == 0 {
+		return nil, nil, nil, errs.New(errs.ValueError, "slice step cannot be zero")
+	}
+
+	var lower, upper *big.Int
+	if st.Sign() > 0 {
+		lower, upper = big.NewInt(0), new(big.Int).Set(length)
+	} else {
+		lower, upper = big.NewInt(-1), new(big.Int).Sub(length, one)
+	}
+	clamp := func(v *big.Int) *big.Int {
+		if v.Sign() < 0 {
+			v = new(big.Int).Add(v, length)
+			if v.Cmp(lower) < 0 {
+				return new(big.Int).Set(lower)
+			}
+			return v
+		}
+		if v.Cmp(upper) > 0 {
+			return new(big.Int).Set(upper)
+		}
+		return new(big.Int).Set(v)
+	}
+
+	begin = new(big.Int).Set(lower)
+	if st.Sign() < 0 {
+		begin = new(big.Int).Set(upper)
+	}
+	if start != nil {
+		begin = clamp(start)
+	}
+	end = new(big.Int).Set(upper)
+	if st.Sign() < 0 {
+		end = new(big.Int).Set(lower)
+	}
+	if stop != nil {
+		end = clamp(stop)
 	}
 	return begin, end, st, nil
 }

@@ -2968,6 +2968,35 @@ for _n, _src in _FILTERIDX:
 
 
 # --- errors -------------------------------------------------------------------
+# PySlice_Unpack converts the *step* first and refuses a zero one there, before
+# it looks at start or stop at all. The order is observable because the two
+# refusals differ in kind: a bound that is not an integer is a TypeError, which
+# jinja2's getitem catches and turns into an undefined, while a zero step is a
+# ValueError it does not catch. Converting start and stop first therefore made
+# `{{ "abcde"[:1.5:0] }}` print nothing -- and, on the bytes path, report the
+# bound instead of the step.
+for _n, _src in [
+    ("float_start", "{{ 'abcde'[1.5::0] }}"),
+    ("float_stop", "{{ 'abcde'[:1.5:0] }}"),
+    ("str_stop", "{{ 'abcde'[:'x':0] }}"),
+    ("none_bounds", "{{ 'abcde'[::0] }}"),
+    ("bytes_float_stop", "{{ 'abcde'.encode()[:1.5:0] }}"),
+    ("list_float_stop", "{{ lst[:1.5:0] }}"),
+    ("tuple_float_stop", "{{ (1,2,3)[:1.5:0] }}"),
+    ("range_float_stop", "{{ range(5)[:1.5:0] }}"),
+    ("dict_float_stop", "{{ d[:1.5:0] }}"),
+]:
+    case(f"errors/zero_step_beats_the_bounds_{_n}", _src, lst=[1, 2, 3], d={"a": 1})
+# And the bound's own refusal, which jinja2 does swallow, so that the ordering
+# fix above cannot quietly start raising where a template used to print nothing.
+for _n, _src in [
+    ("str", "[{{ 'abcde'[:1.5:2] }}]"),
+    ("bytes", "[{{ 'abcde'.encode()[1.5::] }}]"),
+    ("list", "[{{ lst['x'::] }}]"),
+    ("range", "[{{ range(5)[:1.5:] }}]"),
+]:
+    case(f"errors/bad_slice_bound_is_swallowed_{_n}", _src, lst=[1, 2, 3])
+
 case("errors/syntax_unclosed", "{% if x %}")
 # "Unexpected end of template" is reported at the line the *last token* began
 # on, not at the line the source ends on: jinja2's TokenStream.close() builds
@@ -6724,6 +6753,22 @@ for _n, _src in [
 # __getitem__, and CPython's range_reverse computes its first element
 # arithmetically without narrowing the length at all -- so this answers where
 # `|length` on the same range raises. Walking to it cost the whole budget.
+# Slicing a range is arbitrary precision throughout: range_subscript works in
+# PyLongs, so every part of the result is exact. All three saturated to an int
+# before -- `range(2**70)[::-1]` came out as range(9223372036854775806, -1, -1).
+case("globals/range_wide_slice",
+     "{{ range(1180591620717411303424)[::] }}|{{ range(1180591620717411303424)[::-1] }}|"
+     "{{ range(1180591620717411303424)[1:] }}|{{ range(1180591620717411303424)[:-1] }}|"
+     "{{ range(1180591620717411303424)[::1180591620717411303424] }}|"
+     "{{ range(1180591620717411303424)[::(-1180591620717411303424)] }}")
+case("globals/range_wide_slice_of_a_narrow_range",
+     "{{ range(5)[::1180591620717411303424] }}|{{ range(5)[::(-1180591620717411303424)] }}|"
+     "{{ range(5)[1180591620717411303424:] }}|{{ range(5)[:(-1180591620717411303424)] }}|"
+     "{{ range(5)[::1180591620717411303424]|list }}")
+case("globals/range_wide_slice_with_a_step",
+     "{{ range(0,1180591620717411303424,3)[::2] }}|"
+     "{{ range(0,1180591620717411303424,3)[::-1] }}|"
+     "{{ range(1180591620717411303424,0,-1)[::-1] }}")
 case("globals/range_wide_last",
      "{{ range(1180591620717411303424)|last }}|"
      "{{ range(0,1180591620717411303424,3)|last }}|{{ range(0)|last }}")

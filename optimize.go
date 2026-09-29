@@ -1547,7 +1547,7 @@ func sliceable(v value.Value) bool {
 		return true
 	case value.KindObject:
 		switch v.Interface().(type) {
-		case value.Slicer, value.TupleView, value.Sequence:
+		case value.BigSlicer, value.Slicer, value.TupleView, value.Sequence:
 			return true
 		}
 	}

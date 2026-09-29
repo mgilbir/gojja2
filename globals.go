@@ -161,23 +161,32 @@ func (r *rangeObject) GetAttr(name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
-// Slice returns the sub-range a slice selects. Slicing a range in Python
-// yields another range rather than a list, so `range(3)[1:]` renders
-// "range(1, 3)" and not "[1, 2]".
-func (r *rangeObject) Slice(start, stop, step *int) (value.Value, error) {
-	begin, end, st, err := value.SliceBounds(r.n, start, stop, step)
+// BigSlice returns the sub-range a slice selects.
+//
+// Slicing a range in Python yields another range rather than a list, so
+// `range(3)[1:]` renders "range(1, 3)" and not "[1, 2]" -- and Python keeps the
+// slice's stop rather than deriving one from the last element, so `range(3)[::2]`
+// is `range(0, 3, 2)` and not `range(0, 4, 2)`.
+//
+// It is the arbitrary-precision BigSlicer rather than the int Slicer because
+// that is the only correct version for a range: CPython's range_subscript works
+// entirely in PyLongs, so `range(2**70)[::-1]` is
+// `range(1180591620717411303423, -1, -1)` -- three values an int cannot hold,
+// and an int implementation saturated all three.
+func (r *rangeObject) BigSlice(start, stop, step *big.Int) (value.Value, error) {
+	begin, end, st, err := value.BigSliceBounds(r.length, start, stop, step)
 	if err != nil {
 		return value.Undefined, err
 	}
-	// The bounds are positions within this range, so they map back onto
-	// the original start and step: position p stands for start + p*step.
+	// The bounds are positions within this range, so they map back onto the
+	// original start and step: position p stands for start + p*step.
 	bs, _, bstep := r.bounds()
-	at := func(pos int) *big.Int {
-		v := new(big.Int).Mul(bstep, big.NewInt(int64(pos)))
+	at := func(pos *big.Int) *big.Int {
+		v := new(big.Int).Mul(bstep, pos)
 		return v.Add(v, bs)
 	}
 	return value.FromObject(newRange(
-		at(begin), at(end), new(big.Int).Mul(bstep, big.NewInt(int64(st))),
+		at(begin), at(end), new(big.Int).Mul(bstep, st),
 	)), nil
 }
 
