@@ -1432,12 +1432,82 @@ func (g *generator) subscript(depth int) string {
 	case 1:
 		return base + "." + g.c.pick([]string{"a", "b", "name", "nope", "0"})
 	case 2:
-		return base + "[" + g.c.pick([]string{"1:", ":2", "1:2", "::2", "::-1", ":", "-2:"}) + "]"
+		// A slice only reaches its own rules when the base has one. A
+		// bool, a number or an undefined answers "not subscriptable"
+		// before the three parts are converted at all -- and an
+		// arbitrary expression is one of those far more often than it is
+		// a sequence, which is why a zero step next to a bad bound was
+		// generated 728 times in 200,000 templates and still graded
+		// nothing. Half the time the receiver is something sliceable.
+		recv := base
+		if g.c.chance(2) {
+			recv = g.c.pick(sliceReceivers)
+		}
+		return recv + "[" + g.sliceExpr() + "]"
 	case 3:
 		return base + "|attr(" + g.c.pick([]string{"'a'", "'name'", "'nope'"}) + ")"
 	default:
 		return base
 	}
+}
+
+// sliceExpr composes a slice out of its three parts rather than drawing a
+// finished one from a table.
+//
+// A table of seven whole slices reached none of what the three parts do to each
+// other. A zero step is refused *before* the bounds are converted, and the two
+// refusals are not alike: a bound that is not an integer is a TypeError, which
+// jinja2's getitem swallows into an undefined, while the zero step is a
+// ValueError it does not -- so the order decides whether the template prints
+// nothing or fails. Nor did the table hold a bound wider than a machine
+// integer, which clamps rather than refusing, and which saturated every part of
+// a range's slice.
+func (g *generator) sliceExpr() string {
+	part := func() string {
+		if g.c.chance(3) {
+			return ""
+		}
+		return g.c.pick(sliceParts)
+	}
+	out := part() + ":" + part()
+	if g.c.chance(2) {
+		step := part()
+		// A zero step is drawn on purpose rather than waited for: it is
+		// the one part whose refusal beats the other two, so what it
+		// grades is the *pair* -- a zero step next to a bound that is
+		// not an integer -- and waiting for both to come up together out
+		// of eighteen values each found it in neither 20,000 templates
+		// nor a plant.
+		if g.c.chance(4) {
+			step = "0"
+		}
+		out += ":" + step
+	}
+	return out
+}
+
+// sliceReceivers are values a slice has a rule for -- each a different rule.
+var sliceReceivers = []string{
+	"lst", "s", "strs", "mix", "uni", "'abcde'", "[1,2,3]", "(1,2,3)",
+	"'abc'.encode()", "range(5)",
+	// A mapping, whose rule is a KeyError naming the slice.
+	"d",
+	// Not a range wider than a Py_ssize_t, however much its slice is worth
+	// grading: the slice of one is another wide range, and any arm that then
+	// *walks* it -- a for loop, or a filter with no length to ask -- leaves
+	// the oracle spinning until its five-second alarm. Forty thousand
+	// templates took twenty minutes instead of two. Wide ranges are graded
+	// by the corpus, where each case is written down.
+}
+
+var sliceParts = []string{
+	"0", "1", "2", "-1", "-2", "5", "n", "zero", "one",
+	// Not integers at all, which is a TypeError the caller swallows.
+	"1.5", "'x'", "none", "true", "false",
+	// Wider than a machine integer: clamped, not refused, and exact where
+	// the receiver is a range.
+	"9223372036854775807", "(-9223372036854775807 - 1)",
+	"1180591620717411303424", "(-1180591620717411303424)",
 }
 
 func (g *generator) atom() string {
