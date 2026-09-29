@@ -4835,6 +4835,16 @@ for _n, _src in [
     ("group_at_the_c_int_floor", "{{ b.hex('-', -2147483648) }}"),
     ("group_below_the_c_int_floor", "{{ b.hex('-', -2147483649) }}"),
     ("group_past_an_ssize_t", "{{ b.hex('-', 2 ** 70) }}"),
+    # bytes_per_sep is converted before sep is looked at at all -- it is an int
+    # in Argument Clinic and its conversion runs first -- so all four of these
+    # complain about the *second* argument. gojja2 measured the separator first
+    # and reported that instead.
+    ("bad_group_beats_a_none_sep", "{{ b.hex(none, none) }}"),
+    ("bad_group_beats_a_none_sep_str", "{{ b.hex(none, 'x') }}"),
+    ("bad_group_beats_an_int_sep", "{{ b.hex(1, none) }}"),
+    ("bad_group_beats_a_long_sep", "{{ b.hex('--', none) }}"),
+    ("none_sep_with_a_good_group", "{{ b.hex(none, 2) }}"),
+    ("long_sep_with_a_good_group", "{{ b.hex('--', 2) }}"),
     ("group_not_an_integer", "{{ b.hex('-', 'x') }}"),
     ("empty_receiver", "{{ ''.encode().hex('-') }}"),
     ("empty_receiver_bad_sep", "{{ ''.encode().hex(1) }}"),
@@ -6617,6 +6627,64 @@ case("methods/bytes_pad", '{{ "ab".encode().center(7, "*".encode()) }}|{{ "42".e
 case("methods/bytes_join", '{{ "-".encode().join(["a".encode(), "b".encode()]) }}')
 case("errors/bytes_join_item", '{{ "-".encode().join(["a", "b"]) }}')
 case("methods/bytes_hex", '{{ "ab".encode().hex() }}|{{ "abcde".encode().hex("-", 2) }}|{{ "abcde".encode().hex("-", -2) }}')
+# bytes.splitlines' keepends is `bool(accept={int})`, exactly as str's is: a
+# truth test from 3.12 and an integer conversion before it. This was read as an
+# integer on every version, so `b.splitlines(none)` and `b.splitlines('x')` were
+# refused where CPython splits -- and the str half was already right, which is
+# how the two halves of one rule came to differ.
+for _n, _src in [
+    ("none", "{{ b.splitlines(none) }}"),
+    ("str", "{{ b.splitlines('x') }}"),
+    ("empty_str", "{{ b.splitlines('') }}"),
+    ("list", "{{ b.splitlines([]) }}"),
+    ("nonempty_list", "{{ b.splitlines([1]) }}"),
+    ("true", "{{ b.splitlines(true) }}"),
+    ("two", "{{ b.splitlines(2) }}"),
+    ("zero", "{{ b.splitlines(0) }}"),
+    ("float", "{{ b.splitlines(1.5) }}"),
+    ("keyword", "{{ b.splitlines(keepends=none) }}"),
+]:
+    case(f"bytes/splitlines_keepends_{_n}",
+         "{% set b = 'a\nb'.encode() %}" + _src)
+# The str half of the same rule, beside it, so the version matrix grades both.
+for _n, _src in [
+    ("none", "{{ 'a\nb'.splitlines(none) }}"),
+    ("str", "{{ 'a\nb'.splitlines('x') }}"),
+    ("list", "{{ 'a\nb'.splitlines([]) }}"),
+    ("float", "{{ 'a\nb'.splitlines(1.5) }}"),
+]:
+    case(f"methods/str_splitlines_keepends_{_n}", _src)
+
+# `delete` is `y*` in Argument Clinic, which takes no None: only an *omitted*
+# argument is no deletion. `table` is `O` and does take one, which is why the two
+# are not alike -- treating a None delete as absent answered the receiver where
+# CPython asks for a bytes-like object.
+for _n, _src in [
+    ("both_none", "{{ b.translate(none, none) }}"),
+    ("delete_bytes", "{{ b.translate(none, 'a'.encode()) }}"),
+    ("delete_str", "{{ b.translate(none, 'a') }}"),
+    ("delete_int", "{{ b.translate(none, 1) }}"),
+    ("delete_list", "{{ b.translate(none, []) }}"),
+    ("table_only", "{{ b.translate(none) }}"),
+    ("delete_keyword", "{{ b.translate(none, delete=none) }}"),
+]:
+    case(f"bytes/translate_{_n}", "{% set b = 'ab'.encode() %}" + _src)
+
+# getargs.c's converterr spells None as "None" where every Argument Clinic
+# message spells it "NoneType", and the fill character of bytes center/ljust/
+# rjust goes through the old path. So `b.center(6, none)` is "not None" while
+# `'ab'.center(6, none)` is "not NoneType" -- the pair is here so neither can be
+# "fixed" into the other.
+for _n, _src in [
+    ("bytes_center", "{{ b.center(6, none) }}"),
+    ("bytes_ljust", "{{ b.ljust(6, none) }}"),
+    ("bytes_rjust", "{{ b.rjust(6, none) }}"),
+    ("bytes_center_int", "{{ b.center(6, 1) }}"),
+    ("str_center", "{{ 'ab'.center(6, none) }}"),
+    ("str_ljust", "{{ 'ab'.ljust(6, none) }}"),
+]:
+    case(f"errors/fill_none_is_named_{_n}", "{% set b = 'ab'.encode() %}" + _src)
+
 case("methods/bytes_translate",
      '{{ "abc".encode().translate(none, "b".encode()) }}'
      '|{{ "abc".encode().translate("x".encode().maketrans("abc".encode(), "xyz".encode())) }}')

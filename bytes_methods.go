@@ -143,9 +143,21 @@ func fillByte(method string, args *value.CallArgs, py value.PythonVersion) (byte
 	if !ok {
 		return ' ', nil
 	}
+	// This message comes from getargs.c's 'c' unit rather than from Argument
+	// Clinic, and converterr there spells None as "None" where every clinic
+	// message spells it "NoneType":
+	//
+	//	arg == Py_None ? "None" : arg->ob_type->tp_name
+	//
+	// So `b.center(6, none)` is "not None" while `'ab'.center(6, none)`,
+	// which is a clinic message, is "not NoneType".
+	named := v.TypeName()
+	if v.IsNone() {
+		named = "None"
+	}
 	wrongType := errs.New(errs.TypeError,
 		"%s() argument 2 must be a byte string of length 1, not %s",
-		method, v.TypeName())
+		method, named)
 	if v.Kind() != value.KindBytes {
 		// 3.14 left this half exactly as it was, colon and all:
 		// `b.rjust(10, 1)` is "rjust() argument 2 must be ... not int"
@@ -678,13 +690,15 @@ func rsplitN(st *State, s, sep string, n int) ([]string, error) {
 // vertical tab, the form feed and several Unicode separators; bytes does not,
 // because it has no encoding to recognise them in.
 func bytesSplitlines(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	keep := false
-	if v, ok := args.Arg(0); ok {
-		n, err := indexOf(v, cInt)
-		if err != nil {
-			return value.Undefined, err
-		}
-		keep = n != 0
+	// keepends is `bool(accept={int})` in Argument Clinic, exactly as
+	// str.splitlines' is, so from 3.12 it is a truth test and before that an
+	// integer conversion. This read it as an integer on every version, so
+	// `b.splitlines(none)` and `b.splitlines('x')` were refused where CPython
+	// splits -- and the str half of the same rule was already right, which is
+	// how the two came to differ.
+	keep, err := clinicBoolArg(args, 0, "keepends", st.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
 	}
 	s := r.AsString()
 	var out []string
@@ -922,6 +936,20 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 	if err := st.ChargeBytes(2 * int64(len(s))); err != nil {
 		return value.Undefined, err
 	}
+	// bytes_per_sep is converted before sep is looked at at all: it is an int
+	// in Argument Clinic and its conversion runs first, so `b.hex(none, none)`
+	// and `b.hex('--', none)` both complain about the *second* argument.
+	// Reading sep first reported the separator in every one of those.
+	perSep := 1
+	if v, ok := arg(args, 1, "bytes_per_sep"); ok {
+		// `int`, not Py_ssize_t, so it gives up at 2**31 and the
+		// OverflowError names a C int.
+		n, err := indexOf(v, cInt)
+		if err != nil {
+			return value.Undefined, err
+		}
+		perSep = n
+	}
 	sep := ""
 	if v, ok := arg(args, 0, "sep"); ok {
 		// CPython asks four questions about the separator, in this
@@ -958,16 +986,6 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 					"sep must be ASCII.")
 			}
 		}
-	}
-	perSep := 1
-	if v, ok := arg(args, 1, "bytes_per_sep"); ok {
-		// Argument Clinic declares this one `int`, not Py_ssize_t, so it
-		// gives up at 2**31 and the OverflowError names a C int.
-		n, err := indexOf(v, cInt)
-		if err != nil {
-			return value.Undefined, err
-		}
-		perSep = n
 	}
 	if sep == "" {
 		return value.String(hex.EncodeToString([]byte(s))), nil
@@ -1122,7 +1140,12 @@ func bytesTranslate(st *State, r value.Value, args *value.CallArgs) (value.Value
 		table = t
 	}
 	del := ""
-	if v, ok := arg(args, 1, "delete"); ok && !v.IsNone() {
+	// `delete` is `y*` in Argument Clinic, which takes no None: only an
+	// *omitted* argument is no deletion, and an explicit one is refused.
+	// `table` is `O` and does take it, which is why the two are not alike --
+	// treating a None delete as absent made `b.translate(none, none)` answer
+	// the receiver where CPython asks for a bytes-like object.
+	if v, ok := arg(args, 1, "delete"); ok {
 		d, err := bytesLike(v)
 		if err != nil {
 			return value.Undefined, err

@@ -1,0 +1,4 @@
+{}
+---
+{% set b = 'a
+b'.encode() %}{{ b.splitlines(0) }}
