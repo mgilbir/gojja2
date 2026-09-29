@@ -11,11 +11,17 @@ import (
 
 // Set is Python's set, as far as a template can reach one.
 //
-// Only one operation produces it: the difference of a dict's keys or items view
-// with an iterable. jinja2's grammar has no `&` or `^`, and `|` is the filter
-// operator, so `d.keys() - xs` is the whole of the set arithmetic a template can
-// write -- and `set - list` is refused in CPython too, so the result cannot even
-// be the left operand of another one.
+// One operation produces it: the difference of a dict's keys or items view with
+// an iterable. jinja2's grammar has no `&` or `^`, and `|` is the filter
+// operator, so `d.keys() - xs` is the only set arithmetic a template can
+// *write* as an operator -- and `set - list` is refused in CPython, so an
+// iterable cannot be the right operand of a second one. Another set can:
+// `(d.keys() - x) - (d.keys() - y)` is a set difference, and this used to say
+// it was not.
+//
+// Everything else a set does, it does through its methods, all seventeen of
+// which are in set_methods.go. Those take any iterable where the operator takes
+// a set, which is CPython's rule and not a convenience.
 //
 // # Order
 //
@@ -68,10 +74,89 @@ func NewSet(elements []Value, py PythonVersion, budget Budget) (*Set, error) {
 	return s, nil
 }
 
-// GetAttr: a set has methods in Python, and none of them are reachable here --
-// the only set a template can hold came from a view difference, and nothing in
-// jinja2's grammar calls a method on the result of one.
+// GetAttr answers nothing here: the set's methods are bound in the gojja2
+// package, beside every other built-in type's, because that is where the arity
+// table CPython's wordings are generated into lives. This used to say the
+// methods were unreachable, on the grounds that only a view difference makes a
+// set -- but `{% set s = d.keys() - xs %}{{ s.add(1) }}` is a method call on
+// one, and all seventeen of them were missing.
 func (s *Set) GetAttr(string) (Value, bool) { return Undefined, false }
+
+// Elements are the set's members, in the order it keeps them: sorted by repr,
+// for the reason the type comment gives. The slice is the set's own and must
+// not be held past a mutation.
+func (s *Set) Elements() []Value { return s.items }
+
+// Has reports membership without hashing the item again, for a caller that has
+// already checked -- a set's own elements are hashable by construction.
+func (s *Set) Has(v Value) bool {
+	_, ok := s.index.GetKnown(v)
+	return ok
+}
+
+// Add inserts an element, keeping the order sorted. It refuses an unhashable
+// one exactly as building a set does.
+func (s *Set) Add(v Value, py PythonVersion, budget Budget) error {
+	if err := CheckHashable(v, py, AsSetElement); err != nil {
+		return err
+	}
+	if s.Has(v) {
+		return nil
+	}
+	if err := chargeItems(budget, 1); err != nil {
+		return err
+	}
+	s.index.SetKnown(v, None)
+	s.items = append(s.items, v)
+	s.resort()
+	return nil
+}
+
+// Discard removes an element if it is there, reporting whether it was.
+func (s *Set) Discard(v Value) bool {
+	if !s.Has(v) {
+		return false
+	}
+	s.index.DeleteKnown(v)
+	kept := s.items[:0]
+	for _, item := range s.items {
+		if _, in := s.index.GetKnown(item); in {
+			kept = append(kept, item)
+		}
+	}
+	s.items = kept
+	return true
+}
+
+// Pop removes and answers the first element in the set's order. CPython pops
+// the first in *its* order, which is the hash table's; the two orders are the
+// documented divergence and this is one more place it shows.
+func (s *Set) Pop() (Value, bool) {
+	if len(s.items) == 0 {
+		return Undefined, false
+	}
+	v := s.items[0]
+	s.index.DeleteKnown(v)
+	s.items = s.items[1:]
+	return v, true
+}
+
+// Reset replaces every element, which is how the in-place operations --
+// update, the three ..._update and clear -- land their result.
+func (s *Set) Reset(elements []Value, py PythonVersion, budget Budget) error {
+	next, err := NewSet(elements, py, budget)
+	if err != nil {
+		return err
+	}
+	s.items, s.index = next.items, next.index
+	return nil
+}
+
+func (s *Set) resort() {
+	sort.SliceStable(s.items, func(i, j int) bool {
+		return Repr(s.items[i]) < Repr(s.items[j])
+	})
+}
 
 func (s *Set) TypeName() string { return "set" }
 

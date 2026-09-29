@@ -318,6 +318,30 @@ func Sub(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 			return setDifference(view, b, py, budget)
 		}
 	}
+	// Two sets subtract as sets. This is not the view's rule and does not
+	// take an iterable: `set - list` is a TypeError in CPython, and the
+	// only way a template gets a set on the left at all is by writing one
+	// view difference and then subtracting from the result. The type
+	// comment in set.go said that could not happen; `(d.keys() - x) -
+	// (d.keys() - y)` is the shape that does it.
+	if left, ok := a.Interface().(*Set); ok {
+		if right, ok := b.Interface().(*Set); ok {
+			var out []Value
+			for _, v := range left.items {
+				if _, drop := right.index.GetKnown(v); !drop {
+					if err := chargeItems(budget, 1); err != nil {
+						return Undefined, err
+					}
+					out = append(out, v)
+				}
+			}
+			result, err := NewSet(out, py, budget)
+			if err != nil {
+				return Undefined, err
+			}
+			return FromObject(result), nil
+		}
+	}
 	// ...and with the view written second, which CPython reaches through
 	// the view's __rsub__. `'ab' - d.keys()` is a set of the string's
 	// characters minus the keys.

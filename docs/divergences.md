@@ -528,11 +528,12 @@ so the form is pinned exactly and only the number is allowed to differ.
 {{ d.keys() - [] }}
 ```
 
-`d.keys() - xs` is the whole of the set arithmetic a template can write --
-jinja2's grammar has no `&` or `^`, `|` is the filter operator, and CPython
-refuses `set - list`, so the result cannot be the left operand of another one.
-The operation itself matches: the same elements, the same refusals, the same
-four error messages.
+`d.keys() - xs` is the only set arithmetic a template can write as an operator
+-- jinja2's grammar has no `&` or `^` and `|` is the filter operator -- though
+the result can be the left operand of another difference, and a set's seventeen
+methods reach the rest: union, intersection, the three ..._update, add, remove,
+pop and the others. The operations themselves match: the same elements, the
+same refusals, the same messages.
 
 The *order* it prints in does not, and cannot. A set is unordered and CPython's
 repr follows its hash table, which string hashing randomises per process. Three
@@ -553,6 +554,14 @@ and are graded against CPython as usual -- as are the length, the membership
 test, the truthiness, the equality, and `|list|sort`. Only the multi-element
 repr is unreproducible, and `conformance.Comparable` screens it out of the
 generated differential for the same reason it screens an address.
+
+Two things follow the order rather than the repr, and both are it again rather
+than a second divergence. `s.pop()` takes the first element in the set's own
+order, so it takes a different one from CPython unless the set holds one thing;
+the cases here pop until it is empty and compare the sorted result. And a
+`|sort` that fails names the pair it happened to reach first, so
+`{{ s.add(1) }}{{ s|list|sort }}` reports "'int' and 'str'" where CPython
+reports "'str' and 'int'".
 
 `|pprint` is the exception, and it is graded. pprint does not use the repr's
 order: it sorts with `pprint._safe_key`, which is the elements' own ordering

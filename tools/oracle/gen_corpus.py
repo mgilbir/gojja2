@@ -8476,6 +8476,96 @@ for _n, _src in [
 ]:
     case("dictview/" + _n, _DV + _src)
 
+# A set's seventeen methods, which a template reaches because `d.keys() - xs`
+# gives it a set to call them on. All seventeen answered "'set object' has no
+# attribute" until this was swept.
+#
+# Every result that is itself a set is compared through `|list|sort`, never by
+# its repr: a multi-element set prints in hash order on CPython and in repr
+# order here, which is the one thing about a set that cannot be reproduced. See
+# docs/divergences.md.
+_S = ("{% set d = {'a': 1, 'b': 2, 'c': 3} %}{% set s = d.keys() - ['a'] %}"
+      "{% set t = d.keys() - ['b', 'c'] %}")
+for _n, _src in [
+    # The four that build a new set take any number of iterables, and fold left.
+    ("union", "{{ s.union(t)|list|sort }}"),
+    ("union_of_nothing", "{{ s.union()|list|sort }}"),
+    ("union_of_a_list", "{{ s.union(['z'])|list|sort }}"),
+    ("union_of_a_string", "{{ s.union('xy')|list|sort }}"),
+    ("union_of_a_dict", "{{ s.union(d)|list|sort }}"),
+    ("union_of_two", "{{ s.union(t, ['z'])|list|sort }}"),
+    ("intersection", "{{ s.intersection(t)|list|sort }}"),
+    ("intersection_of_a_list", "{{ s.intersection(['b'])|list|sort }}"),
+    ("intersection_of_nothing", "{{ s.intersection()|list|sort }}"),
+    ("difference", "{{ s.difference(t)|list|sort }}"),
+    ("difference_of_a_list", "{{ s.difference(['b'])|list|sort }}"),
+    ("difference_of_two", "{{ s.difference(['b'], ['c'])|list|sort }}"),
+    ("symmetric_difference", "{{ s.symmetric_difference(t)|list|sort }}"),
+    ("symmetric_difference_of_a_list", "{{ s.symmetric_difference(['b'])|list|sort }}"),
+    # ...and the four that land back in the receiver answer None.
+    ("update", "{{ s.update(t) }}|{{ s|list|sort }}"),
+    ("update_of_nothing", "{{ s.update() }}|{{ s|list|sort }}"),
+    ("intersection_update", "{{ s.intersection_update(['b']) }}|{{ s|list|sort }}"),
+    ("difference_update", "{{ s.difference_update(['b']) }}|{{ s|list|sort }}"),
+    ("symmetric_difference_update",
+     "{{ s.symmetric_difference_update(['b', 'z']) }}|{{ s|list|sort }}"),
+    # The three relations, which also take any iterable.
+    ("issubset", "{{ s.issubset(t) }}|{{ s.issubset(d) }}|{{ s.issubset('bc') }}"),
+    ("issuperset", "{{ s.issuperset(t) }}|{{ s.issuperset(['b']) }}"),
+    ("isdisjoint", "{{ s.isdisjoint(t) }}|{{ s.isdisjoint(['b']) }}"),
+    # add, remove, discard, pop, clear, copy.
+    ("add", "{{ s.add('z') }}|{{ s|list|sort }}"),
+    ("add_an_element_it_has", "{{ s.add('b') }}|{{ s|list|sort }}"),
+    ("add_unhashable", "{{ s.add(['z']) }}"),
+    ("add_a_set", "{{ s.add(t) }}"),
+    ("remove", "{{ s.remove('b') }}|{{ s|list|sort }}"),
+    ("remove_a_missing_element", "{{ s.remove('z') }}"),
+    ("remove_unhashable", "{{ s.remove(['z']) }}"),
+    # remove and discard take a set where add refuses one: set_remove catches
+    # the unhashable TypeError and looks up a frozenset instead, so the
+    # complaint is a KeyError naming the set.
+    ("remove_a_set", "{{ s.remove(t) }}"),
+    ("discard", "{{ s.discard('b') }}|{{ s|list|sort }}"),
+    ("discard_a_missing_element", "{{ s.discard('z') }}|{{ s|list|sort }}"),
+    ("discard_a_set", "{{ s.discard(t) }}|{{ s|list|sort }}"),
+    ("discard_unhashable", "{{ s.discard(['z']) }}"),
+    # pop takes an arbitrary element, so only the *set* it leaves is compared:
+    # popping everything and sorting is order-free on both sides.
+    ("pop_everything", "{% set out = [] %}{% for i in range(2) %}"
+     "{% do out.append(s.pop()) %}{% endfor %}{{ out|sort }}|{{ s|list }}"),
+    ("pop_from_an_empty_set", "{{ (d.keys() - d.keys()).pop() }}"),
+    ("clear", "{{ s.clear() }}|{{ s|list }}|{{ s|length }}"),
+    ("copy_is_a_new_set", "{% set c = s.copy() %}{{ c|list|sort }}|{{ s.add('z') }}|"
+     "{{ c|list|sort }}|{{ s|list|sort }}"),
+    ("union_is_a_new_set", "{% set c = s.union() %}{{ s.add('z') }}|{{ c|list|sort }}"),
+    # What each one refuses. The arity wordings are CPython's own, probed into
+    # method_arity.go rather than written out here.
+    ("add_needs_one", "{{ s.add() }}"),
+    ("add_takes_one", "{{ s.add(1, 2) }}"),
+    ("pop_takes_none", "{{ s.pop(1) }}"),
+    ("clear_takes_none", "{{ s.clear(1) }}"),
+    ("copy_takes_none", "{{ s.copy(1) }}"),
+    ("isdisjoint_needs_one", "{{ s.isdisjoint() }}"),
+    ("isdisjoint_takes_one", "{{ s.isdisjoint(t, t) }}"),
+    ("symmetric_difference_needs_one", "{{ s.symmetric_difference() }}"),
+    ("union_takes_no_keywords", "{{ s.union(x=1) }}"),
+    ("add_takes_no_keywords", "{{ s.add(x=1) }}"),
+    ("union_of_an_int", "{{ s.union(1) }}"),
+    ("union_of_none", "{{ s.union(none) }}"),
+    ("union_of_unhashable", "{{ s.union([['z']]) }}"),
+    ("issubset_of_an_int", "{{ s.issubset(1) }}"),
+    ("update_of_an_int", "{{ s.update(1) }}|{{ s|list|sort }}"),
+    # The operator takes a set and not an iterable, which is the difference
+    # between it and the methods.
+    ("minus_a_set", "{{ (s - t)|list|sort }}"),
+    ("minus_a_view", "{{ (s - d.keys())|list|sort }}"),
+    ("a_view_minus_a_set", "{{ (d.keys() - s)|list|sort }}"),
+    ("minus_a_list", "{{ s - ['b'] }}"),
+    ("minus_a_string", "{{ s - 'b' }}"),
+    ("minus_an_int", "{{ s - 1 }}"),
+]:
+    case(f"sets/{_n}", _S + _src)
+
 case("filters/pprint_set_empty", "{% set d = {'a': 1} %}{{ (d.keys() - d.keys())|pprint }}")
 case("filters/pprint_set_in_a_list",
      "{% set d = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, '11': 11, '12': 12, '13': 13, '14': 14, '15': 15, '16': 16, '17': 17, '18': 18, '19': 19, '20': 20, '21': 21, '22': 22, '23': 23, '24': 24, '25': 25, '26': 26, '27': 27, '28': 28, '29': 29, '30': 30, '31': 31, '32': 32, '33': 33, '34': 34, '35': 35, '36': 36, '37': 37, '38': 38, '39': 39} %}{{ [(d.keys() - [])]|pprint }}")

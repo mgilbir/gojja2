@@ -55,6 +55,13 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 			table, recv = tupleMethods, tv.AsTuple()
 			break
 		}
+		// A set's methods are bound here rather than from its own
+		// GetAttr, so they get the arity table -- the wordings of which
+		// are CPython's own, probed per method.
+		if _, ok := recv.Interface().(*value.Set); ok {
+			table = setMethods
+			break
+		}
 		return value.Undefined, false
 	default:
 		return value.Undefined, false

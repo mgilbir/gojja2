@@ -36,6 +36,8 @@ DST = ROOT / "method_arity.go"
 METHODS_GO = ROOT / "methods.go"
 # bytes has forty-two methods and they live in a file of their own.
 BYTES_GO = ROOT / "bytes_methods.go"
+# ...and set's seventeen live in one of their own.
+SET_GO = ROOT / "set_methods.go"
 
 # A receiver of each type, chosen so that a correctly-shaped call is as likely
 # as possible to *work*: the probe reads arity errors, and an argument error of
@@ -51,12 +53,15 @@ RECEIVERS = {
     "dict_keys": {"a": 1, "b": 2}.keys(),
     "dict_items": {"a": 1, "b": 2}.items(),
     "mappingproxy": types.MappingProxyType({"a": 1, "b": 2}),
+    # A set, which a template reaches as the difference of a view with an
+    # iterable, and whose seventeen methods are set_methods.go's.
+    "set": {"a", "b"},
 }
 
 TYPES = {
     "str": str, "list": list, "dict": dict, "tuple": tuple, "bytes": bytes,
     "dict_keys": type({}.keys()), "dict_items": type({}.items()),
-    "mappingproxy": types.MappingProxyType,
+    "mappingproxy": types.MappingProxyType, "set": set,
 }
 
 # A value that is wrong for almost every parameter, so a call that gets past
@@ -256,7 +261,18 @@ def describe(tname: str, mname: str) -> dict:
     bound_to_class = isinstance(raw, (classmethod, staticmethod)) or (
         getattr(fn, "__self__", None) is TYPES[tname]
     )
-    lead = () if bound_to_class else (RECEIVERS[tname],)
+    # Bound, the way a template reaches it: jinja2 compiles `s.union(x=1)` into
+    # a getattr and then a call, so what a template sees is the *bound method
+    # object's* complaint. Calling the type's function with the receiver in
+    # front is a different code path in CPython, and on 3.11 it words one of
+    # them differently: `{1}.union(x=1)` is "set.union() takes no keyword
+    # arguments" there while `getattr({1}, 'union')(x=1)` is "union() takes no
+    # keyword arguments", which is the one a template produces. The pinned
+    # interpreter words all 136 identically either way, so this changes nothing
+    # in the committed table and one entry in the 3.11 block beside it.
+    lead = () if bound_to_class else ()
+    if not bound_to_class:
+        fn = getattr(RECEIVERS[tname], mname)
     what = f"{tname}.{mname}"
 
     MAX = 8
@@ -305,6 +321,7 @@ def gojja2_methods() -> dict[str, list[str]]:
     """The methods gojja2 implements, read out of its own tables."""
     txt = METHODS_GO.read_text(encoding="utf-8")
     bytes_txt = BYTES_GO.read_text(encoding="utf-8")
+    set_txt = SET_GO.read_text(encoding="utf-8")
 
     def table(src: str, start: str, end: str) -> list[str]:
         i = src.index(start)
@@ -321,6 +338,7 @@ def gojja2_methods() -> dict[str, list[str]]:
         "dict_keys": table(txt, "var dictViewMethods = map[string]", "\n}\n"),
         "dict_items": table(txt, "var dictViewMethods = map[string]", "\n}\n"),
         "mappingproxy": table(txt, "var mappingProxyMethods = map[string]", "\n}\n"),
+        "set": table(set_txt, "var setMethods = map[string]", "\n}\n"),
     }
 
 
