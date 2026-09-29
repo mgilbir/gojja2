@@ -368,7 +368,7 @@ func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found,
 		return true, true, nil
 	}
 	pair, _ := item.Seq()
-	eq, err := value.EqualErr(pair.At(1), got, py)
+	eq, err := value.EqualBoolErr(pair.At(1), got, py)
 	return eq, true, err
 }
 
@@ -380,7 +380,7 @@ func (v *dictView) scan(item value.Value, py value.PythonVersion) (bool, error) 
 	for _, have := range v.entries() {
 		// The element on the left, as every containment scan in
 		// CPython has it.
-		eq, err := value.EqualErr(have, item, py)
+		eq, err := value.EqualBoolErr(have, item, py)
 		if err != nil {
 			return false, err
 		}
@@ -424,7 +424,7 @@ func (v *dictView) EqualsErr(other value.Value, py value.PythonVersion) (bool, b
 	for _, item := range mine {
 		found := false
 		for _, cand := range theirs {
-			eq, err := value.EqualErr(item, cand, py)
+			eq, err := value.EqualBoolErr(item, cand, py)
 			if err != nil {
 				return false, true, err
 			}

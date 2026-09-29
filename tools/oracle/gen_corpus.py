@@ -1732,6 +1732,64 @@ for _n, _src in [
     ("int_filter_of_nan", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|int }}"),
 ]:
     case(f"numbers/nonfinite_{_n}", _src)
+
+# What a NaN *is*, as opposed to what it equals.
+#
+# Every float in CPython is an object, and for every float but a NaN that makes
+# no difference, because `is` implies `==`. A NaN equals nothing, itself
+# included, so the two questions come apart -- and almost everything that
+# searches or compares a container asks the *identity* question first, because
+# that is what PyObject_RichCompareBool does. `x == x` is False and `[x] == [x]`
+# is True, for the same x, and there is no contradiction in it.
+#
+# Two NaNs computed separately are two objects, which is what tells the rule
+# from "a NaN is equal to itself after all": every case below has a twin that
+# answers the other way. The prefix is the one from the conversions above --
+# 1e400 folds and writes out as a bare `inf`, while 1e308 multiplied through a
+# name overflows during the render.
+_NAN = "{% set a = 1e308 %}{% set b = a * 10 %}{% set x = b - b %}"
+_TWO = _NAN + "{% set y = b - b %}"
+for _n, _src in [
+    # The operator itself has no identity shortcut: this is float.__eq__.
+    ("compared_directly", _NAN + "{{ x == x }}|{{ x != x }}"),
+    ("is_sameas_itself", _NAN + "{{ x is sameas x }}"),
+    ("two_are_not_sameas", _TWO + "{{ x is sameas y }}"),
+    # Containers compare their elements with the identity question.
+    ("in_a_list", _NAN + "{{ [x] == [x] }}|{{ [x] != [x] }}"),
+    ("two_in_lists", _TWO + "{{ [x] == [y] }}"),
+    ("a_fresh_nan_is_a_fresh_object", _NAN + "{{ [x] == [x + 0] }}"),
+    ("in_a_tuple", _NAN + "{{ (x, 1) == (x, 1) }}"),
+    ("nested_in_lists", _NAN + "{{ [[x]] == [[x]] }}"),
+    ("as_a_dict_value", _NAN + "{{ {'a': x} == {'a': x} }}"),
+    ("two_as_dict_values", _TWO + "{{ {'a': x} == {'a': y} }}"),
+    # Containment is the same question, asked of each candidate.
+    ("found_in_a_list", _NAN + "{{ x in [x] }}"),
+    ("another_not_found_in_a_list", _TWO + "{{ y in [x] }}"),
+    ("found_in_a_tuple", _NAN + "{{ x in (x,) }}"),
+    ("found_in_a_dict", _NAN + "{{ x in {x: 1} }}"),
+    # ...and so are the three searching list methods.
+    ("index_of_the_same_nan", _NAN + "{{ [x].index(x) }}"),
+    ("index_of_another_nan", _TWO + "{{ [x].index(y) }}"),
+    ("count_of_the_same_nan", _TWO + "{{ [x, y].count(x) }}"),
+    # A NaN key hashes by identity, which CPython has done since 3.10: the same
+    # one is one key and finds itself, two are two keys and neither finds the
+    # other.
+    ("as_a_dict_key", _NAN + "{{ {x: 1}[x] }}"),
+    ("another_key_misses", _TWO + "{{ {x: 1}.get(y, 'miss') }}"),
+    ("one_key_written_twice", _NAN + "{{ {x: 1, x: 2}|length }}"),
+    ("two_keys_are_two_entries", _TWO + "{{ {x: 1, y: 2}|length }}"),
+    # |unique keeps a set, so it dedupes by the same rule.
+    ("unique_keeps_one", _NAN + "{{ [x, x]|unique|list|length }}"),
+    ("unique_keeps_both", _TWO + "{{ [x, y]|unique|list|length }}"),
+    # The views compare as sets, so their elements go through it too.
+    ("in_a_keys_view", _NAN + "{{ {x: 1}.keys() == {x: 1}.keys() }}"),
+    ("in_an_items_view", _NAN + "{{ {'a': x}.items() == {'a': x}.items() }}"),
+    # loop.changed compares two tuples, and a tuple compares its elements.
+    ("loop_changed", _NAN + "{% for i in [1, 2] %}{{ loop.changed(x) }}{% endfor %}"),
+    ("loop_changed_by_another", _TWO +
+     "{% for i in [1, 2] %}{{ loop.changed(x if loop.first else y) }}{% endfor %}"),
+]:
+    case(f"numbers/nan_identity_{_n}", _src)
 # |filesizeformat formats a scaled float directly, and Python writes a non-finite
 # in words where Go writes "NaN" and "+Inf". A *negative* infinity lands in the
 # int(bytes) branch -- it is less than the base -- where an int64 conversion
@@ -2023,6 +2081,35 @@ for _u in ("strict", "chainable", "debug", ""):
 # has no undefined in it at all.
 case("methods/dict_view_difference_empty_list",
      "{% set q = {'a': 1} %}{{ q.keys() - [] }}|{{ q.items() - [] }}")
+
+# Comparing two views, which is a set comparison and not a sequence one: order
+# does not matter, a values view has no __eq__ at all so two of them are equal
+# only by identity, and a view is never equal to a view of another kind or to a
+# dict. `dictview.EqualsErr` had every one of these rules written down and not
+# one case reaching them -- `go tool cover` put nothing on the comparison at
+# all, because no corpus case had ever compared two views of the same kind.
+for _n, _src in [
+    ("keys_ignore_order", "{{ {'a': 1, 'b': 2}.keys() == {'b': 2, 'a': 1}.keys() }}"),
+    ("items_ignore_order", "{{ {'a': 1, 'b': 2}.items() == {'b': 2, 'a': 1}.items() }}"),
+    ("keys_differ_in_length", "{{ {'a': 1, 'b': 2}.keys() == {'a': 1}.keys() }}"),
+    ("items_differ_in_value", "{{ {'a': 1}.items() == {'a': 2}.items() }}"),
+    # Two values views are two objects, so this is False however equal they look.
+    ("values_are_never_equal", "{{ {'a': 1}.values() == {'a': 1}.values() }}"),
+    # ...and one values view is the same object as itself.
+    ("a_values_view_equals_itself",
+     "{% set q = {'a': 1} %}{% set v = q.values() %}{{ v == v }}"),
+    ("keys_against_items", "{{ {'a': 1}.keys() == {'a': 1}.items() }}"),
+    ("keys_against_the_dict", "{{ {'a': 1}.keys() == {'a': 1} }}"),
+    ("keys_not_equal", "{{ {'a': 1}.keys() != {'a': 1}.keys() }}"),
+    # The elements compare as Python compares them, so an int key and the bool
+    # or float that equals it are the same element.
+    ("keys_across_int_and_bool", "{{ {1: 'x'}.keys() == {true: 'x'}.keys() }}"),
+    ("items_across_int_and_float", "{{ {1: 'x'}.items() == {1.0: 'x'}.items() }}"),
+    # An items view carries values, which need not be hashable.
+    ("items_with_list_values", "{{ {'a': [1]}.items() == {'a': [1]}.items() }}"),
+    ("empty_views", "{{ {}.keys() == {}.keys() }}|{{ {}.items() == {}.items() }}"),
+]:
+    case(f"methods/dict_view_equal_{_n}", _src)
 
 # Every one of these is a real `==` per element, so a StrictUndefined among the
 # *elements* refuses just as one in the item position does. gojja2 compared with a

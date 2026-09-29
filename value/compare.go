@@ -49,6 +49,35 @@ func EqualErr(a, b Value, py PythonVersion) (bool, error) {
 	return equalDepth(a, b, 0, py)
 }
 
+// EqualBool is CPython's PyObject_RichCompareBool: the same object, or an equal
+// one.
+//
+// This is not what `==` does, and the difference is the whole of what a NaN
+// means. `x == x` calls float.__eq__ and is False; `x in [x]`, `[x] == [x]`,
+// `{x: 1}[x]` and everything else that searches or compares a *container* asks
+// this instead, which answers True for a NaN read twice from one place. CPython
+// draws the same line, in the same place, for the same reason: the identity
+// check is what makes a container equal to itself whatever it holds.
+//
+// So every element comparison goes through here, and the `==` operator does
+// not. See [SameObject] for which values have an identity to compare.
+func EqualBool(a, b Value) bool {
+	equal, _ := equalBoolDepth(a, b, 0, DefaultPythonVersion)
+	return equal
+}
+
+// EqualBoolErr is [EqualBool], reporting the errors a comparison can raise.
+func EqualBoolErr(a, b Value, py PythonVersion) (bool, error) {
+	return equalBoolDepth(a, b, 0, py)
+}
+
+func equalBoolDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
+	if SameObject(a, b) {
+		return true, nil
+	}
+	return equalDepth(a, b, depth, py)
+}
+
 func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 	if depth > maxCompareDepth {
 		// The suffix stays, in every version. 3.12 dropped "while
@@ -142,7 +171,7 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 			return false, nil
 		}
 		for i := range as.items {
-			equal, err := equalDepth(as.items[i], bs.items[i], depth+1, py)
+			equal, err := equalBoolDepth(as.items[i], bs.items[i], depth+1, py)
 			if err != nil {
 				return false, err
 			}
@@ -163,7 +192,7 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 			if !ok {
 				return false, nil
 			}
-			equal, rerr := equalDepth(e.Value, other, depth+1, py)
+			equal, rerr := equalBoolDepth(e.Value, other, depth+1, py)
 			if rerr != nil {
 				return false, rerr
 			}
@@ -653,7 +682,7 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 			// against the item, so `{{ nope in [d.nope] }}` names
 			// the element's complaint and only an element with no
 			// opinion hands the question back to the item.
-			eq, err := EqualErr(v, item, py)
+			eq, err := EqualBoolErr(v, item, py)
 			if err != nil {
 				return false, err
 			}
@@ -692,7 +721,7 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 				if !ok {
 					continue
 				}
-				eq, err := EqualErr(v, item, py)
+				eq, err := EqualBoolErr(v, item, py)
 				if err != nil {
 					return false, err
 				}
@@ -706,7 +735,7 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 				if err := chargeItems(budget, 1); err != nil {
 					return false, err
 				}
-				eq, err := EqualErr(v, item, py)
+				eq, err := EqualBoolErr(v, item, py)
 				if err != nil {
 					return false, err
 				}

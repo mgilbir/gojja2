@@ -2255,7 +2255,7 @@ func methodListRemove(st *State, r value.Value, args *value.CallArgs) (value.Val
 	v, _ := arg(args, 0, "")
 	s, _ := r.Seq()
 	for i, item := range s.Items() {
-		eq, err := value.EqualErr(item, v, st.PythonVersion())
+		eq, err := value.EqualBoolErr(item, v, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -2294,7 +2294,7 @@ func methodSeqIndex(st *State, r value.Value, args *value.CallArgs) (value.Value
 		return value.Undefined, err
 	}
 	for i := start; i < end; i++ {
-		eq, err := value.EqualErr(items[i], v, st.PythonVersion())
+		eq, err := value.EqualBoolErr(items[i], v, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -2513,7 +2513,7 @@ func methodSeqCount(st *State, r value.Value, args *value.CallArgs) (value.Value
 	s, _ := r.Seq()
 	n := 0
 	for _, item := range s.Items() {
-		eq, err := value.EqualErr(item, v, st.PythonVersion())
+		eq, err := value.EqualBoolErr(item, v, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}

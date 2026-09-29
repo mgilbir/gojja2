@@ -226,10 +226,13 @@ func testSameAs(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
 	case value.KindList, value.KindDict, value.KindObject, value.KindFunc:
 		return v.Interface() == other.Interface(), nil
 	case value.KindFloat:
-		// NaN is not identical to another NaN unless it is the same
-		// object, which for a float value it never is here.
+		// A NaN is the one scalar whose identity is not its value, and
+		// it carries one: `{% set x = b - b %}{{ x is sameas x }}` is
+		// True, and it is False for a second NaN computed separately.
+		// Every other float equals itself, so identity and equality
+		// coincide and the fallthrough answers.
 		if math.IsNaN(v.AsFloat()) {
-			return false, nil
+			return value.SameObject(v, other), nil
 		}
 	}
 	return value.Equal(v, other), nil

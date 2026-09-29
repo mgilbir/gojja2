@@ -605,6 +605,46 @@ tautology.
 The singletons CPython really guarantees are matched: None, True, False, and
 the empty tuple.
 
+### A NaN handed in from Go twice
+
+A NaN is the only value whose identity a template can observe. Everywhere else
+`is` implies `==`, so nothing that asks "the same object, or an equal one" --
+which is what every container comparison asks -- can tell the two apart. A NaN
+is equal to nothing, itself included, so for a NaN the two questions come apart:
+
+```jinja
+{% set a = 1e308 %}{% set b = a * 10 %}{% set x = b - b %}
+{{ x == x }}        False -- the operator is float.__eq__
+{{ [x] == [x] }}    True  -- the list compares its elements by identity first
+{{ x in [x] }}      True
+{{ {x: 1}[x] }}     1     -- a NaN hashes by identity, as CPython has since 3.10
+```
+
+gojja2 gives every NaN an identity where the value is made, so all of that, and
+`|unique`, `list.index`, `list.count`, `loop.changed` and the dict views, answer
+as CPython does -- including the other side of the rule, that two NaNs computed
+separately are two objects and equal to neither each other nor themselves inside
+a container.
+
+What it cannot reproduce is sharing that happened before the values arrived. A
+Go context is not a Python object graph:
+
+```go
+map[string]any{"n": math.NaN(), "ns": []any{math.NaN()}}
+```
+
+is two NaNs however it was written, because a `float64` carries no identity to
+share -- and even `n := math.NaN(); map[string]any{"n": n, "ns": []any{n}}` is
+two, for the same reason. Python would have had one object in both places, and
+`{{ n in ns }}` is True there and False here. Within a render nothing is lost:
+one context value is one object however often the template reads it, which is
+what the four other cases in `TestNaNKeepsItsIdentityWithinARender` hold.
+
+The corpus cannot show any of this either way -- its contexts are JSON, which
+has no NaN -- so the Go test is where it is asserted, and
+`numbers/nan_identity_*` grades the twenty-seven shapes a template can build for
+itself.
+
 ### Comparison order inside a long sort
 
 Sorting values that cannot be compared raises, and the message names the two

@@ -598,6 +598,16 @@ func hashScalar(v, outer Value, py PythonVersion, use HashUse) (hashKey, error) 
 		}
 		return hashKey{kind: KindInt, num: int64(v.num)}, nil
 	case KindFloat:
+		// A NaN hashes by identity, as CPython has done since 3.10:
+		// float.__hash__ answers object_hash for a value that is equal
+		// to nothing, so two NaNs are two keys and one NaN is one --
+		// `{% set x = b - b %}{{ {x: 1}[x] }}` finds it and
+		// `{% set y = b - b %}{{ {x: 1, y: 2}|length }}` is two. A
+		// float key is not equal to anything else either way, so this
+		// is the whole of the difference.
+		if id, ok := v.obj.(*nanIdentity); ok {
+			return hashKey{kind: KindFloat, str: fmt.Sprintf("%p", id)}, nil
+		}
 		return hashFloat(v.AsFloat()), nil
 	case KindString:
 		return hashKey{kind: KindString, str: v.str}, nil
