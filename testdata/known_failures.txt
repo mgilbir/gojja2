@@ -171,6 +171,14 @@ own/divergence/class_python_method_cycler_next_with_self.jj2
 own/divergence/class_python_method_cycler_reset_with_self.jj2
 own/divergence/class_python_method_loop_cycle_with_self.jj2
 
+# --- a bound method's receiver compared by identity ---
+# Two bound methods are equal when their receivers are the same object. Two
+# literal 300s are two objects on CPython and one value here. See
+# docs/divergences.md, "`is sameas` on two literals".
+own/divergence/bound_method_literal_receiver_int.jj2
+own/divergence/bound_method_literal_receiver_float.jj2
+own/divergence/bound_method_literal_receiver_wide_int.jj2
+
 # --- an unpack count over a lazy filter's result ---------------------------------
 # The @3.14 suffix means "agrees with the pin, diverges on that one". 3.14 names
 # the count in "too many values to unpack" for a list, a tuple or a

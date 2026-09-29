@@ -640,7 +640,9 @@ func (f *builtinFunc) Equals(other value.Value) (bool, bool) {
 	// A receiver that has an identity settles it: two dicts that are not the
 	// same dict give two bound methods that are not equal, however equal the
 	// dicts look. Only a scalar falls through, and there CPython is
-	// comparing an object gojja2 does not have.
+	// comparing an object gojja2 does not have: two literal 300s are two
+	// objects there. Equality of value is what a variable receiver answers
+	// on both; see "`is sameas` on two literals" in docs/divergences.md.
 	if value.HasIdentity(f.self) || value.HasIdentity(o.self) {
 		return false, true
 	}

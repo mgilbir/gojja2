@@ -49,7 +49,7 @@ are safety controls rather than behavioural choices, and they live in
 | [A comparison that runs out of stack under 3.14](#a-comparison-that-runs-out-of-stack-under-314) | the sentence is CPython's through 3.13; 3.14 names the stack it used | No -- only under 3.14, and only the wording |
 | [The order a set prints in](#the-order-a-set-prints-in) | sorted, where CPython's is its hash order | No -- CPython's own order differs between runs |
 | [lipsum() and random](#lipsum-and-random) | a different random draw | No -- likewise |
-| [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there | Only for a literal-vs-literal `sameas`, which is a tautology |
+| [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there; so is `==` on two bound methods of literals | Only for a literal-vs-literal `sameas` or method comparison, which is a tautology |
 | [Comparison order inside a long sort](#comparison-order-inside-a-long-sort) | which pair a failing sort names | Only inside an error message, above 64 elements |
 | [A `{% set %}` block writing to a name that was never set](#a--set--block-writing-to-a-name-that-was-never-set) | both raise `TypeError`; jinja2 names a sentinel of its own | No -- only the type in the message |
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
@@ -613,6 +613,24 @@ tautology.
 
 The singletons CPython really guarantees are matched: None, True, False, and
 the empty tuple.
+
+The same question is asked, less visibly, by `==` on two bound methods: CPython
+says they are equal when their functions are the same and their receivers are
+the same *object*. gojja2 compares a scalar receiver by value, which agrees for
+a variable, for a small int CPython caches, and for everything a template writes
+on purpose:
+
+```jinja
+{% set x = 'hello' %}{{ x.upper == x.upper }}   True in both
+{{ (1).bit_length == (1).bit_length }}          True in both -- 1 is cached
+{{ (300).bit_length == (300).bit_length }}      True here, False on CPython
+{% set n = 300 %}{% set m = 300 %}{{ n.bit_length == m.bit_length }}  True in both
+```
+
+The third is two objects because jinja2 folds each literal into one of its own;
+the fourth is one because CPython's compiler shares the constant between the two
+assignments. Following it would mean modelling the small-int cache, the fold and
+the compiler's constant table together.
 
 ### A NaN handed in from Go twice
 

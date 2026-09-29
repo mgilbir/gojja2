@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a'.upper in ['a'.upper] }}|{{ ['a'.upper]|unique|list|length }}

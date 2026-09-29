@@ -2967,6 +2967,58 @@ for _n, _src in [
 ]:
     case("classes/" + _n, _src)
 
+# set() is a set's own class, and its constructor ran in no case at all: it
+# takes what list and tuple take, hashes each element as it goes, and refuses
+# a keyword and a second argument in set's own words.
+for _n, _src in [
+    ("empty_and_iterables", "{{ s.__class__()|list }}|{{ s.__class__([1, 2, 2])|sort }}|"
+     "{{ s.__class__('abca')|sort }}|{{ s.__class__(range(3))|sort }}|"
+     "{{ s.__class__(d)|sort }}|{{ s.__class__(d.items())|sort }}"),
+    ("unhashable", "{{ s.__class__([[1]]) }}"),
+    ("not_iterable", "{{ s.__class__(1) }}"),
+    ("two_arguments", "{{ s.__class__(1, 2) }}"),
+    ("keyword", "{{ s.__class__(x=1) }}"),
+    ("undefined", "{{ s.__class__(nope)|list }}"),
+    ("copy_is_equal_not_same", "{{ s.__class__(s) == s }}|{{ s.__class__(s) is sameas s }}"),
+]:
+    case("classes/construct_set_" + _n, _V + _src)
+
+# A set's pop, clear, equality and ordering, which the method sweep reached but
+# never on the paths coverage marked: a pop from a one-element set (its answer
+# does not depend on the order) and from an empty one, clear on both, equality
+# against a copy, a view and a list, and an ordering refused against a
+# non-set in both directions.
+for _n, _src in [
+    ("pop", "{{ (d.keys() - ['b']).pop() }}"),
+    ("pop_empty", "{{ (d.keys() - ['a', 'b']).pop() }}"),
+    ("clear", "{% set e = d.keys() - ['a', 'b'] %}{{ e.clear() }}|{{ e|list }}|"
+     "{% set t = d.keys() - ['a'] %}{{ t.clear() }}{{ t|list }}"),
+    ("equality", "{{ s == s.copy() }}|{{ (d.keys() - []) == d.keys() }}|{{ d.keys() == (d.keys() - []) }}|"
+     "{{ s == ['a'] }}|{{ (d.keys() - []) != d.keys() }}|{{ s == d.items() }}"),
+    ("ordering", "{{ d.keys() < (d.keys() - []) }}|{{ (d.keys() - []) <= d.keys() }}|"
+     "{{ s < d.keys() }}|{{ d.keys() > s }}|{{ s >= s }}"),
+    ("ordering_refused_right", "{{ s < [1] }}"),
+    ("ordering_refused_left", "{{ [1] > s }}"),
+    ("ordering_refused_int", "{{ 1 < s }}"),
+]:
+    case("methods/set_" + _n, _V + _src)
+
+# Two bound methods are equal when their receivers are the same object and
+# their functions the same. For a receiver that is a variable, or one small
+# enough to be cached, that is equality of value, which is what gojja2
+# answers; the literals it is not are in divergence/.
+for _n, _src in [
+    ("str", "{{ 'a'.upper == 'a'.upper }}|{{ 'a'.upper == 'b'.upper }}|{{ 'a'.upper == 'a'.lower }}"),
+    ("variable", "{% set x = 'hello' %}{{ x.upper == x.upper }}|{{ x.upper != x.upper }}"),
+    ("small_int", "{{ (1).bit_length == (1).bit_length }}|{% set k = 3 %}{% set j = 3 %}"
+     "{{ k.bit_length == j.bit_length }}"),
+    ("float_variable", "{% set g = 1.5 %}{{ g.hex == g.hex }}"),
+    ("bool", "{{ true.bit_length == true.bit_length }}|{{ true.bit_length == (1).bit_length }}"),
+    ("concatenated", "{% set a = 'x' ~ 'y' %}{% set b = 'x' ~ 'y' %}{{ a.upper == b.upper }}"),
+    ("in_a_list", "{{ 'a'.upper in ['a'.upper] }}|{{ ['a'.upper]|unique|list|length }}"),
+]:
+    case("tests/bound_method_equal_" + _n, _src)
+
 # The AttributeError for a type object is worded specially too -- `type object
 # 'int' has no attribute 'items'` -- and eight filters reach it by asking a
 # value for a method it does not have. The render differential found it as
@@ -5558,6 +5610,18 @@ for _n, _src in [
     ("loop_cycle_with_self", "{% for i in [1, 2] %}{{ loop.__class__.cycle(loop, 'a', 'b') }}{% endfor %}"),
 ]:
     case(f"divergence/class_python_method_{_n}", _src)
+
+# A bound method compares its receiver by *identity*, and whether two literal
+# scalars are one object is CPython's business: jinja2 folds each literal into
+# an object of its own, 1 is cached and 300 is not. gojja2 compares a scalar
+# receiver by value. Listed in known_failures.txt; see "`is sameas` on two
+# literals" in docs/divergences.md.
+for _n, _src in [
+    ("int", "{{ (300).bit_length == (300).bit_length }}"),
+    ("float", "{{ (1.5).hex == (1.5).hex }}"),
+    ("wide_int", "{{ (2**70).bit_length == (2**70).bit_length }}"),
+]:
+    case(f"divergence/bound_method_literal_receiver_{_n}", _src)
 
 # bool's descriptors are int's, and so are their arity messages: CPython says
 # "int.conjugate()" where the same method reached through the *value* says
