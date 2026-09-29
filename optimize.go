@@ -95,6 +95,19 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			// pure. jinja2 calls it at compile time regardless, so
 			// declining reproduced neither the order nor the number
 			// of calls.
+			//
+			// jinja2 does decline for *one* kind, and gojja2 has no
+			// way to spell it: _make_finalize builds a compile-time
+			// function only when the finalize takes the value alone
+			// or takes the environment, and leaves it None for
+			// @pass_context and @pass_eval_context -- so calling it
+			// from the const path raises, the child is deferred, and
+			// those two see raw text even for a constant. Measured:
+			// under autoescape an upper() gives "&LT;I&GT;" plain
+			// and with @pass_environment, "&lt;I&gt;" with either of
+			// the other two. WithFinalize takes func(Value) Value,
+			// which is the first of those, so folding always applies
+			// here.
 			if c.env.finalize != nil {
 				v = c.env.finalize(v)
 			}
