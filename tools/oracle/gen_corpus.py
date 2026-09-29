@@ -9060,6 +9060,162 @@ case("newline/trim_blocks_crlf", "{% if 1 %}\r\na{% endif %}\r\nb",
 case("newline/lstrip_blocks_cr", "  {% if 1 %}\ra{% endif %}",
      __settings__={"newline_sequence": "\r", "lstrip_blocks": True}, v="")
 
+# --- coverage pass over filters.go and bytes_methods.go ------------------------
+# Each of these reached a block no case did. Most agreed with CPython already and
+# are here so a change to the path is graded; two did not, and are marked.
+
+# `attribute=` reads a run of digits as an int *however wide*: the lookup is then
+# with an int key, which no key spelled as the digits answers. gojja2 kept a run
+# that overflowed 64 bits as a name and found the dict entry.
+for _n, _src in [
+    ("wide_int_is_not_the_name",
+     "{{ [{'99999999999999999999': 7}]|map(attribute='99999999999999999999')|list }}"),
+    ("wide_int_indexes_nothing", "{{ [[5]]|map(attribute='99999999999999999999')|list }}"),
+    ("max_int64_indexes_nothing", "{{ [[5]]|map(attribute='9223372036854775807')|list }}"),
+    ("empty_part_is_a_name", "{{ [{'': 1}]|map(attribute='')|list }}|{{ [{'a': {'': 2}}]|map(attribute='a.')|list }}"),
+    ("missing_then_more", "{{ [{'a': 1}]|map(attribute='b.c')|list }}"),
+    ("missing_then_more_sort", "{{ [{'a': 1}]|sort(attribute='b.c') }}"),
+    ("missing_then_more_deep", "{{ [{'a': 1}]|map(attribute='b.c.d')|list }}"),
+    ("missing_then_map", "{{ [{'a': 1}]|map(attribute='b')|map(attribute='c')|list }}"),
+    ("missing_then_sum", "{{ [{'a': 1}, {'a': 2}]|sum(attribute='b.c') }}"),
+    ("missing_then_max", "{{ [{'a': 1}, {'a': 2}]|max(attribute='b.c') }}"),
+]:
+    case("filters/attribute_" + _n, _src)
+
+# Markup has two methods str has not. Both answer a plain str -- so autoescape
+# escapes what they return -- and both are Python functions, so a call is
+# refused in a Python function's words. gojja2 had neither.
+for _n, _src in [
+    ("striptags", "{{ ('<b>x &amp; y</b>'|safe).striptags()|pprint }}"),
+    ("unescape", "{{ ('a &amp; b'|safe).unescape()|pprint }}"),
+    ("unescape_is_str", "{{ ('a &amp; b'|safe).unescape() is escaped }}|{{ ('a'|safe).striptags() is escaped }}"),
+    ("striptags_positional", "{{ ('<b>x</b>'|safe).striptags(1)|pprint }}"),
+    ("unescape_positional", "{{ ('a'|safe).unescape(1, 2)|pprint }}"),
+    ("striptags_keyword", "{{ ('<b>x</b>'|safe).striptags(a=1)|pprint }}"),
+    ("unescape_keyword", "{{ ('a'|safe).unescape(a=1)|pprint }}"),
+    ("bound_repr", "{{ ('<b>x</b>'|safe).striptags|pprint }}"),
+    ("autoescaped", "{% autoescape true %}{{ ('<b>x</b> &lt;'|safe).unescape() }}|{{ ('<b>x</b> &lt;'|safe).striptags() }}{% endautoescape %}"),
+    ("on_a_str", "{{ 'a'.unescape() }}"),
+]:
+    case("markup/method_" + _n, _src)
+
+# The references an unescape resolves to something other than the code point:
+# past the last one, a surrogate, NUL, the C1 controls that Windows-1252 gives
+# characters to, and the invalid ones that vanish.
+for _n, _ref in [
+    ("huge_decimal", "&#99999999999;"), ("huge_hex", "&#x99999999999;"),
+    ("over_int32", "&#4294967296;"), ("int32_max", "&#2147483647;"),
+    ("control", "&#1;"), ("delete", "&#x7f;"), ("nul", "&#0;"),
+    ("surrogate", "&#xD800;"), ("past_unicode", "&#x110000;"),
+    ("cp1252", "&#128;"), ("plain", "&#65;"),
+]:
+    case("filters/striptags_charref_" + _n, "{{ '" + _ref + "'|striptags|pprint }}")
+    case("markup/unescape_charref_" + _n, "{{ ('" + _ref + "'|safe).unescape()|pprint }}")
+
+# round(x, none) is an integer, ties to even, whichever side the tie is on.
+for _n, _v in [("up", "3.5"), ("down", "2.5"), ("neg_down", "-2.5"), ("neg_up", "-3.5"),
+               ("over_half", "2.7"), ("neg_over_half", "-2.7"), ("tiny", "5e-324")]:
+    case("filters/round_none_" + _n, "{{ " + _v + "|round(none) }}")
+
+# A wide value that gets past bytes_methods' bounds and edge cases.
+for _n, _src in [
+    ("find_negative_start_past_front", "{{ 'abc'.encode().find('a'.encode(), -10) }}"),
+    ("find_end_past_back", "{{ 'abc'.encode().find('c'.encode(), -10, 10) }}"),
+    ("find_empty_end_past_back", "{{ 'abc'.encode().find(''.encode(), 0, 10) }}"),
+    ("rfind_both_past", "{{ 'abc'.encode().rfind('c'.encode(), -10, 10) }}"),
+    ("count_both_past", "{{ 'abc'.encode().count('c'.encode(), -10, 10) }}"),
+    ("istitle_lone_lower", "{{ 'a'.encode().istitle() }}|{{ 'aB'.encode().istitle() }}|{{ 'Ab Cd'.encode().istitle() }}"),
+    ("startswith_tuple_none_match", "{{ 'abc'.encode().startswith(('x'.encode(), 'y'.encode())) }}"),
+    ("endswith_tuple_none_match", "{{ 'abc'.encode().endswith(('x'.encode(), 'y'.encode())) }}"),
+    ("strip_chars", "{{ ' abc '.encode().strip('a '.encode()) }}|{{ ' abc '.encode().lstrip('a '.encode()) }}|{{ ' abc '.encode().rstrip('c '.encode()) }}"),
+    ("strip_none", "{{ ' abc '.encode().strip(none) }}"),
+    ("strip_int", "{{ ' abc '.encode().strip(1) }}"),
+    ("lstrip_str", "{{ ' abc '.encode().lstrip('x') }}"),
+    ("rsplit_zero", "{{ 'a b'.encode().rsplit(' '.encode(), 0) }}|{{ 'a b'.encode().rsplit(none, 0) }}"),
+    ("splitlines_crlf", "{{ 'a\\r\\nb\\rc\\nd\\r\\n'.encode().splitlines() }}|{{ 'a\\r\\nb\\rc\\nd\\r\\n'.encode().splitlines(true) }}"),
+    ("removeprefix_hit", "{{ 'abc'.encode().removeprefix('a'.encode()) }}|{{ 'abc'.encode().removeprefix('abc'.encode()) }}"),
+    ("removesuffix_hit", "{{ 'abc'.encode().removesuffix('c'.encode()) }}"),
+    ("remove_miss_and_empty", "{{ 'abc'.encode().removeprefix('x'.encode()) }}|{{ 'abc'.encode().removesuffix(''.encode()) }}"),
+]:
+    case("bytes/method_" + _n, _src)
+
+
+# indent's `s += newline` is an augmented assignment, so a list survives it and
+# dies on splitlines, where everything else dies on the `+=`.
+case("filters/indent_list", "{{ [1, 2]|indent }}")
+
+# pprint writes every column of indent, however far in a value sits: under a key
+# a hundred characters wide the value starts at column 100, and everything that
+# wraps there is placed at that column. gojja2 capped the indent at the line
+# width of 80. (A value ninety lists deep shows the same thing, and allocates
+# too much for TestRenderAllocationStaysInProportion, which reads this corpus.)
+for _n, _src in [
+    ("bytes_under_a_long_key", "{{ {'k' * 90: 'abcdefgh'.encode()}|pprint }}"),
+    ("empty_string_under_a_long_key", "{{ {'k' * 90: ''}|pprint }}"),
+    ("string_under_a_long_key", "{{ {'k' * 90: ('a b' * 30)}|pprint }}"),
+    ("dict_under_a_long_key", "{{ {'k' * 90: {'a': 1, 'b': 2}}|pprint }}"),
+    ("long_keys", "{{ {'k' * 100: {'k' * 100: ('a b' * 100)}}|pprint }}"),
+    ("long_keys_bytes", "{{ {'k' * 100: {'k' * 100: ('a b' * 100).encode()}}|pprint }}"),
+    ("tuple_one_wide", "{{ (['a' * 30, 'b' * 30, 'c' * 30],)|pprint }}"),
+    ("tuple_one_string", "{{ (('a' * 100),)|pprint }}"),
+    ("tuple_three", "{{ ('a' * 30, 'b' * 30, 'c' * 30)|pprint }}"),
+    ("tuple_one_of_tuple", "{{ (('a' * 30, 'b' * 30, 'c' * 30),)|pprint }}"),
+    ("markup_wide", "{{ ('a' * 100)|safe|pprint }}"),
+    ("markup_wide_in_list", "{{ [('a' * 100)|safe]|pprint }}"),
+    ("crlf_lines", "{{ ('a\\r\\nb' * 40)|pprint }}"),
+    ("cr_lines", "{{ ('a\\r\\nbcd\\r' * 20)|pprint }}"),
+    ("mixed_line_ends", "{{ ('ab\\n\\r\\n\\rc' * 30)|pprint }}"),
+    ("crlf_in_list", "{{ [('a\\r\\nb' * 40)]|pprint }}"),
+]:
+    case("filters/pprint_" + _n, _src)
+
+# round of a float with no digits: an infinity or a NaN is returned as it is at
+# every precision that keeps its type, and refused where the answer is an int.
+for _n, _src in [
+    ("inf_neg_precision", "{% set x = 1e308 %}{{ (x * x)|round(-1) }}|{{ (x * x - x * x)|round(-1) }}"),
+    ("inf_far_neg_precision", "{% set x = 1e308 %}{{ (x * x)|round(-400) }}|{{ (x * x - x * x)|round(-400) }}"),
+    ("inf_pos_precision", "{% set x = 1e308 %}{{ (x * x)|round(1) }}|{{ (x * x - x * x)|round(1) }}"),
+    ("inf_floor", "{% set x = 1e308 %}{{ (x * x)|round(-1, 'floor') }}"),
+    ("inf_ceil", "{% set x = 1e308 %}{{ (x * x)|round(1, 'ceil') }}"),
+    ("nan_ceil", "{% set x = 1e308 %}{{ (x * x - x * x)|round(1, 'ceil') }}"),
+    ("inf_none", "{% set x = 1e308 %}{{ (x * x)|round(none) }}"),
+    ("nan_none", "{% set x = 1e308 %}{{ (x * x - x * x)|round(none) }}"),
+]:
+    case("filters/round_" + _n, _src)
+
+# jinja2's base is an int, so the comparison with each unit is exact: 1e24 is a
+# float *below* 1000**8 and belongs to the ZB row, as "1000.0 ZB". Comparing
+# with a float power of the base sent it to YB as "1.0 YB".
+for _n, _src in [
+    ("decimal_yb_boundary", "{{ 1e24|filesizeformat }}|{{ (1e24 + 1e9)|filesizeformat }}"),
+    ("decimal_yb_next_float", "{% set x = 1e24 %}{{ (x * 1.0000000000000002)|filesizeformat }}"),
+    ("decimal_zb_boundary", "{{ 1e21|filesizeformat }}"),
+    ("decimal_huge", "{{ 1e27|filesizeformat }}|{{ 1e30|filesizeformat }}"),
+    ("binary_yib_boundary", "{{ (1024 ** 8)|filesizeformat(true) }}|{{ (1024 ** 8 - 1)|filesizeformat(true) }}"),
+    ("infinity", "{% set x = 1e308 %}{{ (x * x)|filesizeformat }}|{{ (x * x)|filesizeformat(true) }}"),
+    ("negative_infinity", "{% set x = 1e308 %}{{ (-(x * x))|filesizeformat }}"),
+    ("nan", "{% set x = 1e308 %}{{ (x * x - x * x)|filesizeformat }}"),
+]:
+    case("filters/filesizeformat_value_" + _n, _src)
+
+# The chainable undefined lets an attribute path carry on from a missing step.
+for _u in ("chainable", "strict", "debug", ""):
+    _n = _u or "default"
+    case(f"filters/attribute_missing_then_more_{_n}",
+         "{{ [{'a': 1}]|map(attribute='b.c')|list }}",
+         __settings__={"undefined": _u} if _u else {})
+
+# A word that starts with hyphens is cut where it is too long, not after the
+# hyphen: everything before it is a hyphen, so there is nothing to break at.
+for _n, _src in [
+    ("leading_hyphens", "{{ '--abcdefghij'|wordwrap(4)|pprint }}"),
+    ("three_leading_hyphens", "{{ '---abcdef'|wordwrap(5)|pprint }}"),
+    ("hyphen_after_letters", "{{ 'a--abcdefghij'|wordwrap(4)|pprint }}"),
+    ("hyphens_after_a_space", "{{ 'xx --abcdefghij'|wordwrap(4)|pprint }}"),
+    ("single_leading_hyphen", "{{ '-abcdefghij'|wordwrap(4)|pprint }}"),
+]:
+    case("filters/wordwrap_" + _n, _src)
+
 
 def main() -> int:
     if DST.exists():

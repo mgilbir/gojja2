@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.encode().find('c'.encode(), -10, 10) }}

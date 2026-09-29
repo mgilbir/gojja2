@@ -873,6 +873,12 @@ the methods it inherits from str are str's descriptors, but the ones it
 overrides are plain Python functions whose repr carries a memory address, which
 no corpus and no differential can grade.
 
+Of the methods Markup adds to str, `striptags()` and `unescape()` are
+implemented and graded. The class method `Markup.escape` and the `__html__`
+protocol method are not: `{{ ('a'|safe).escape('<') }}` and
+`{{ ('a'|safe).__html__() }}` answer an undefined attribute where jinja2 answers
+`Markup('&lt;')` and `Markup('a')`.
+
 Everything else a type object answers matches: `__name__`, `__qualname__`,
 `__module__`, its repr, equality with another type object *and with the class
 global it is* (`{{ d.__class__ == dict }}` is true), calling it, and its

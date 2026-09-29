@@ -31,12 +31,50 @@ import (
 // the lookup comes from constant folding, which State.Step and State.Charge
 // both handle.
 
+// markupMethods are the methods markupsafe.Markup has that str has not.
+// Both answer a plain str, not a Markup: `striptags` is
+// `Markup(stripped).unescape()`.
+var markupMethods = map[string]func(*State, value.Value) (value.Value, error){
+	"striptags": func(s *State, r value.Value) (value.Value, error) {
+		return filterStriptags(s, r, nil)
+	},
+	"unescape": func(s *State, r value.Value) (value.Value, error) {
+		text, err := unescapeHTML(s, r.AsString())
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.String(text), nil
+	},
+}
+
 // builtinMethod resolves a method on a built-in type, returning it bound.
 func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) {
 	var table map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error)
 	switch recv.Kind() {
 	case value.KindString:
 		table = stringMethods
+		// markupsafe.Markup adds two methods to str, and they are
+		// written in Python, so a call is checked against a Python
+		// signature and the bound method is a `method`.
+		if recv.IsSafe() {
+			if fn, ok := markupMethods[name]; ok {
+				return Method(name, "Markup", "markupsafe.Markup", recv,
+					func(callState *State, args *value.CallArgs) (value.Value, error) {
+						if callState == nil {
+							callState = s
+						}
+						if n := len(args.Pos); n > 0 {
+							return value.Undefined, errs.New(errs.TypeError,
+								"Markup.%s() takes 1 positional argument but %d were given", name, n+1)
+						}
+						if len(args.Kwargs) > 0 {
+							return value.Undefined, errs.New(errs.TypeError,
+								"Markup.%s() got an unexpected keyword argument '%s'", name, args.Kwargs[0].Name)
+						}
+						return fn(callState, recv)
+					}), true
+			}
+		}
 	case value.KindBytes:
 		table = bytesMethods
 	case value.KindDict:

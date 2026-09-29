@@ -318,7 +318,7 @@ func attrParts(attribute value.Value) []value.Value {
 	parts := make([]value.Value, 0, len(fields))
 	for _, part := range fields {
 		if n, ok := pyDigitsToInt(part); ok {
-			parts = append(parts, value.Int(n))
+			parts = append(parts, n)
 			continue
 		}
 		parts = append(parts, value.String(part))
@@ -330,25 +330,33 @@ func attrParts(attribute value.Value) []value.Value {
 //
 // str.isdigit accepts no sign and no spaces, so "-1" and " 1" are names; it
 // does accept other scripts' digits, and int() reads those, so "١" is 1.
-func pyDigitsToInt(part string) (int64, bool) {
+func pyDigitsToInt(part string) (value.Value, bool) {
 	if part == "" {
-		return 0, false
+		return value.Undefined, false
 	}
 	var n int64
+	var wide *big.Int
 	for _, r := range part {
 		d := pyDigitValue(r)
 		if d < 0 {
-			return 0, false
+			return value.Undefined, false
 		}
-		// An attribute specification long enough to overflow is not
-		// an index anyone meant; Python would build the integer, and
-		// the lookup would miss either way.
-		if n > (math.MaxInt64-int64(d))/10 {
-			return 0, false
+		// Python builds the integer however wide it is, and a lookup
+		// with it is a lookup with an int -- which finds no key spelled
+		// as the digits. Reading it as a name instead found one.
+		if wide == nil && n > (math.MaxInt64-int64(d))/10 {
+			wide = big.NewInt(n)
+		}
+		if wide != nil {
+			wide.Mul(wide, big.NewInt(10)).Add(wide, big.NewInt(int64(d)))
+			continue
 		}
 		n = n*10 + int64(d)
 	}
-	return n, true
+	if wide != nil {
+		return value.BigInt(wide), true
+	}
+	return value.Int(n), true
 }
 
 // pyDigitValue is the decimal value of a rune str.isdigit accepts, or -1.
@@ -2113,7 +2121,11 @@ func pformatString(st *State, b *strings.Builder, text, rep string, indent, allo
 			return err
 		}
 		if i > 0 {
-			b.WriteString("\n" + pprintIndent(indent))
+			pad, err := pprintIndent(st, indent)
+			if err != nil {
+				return err
+			}
+			b.WriteString("\n" + pad)
 		}
 		b.WriteString(chunk)
 	}
@@ -2153,12 +2165,17 @@ func pformatBytes(st *State, b *strings.Builder, data, rep string,
 	width := pprintWidth - indent
 	last := len(data) / 4 * 4
 	current, delim := "", ""
-	write := func(piece string) {
+	write := func(piece string) error {
 		b.WriteString(delim)
 		b.WriteString(value.ReprFor(value.Bytes([]byte(piece)), st.PythonVersion()))
 		if delim == "" {
-			delim = "\n" + pprintIndent(indent)
+			pad, err := pprintIndent(st, indent)
+			if err != nil {
+				return err
+			}
+			delim = "\n" + pad
 		}
+		return nil
 	}
 	for i := 0; i < len(data); i += 4 {
 		if err := st.Poll(); err != nil {
@@ -2172,7 +2189,9 @@ func pformatBytes(st *State, b *strings.Builder, data, rep string,
 		}
 		if len(value.ReprFor(value.Bytes([]byte(candidate)), st.PythonVersion())) > width {
 			if current != "" {
-				write(current)
+				if err := write(current); err != nil {
+					return err
+				}
 			}
 			current = part
 			continue
@@ -2180,7 +2199,9 @@ func pformatBytes(st *State, b *strings.Builder, data, rep string,
 		current = candidate
 	}
 	if current != "" {
-		write(current)
+		if err := write(current); err != nil {
+			return err
+		}
 	}
 	if parens {
 		b.WriteString(")")
@@ -2190,18 +2211,21 @@ func pformatBytes(st *State, b *strings.Builder, data, rep string,
 
 // pprintIndent is the leading space for one pprint line.
 //
-// The indent grows with the depth of the value being printed, and that depth
-// is the caller's -- a deeply nested structure handed in from Go would
-// otherwise size an allocation per line from it. Indenting past the line width
-// carries no information, so it is capped there.
-func pprintIndent(n int) string {
+// The indent grows with the depth of the value being printed and with the
+// width of the keys on the way down, so it is charged before it is built: a
+// deeply nested structure would otherwise size an allocation per container from
+// it. It is not capped at the line width. Indenting past the line width carries
+// no information, but pprint writes every column of it all the same -- a value
+// ninety lists deep puts its second line at column ninety -- so a cap answered
+// with fewer spaces than CPython does.
+func pprintIndent(st *State, n int) (string, error) {
 	if n <= 0 {
-		return ""
+		return "", nil
 	}
-	if n > pprintWidth {
-		n = pprintWidth
+	if err := st.ChargeBytes(int64(n)); err != nil {
+		return "", err
 	}
-	return strings.Repeat(" ", n)
+	return strings.Repeat(" ", n), nil
 }
 
 // splitLinesKeepingEnds is Python's str.splitlines(True).
@@ -2229,7 +2253,11 @@ func pformatItems[T any](st *State, b *strings.Builder, items []T, indent, allow
 	write func(*strings.Builder, T, int, int) error,
 ) error {
 	inner := indent + 1
-	separator := ",\n" + pprintIndent(inner)
+	pad, err := pprintIndent(st, inner)
+	if err != nil {
+		return err
+	}
+	separator := ",\n" + pad
 	for i, item := range items {
 		if err := st.Poll(); err != nil {
 			return err
@@ -3090,8 +3118,14 @@ func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.
 		return fmt.Sprintf("%.1f", x)
 	}
 	for i, prefix := range prefixes {
-		unit := math.Pow(base, float64(i+2))
-		if bytes < unit || i == len(prefixes)-1 {
+		// jinja2's base is an int, so `base ** (i + 2)` is an exact integer
+		// and the comparison against the float is exact too. 1000**8 is
+		// not a float -- its odd factor, 5**24, needs 56 bits -- so the
+		// float 1e24 is *below* it, and lands in the ZB row as
+		// "1000.0 ZB". Comparing against a float power called it "1.0 YB".
+		exact := new(big.Int).Exp(big.NewInt(int64(base)), big.NewInt(int64(i+2)), nil)
+		unit, _ := new(big.Float).SetInt(exact).Float64()
+		if i == len(prefixes)-1 || belowExact(bytes, exact) {
 			return value.String(oneDecimal(base*bytes/unit) + " " + prefix), nil
 		}
 	}
@@ -3228,4 +3262,16 @@ func augmentedAssign(err error) error {
 		e.Msg = strings.Replace(e.Msg, "for +:", "for +=:", 1)
 	}
 	return err
+}
+
+// belowExact reports f < n with no rounding of either side, which is how Python
+// compares a float with an int. A NaN is below nothing.
+func belowExact(f float64, n *big.Int) bool {
+	switch {
+	case math.IsNaN(f):
+		return false
+	case math.IsInf(f, 0):
+		return f < 0
+	}
+	return new(big.Float).SetFloat64(f).Cmp(new(big.Float).SetInt(n)) < 0
 }

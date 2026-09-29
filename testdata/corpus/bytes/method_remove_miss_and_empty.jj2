@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.encode().removeprefix('x'.encode()) }}|{{ 'abc'.encode().removesuffix(''.encode()) }}

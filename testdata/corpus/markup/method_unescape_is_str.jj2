@@ -1,0 +1,3 @@
+{}
+---
+{{ ('a &amp; b'|safe).unescape() is escaped }}|{{ ('a'|safe).striptags() is escaped }}

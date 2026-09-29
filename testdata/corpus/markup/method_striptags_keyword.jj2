@@ -1,0 +1,3 @@
+{}
+---
+{{ ('<b>x</b>'|safe).striptags(a=1)|pprint }}

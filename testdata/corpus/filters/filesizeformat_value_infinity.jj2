@@ -1,0 +1,3 @@
+{}
+---
+{% set x = 1e308 %}{{ (x * x)|filesizeformat }}|{{ (x * x)|filesizeformat(true) }}
