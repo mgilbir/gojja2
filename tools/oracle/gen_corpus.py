@@ -2019,6 +2019,37 @@ case("errors/attribute_of_a_built_undefined",
 
 # ...and the shapes it must still refuse, so the rule above cannot spread.
 case("errors/items_of_a_non_mapping", "{{ [1]|items|list }}")
+
+# `x in d.keys().mapping` -- membership on the read-only proxy a view carries.
+# Coverage over the whole corpus reported mappingProxy.ContainsErr as never
+# reached: the proxy itself was graded, asking it a question was not. A proxy
+# hashes its key like the dict it wraps, so an unhashable one is refused rather
+# than answered False.
+for _n, _src in [
+    ("hit", "{{ 'a' in d.keys().mapping }}"),
+    ("miss", "{{ 'nope' in d.keys().mapping }}"),
+    ("int_key", "{{ 1 in d.keys().mapping }}"),
+    ("unhashable_key", "{{ [1] in d.keys().mapping }}"),
+    ("not_in", "{{ 'a' not in d.keys().mapping }}"),
+    ("through_items_view", "{{ 'a' in d.items().mapping }}"),
+    ("through_values_view", "{{ 'a' in d.values().mapping }}"),
+]:
+    case(f"methods/mappingproxy_contains_{_n}", _src, d={"a": 1, "b": 2})
+
+# bytes.replace, which the corpus reached only through a type error. The empty
+# needle is the arithmetic worth grading: it inserts between every byte and at
+# both ends, and the count bounds how many of those insertions happen.
+for _n, _src in [
+    ("plain", "{{ b.replace('b'.encode(), 'X'.encode()) }}"),
+    ("empty_needle", "{{ b.replace(''.encode(), '-'.encode()) }}"),
+    ("empty_needle_counted", "{{ b.replace(''.encode(), '-'.encode(), 2) }}"),
+    ("empty_needle_zero", "{{ b.replace(''.encode(), '-'.encode(), 0) }}"),
+    ("empty_needle_negative", "{{ b.replace(''.encode(), '-'.encode(), -1) }}"),
+    ("empty_needle_empty_receiver", "{{ ''.encode().replace(''.encode(), '-'.encode()) }}"),
+    ("to_nothing", "{{ 'aaa'.encode().replace('a'.encode(), ''.encode()) }}"),
+    ("grows_and_counted", "{{ 'aaa'.encode().replace('a'.encode(), 'bb'.encode(), 2) }}"),
+]:
+    case(f"methods/bytes_replace_{_n}", "{% set b = 'abc'.encode() %}" + _src)
 case("errors/items_of_a_string", "{{ 'ab'|items|list }}")
 
 # `x in y` asks y for a __contains__ before it looks at x at all, so a y that
@@ -2816,9 +2847,19 @@ for _n, _src in [
     ("bytes_unexpected_keyword", "{{ b.__class__(zz=5) }}"),
     ("bytes_of_none", "{{ b.__class__(nil) }}"),
     ("str_of_bytes", "{{ s.__class__(b, 'utf-8') }}"),
+    # tuple(), which coverage over the whole corpus reported as never reached at
+    # all: every other constructor here was graded and this one was not. It
+    # agreed already; what was missing was a case saying so.
+    ("tuple_empty", "{{ (1,2).__class__() }}"),
+    ("tuple_of_a_list", "{{ (1,2).__class__([3,4]) }}"),
+    ("tuple_of_a_str", "{{ (1,2).__class__('ab') }}"),
+    ("tuple_of_a_range", "{{ (1,2).__class__(range(3)) }}"),
+    ("tuple_of_a_mapping", "{{ (1,2).__class__(d) }}"),
+    ("tuple_of_an_int", "{{ (1,2).__class__(1) }}"),
+    ("tuple_arity", "{{ (1,2).__class__([1], 2) }}"),
 ]:
     case(f"classes/construct_{_n}",
-         "{% set b = 'ab'.encode() %}" + _src, nil=None)
+         "{% set b = 'ab'.encode() %}" + _src, nil=None, d={"a": 1}, s="x")
 
 # The generic-alias divergence, reached through `__class__` rather than through
 # the `dict` global: CPython answers a types.GenericAlias, gojja2 has none.

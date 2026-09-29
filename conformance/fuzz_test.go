@@ -87,19 +87,33 @@ type harness struct {
 // started at the first one and never at all in a clean run.
 func (h *harness) reproducible(t testing.TB, c conformance.GeneratedCase, first *conformance.OracleResult) bool {
 	t.Helper()
+	// Every failure here is fatal rather than "grade it anyway". The first
+	// oracle already started, so a second one failing is a broken
+	// environment -- and a guard that quietly turns itself off is worse than
+	// no guard, because the divergence it should have discarded is then
+	// reported with nothing saying why.
 	if h.second == nil {
 		o, err := conformance.StartOracleWithHashSeed(h.version, secondHashSeed)
 		if err != nil {
-			// No second opinion available: grade it, rather than
-			// silently dropping every divergence.
-			return true
+			t.Fatalf("second oracle: %v", err)
 		}
 		h.second = o
-		t.Cleanup(func() { _ = o.Close() })
+		// Closed with the case that needed it, and the field cleared so
+		// the next one starts a fresh process. Registering this on the
+		// harness's own T instead is not allowed inside a fuzz target
+		// ("f.Cleanup was called inside the fuzz target"), and leaving it
+		// on the per-case t *without* the reset left a closed handle
+		// behind: every later call then failed with "file already
+		// closed", which the first version of this turned into "grade
+		// it" and reported a case it should have discarded.
+		t.Cleanup(func() {
+			_ = o.Close()
+			h.second = nil
+		})
 	}
 	raw, _, err := h.contextFor(c)
 	if err != nil {
-		return true
+		t.Fatalf("context: %v", err)
 	}
 	again, err := h.second.Render(conformance.OracleRequest{
 		Name:      fuzzTemplateName,
@@ -109,7 +123,7 @@ func (h *harness) reproducible(t testing.TB, c conformance.GeneratedCase, first 
 		Templates: h.templatesFor(c),
 	})
 	if err != nil {
-		return true
+		t.Fatalf("second oracle: %v", err)
 	}
 	return first.Expected().Equal(again.Expected())
 }

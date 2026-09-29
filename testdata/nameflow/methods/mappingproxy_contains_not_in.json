@@ -1,0 +1,6 @@
+{
+  "case": "methods/mappingproxy_contains_not_in.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

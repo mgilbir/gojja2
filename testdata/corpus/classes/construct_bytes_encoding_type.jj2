@@ -1,5 +1,9 @@
 {
-  "nil": null
+  "nil": null,
+  "d": {
+    "a": 1
+  },
+  "s": "x"
 }
 ---
 {% set b = 'ab'.encode() %}{{ b.__class__(5, 2) }}

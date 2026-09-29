@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_tuple_of_a_mapping.jj2",
+  "variables": {
+    "d": "or"
+  }
+}
