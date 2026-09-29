@@ -3060,6 +3060,25 @@ for _n, _src in [
     ("dict_float_stop", "{{ d[:1.5:0] }}"),
 ]:
     case(f"errors/zero_step_beats_the_bounds_{_n}", _src, lst=[1, 2, 3], d={"a": 1})
+# A slice is hashable from 3.12, but only as far as its parts are: its hash is
+# built from start, stop and step, so an unhashable bound is refused *before* the
+# miss is reported. gojja2 reported the KeyError naming the slice.
+#
+# The bound goes through a name because a constant slice folds, and folding one
+# goes through the swallowing getitem and prints nothing.
+for _n, _src in [
+    ("list_start", "{% set q = [1,2] %}{{ d[q:] }}"),
+    ("list_stop", "{% set q = [1,2] %}{{ d[:q] }}"),
+    ("list_step", "{% set q = [1,2] %}{{ d[::q] }}"),
+    ("dict_start", "{% set q = {'a':1} %}{{ d[q:] }}"),
+    ("set_start", "{% set q = d.keys() - [] %}{{ d[q:] }}"),
+    ("hashable_start", "{% set q = 1 %}{{ d[q:] }}"),
+    ("hashable_tuple_start", "{% set q = (1,2) %}{{ d[q:] }}"),
+    ("unhashable_in_a_tuple", "{% set q = ([1],) %}{{ d[q:] }}"),
+    ("two_unhashable_the_first_wins", "{% set q = [1] %}{% set r = {'a':1} %}{{ d[q:r] }}"),
+]:
+    case(f"errors/dict_slice_{_n}", _src, d={"a": 1})
+
 # And the bound's own refusal, which jinja2 does swallow, so that the ordering
 # fix above cannot quietly start raising where a template used to print nothing.
 for _n, _src in [

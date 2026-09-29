@@ -1,0 +1,6 @@
+{
+  "case": "errors/dict_slice_two_unhashable_the_first_wins.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

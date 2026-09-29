@@ -1,0 +1,6 @@
+{
+  "case": "errors/dict_slice_set_start.jj2",
+  "variables": {
+    "d": "ofr"
+  }
+}

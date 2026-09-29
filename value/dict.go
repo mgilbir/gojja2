@@ -445,6 +445,44 @@ func hashKnown(v Value) hashKey {
 	return h
 }
 
+// CheckHashableAs is CheckHashable for a value hashed as *part* of something
+// else, which is the type 3.14's message names.
+//
+// A slice used as a dict key is hashable from 3.12, but only as far as its three
+// parts are -- and the refusal names the slice, not the part:
+// `{'a':1}[[1,2]:]` is "cannot use 'slice' as a dict key (unhashable type:
+// 'list')". Hashing the part on its own named the part, and named the *tuple*
+// for a part that was one.
+//
+// A StrictUndefined's own refusal is returned unchanged: it is not a hashability
+// message and has nothing to re-word.
+func CheckHashableAs(v Value, outerName string, py PythonVersion, use HashUse) error {
+	err := CheckHashable(v, py, use)
+	if err == nil {
+		return nil
+	}
+	inner := innerUnhashable(v, py, use)
+	if inner.IsUndefined() {
+		return err
+	}
+	return ErrUnhashable(outerName, inner, py, use)
+}
+
+// innerUnhashable finds the value whose type an unhashable refusal names: v
+// itself, or the first element of a tuple tree that cannot be hashed.
+func innerUnhashable(v Value, py PythonVersion, use HashUse) Value {
+	items, ok := tupleItems(v)
+	if !ok {
+		return v
+	}
+	for _, e := range items {
+		if CheckHashable(e, py, use) != nil {
+			return innerUnhashable(e, py, use)
+		}
+	}
+	return v
+}
+
 func hash(v Value, py PythonVersion, use HashUse) (hashKey, error) {
 	// StrictUndefined defines __hash__ as a failure, so anything that
 	// hashes one -- a dict key, a set member, `value in env.filters`

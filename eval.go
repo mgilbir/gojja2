@@ -918,6 +918,19 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.Python
 		// that was a TypeError; 3.12 made slices hashable, so it became
 		// an ordinary KeyError naming the slice that missed.
 		if py.SliceKeysAreHashable() {
+			// Hashable, but only as far as its parts are: a slice's
+			// hash is built from start, stop and step, so an
+			// unhashable bound is refused *before* the miss is
+			// reported. `{'a':1}[[1,2]:]` is "unhashable type:
+			// 'list'" and not a KeyError naming the slice.
+			for _, part := range []value.Value{startV, stopV, stepV} {
+				// CheckHashableAs, not CheckHashable: from 3.14
+				// the refusal names what was used as the key,
+				// which is the slice and not the part.
+				if err := value.CheckHashableAs(part, "slice", py, value.AsDictKey); err != nil {
+					return value.Undefined, err
+				}
+			}
 			return value.Undefined, errs.New(errs.KeyError, "%s",
 				sliceRepr(startV, stopV, stepV, py))
 		}
