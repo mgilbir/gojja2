@@ -7863,6 +7863,38 @@ for _n, _src in [
     ("name_ends_the_string", "{{ '{ '.format(1) }}"),
     ("index_ends_the_string", "{% set d = {'a': 1} %}{{ '{0[a'.format(d) }}"),
     ("attribute_ends_the_string", "{{ '{0.a'.format(1) }}"),
+    # An empty attribute is a *parse* error, not a lookup: CPython's
+    # FieldNameIterator refuses it when the chain reaches that step. gojja2 asked
+    # for an attribute called "" and reported that instead. The order is what the
+    # rest of these hold: `{0.a.}` still reports the failed 'a' first, and
+    # `{0.}` with no argument 0 still reports the missing argument.
+    ("empty_attribute", "{{ '{0.}'.format(1) }}"),
+    ("empty_attribute_no_index", "{{ '{.}'.format(1) }}"),
+    ("empty_attribute_twice", "{{ '{0..a}'.format(1) }}"),
+    ("empty_attribute_then_index", "{{ '{0.[0]}'.format(1) }}"),
+    ("empty_attribute_after_a_good_one", "{{ '{0.real.}'.format(1) }}"),
+    ("empty_attribute_after_a_bad_one", "{{ '{0.a.}'.format(1) }}"),
+    ("empty_attribute_with_a_spec", "{{ '{0.:5}'.format(1) }}"),
+    ("empty_attribute_with_a_conversion", "{{ '{0.!r}'.format(1) }}"),
+    ("empty_attribute_no_argument", "{{ '{0.}'.format() }}"),
+    # The conversion specifier is checked before the spec is expanded, and after
+    # the field is resolved. gojja2 expanded first, so a bad conversion beside a
+    # nested field reported the *numbering* instead.
+    ("unknown_conversion_before_a_nested_spec", "{{ '{0!q:{}}'.format(1, 3) }}"),
+    ("unknown_conversion_before_a_named_spec", "{{ '{0!q:{nosuch}}'.format(1) }}"),
+    ("unknown_conversion_before_an_indexed_spec", "{{ '{0!q:{9}}'.format(1) }}"),
+    ("unknown_conversion_after_the_field", "{{ '{nope!q:{}}'.format(1, 3) }}"),
+    ("unknown_conversion_after_an_attribute", "{{ '{0.nope!q:{}}'.format(1, 3) }}"),
+    ("unknown_conversion_after_an_index", "{{ '{9!q:{}}'.format(1, 3) }}"),
+    ("good_conversion_before_a_nested_spec", "{{ '{0!s:{}}'.format(1, 3) }}"),
+    # The same order inside a nested field. The conversion beats even the
+    # recursion refusal, and putting the check before the field's own lookup --
+    # which is how the first attempt at the rule above was written -- turned
+    # `{0:{nope!q}}` from the KeyError into the conversion error.
+    ("nested_unknown_conversion", "{{ '{0:{1!q}}'.format(1, 2) }}"),
+    ("nested_unknown_conversion_beats_recursion", "{{ '{0:{1!q:{}}}'.format(1, 2) }}"),
+    ("nested_field_beats_its_conversion", "{{ '{0:{nope!q}}'.format(1) }}"),
+    ("nested_recursion_with_a_good_conversion", "{{ '{0:{1!r:{2}}}'.format(1, 2, 3) }}"),
 ]:
     case("methods/format_field_" + _n, _src)
 

@@ -1252,6 +1252,16 @@ func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 			if err != nil {
 				return value.Undefined, err
 			}
+			// The conversion specifier is checked before the spec is
+			// expanded: `'{0!q:{}}'.format(42, 3)` is "Unknown
+			// conversion specifier q" and not the numbering error
+			// that expanding `{}` would raise. It comes *after* the
+			// field is resolved, though -- `{nope!q}` is the
+			// KeyError -- which is why this is a check here rather
+			// than a reordering of convertAndFormat.
+			if err := checkConversion(conv); err != nil {
+				return value.Undefined, err
+			}
 			// A spec may itself hold replacement fields -- `{:{w}.{p}f}`
 			// -- which are resolved against the same arguments before
 			// the spec is read.
@@ -1402,12 +1412,19 @@ func expandSpec(st *State, spec string, base fieldBase, auto *int) (string, erro
 		if err != nil {
 			return "", err
 		}
-		if strings.IndexByte(inner, '{') >= 0 {
-			return "", errs.New(errs.ValueError, "Max string recursion exceeded")
-		}
 		v, err := resolveFormatField(field, base, auto, st.PythonVersion())
 		if err != nil {
 			return "", err
+		}
+		// Same order as the outer loop: the field is resolved first --
+		// `{0:{nope!q}}` is the KeyError -- then the conversion, which
+		// beats even the recursion refusal below: `{0:{1!q:{}}}` is
+		// "Unknown conversion specifier q".
+		if err := checkConversion(conv); err != nil {
+			return "", err
+		}
+		if strings.IndexByte(inner, '{') >= 0 {
+			return "", errs.New(errs.ValueError, "Max string recursion exceeded")
 		}
 		text, err := convertAndFormat(st, v, conv, inner)
 		if err != nil {
@@ -1417,6 +1434,17 @@ func expandSpec(st *State, spec string, base fieldBase, auto *int) (string, erro
 		i = next
 	}
 	return b.String(), nil
+}
+
+// checkConversion reports an unknown conversion specifier, which CPython
+// refuses before it expands the format spec. convertAndFormat repeats the same
+// switch because it is also reached from paths that have already checked.
+func checkConversion(conv string) error {
+	switch conv {
+	case "", "s", "r", "a":
+		return nil
+	}
+	return errs.New(errs.ValueError, "Unknown conversion specifier %s", conv)
 }
 
 // convertAndFormat applies `!r`, `!s` or `!a` and then the format spec, in that
@@ -1492,6 +1520,17 @@ type fieldAccessor struct {
 func (a fieldAccessor) apply(v value.Value, py value.PythonVersion) (value.Value, error) {
 	if a.isIndex {
 		return fieldSubscript(v, a.name, py)
+	}
+
+	// An empty attribute is a parse error rather than a lookup: CPython's
+	// FieldNameIterator refuses it with "Empty attribute in format string"
+	// when the chain *reaches* that step, which is what keeps the order
+	// intact -- `{0.a.}` still reports the failed 'a' first, and `{0.}`
+	// with no argument 0 still reports the missing argument. gojja2 asked
+	// for an attribute called "" and reported that instead.
+	if a.name == "" {
+		return value.Undefined, errs.New(errs.ValueError,
+			"Empty attribute in format string")
 	}
 
 	// Attribute access, with no item fall-back.
