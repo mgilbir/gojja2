@@ -464,42 +464,27 @@ func (v *dictView) Repr() string {
 	return b.String()
 }
 
-// EqualsErr compares a keys or items view the way Python does, as a set. A
-// values view has no __eq__ at all there, so two of them are equal only by
-// identity -- `{'a':1}.values() == {'a':1}.values()` is False.
+// EqualsErr is a view's own opinion about ==, and by the time it is asked the
+// interesting case has already been answered.
 //
-// The set comparison compares elements, so a StrictUndefined among them refuses:
-// an items view carries the dict's values and `{'a': nope}.items() ==
-// {'a': 1}.items()` raises, where a keys view carries only the keys and answers
-// True. This compared with a form that has nowhere to put an error and answered
-// False for both.
-func (v *dictView) EqualsErr(other value.Value, py value.PythonVersion) (bool, bool, error) {
+// Two keys views, or two items views, are both set-like, so `equalAsSets` in
+// the value package compares them as sets: the lengths, then every element of
+// one looked for in the other *through the view*. That is what makes
+// `{'a': nope}.items() == {'a': 1}.items()` raise while the keys of the same
+// two answer True -- an items view carries the values and a keys view does not.
+// This is reached only when that did not apply: a values view, which
+// PyDictViewSet_Check refuses, or a view against something that is not a view.
+//
+// So what is left is identity, which is what CPython has for a values view:
+// dict_values defines no __eq__, so `{'a':1}.values() == {'a':1}.values()` is
+// False. The element scan that used to be here was a second copy of the set
+// comparison and could not run -- it asks about two same-kind views, and no
+// pair of those gets this far. A panic in its place survived the suite, 4,784
+// corpus cases and a 30,000-template soak.
+func (v *dictView) EqualsErr(other value.Value, _ value.PythonVersion) (bool, bool, error) {
 	o, ok := other.Interface().(*dictView)
 	if !ok || o.kind != v.kind {
 		return false, true, nil
 	}
-	if v.kind == viewValues {
-		return v == o, true, nil
-	}
-	mine, theirs := v.entries(), o.entries()
-	if len(mine) != len(theirs) {
-		return false, true, nil
-	}
-	for _, item := range mine {
-		found := false
-		for _, cand := range theirs {
-			eq, err := value.EqualBoolErr(item, cand, py)
-			if err != nil {
-				return false, true, err
-			}
-			if eq {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false, true, nil
-		}
-	}
-	return true, true, nil
+	return v == o, true, nil
 }

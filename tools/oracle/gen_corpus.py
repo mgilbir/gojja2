@@ -8460,6 +8460,19 @@ for _n, _src in [
      "{{ 0 in C(range(2)) }}|{{ 5 in C(range(2)) }}|{{ 'a' in C(range(2)) }}"),
     ("proxy_contains_over_an_undefined",
      "{% set C = d.keys().mapping.__class__ %}{{ 0 in C(nope) }}"),
+    # The subscript is PyObject_GetItem on the wrapped value, so each kind
+    # indexes as it does on its own -- negative from the end, a miss for a key
+    # it cannot take, and an undefined for a key out of range.
+    ("proxy_index_over_a_string", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C('ab')[0] }}][{{ C('ab')[-1] }}][{{ C('ab')[5] }}][{{ C('ab')['x'] }}]"),
+    ("proxy_index_over_bytes", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C('ab'.encode())[1] }}][{{ C('ab'.encode())[-1] }}]"
+     "[{{ C('ab'.encode())[9] }}][{{ C('ab'.encode())['x'] }}]"),
+    ("proxy_index_over_a_range", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(range(3))[1] }}][{{ C(range(3))[-1] }}][{{ C(range(3))[9] }}]"
+     "[{{ C(range(3))['x'] }}]"),
+    ("proxy_index_over_a_proxy", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(d.keys().mapping)['a'] }}][{{ C(d.keys().mapping)['z'] }}]"),
 ]:
     case("dictview/" + _n, _DV + _src)
 
