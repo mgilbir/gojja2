@@ -127,8 +127,6 @@ func (v *undeclaredVisitor) stmt(stmt ast.Stmt) {
 		v.expr(n.Template)
 	case *ast.Extends:
 		v.expr(n.Template)
-	case *ast.Scope:
-		v.stmts(n.Body)
 	case *ast.AutoescapeBlock:
 		v.expr(n.Value)
 		v.stmts(n.Body)

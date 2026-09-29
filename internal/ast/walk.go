@@ -76,8 +76,6 @@ func Inspect(n Node, fn func(Node) bool) {
 		Inspect(n.Template, fn)
 	case *ExprStmt:
 		Inspect(n.Node, fn)
-	case *Scope:
-		inspectStmts(n.Body, fn)
 	case *AutoescapeBlock:
 		Inspect(n.Value, fn)
 		inspectStmts(n.Body, fn)

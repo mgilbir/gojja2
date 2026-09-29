@@ -184,12 +184,6 @@ func (ex *exec) execStmtInner(stmt ast.Stmt) error {
 	case *ast.ExprStmt:
 		_, err := ex.eval(n.Node)
 		return err
-	case *ast.Scope:
-		inner := newScope(ex.sc)
-		if err := declareFrameLocals(inner, ex.st, n, n.Body, inner.parent); err != nil {
-			return err
-		}
-		return ex.child(inner).execBody(n.Body)
 	case *ast.AutoescapeBlock:
 		return ex.execAutoescape(n)
 	case *ast.Break:
@@ -325,10 +319,6 @@ func bodyRetainsScope(body []ast.Stmt) bool {
 			if bodyRetainsScope(n.Body) {
 				return true
 			}
-		case *ast.Scope:
-			if bodyRetainsScope(n.Body) {
-				return true
-			}
 		case *ast.AutoescapeBlock:
 			if bodyRetainsScope(n.Body) {
 				return true
@@ -375,10 +365,6 @@ func hasFilterBlock(body []ast.Stmt) bool {
 				return true
 			}
 		case *ast.Block:
-			if hasFilterBlock(n.Body) {
-				return true
-			}
-		case *ast.Scope:
 			if hasFilterBlock(n.Body) {
 				return true
 			}

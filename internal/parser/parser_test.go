@@ -135,8 +135,6 @@ func dump(n any) string {
 		return node("exprstmt", dump(n.Node))
 	case *ast.AutoescapeBlock:
 		return node("autoescape", dump(n.Value), seqStmt(n.Body))
-	case *ast.Scope:
-		return node("scope", seqStmt(n.Body))
 	case *ast.Break:
 		return node("break")
 	case *ast.Continue:

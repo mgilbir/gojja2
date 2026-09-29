@@ -431,14 +431,6 @@ func (b *synBuilder) stmt(s ast.Stmt) *syntax.Node {
 		b.edge(out, syntax.RoleValue, b.expr(n.Node))
 		return out
 
-	case *ast.Scope:
-		out := node(syntax.KindScope, n.Line())
-		b.pushFrame(out)
-		b.declareBody(n.Body)
-		b.body(out, syntax.RoleBody, n.Body)
-		b.popFrame()
-		return out
-
 	case *ast.AutoescapeBlock:
 		// Wrapped in a scope, which gojja2's own tree leaves implicit and
 		// jinja2's states. The body *is* a scope -- a `{% set %}` inside an

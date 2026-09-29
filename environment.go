@@ -1011,8 +1011,6 @@ func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block,
 				walk(n.Body)
 			case *ast.CallBlock:
 				walk(n.Body)
-			case *ast.Scope:
-				walk(n.Body)
 			case *ast.AutoescapeBlock:
 				walk(n.Body)
 			}

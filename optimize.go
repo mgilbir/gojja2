@@ -687,8 +687,6 @@ func (f *constFolder) stmt(stmt ast.Stmt) {
 		if f.rootlevel {
 			f.knownExtends = true
 		}
-	case *ast.Scope:
-		f.nested(n.Body)
 	case *ast.AutoescapeBlock:
 		n.Value = f.foldCheck(n.Value)
 		f.autoescapeBody(n)
@@ -1633,8 +1631,6 @@ func walkOutputs(c *constEvaluator, body []ast.Stmt, fn func(*ast.Output, bool))
 				walk(n.Body, escaping)
 			case *ast.Block:
 				walk(n.Body, env)
-			case *ast.Scope:
-				walk(n.Body, escaping)
 			case *ast.AutoescapeBlock:
 				inner, volatile := blockEscaping(c, n, escaping)
 				saved := c.volatile

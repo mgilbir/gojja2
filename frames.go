@@ -165,7 +165,7 @@ func (v *frameVisitor) stmt(stmt ast.Stmt) {
 		v.expr(n.Call)
 	case *ast.FilterBlock:
 		v.expr(n.Filter)
-	case *ast.Block, *ast.Scope:
+	case *ast.Block:
 		// Compiled as separate functions; nothing binds here.
 	case *ast.If:
 		v.ifStmt(n)
