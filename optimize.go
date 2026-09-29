@@ -32,11 +32,6 @@ import (
 // behaviour-neutral but would share one container between renders, so it is
 // left alone.
 func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
-	if c.env.finalize != nil {
-		// finalize runs over every printed value; folding would have to
-		// run it at compile time, and it may not be pure.
-		return
-	}
 	walkOutputs(c, body, func(out *ast.Output, escaping bool) {
 		for i, node := range out.Nodes {
 			if _, isData := node.(*ast.TemplateData); isData {
@@ -63,13 +58,6 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
 				continue
 			}
-			// StrFor, not Str: a container's text is its repr, and
-			// repr escapes by isprintable, which the interpreter
-			// decides. Folding with the pin's tables baked
-			// `{{ ['\u1c89'] }}` as an escape under 3.14, where the
-			// character is assigned and prints as itself -- the
-			// unfolded path was already right.
-			text := value.StrFor(v, c.pyVersion())
 			if escaping && !v.IsSafe() {
 				// A value whose own __html__ cannot be called
 				// stays a run-time failure, for the same reason
@@ -82,11 +70,41 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 					continue
 				}
 				if html, ok := value.HTML(v); ok {
-					text = html
+					v = value.Safe(html)
 				} else {
-					text = escapeHTML(text)
+					v = value.Safe(escapeHTML(value.StrFor(v, c.pyVersion())))
 				}
 			}
+			// finalize runs *here*, on the already-escaped value,
+			// because that is what _output_child_to_const does:
+			//
+			//	const = node.as_const(...)
+			//	if autoescape: const = escape(const)
+			//	return str(environment.finalize(const))
+			//
+			// At run time the generated source is the other way
+			// round -- `escape(environment.finalize(x))` -- so the
+			// same finalize sees raw text there and escaped text
+			// here. It is jinja2's own asymmetry, and a finalize
+			// that changes text tells the two apart: under
+			// autoescape an upper() makes `{{ '<i>' }}` "&LT;I&GT;"
+			// and `{% set v = '<i>' %}{{ v }}` "&lt;I&gt;".
+			//
+			// This pass used to decline to fold at all when a
+			// finalize was set, on the grounds that it might not be
+			// pure. jinja2 calls it at compile time regardless, so
+			// declining reproduced neither the order nor the number
+			// of calls.
+			if c.env.finalize != nil {
+				v = c.env.finalize(v)
+			}
+			// StrFor, not Str: a container's text is its repr, and
+			// repr escapes by isprintable, which the interpreter
+			// decides. Folding with the pin's tables baked
+			// `{{ ['\u1c89'] }}` as an escape under 3.14, where the
+			// character is assigned and prints as itself -- the
+			// unfolded path was already right.
+			text := value.StrFor(v, c.pyVersion())
 			// The text becomes part of the compiled template and is
 			// kept for as long as it is cached, so it obeys the same
 			// cap as any other folded constant. Leaving it for runtime
