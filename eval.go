@@ -626,6 +626,15 @@ func undefinedFor(s *State, v value.Value) value.Value {
 }
 
 func (ex *exec) indexSequence(base, key value.Value) (value.Value, error) {
+	// An object that presents a sequence -- a range, a group -- is indexed
+	// exactly, before the key is narrowed: a range's positions go past an
+	// int64. See value.SequenceItem.
+	if seq, ok := base.Interface().(value.Sequence); ok && base.Kind() == value.KindObject && key.IsInteger() {
+		if v, found := value.SequenceItem(seq, key); found {
+			return v, nil
+		}
+		return ex.st.Undefined(value.UndefinedElement(base, key)), nil
+	}
 	i, ok := key.Int64()
 	if !ok {
 		if key.Kind() == value.KindString {
@@ -673,17 +682,6 @@ func (ex *exec) indexSequence(base, key value.Value) (value.Value, error) {
 			return ex.st.Undefined(value.UndefinedIndex(base, int(i))), nil
 		}
 		return s.At(idx), nil
-	case value.KindObject:
-		seq := base.Interface().(value.Sequence)
-		idx := int(i)
-		if idx < 0 {
-			idx += seq.Len()
-		}
-		v, ok := seq.GetIndex(idx)
-		if !ok {
-			return ex.st.Undefined(value.UndefinedIndex(base, int(i))), nil
-		}
-		return v, nil
 	}
 	return ex.st.Undefined(value.UndefinedIndex(base, int(i))), nil
 }

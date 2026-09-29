@@ -3213,6 +3213,11 @@ for _n, _src in [
     ("range_subscript", "{{ range['k'] }}"),
     ("self_is_iterable", "{% block b %}B{% endblock %}{{ self is iterable }}"),
     ("self_list", "{% block b %}B{% endblock %}{{ self|list }}"),
+    # |reverse is lazy in jinja2 as map and select are: reversed() is an
+    # iterator, which has no length, is always true, and is never built.
+    ("lazy_reverse_length", "{{ [1, 2]|reverse|length }}"),
+    ("lazy_reverse_truth", "{% if []|reverse %}t{% else %}f{% endif %}"),
+    ("lazy_reverse_of_a_wide_range", "{{ range(2**70)|reverse|first }}"),
     # The same refusal reached through a proxy, whose iter() is the wrapped
     # object's.
     ("self_list_through_a_proxy",
@@ -7345,6 +7350,31 @@ case("modules/import_extending_matches_include",
 #
 # gojja2 narrowed the bounds when the range was built and refused the lot.
 case("globals/range_wide_repr", "{{ range(1180591620717411303424) }}|{{ range(2,1180591620717411303424,3) }}")
+
+# A range too long for an int is indexed exactly. A negative key wrapped
+# against the length clamped to an int64, so `range(2**70)[-1]` was
+# 9223372036854775806 -- a wrong number, not a refusal -- and a key past an
+# int64 was simply not found. Both the folded subscript and the run-time one,
+# and the two other routes to it: a proxy's subscript and a format field.
+for _n, _src in [
+    ("negative", "{{ range(2**70)[-1] }}|{{ range(2**70)[-(2**70)] }}|[{{ range(2**70)[-(2**70) - 1] }}]"),
+    ("negative_runtime", "{% set r = range(2**70) %}{% set k = -1 %}{{ r[k] }}|{{ r[-2] }}"),
+    ("past_int64", "{{ range(2**70)[2**69] }}|{% set r = range(2**70) %}"
+     "{{ r[9223372036854775807] }}|{{ r[9223372036854775808] }}|[{{ r[2**70] }}]"),
+    ("stepped", "{% set r = range(0, 2**70, 3) %}{{ r[-1] }}|{{ r[2**66] }}"),
+    ("descending", "{% set r = range(2**70, 0, -1) %}{{ r[-1] }}|{{ r[-2] }}"),
+    ("straddling_int64", "{% set r = range(-(2**63), 2**63) %}{{ r[-1] }}|{{ r[2**63] }}"),
+    ("round_trip", "{% set r = range(2**70) %}{{ r.index(r[-1]) }}|{{ r[-1] in r }}"),
+    ("bool_key", "{{ range(3)[true] }}|{{ range(3)[false] }}|[{{ range(0)[true] }}]"),
+    ("through_a_proxy", "{% set C = {'a': 1}.keys().mapping.__class__ %}"
+     "{{ C(range(2**70))[-1] }}|{{ C(range(2**40))[2**35] }}|[{{ C(range(3))[5] }}]"),
+    ("format_field", "{{ '{0[2]}'.format(range(3)) }}|{{ '{0[9223372036854775807]}'.format(range(2**70)) }}"),
+    ("format_field_out_of_range", "{{ '{0[5]}'.format(range(3)) }}"),
+    # Environment.getitem, which a filter's attribute= reaches without a
+    # subscript in the template at all.
+    ("attribute", "{{ [range(2**70)]|map(attribute=-1)|list }}|{{ [range(2**70)]|map(attribute=2**69)|list }}"),
+]:
+    case("globals/range_wide_index_" + _n, _src)
 case("globals/range_wide_first", "{{ range(1180591620717411303424)|first }}|{{ range(2,1180591620717411303424,3)|first }}")
 case("globals/range_wide_contains",
      "{{ 3 in range(1180591620717411303424) }}|{{ -1 in range(1180591620717411303424) }}"

@@ -5,7 +5,6 @@ package gojja2
 
 import (
 	"iter"
-	"math"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -219,17 +218,7 @@ func (m *mappingProxy) GetItem(key value.Value) (value.Value, bool) {
 		return value.Int(int64(raw[i])), true
 	}
 	if seq, ok := m.d.Interface().(value.Sequence); ok {
-		i, ok := key.Int64()
-		if !ok {
-			return value.Undefined, false
-		}
-		if i < 0 {
-			i += int64(seq.Len())
-		}
-		if i < 0 || i > math.MaxInt32 {
-			return value.Undefined, false
-		}
-		return seq.GetIndex(int(i))
+		return value.SequenceItem(seq, key)
 	}
 	// An object whose __getitem__ gojja2 answers through the attribute
 	// path -- `self['body']` is the one -- indexes through the proxy the

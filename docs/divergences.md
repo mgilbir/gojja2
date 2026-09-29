@@ -73,7 +73,8 @@ are safety controls rather than behavioural choices, and they live in
 ```
 
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
-`items` return generators. gojja2's return lists. Anything that *walks* the
+`items` return generators, and `reverse` returns Python's `reversed()` iterator
+for anything but a string. gojja2's return lists. Anything that *walks* the
 result forwards -- iterating it, `|list`, `|join`, `|first`, `|sort` -- behaves
 identically. Five things do not:
 
@@ -103,6 +104,11 @@ The fifth is not hypothetical: DeepSeek-R1's own chat template, as vendored by
 llama.cpp, writes `{{ tools | map(attribute='function') | tojson(indent=2) }}`,
 which raises under CPython jinja2 and renders under gojja2. Both cases are in
 the chat-templates corpus, listed in testdata/known_failures.txt.
+
+A list is also built in full, which a lazy iterator is not: jinja2 answers
+`{{ range(2**70)|reverse|first }}` by stepping `reversed()` once, and gojja2's
+`|reverse` walks the whole range into a list and is stopped by the render
+budget. `{{ range(2**70)|last }}` answers exactly on both.
 
 A knock-on: a filter that raises does so at the point gojja2 applies it, where
 jinja2 defers until the generator is consumed. The exception is the same; where

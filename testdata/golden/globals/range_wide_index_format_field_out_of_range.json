@@ -1,0 +1,14 @@
+{
+  "case": "globals/range_wide_index_format_field_out_of_range.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "IndexError",
+    "message": "range object index out of range"
+  }
+}

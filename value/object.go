@@ -156,12 +156,46 @@ type BigLener interface {
 // answers there while `len()` of that range raises. Walking to it instead cost
 // the whole render budget and then failed.
 //
-// Len and GetIndex stay as they are -- saturating -- so iteration and ordinary
-// indexing keep working on an int; BigIndex is the exact path beside them.
+// Len and GetIndex stay as they are -- saturating -- so iteration keeps
+// working on an int; BigIndex is the exact path beside them, and SequenceItem
+// is how a subscript reaches it.
 type BigSequence interface {
 	Sequence
 	BigLener
 	BigIndex(i *big.Int) (Value, bool)
+}
+
+// SequenceItem is seq[key] for an Object that presents a sequence: an integer
+// key (a bool is one), counted from the end when it is negative. The second
+// result is false when the key is out of range or not an integer.
+//
+// A BigSequence is answered exactly. Wrapping a negative key against the
+// saturated Len instead made `range(2**70)[-1]` 9223372036854775806 -- a
+// wrong number rather than a refusal -- and a key past an int64, which
+// range_subscript takes as a PyLong, was simply not found.
+func SequenceItem(seq Sequence, key Value) (Value, bool) {
+	if !key.IsInteger() {
+		return Undefined, false
+	}
+	if b, ok := seq.(BigSequence); ok {
+		k, _ := key.BigInt()
+		if k.Sign() < 0 {
+			k = new(big.Int).Add(k, b.BigLen())
+		}
+		return b.BigIndex(k)
+	}
+	i, fits := key.Int64()
+	if !fits {
+		return Undefined, false
+	}
+	n := int64(seq.Len())
+	if i < 0 {
+		i += n
+	}
+	if i < 0 || i >= n {
+		return Undefined, false
+	}
+	return seq.GetIndex(int(i))
 }
 
 // Container is an Object that answers `x in obj` itself.

@@ -63,8 +63,11 @@ func newRange(start, stop, step *big.Int) *rangeObject {
 	} else {
 		r.wide = &wideRange{start: start, stop: stop, step: step}
 	}
-	// A range longer than maxInt cannot be walked under any budget, so the
-	// clamp is unobservable except through len(), which uses BigLen.
+	// A range longer than maxInt cannot be walked under any budget, which is
+	// why iteration may use the clamp. Nothing that *computes* a position may:
+	// len() uses BigLen, and a subscript goes through value.SequenceItem --
+	// wrapping a negative key against this clamp made `range(2**70)[-1]`
+	// 9223372036854775806.
 	if r.length.IsInt64() && r.length.Int64() <= int64(math.MaxInt) {
 		r.n = int(r.length.Int64())
 	} else {

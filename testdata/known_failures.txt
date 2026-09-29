@@ -32,6 +32,9 @@ jinja-harvest/security_ccdfed5fc2.jj2     # __builtins__[__import__]
 # "Lazy sequence filters".
 chat-templates/models_llama-cpp-deepseek-r1__tool_call.jj2   # map()|tojson: generator is not JSON serializable
 chat-templates/models_llama-cpp-deepseek-r1__tools.jj2       # map()|tojson: generator is not JSON serializable
+own/divergence/lazy_reverse_length.jj2            # reversed() has no len(); the list here does
+own/divergence/lazy_reverse_truth.jj2             # reversed() is always true
+own/divergence/lazy_reverse_of_a_wide_range.jj2   # the list is built in full and meets the budget
 
 # --- generator addresses (not gradable) ---------------------------------------
 # `{{ [] | items }}` and friends: jinja2's items is lazy, so printing it renders

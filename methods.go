@@ -1650,13 +1650,12 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 	// itself in both complaints. Note the "object" a range puts in its
 	// out-of-range message and a list does not.
 	if seq, ok := v.Interface().(value.Sequence); ok {
-		idx, ok := key.Int64()
-		if !ok {
+		if !key.IsInteger() {
 			return value.Undefined, errs.New(errs.TypeError,
 				"%s indices must be integers or slices, not %s",
 				v.TypeName(), key.TypeName())
 		}
-		if item, in := seq.GetIndex(int(idx)); in {
+		if item, in := value.SequenceItem(seq, key); in {
 			return item, nil
 		}
 		return value.Undefined, errs.New(errs.IndexError,
