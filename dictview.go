@@ -8,6 +8,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/value"
 )
 
@@ -287,6 +288,66 @@ func (m *mappingProxy) Len() int {
 		return 0
 	}
 	return n
+}
+
+// pairs is what a dict-shaped consumer reads from a proxy: dict.update, dict(),
+// |items and |dictsort. None of them walks its argument as a Mapping.
+// PyDict_Merge calls b.keys() and indexes b by each key, and jinja2's two
+// filters call value.items(). A proxy's methods are the wrapped object's, so
+// over anything but a dict they answer whatever that object does --
+// `dict(mappingproxy('ab'))` is "'str' object has no attribute 'keys'" --
+// where walking the proxy's own Keys and GetItem invented a pair for each
+// character of the string.
+//
+// via is "keys" or "items", whichever method the consumer calls.
+//
+// Consumers reach it through pairSource rather than *mappingProxy: dict.update
+// is one of them and sits in dictMethods, and a static call from there into a
+// method that looks attributes up closes an initialisation cycle back to
+// dictMethods. A call through an interface is not a dependency.
+type pairSource interface {
+	pairs(s *State, via string) ([][2]value.Value, error)
+}
+
+func (m *mappingProxy) pairs(s *State, via string) ([][2]value.Value, error) {
+	if d, ok := m.d.Dict(); ok {
+		out := make([][2]value.Value, 0, d.Len())
+		for _, e := range d.Entries() {
+			out = append(out, [2]value.Value{e.Key, e.Value})
+		}
+		return out, nil
+	}
+	got, err := proxyMethod(via)(s, value.FromObject(m), &value.CallArgs{})
+	if err != nil {
+		return nil, err
+	}
+	seq, err := value.Iterate(got)
+	if err != nil {
+		return nil, err
+	}
+	var out [][2]value.Value
+	for item := range seq {
+		if err := s.Step(1); err != nil {
+			return nil, err
+		}
+		if via == "keys" {
+			v, found, err := m.GetItemErr(item)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, errs.New(errs.KeyError, "%s", value.ReprFor(item, s.PythonVersion()))
+			}
+			out = append(out, [2]value.Value{item, v})
+			continue
+		}
+		k, v, err := unpackPair(item, s.PythonVersion())
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, [2]value.Value{k, v})
+	}
+	return out, nil
 }
 
 // LenErr and IterateErr are len() and iter() of the wrapped object, error and

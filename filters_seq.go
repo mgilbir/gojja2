@@ -32,7 +32,7 @@ func filterList(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 
 // filterItems yields (key, value) pairs, and tolerates undefined so that
 // `{% for k, v in missing|items %}` renders nothing rather than failing.
-func filterItems(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+func filterItems(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	if v.IsUndefined() {
 		// do_items checks `isinstance(value, Undefined)` and returns
 		// before it yields anything, with no class distinction: the
@@ -47,6 +47,17 @@ func filterItems(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error
 		items := make([]value.Value, 0, d.Len())
 		for _, e := range d.Entries() {
 			items = append(items, value.NewTuple(e.Key, e.Value))
+		}
+		return value.NewList(items...), nil
+	}
+	if m, ok := v.Interface().(pairSource); ok {
+		pairs, err := m.pairs(s, "items")
+		if err != nil {
+			return value.Undefined, err
+		}
+		items := make([]value.Value, 0, len(pairs))
+		for _, kv := range pairs {
+			items = append(items, value.NewTuple(kv[0], kv[1]))
 		}
 		return value.NewList(items...), nil
 	}
@@ -432,6 +443,20 @@ func filterDictsort(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	}
 
 	d, ok := v.Dict()
+	if proxy, isProxy := v.Interface().(pairSource); !ok && isProxy {
+		pairs, err := proxy.pairs(s, "items")
+		if err != nil {
+			return value.Undefined, err
+		}
+		out := value.NewDict()
+		target, _ := out.Dict()
+		for _, kv := range pairs {
+			if err := target.Set(kv[0], kv[1], s.PythonVersion()); err != nil {
+				return value.Undefined, err
+			}
+		}
+		d, ok = out.Dict()
+	}
 	if !ok {
 		if m, isMapping := v.Interface().(value.Mapping); isMapping && v.Kind() == value.KindObject {
 			out := value.NewDict()

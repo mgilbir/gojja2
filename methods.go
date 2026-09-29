@@ -2142,7 +2142,7 @@ func methodDictUpdate(s *State, r value.Value, args *value.CallArgs) (value.Valu
 		// refuses it refuses the same way. This used to test only for a
 		// mapping and discard everything else in silence, so
 		// `d.update([("a", 1)])` left the dict empty and reported success.
-		if err := updateDictFrom(d, other, s.PythonVersion()); err != nil {
+		if err := updateDictFrom(s, d, other); err != nil {
 			return value.Undefined, err
 		}
 	}
@@ -2156,7 +2156,8 @@ func methodDictUpdate(s *State, r value.Value, args *value.CallArgs) (value.Valu
 // dict.update and dict() both take: a dict, any mapping, or an iterable of
 // key/value pairs. It is the single implementation behind both, so the two
 // cannot drift apart again.
-func updateDictFrom(d *value.Dict, src value.Value, py value.PythonVersion) error {
+func updateDictFrom(s *State, d *value.Dict, src value.Value) error {
+	py := s.PythonVersion()
 	if src.IsUndefined() {
 		// dict() probes for a keys() method first, and that probe is what
 		// fails on an Undefined.
@@ -2165,6 +2166,18 @@ func updateDictFrom(d *value.Dict, src value.Value, py value.PythonVersion) erro
 	if sd, ok := src.Dict(); ok {
 		for _, e := range sd.Entries() {
 			if err := d.Set(e.Key, e.Value, py); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if m, ok := src.Interface().(pairSource); ok {
+		pairs, err := m.pairs(s, "keys")
+		if err != nil {
+			return err
+		}
+		for _, kv := range pairs {
+			if err := d.Set(kv[0], kv[1], py); err != nil {
 				return err
 			}
 		}

@@ -4706,6 +4706,14 @@ case("grouptuple/percent", GROUP + '{{ "%s/%s" % g }}|{{ "%r" % g[0] }}', **USER
 case("grouptuple/order", GROUP + "{{ g < ('Lisbon', []) }}|{{ ('Lisbon', []) < g }}|{{ g == ('x',) }}", **USERS)
 case("grouptuple/equality", GROUP + "{{ g == ('Lisbon', users[:1] + users[2:]) }}|{{ ('Lisbon', []) == g }}|{{ g == ['Lisbon'] }}|{{ g in [('Lisbon', users[:1] + users[2:])] }}", **USERS)
 case("grouptuple/sum_start", GROUP + "{{ [g]|sum(start=()) }}", **USERS)
+# A literal tuple on the left of a group tuple runs the group's reflected
+# comparison first, for every operator: the answer is the same, and the refusal
+# names the swapped operator. Only `<` and `==` had a case.
+case("grouptuple/reflected_orderings",
+     "{% for g in [1, 1, 2]|groupby('real') %}{{ (1,) < g }}{{ (1,) <= g }}{{ (1,) >= g }}{{ (1,) > g }}|{% endfor %}")
+for _op in ["<", "<=", ">="]:
+    case("grouptuple/reflected_refusal_" + {"<": "lt", "<=": "le", ">=": "ge"}[_op],
+         "{% for g in [1, 1, 2]|groupby('real') %}{{ ('a',) " + _op + " g }}{% endfor %}")
 
 case("errshape/grouptuple_concat_str", GROUP + '{{ g + "s" }}', **USERS)
 case("errshape/grouptuple_concat_list", GROUP + "{{ g + [1] }}", **USERS)
@@ -4725,6 +4733,19 @@ case("errshape/format_percent_width", "{{ '%5%' % 1 }}")
 case("errshape/format_percent_starved", "{{ '%5%' % () }}")
 case("errshape/format_percent_urlencoded", "{{ ({(1,2): 'x'}|urlencode) % 2 }}")
 case("markup/format_percent_literal", "{{ '100%% sure, %s' % 'really' }}|{{ '%s%%' % 5 }}")
+
+# The str methods markupsafe keeps a Markup from, which a Markup receiver
+# answers as a Markup -- so under autoescape the result is not escaped again.
+# None of these had been called on a Markup at all.
+for _n, _src in [
+    ("translate", "{{ ('<a>'|safe).translate({97: 'b'}) }}|{{ ('a'|safe).translate({97: '<'}) }}"),
+    ("expandtabs", "{{ ('<a>\tx'|safe).expandtabs(2) }}"),
+    ("partition", "{{ ('<a>-x'|safe).partition('-') }}|{{ ('<a>-x'|safe).rpartition('-')[0] }}|"
+     "{{ ('ab'|safe).partition('z') }}|{{ ('ab'|safe).rpartition('z') }}"),
+    ("removeprefix", "{{ ('<a>x'|safe).removeprefix('<') }}|{{ ('<a>x'|safe).removesuffix('x') }}|"
+     "{{ ('a'|safe).removeprefix('<') }}"),
+]:
+    case("markup/method_keeps_markup_" + _n, "{% autoescape true %}" + _src + "{% endautoescape %}")
 case("errshape/format_char", "{{ '%S' % 'a' }}")
 # The C functions jinja2 registers do not all word an argument error alike:
 # abs, len and callable say "takes exactly one argument", the operator.*
@@ -8701,6 +8722,50 @@ for _n, _src in [
      "[{{ C(self)[0] }}][{{ C(self)['nope'] }}]"),
 ]:
     case("dictview/" + _n, _DV + _src)
+# dict.update, dict(), |items and |dictsort never walk a mapping argument as a
+# mapping: PyDict_Merge calls its keys() and indexes it by each, and jinja2's
+# two filters call its items(). A proxy's methods are the wrapped object's, so
+# over a string, a range, bytes or the template reference each of them is an
+# AttributeError -- and each answered pairs invented from the characters.
+_PC = "{% set C = d.keys().mapping.__class__ %}"
+for _n, _src in [
+    ("update_over_a_string", "{% set x = {} %}{% set _ = x.update(C('ab')) %}{{ x }}"),
+    ("update_over_a_range", "{% set x = {} %}{% set _ = x.update(C(range(2))) %}{{ x }}"),
+    ("update_over_bytes", "{% set x = {} %}{% set _ = x.update(C('ab'.encode())) %}{{ x }}"),
+    ("update_over_a_proxy", "{% set x = {'z': 0} %}{% set _ = x.update(C(C({'q': 2, 'a': 1}))) %}{{ x }}"),
+    ("update_over_a_dict", "{% set x = {'z': 0} %}{% set _ = x.update(C({'q': 2})) %}{{ x }}"),
+    ("dict_over_a_string", "{{ dict(C('ab')) }}"),
+    ("dict_over_a_proxy", "{{ dict(C({'q': 2}), r=3) }}|{{ dict(C(C({'q': 2}))) }}"),
+    ("dict_over_an_undefined", "{{ dict(C(nope)) }}"),
+    ("dictsort_over_a_string", "{{ C('ab')|dictsort }}"),
+    ("dictsort_over_a_range", "{{ C(range(2))|dictsort }}"),
+    ("dictsort_over_a_proxy", "{{ C({'q': 2, 'a': 1})|dictsort }}|{{ C(C({'q': 2, 'a': 1}))|dictsort(by='value') }}"),
+    ("items_filter_over_a_string", "{{ C('ab')|items|list }}"),
+    ("items_filter_over_a_proxy", "{{ C({'q': 2, 'a': 1})|items|list }}|{{ C(C({'q': 2}))|items|list }}"),
+    ("items_filter_over_an_undefined", "{{ C(nope)|items|list }}"),
+    ("dict_over_self", "{% block b %}B{% endblock %}{{ dict(C(self)) }}"),
+    ("dictsort_over_self", "{% block b %}B{% endblock %}{{ C(self)|dictsort }}"),
+]:
+    case("dictview/proxy_" + _n, _DV + _PC + _src)
+
+# list.index's start and stop are slice indices: clamped when past either end,
+# however far, refused when not an integer, and an empty window when the stop
+# is before the start. A bound written -(2**70) is parenthesised on purpose.
+for _n, _src in [
+    ("start_past_the_end", "{{ [1, 2, 3, 2].index(2, 2**70) }}"),
+    ("start_far_before", "{{ [1, 2, 3, 2].index(2, -(2**70)) }}|{{ [1, 2, 3, 2].index(2, -10) }}|"
+     "{{ [1, 2, 3, 2].index(2, -1) }}"),
+    ("stop_far_past", "{{ [1, 2, 3, 2].index(2, 2, 2**70) }}"),
+    ("stop_far_before", "{{ [1, 2, 3, 2].index(2, 0, -(2**70)) }}"),
+    ("start_not_an_int", "{{ [1, 2, 3, 2].index(2, 1.5) }}"),
+    ("stop_before_start", "{{ [1, 2, 3, 2].index(2, 3, 1) }}"),
+    ("tuple_wide_bounds", "{{ (1, 2).index(2, -(2**70), 2**70) }}"),
+    # Jinja's unary minus binds tighter than **, so this start is (-2)**70,
+    # which is positive and past the end.
+    ("unary_minus_before_power", "{{ [1, 2, 3, 2].index(2, -2**70) }}"),
+]:
+    case("methods/list_index_bounds_" + _n, _src)
+
 # A loop over a proxy that stops early stops the wrapped object's iteration.
 case("dictview/proxy_iteration_stops_early",
      _DV + "{% set C = d.keys().mapping.__class__ %}{% for k in C('ab') %}{{ k }}{% break %}{% endfor %}",

@@ -1,0 +1,11 @@
+{
+  "case": "markup/method_keeps_markup_partition.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "(Markup(&#39;&lt;a&gt;&#39;), Markup(&#39;-&#39;), Markup(&#39;x&#39;))|<a>|(Markup(&#39;ab&#39;), Markup(&#39;&#39;), Markup(&#39;&#39;))|(Markup(&#39;&#39;), Markup(&#39;&#39;), Markup(&#39;ab&#39;))"
+}
