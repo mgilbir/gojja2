@@ -289,6 +289,25 @@ func (m *mappingProxy) Len() int {
 	return n
 }
 
+// LenErr and IterateErr are len() and iter() of the wrapped object, error and
+// all: mappingproxy_len is PyObject_Size(pp->mapping) and mappingproxy_getiter
+// PyObject_GetIter(pp->mapping). Len and Keys above have no way to say the
+// wrapped object refused, and answered 0 and nothing -- for a proxy over the
+// template reference, and over a StrictUndefined, whose __len__ raises.
+func (m *mappingProxy) LenErr() (int, error) {
+	if d, ok := m.d.Dict(); ok {
+		return d.Len(), nil
+	}
+	return value.Len(m.d)
+}
+
+func (m *mappingProxy) IterateErr() (iter.Seq[value.Value], error) {
+	if _, ok := m.d.Dict(); ok {
+		return m.Iterate(), nil
+	}
+	return value.Iterate(m.d)
+}
+
 func (m *mappingProxy) Iterate() iter.Seq[value.Value] {
 	return func(yield func(value.Value) bool) {
 		for _, k := range m.Keys() {

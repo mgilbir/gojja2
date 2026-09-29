@@ -1,0 +1,6 @@
+{
+  "case": "dictview/proxy_over_self_index.jj2",
+  "variables": {
+    "self": "or"
+  }
+}

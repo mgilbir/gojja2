@@ -42,6 +42,12 @@ func registerDefaultTests(env *Environment) {
 		if value.StrictRefusal(v) != nil {
 			return false, nil
 		}
+		// ...and asks len() before anything else, so an object whose
+		// length is its contents' -- a mappingproxy over the template
+		// reference -- is not a sequence when that refuses.
+		if _, err := value.Len(v); err != nil {
+			return false, nil
+		}
 		return isSequenceValue(v), nil
 	})
 	addTest(env, "iterable", func(_ *State, v value.Value, _ *value.CallArgs) (bool, error) {

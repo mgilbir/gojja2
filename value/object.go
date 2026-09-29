@@ -79,6 +79,25 @@ type Sized interface {
 	Len() int
 }
 
+// SizedErr is Sized for an object whose len() can raise, and IterableErr is
+// Iterable for one whose iteration can: Len and Iterate consult them first.
+//
+// The plain interfaces have nowhere to put an error, so an object that
+// delegates -- a mappingproxy is len() and iter() of whatever it wraps --
+// answered 0 and nothing where CPython raises: `mappingproxy(self)|length` is
+// "object of type 'TemplateReference' has no len()". The same shape as
+// EqualerErr beside Equaler.
+type SizedErr interface {
+	Object
+	LenErr() (int, error)
+}
+
+// IterableErr is described with SizedErr.
+type IterableErr interface {
+	Object
+	IterateErr() (iter.Seq[Value], error)
+}
+
 // Equaler lets an Object decide == for itself. The second result reports
 // whether it has an opinion; without one, objects compare by identity.
 //

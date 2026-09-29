@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "loopcontrols"
+    ]
+  }
+}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}{% for k in C('ab') %}{{ k }}{% break %}{% endfor %}

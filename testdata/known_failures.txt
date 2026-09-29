@@ -114,6 +114,8 @@ own/divergence/dict_attr_fallback.jj2    dict.nosuch falls back to a generic ali
 # failing. See docs/divergences.md.
 own/divergence/self_is_iterable.jj2      the legacy iteration protocol accepts __getitem__
 own/divergence/self_list.jj2             list(self) asks for index 0 and raises KeyError
+own/divergence/self_list_through_a_proxy.jj2  likewise, through a mappingproxy
+own/divergence/self_loop_through_a_proxy.jj2  likewise, as a for loop
 
 # --- a `{% set %}` block writing to a name that was never set ------------------
 # The block form is an item assignment, not a namespace write -- jinja2 emits no

@@ -51,6 +51,11 @@ func IsTrue(v Value) (bool, error) {
 		switch o := v.obj.(type) {
 		case Booler:
 			return o.IsTrue(), nil
+		case SizedErr:
+			// No __bool__, so __len__ decides, and its refusal is
+			// bool()'s: `{% if mappingproxy(self) %}` raises.
+			n, err := o.LenErr()
+			return n != 0, err
 		case Mapping:
 			return o.Len() != 0, nil
 		case Sequence:
@@ -88,6 +93,8 @@ func Len(v Value) (int, error) {
 		return d.Len(), nil
 	case KindObject:
 		switch o := v.obj.(type) {
+		case SizedErr:
+			return o.LenErr()
 		case Mapping:
 			return o.Len(), nil
 		case Sequence:

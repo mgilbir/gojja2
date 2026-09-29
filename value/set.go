@@ -231,21 +231,19 @@ func (s *Set) ContainsErr(item Value, py PythonVersion) (found, known bool, err 
 	return ok, true, nil
 }
 
-// Equals compares as a set: same size, same members, order irrelevant.
+// Equals answers only against something that is not a set, which is never
+// equal to one: `s == ['a']` is False.
+//
+// Two sets are compared by equalAsSets in compare.go, which runs before any
+// Equaler is asked and is where the rule -- same size, every member of one in
+// the other -- is kept. This carried a second copy of it that nothing reached:
+// replacing it with a wrong answer left the suite green. So a set here has no
+// opinion, and the caller's own rule decides.
 func (s *Set) Equals(other Value) (bool, bool) {
-	o, ok := other.Interface().(*Set)
-	if !ok {
-		return false, true
+	if _, ok := other.Interface().(*Set); ok {
+		return false, false
 	}
-	if len(s.items) != len(o.items) {
-		return false, true
-	}
-	for _, v := range s.items {
-		if _, in := o.index.GetKnown(v); !in {
-			return false, true
-		}
-	}
-	return true, true
+	return false, true
 }
 
 // setReverseDifference is `other - view`, which a template reaches by writing

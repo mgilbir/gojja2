@@ -3213,6 +3213,13 @@ for _n, _src in [
     ("range_subscript", "{{ range['k'] }}"),
     ("self_is_iterable", "{% block b %}B{% endblock %}{{ self is iterable }}"),
     ("self_list", "{% block b %}B{% endblock %}{{ self|list }}"),
+    # The same refusal reached through a proxy, whose iter() is the wrapped
+    # object's.
+    ("self_list_through_a_proxy",
+     "{% block b %}B{% endblock %}{% set C = {'a': 1}.keys().mapping.__class__ %}{{ C(self)|list }}"),
+    ("self_loop_through_a_proxy",
+     "{% block b %}B{% endblock %}{% set C = {'a': 1}.keys().mapping.__class__ %}"
+     "{% for k in C(self) %}{{ k }}{% endfor %}"),
 ]:
     case(f"divergence/{_n}", _src)
 
@@ -8671,8 +8678,43 @@ for _n, _src in [
      "[{{ C(range(3))['x'] }}]"),
     ("proxy_index_over_a_proxy", "{% set C = d.keys().mapping.__class__ %}"
      "[{{ C(d.keys().mapping)['a'] }}][{{ C(d.keys().mapping)['z'] }}]"),
+    ("proxy_index_over_a_range_not_an_int", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(range(3))[1.5] }}][{{ C(range(3))[2**40] }}][{{ C(range(3))[none] }}]"),
+    ("proxy_over_a_proxy_lists", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ C(C(d))|list }}|{{ C(C(d))|length }}"),
+    # len(), bool() and `is sequence` of a proxy are len() of what it wraps,
+    # refusal included: the template reference has __getitem__ and no
+    # __len__. They answered 0, False and True here, because the proxy's
+    # length had nowhere to put the error.
+    ("proxy_over_self_length",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}{{ C(self)|length }}"),
+    ("proxy_over_a_proxy_over_self_length",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}{{ C(C(self))|length }}"),
+    ("proxy_over_self_truth",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}"
+     "{% if C(self) %}t{% else %}f{% endif %}"),
+    ("proxy_over_self_is_sequence",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}"
+     "{{ C(self) is sequence }}|{{ C(self) is iterable }}|{{ C(d) is sequence }}"),
+    ("proxy_over_self_index",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(self)[0] }}][{{ C(self)['nope'] }}]"),
 ]:
     case("dictview/" + _n, _DV + _src)
+# A loop over a proxy that stops early stops the wrapped object's iteration.
+case("dictview/proxy_iteration_stops_early",
+     _DV + "{% set C = d.keys().mapping.__class__ %}{% for k in C('ab') %}{{ k }}{% break %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]})
+# A StrictUndefined's __len__, __iter__ and __bool__ all raise, and a proxy
+# over one hands each of them on; the proxy answered 0, nothing and False.
+for _n, _src in [
+    ("length", "{{ C(nope)|length }}"),
+    ("list", "{{ C(nope)|list }}"),
+    ("truth", "{% if C(nope) %}t{% else %}f{% endif %}"),
+]:
+    case("dictview/proxy_over_a_strict_undefined_" + _n,
+         _DV + "{% set C = d.keys().mapping.__class__ %}" + _src,
+         __settings__={"undefined": "strict"})
 
 # A set's seventeen methods, which a template reaches because `d.keys() - xs`
 # gives it a set to call them on. All seventeen answered "'set object' has no

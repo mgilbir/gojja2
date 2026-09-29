@@ -309,7 +309,8 @@ which is a block name lookup, and raises `KeyError: 0`. gojja2 answers
 Reproducing the KeyError would mean a way for an Object to say "iterable, but
 the first step fails", which nothing else here needs. Every template that
 *iterates* `self` fails either way -- `|list`, `|join`, `|sort`, `{% for %}`
-and `in` all raise, and only the wording differs.
+and `in` all raise, and only the wording differs. The same holds through a
+`mappingproxy` over `self`, whose iteration is the wrapped object's.
 
 One case answers rather than failing, though, so it is not only wording:
 

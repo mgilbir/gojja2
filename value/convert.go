@@ -969,6 +969,8 @@ func Iterate(v Value) (iter.Seq[Value], error) {
 		}, nil
 	case KindObject:
 		switch o := v.Interface().(type) {
+		case IterableErr:
+			return o.IterateErr()
 		case Iterable:
 			return o.Iterate(), nil
 		case Mapping:
