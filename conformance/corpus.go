@@ -69,6 +69,41 @@ type Settings struct {
 	Undefined  string     `json:"undefined"`
 	// Extensions names the optional tags the case needs, e.g. "do".
 	Extensions []string `json:"extensions"`
+	// Policies are jinja2's environment policies, which change what a filter
+	// produces for every template in the environment rather than for one
+	// call: `urlize.rel`, `urlize.target` and `truncate.leeway`. A pointer
+	// per field, so that an omitted one keeps jinja2's default and an
+	// explicit empty string or zero is still a setting.
+	Policies *CasePolicies `json:"policies"`
+}
+
+// CasePolicies is the subset of jinja2's env.policies that changes rendering.
+//
+// jinja2 has more -- the i18n ones, and json.dumps_function, which is a
+// callable a JSON header cannot carry. These three are the ones a template can
+// observe without one.
+type CasePolicies struct {
+	URLizeRel      *string `json:"urlize.rel"`
+	URLizeTarget   *string `json:"urlize.target"`
+	TruncateLeeway *int    `json:"truncate.leeway"`
+}
+
+// apply returns the gojja2 policies this case asks for, starting from the
+// defaults so that an omitted field is jinja2's own.
+func (p *CasePolicies) apply(base gojja2.Policies) gojja2.Policies {
+	if p == nil {
+		return base
+	}
+	if p.URLizeRel != nil {
+		base.URLizeRel = *p.URLizeRel
+	}
+	if p.URLizeTarget != nil {
+		base.URLizeTarget = *p.URLizeTarget
+	}
+	if p.TruncateLeeway != nil {
+		base.TruncateLeeway = *p.TruncateLeeway
+	}
+	return base
 }
 
 // Autoescape is a case's escaping setting: a bool, or the name of a rule.
@@ -393,6 +428,9 @@ func (c *Case) EnvironmentFor(py gojja2.PythonVersion) (*gojja2.Environment, err
 	)
 	if len(s.Extensions) > 0 {
 		opts = append(opts, gojja2.WithExtensions(s.Extensions...))
+	}
+	if s.Policies != nil {
+		opts = append(opts, gojja2.WithPolicies(s.Policies.apply(gojja2.DefaultPolicies())))
 	}
 	opts = append(opts, gojja2.WithPythonVersion(py))
 	env, err := gojja2.New(opts...)

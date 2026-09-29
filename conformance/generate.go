@@ -415,6 +415,13 @@ type GeneratedCase struct {
 	// constant of the harness. See templateSets.
 	Templates   map[string]string
 	TemplateSet string
+	// Policies are jinja2's env.policies for this case, and PolicySet names
+	// the draw. They change what a filter produces for every template rather
+	// than for one call -- urlize's rel and target, truncate's leeway -- so
+	// a run that leaves them at the default asks only one third of that
+	// dimension. nil is jinja2's own defaults. See policySets.
+	Policies  map[string]any
+	PolicySet string
 }
 
 // Delimiters is what opens and closes a tag. jinja2 lets all six be configured,
@@ -594,6 +601,11 @@ func generateCase(input []byte, withEnvironment bool) GeneratedCase {
 	// Weighted toward the default for the same reason: the other two are an
 	// addition to what the soak has always asked, not a replacement.
 	ctx := contextSets[g.c.intn(len(contextSets)+3)%len(contextSets)]
+	// The environment *policies*, which change what |urlize and |truncate
+	// produce for every template in the environment rather than for one
+	// call. Weighted toward jinja2's own defaults, which is what a case that
+	// does not mention them should still be drawing most of the time.
+	policy := policySets[g.c.intn(len(policySets)+4)%len(policySets)]
 	var extensions []string
 	if g.do {
 		extensions = append(extensions, "do")
@@ -623,6 +635,8 @@ func generateCase(input []byte, withEnvironment bool) GeneratedCase {
 		TemplateSet:         set.name,
 		Context:             json.RawMessage(ctx.json),
 		ContextSet:          ctx.name,
+		Policies:            policy.values,
+		PolicySet:           policy.name,
 	}
 }
 
@@ -2075,6 +2089,24 @@ func (g *generator) list(n int) string {
 	return strings.Join(parts, ", ")
 }
 
+// policySets are the environment policies a case renders under, drawn per case.
+//
+// jinja2's policies are settings of the *environment*, so they change every
+// |urlize and every |truncate in the template rather than one call, and a call
+// that names the same option overrides them. Only the three a template can
+// observe are here: the i18n ones need an extension and json.dumps_function is
+// a callable a JSON setting cannot carry.
+var policySets = []struct {
+	name   string
+	values map[string]any
+}{
+	{"default", nil},
+	{"urlize", map[string]any{"urlize.rel": "me", "urlize.target": "_blank"}},
+	{"norel", map[string]any{"urlize.rel": ""}},
+	{"leeway", map[string]any{"truncate.leeway": 0}},
+	{"wide-leeway", map[string]any{"truncate.leeway": 25}},
+}
+
 // contextSets are the values a case renders against, drawn per case.
 //
 // There was one, so every generated template saw a three-element `lst`, a
@@ -2119,6 +2151,15 @@ var contextSets = []struct {
   "nested": {"x": {"y": [[1]]}},
   "html": "<script>alert(1)</script>", "pairs": [[1, 2, 3], []]
 }`},
+}
+
+// FuzzPolicySets names the policy sets, for the summary line.
+func FuzzPolicySets() []string {
+	out := make([]string, len(policySets))
+	for i, p := range policySets {
+		out[i] = p.name
+	}
+	return out
 }
 
 // FuzzContextSets names the context sets, for the summary line.

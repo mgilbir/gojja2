@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "policies": {
+      "urlize.target": "_blank"
+    }
+  },
+  "u": "see http://x.com now"
+}
+---
+{{ u|urlize(target=none) }}

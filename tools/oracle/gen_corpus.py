@@ -4265,6 +4265,37 @@ case("repr/bytes_short_escapes_and_quotes",
 case("filters/urlize", "{{ 'see http://example.com/a?b=1, and www.x.org. mail me@example.com'|urlize }}")
 case("filters/urlize_args", "{{ 'go to http://example.com now'|urlize(10, target='_blank') }}")
 case("filters/tojson", "{{ {'b':1,'a':[1,2],'c':'<x>'}|tojson }}|{{ [1,2]|tojson(indent=2) }}")
+# The environment *policies*, which change what a filter produces for every
+# template rather than for one call: urlize.rel, urlize.target and
+# truncate.leeway. gojja2 already honoured all three -- 98 shapes across seven
+# settings agreed -- and nothing asserted it, which is the `make ungraded`
+# reasoning applied to a setting rather than to a message. An explicit empty
+# string and an explicit zero are settings too, not omissions, which is why
+# the header carries them as pointers.
+for _n, _src, _pol in [
+    ("rel_default", "{{ u|urlize }}", {}),
+    ("rel_empty", "{{ u|urlize }}", {"urlize.rel": ""}),
+    ("rel_named", "{{ u|urlize }}", {"urlize.rel": "me"}),
+    ("rel_beside_nofollow", "{{ u|urlize(nofollow=true) }}", {"urlize.rel": "me"}),
+    ("rel_overridden_by_the_call", "{{ u|urlize(rel='own') }}", {"urlize.rel": "me"}),
+    ("rel_none_at_the_call", "{{ u|urlize(rel=none) }}", {"urlize.rel": "me"}),
+    ("target_set", "{{ u|urlize }}", {"urlize.target": "_blank"}),
+    ("target_overridden_by_the_call", "{{ u|urlize(target='_self') }}", {"urlize.target": "_blank"}),
+    ("target_none_at_the_call", "{{ u|urlize(target=none) }}", {"urlize.target": "_blank"}),
+    ("both", "{{ u|urlize }}", {"urlize.rel": "me", "urlize.target": "_top"}),
+    ("email_takes_the_policies", "{{ 'a@b.com'|urlize }}", {"urlize.rel": "me", "urlize.target": "_top"}),
+    ("leeway_default", "{{ 'abcdefghij'|truncate(5) }}", {}),
+    ("leeway_zero", "{{ 'abcdefghij'|truncate(5) }}", {"truncate.leeway": 0}),
+    ("leeway_wide", "{{ 'abcdefghij'|truncate(5) }}", {"truncate.leeway": 20}),
+    ("leeway_overridden_by_the_call", "{{ 'abcdefghij'|truncate(5, false, '...', 0) }}", {"truncate.leeway": 20}),
+    ("leeway_on_words", "{{ 'a b c d e f g h i j'|truncate(8) }}", {"truncate.leeway": 0}),
+    ("leeway_leaves_a_short_string", "{{ 'short'|truncate(10) }}", {"truncate.leeway": 0}),
+    ("all_three", "{{ u|urlize }}[{{ 'abcdefghij'|truncate(5) }}]",
+     {"urlize.rel": "me", "urlize.target": "_top", "truncate.leeway": 2}),
+]:
+    case(f"policies/{_n}", _src, __settings__={"policies": _pol},
+         u="see http://x.com now")
+
 case("filters/xmlattr", "{{ {'class':'a b','id':none,'data-x':1}|xmlattr }}")
 # do_xmlattr escapes both halves with markupsafe's escape(), which leaves a value
 # that is already safe alone. gojja2 escaped the text unconditionally, so

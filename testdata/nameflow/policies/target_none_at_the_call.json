@@ -1,0 +1,6 @@
+{
+  "case": "policies/target_none_at_the_call.jj2",
+  "variables": {
+    "u": "or"
+  }
+}

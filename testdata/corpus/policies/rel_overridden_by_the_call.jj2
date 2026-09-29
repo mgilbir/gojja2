@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "policies": {
+      "urlize.rel": "me"
+    }
+  },
+  "u": "see http://x.com now"
+}
+---
+{{ u|urlize(rel='own') }}

@@ -1,0 +1,11 @@
+{
+  "case": "policies/rel_none_at_the_call.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "see <a href=\"http://x.com\" rel=\"me\">http://x.com</a> now"
+}

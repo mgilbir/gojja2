@@ -210,6 +210,9 @@ func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
 	if c.LineCommentPrefix != "" {
 		opts = append(opts, gojja2.WithLineCommentPrefix(c.LineCommentPrefix))
 	}
+	if len(c.Policies) > 0 {
+		opts = append(opts, gojja2.WithPolicies(casePolicies(c)))
+	}
 	if d := c.Delimiters; d != nil {
 		opts = append(opts,
 			gojja2.WithBlockDelimiters(d.BlockStart, d.BlockEnd),
@@ -236,6 +239,23 @@ func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
 // and not the other. A setting added to caseOptions and forgotten here is a
 // comparison between two environments rather than between two engines, and it
 // looks exactly like a divergence.
+// casePolicies turns the drawn policy map into gojja2's struct, starting from
+// the defaults so an undrawn field is still jinja2's own. The map is what the
+// oracle is handed verbatim, so the two sides cannot drift by spelling.
+func casePolicies(c conformance.GeneratedCase) gojja2.Policies {
+	p := gojja2.DefaultPolicies()
+	if v, ok := c.Policies["urlize.rel"].(string); ok {
+		p.URLizeRel = v
+	}
+	if v, ok := c.Policies["urlize.target"].(string); ok {
+		p.URLizeTarget = v
+	}
+	if v, ok := c.Policies["truncate.leeway"].(int); ok {
+		p.TruncateLeeway = v
+	}
+	return p
+}
+
 func caseSettings(c conformance.GeneratedCase) map[string]any {
 	settings := map[string]any{}
 	if c.AutoescapeSelect {
@@ -266,6 +286,9 @@ func caseSettings(c conformance.GeneratedCase) map[string]any {
 	}
 	if c.LineCommentPrefix != "" {
 		settings["line_comment_prefix"] = c.LineCommentPrefix
+	}
+	if len(c.Policies) > 0 {
+		settings["policies"] = c.Policies
 	}
 	if d := c.Delimiters; d != nil {
 		settings["block_start_string"] = d.BlockStart
@@ -521,6 +544,7 @@ func TestDifferential(t *testing.T) {
 	var checked, skipped, escaping, selecting int
 	setRuns := map[string]int{}
 	ctxRuns := map[string]int{}
+	polRuns := map[string]int{}
 	var failures int
 	// unstable counts the cases whose CPython answer was not reproducible in
 	// a second process; see harness.reproducible. Reported rather than
@@ -549,6 +573,7 @@ func TestDifferential(t *testing.T) {
 		}
 		setRuns[c.TemplateSet]++
 		ctxRuns[c.ContextSet]++
+		polRuns[c.PolicySet]++
 		if c.Undefined != "" {
 			undefinedRuns[c.Undefined]++
 		}
@@ -584,14 +609,15 @@ func TestDifferential(t *testing.T) {
 		"lexer %d trim, %d lstrip, %d keep-newline, %d crlf, %d cr, "+
 		"%d custom delimiters, %d line statements, %d line comments; "+
 		"extensions %d do, %d loopcontrols, writing %d print, %d do, %d break, %d continue; "+
-		"templates %s; context %s",
+		"templates %s; context %s; policies %s",
 		checked, seed, escaping, selecting, skipped,
 		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"],
 		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
 		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"], lexRuns["lineprefix"], lexRuns["linecomment"],
 		tagRuns["ext-do"], tagRuns["ext-loopcontrols"],
 		tagRuns["print"], tagRuns["do"], tagRuns["break"], tagRuns["continue"],
-		templateSetCounts(setRuns), contextSetCounts(ctxRuns))
+		templateSetCounts(setRuns), contextSetCounts(ctxRuns),
+		namedCounts(conformance.FuzzPolicySets(), polRuns))
 	// An extension that is enabled and never written is an axis that costs a
 	// run and asks nothing, which is what `break` was for as long as the
 	// generator could not emit it. Asserted rather than printed, because a
@@ -614,9 +640,24 @@ func TestDifferential(t *testing.T) {
 			t.Errorf("%d templates and not one drew the %q context", checked, name)
 		}
 	}
+	for _, name := range conformance.FuzzPolicySets() {
+		if checked > 1000 && polRuns[name] == 0 {
+			t.Errorf("%d templates and not one drew the %q policies", checked, name)
+		}
+	}
 	if checked > 1000 && selecting == 0 {
 		t.Errorf("%d templates and not one drew select_autoescape", checked)
 	}
+}
+
+// namedCounts renders a per-draw tally for the summary line, in the order the
+// names were declared so that a zero keeps its place.
+func namedCounts(names []string, runs map[string]int) string {
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, fmt.Sprintf("%d %s", runs[name], name))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // contextSetCounts renders the per-context tally for the summary line.

@@ -107,9 +107,14 @@ type Policies struct {
 	TruncateLeeway int
 }
 
-func defaultPolicies() Policies {
+// DefaultPolicies returns jinja2's own policy defaults, which is where a caller
+// adjusting one of them should start: WithPolicies replaces the whole struct, so
+// building one from scratch would silently reset the others.
+func DefaultPolicies() Policies {
 	return Policies{URLizeRel: "noopener", TruncateLeeway: 5}
 }
+
+func defaultPolicies() Policies { return DefaultPolicies() }
 
 // Option configures an Environment. It reports what it could not accept, so
 // that a misconfiguration is refused at New rather than surfacing later as a
