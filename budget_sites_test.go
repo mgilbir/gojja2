@@ -227,6 +227,22 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		// this asked for map("string").
 		"map steps": {`{% set v = range(2000)|map(attribute="real") %}`,
 			gojja2.ErrTooManyIterations, 0, 1000, nil},
+		// set_methods.go, setArgument: a set method takes any iterable,
+		// and walking a string is charged by nothing else. The receiver
+		// is a one-element set so that building it costs next to
+		// nothing.
+		"set method argument": {`{% set v = (pairs.keys() - []).union(s2k) %}`,
+			gojja2.ErrTooManyIterations, 0, 1000, nil},
+		// dictview.go, mappingProxy.pairs: a proxy over something that
+		// is not a dict is read through the wrapped object's own
+		// items(), and that walk is the charge. A proxy over a proxy
+		// over a dict of two thousand keys takes it. Reading `wide` from
+		// the context costs two thousand steps by itself, so the bound
+		// sits between that and the pairs walk on top of it -- at a
+		// thousand the conversion refused first and taking the charge
+		// out changed nothing.
+		"proxy pairs": {`{% set C = pairs.keys().mapping.__class__ %}{% set v = C(C(wide))|items %}`,
+			gojja2.ErrTooManyIterations, 0, 3000, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out, iters := tc.outBytes, tc.iters

@@ -237,6 +237,16 @@ def mutations():
 def main(only: str = "") -> int:
     # Before anything else, in case the last run was killed mid-mutation.
     _restore()
+    # TestGeneratedCorporaAgree is one of the analysis checks, and it skips --
+    # passes, as far as caught() can tell -- when the imported corpora are not
+    # there. They are gitignored, so a fresh clone or a `git worktree` has none,
+    # and a run there reported two analysis sites as survivors that the full
+    # check catches. A check that cannot fail is not a check; refuse instead.
+    if only != "budget" and not (ROOT / "testdata/generated/references.jsonl").is_file():
+        raise SystemExit(
+            "mutate: testdata/generated/ is missing, so TestGeneratedCorporaAgree "
+            "would skip and every analysis mutation it catches would read as a "
+            "survivor; run `make import` first (or ARGS=--budget)")
     backups = {}
     with tempfile.TemporaryDirectory() as td:
         for path, _pattern in SITES:
