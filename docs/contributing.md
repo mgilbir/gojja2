@@ -198,8 +198,8 @@ records a Def, a Use, a Scope or a context name. Those are further upstream than
 anything in `dataflow/`: a binding that goes unrecorded is a name the analysis
 cannot see, which is indistinguishable to it from a name that does nothing.
 
-90 mutations, all 90 *exercised*, seven surviving: one in the analysis, six
-in the budget below. The count of exercised ones is
+93 mutations, all 93 *exercised*, none surviving: 54 over the analysis and the
+tree it runs on, 39 over the budget below. The count of exercised ones is
 reported separately because it used to be smaller than the total without saying
 so: some sites are the only reader of a loop variable, so commenting the line
 out left something declared and not used, the build failed, and the tool called
@@ -225,15 +225,48 @@ covered the load an `ns.attr` target performs, which is what settles the name so
 a later `{% set ns = ... %}` does not claim it. gojja2's own parser cannot build
 the first three, and the tree type is public, so a caller can.
 
-**One survivor is open.** `frames.go`'s `v.store(name)` for a name every branch of
-an `{% if %}` binds is not constrained by anything: not the corpus, not
-`make soak-syntax` at 60,000 templates on two seeds. Replacing it with
-`v.settle(name)` *does* fail a soak, so the distinction it draws is real; removing
-it altogether has not been made to fail. The likely reason is that the writes a
-branch makes are applied separately, after the sorted loop, so the store there
-adds only an ownership claim that nothing reads. It has been left alone rather
-than simplified on that hypothesis: a line that cannot be shown to matter is not
-the same as one shown not to.
+**That last survivor is closed, and it was not a missing test.** `frames.go`'s
+`v.store(name)` for a name every branch of an `{% if %}` binds was reported here
+as unconstrained -- by the corpus or by `make soak-syntax` -- with the note that
+replacing it with `v.settle(name)` failed a soak, so the distinction was real.
+That note was wrong: the two are the same statement once the branch is reached,
+because the fallthrough settles as well, and a mutation that cannot change the
+answer cannot fail anything. What the survivor actually meant is that **the
+branch is never taken**. `go tool cover` puts nothing on it across all 4,715
+corpus cases, and a `panic` in its place survives the whole suite and 80,000
+generated templates on two seeds.
+
+It is unreachable by construction, not by accident. The condition wants a name
+bound by *all three* arms -- body, elifs, else -- and an `{% elif %}` is a nested
+`If`, which records what it writes through the pass that follows the sorted loop
+rather than through `store()`. So the elif arm never reports a name as bound, no
+matter what it contains, and the count stops at two every time. jinja2 3.1 does
+not count either: `Symbols.branch_update` takes the union of what the arms wrote
+and gives every name a load. The counting was jinja2 2.x's rule, carried across
+and never exercised.
+
+The branch is gone, and `control/branch_binding_*` now grades the rule that is in
+force -- nine cases in a loop, a macro, a block, a filter block and at the root.
+They are what makes the removal safe to have made: planting the arithmetic the
+old rule wanted, `counts[name] >= 2`, fails four of them, along with
+`TestSyntaxMatchesTheReference` and the syntax soak. Before them, nothing in the
+repository could tell the two rules apart.
+
+**A second survivor was redundancy, and removing it made a neighbour
+measurable.** `steerEmit`'s document-level `a.apply(srcs, Steers)` ran when no
+capture was collecting the body -- and every one of its five callers applies
+Steers to the same symbols a line or two earlier, so it never changed an effect
+in any shape tried. It was masking `forStmt`'s `a.apply(loopTest, Steers)`, which
+was itself reported as a survivor. With the duplicate gone, planting that line
+fails five tests instead of none. **Two survivors can be each other's reason**:
+the fix for one was the answer to the other.
+
+**And a third was not a survivor at all.** `canFailIn`'s needle in `mutate.py`
+still read `func canFailIn(n *syntax.Node) bool {` after the function became a
+method, so `str.replace` matched nothing, the file was written back unchanged,
+and the suite passed on the original source. "Nothing noticed the change" and
+"there was no change" print the same. The tool now raises on a needle it cannot
+find rather than reporting the site.
 
 ### And the budget, for the same reason
 
@@ -244,7 +277,7 @@ far stronger check than mutating it would be. The budget has no counterpart in
 CPython at all -- it is gojja2's invention -- so nothing outside this repository
 can say whether it holds. That is the line: **mutate what has no oracle.**
 
-Thirty-eight places reserve memory or iterations before taking them. The
+Thirty-nine places reserve memory or iterations before taking them. The
 mutation removes the *charge*, not just its refusal, and the difference matters:
 leaving the debit in place lets a later charge refuse instead, so sixteen sites
 read as constrained under the weaker mutation and were not. A bound that only
@@ -259,12 +292,33 @@ constant-folded and never reach the code at all, and a context list is charged
 as it is converted, so a per-item step has to be driven by a lazy `range()`
 rather than by a list a test passes in.
 
-**Six survive.** Every one is a second charge on bytes or items that something
-upstream has already charged: `|batch` after `materialize`, `|map` and
-`str.join` over a sequence the conversion paid for, `pad` beside the
-`repeatString` inside it, and the two walks that materialise a loop's source.
+**None survive.** Four were closed by giving each site a template that reaches
+it and nothing else. The last two could not be, and were closed by measuring
+each the way it *can* be measured rather than the way the table does it.
 
-A seventh survived for a while and was a finding about the *test*, not the
+`writeJSONString`'s block charge is a **deadline** instrument and not a size
+bound: it consults the context every few thousand bytes so that escaping a long
+string can be interrupted, which is what the 23MB render that ignored a 19ms
+deadline was about. `TestStringFiltersYieldToTheDeadline` was already timing it,
+against a bar too loose to decide -- take the charge out and the render stops at
+57%, 67% and 64% of its full length over three runs, against a 60% bar, so the
+defect was caught two times in three and reported as surviving on the third. It
+is in `tightBar` at 30% now; the charge in place stops it at 13% every run.
+
+`pad` adds the two halves of a centre together and charges the sum before it
+builds either. No *budget* can tell that from the charges `repeatString` makes
+anyway, because whatever the halves cost together they cost apart. The gate that
+can is the other one: `ChargeBytes` refuses anything over `maxAllocBytes`
+outright, before the budget is consulted at all, and that ceiling is per charge.
+So a centre three billion wide asks for a sum over the ceiling whose halves are
+each under it: with the charge the render is refused with an `OverflowError`
+naming the sum and nothing is built, and without it the budget refuses one gate
+later and a gigabyte and a half further on.
+`TestPadChargesTheWholeCentreBeforeBuildingEitherHalf` asserts the *kind*,
+because "it failed" is true of both. **A charge no bound can isolate may still
+have a ceiling that can.**
+
+One more survived for a while and was a finding about the *test*, not the
 charge. `|urlencode`'s per-item step was measured by
 `range(2000)|map("string")|list|batch(2)|urlencode` under a bound of a thousand
 -- and `map` alone costs two thousand, so the bound was reached before urlencode
@@ -273,9 +327,6 @@ ran at all. The case passed, and it passed for the wrong reason. It asks for
 the pairs costs (4,000) and what urlencode's own walk adds (1,000 more), because
 every shape that hands it pairs has already paid for them. **A charge is only
 measured by a bound the site itself has to cross.**
-They are belt-and-braces rather than gaps, and they are left alone on the same
-principle as the open `frames.go` survivor above: a line that cannot be shown to
-matter is not the same as one shown not to.
 
 Two things about running it. A mutation that removes a bound is *meant* to let
 the render allocate without one, so each measuring run gets a cap of its own --
