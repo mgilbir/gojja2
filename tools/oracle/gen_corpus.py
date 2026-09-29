@@ -120,6 +120,38 @@ case("operators/negative_power_folded", "{{ (-8) ** 2 }}|{{ -8 ** 2 }}|{{ (-2) *
 case("operators/negative_power_runtime", "{% set m = 2 %}{{ (-8) ** m }}|{{ (-8.5) ** m }}|{{ (0-8) ** m }}|{{ (-8) ** -m }}", )
 case("operators/negative_power_variable_base", "{% set m = 2 %}{% set x = -8 %}{{ x ** m }}|{% set y = 8 %}{{ (-y) ** m }}")
 case("operators/negative_power_test_exponent", "{{ '[%o]' % -8 ** 0 is eq(n) }}")
+# The lift is decided by the constant's *repr* beginning with a minus, which is
+# the mechanism, and not by whether it is less than zero, which is not the same
+# question: repr(-0.0) is "-0.0" and -0.0 is not negative. Comparing against
+# zero left `{% set m = 2 %}{{ (-0.0) ** m }}` as (-0.0) ** 2 = 0.0 where
+# CPython writes -(0.0 ** 2) = -0.0 -- and with an exponent of 0 the two differ
+# by more than a sign, -1.0 against 1.0. An exponent of 1 is where they agree,
+# which is why all three are here.
+case("operators/negative_zero_power_runtime",
+     "{% set m = 2 %}{{ (-0.0) ** m }}|{% set z = 0 %}{{ (-0.0) ** z }}|"
+     "{% set o = 1 %}{{ (-0.0) ** o }}|{{ (-0.0) ** 2 }}|{{ -(0.0 ** 2) }}|"
+     "{% set m2 = 2 %}{{ (-1e-320) ** m2 }}|{% set m3 = 2 %}{{ (-0) ** m3 }}")
+
+# A base of 0, 1 or -1 makes the exponent's size irrelevant, and CPython's
+# long_pow takes those before it looks at the exponent at all. gojja2's own
+# "exponent too large" bound spoke first, so `{{ 1 ** (2 ** 70) }}` was refused
+# where CPython answers 1. The sign of -1 still follows the exponent's parity.
+for _n, _src in [
+    ("zero", "{{ 0 ** (2 ** 70) }}"),
+    ("one", "{{ 1 ** (2 ** 70) }}"),
+    ("minus_one_even", "{{ (0 - 1) ** (2 ** 70) }}"),
+    ("minus_one_odd", "{{ (0 - 1) ** (2 ** 70 + 1) }}"),
+    ("true", "{{ true ** (2 ** 70) }}"),
+    ("false", "{{ false ** (2 ** 70) }}"),
+    ("zero_to_zero", "{{ 0 ** 0 }}"),
+    ("through_a_name", "{% set y = 2 ** 70 %}{{ 1 ** y }}"),
+    ("base_through_a_name", "{% set b = 1 %}{{ b ** (2 ** 70) }}"),
+    # No case for a base of 2: CPython *tries* it, and what comes back is this
+    # machine's MemoryError rather than an answer, which the oracle refuses to
+    # record. gojja2 still says "exponent too large" there, and the probe that
+    # found this family is what checks it.
+]:
+    case(f"operators/trivial_power_base_{_n}", _src)
 case("operators/negative_floordiv", "{{ -7//2 }}|{{ -7%2 }}|{{ 7//-2 }}|{{ 7%-2 }}|{{ -7.0//2 }}|{{ -7.0%2 }}")
 case("operators/precedence", "{{ 2 ** 3 ** 2 }}|{{ -2 ** 2 }}|{{ 1 + 2 * 3 }}|{{ 'a' ~ 1 + 2 }}")
 case("operators/concat", "{{ 'a' ~ 1 ~ none ~ true ~ [1] }}")

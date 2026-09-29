@@ -834,6 +834,33 @@ func Mod(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 	return BigInt(r), nil
 }
 
+// trivialPowBase answers a power whose base makes the exponent's size
+// irrelevant: 0, 1 and -1. CPython's long_pow takes these before it considers
+// the exponent, which is why `1 ** (2 ** 70)` answers instantly.
+//
+// The exponent is non-negative here, so a base of 0 is 0 (and 0**0 is 1, which
+// the exponent's own sign already decided above).
+func trivialPowBase(base, exp *big.Int) (Value, bool) {
+	if !base.IsInt64() {
+		return Undefined, false
+	}
+	switch base.Int64() {
+	case 0:
+		if exp.Sign() == 0 {
+			return Int(1), true
+		}
+		return Int(0), true
+	case 1:
+		return Int(1), true
+	case -1:
+		if exp.Bit(0) == 0 {
+			return Int(1), true
+		}
+		return Int(-1), true
+	}
+	return Undefined, false
+}
+
 // Pow implements `**`.
 //
 // An integer base with a non-negative integer exponent stays exact; a negative
@@ -853,10 +880,20 @@ func Pow(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 	if a.IsInteger() && b.IsInteger() {
 		by, _ := b.BigInt()
 		if by.Sign() >= 0 {
+			bx, _ := a.BigInt()
+			// A base of 0, 1 or -1 is answered without looking at
+			// the exponent's size, exactly as CPython's long_pow
+			// does: `1 ** (2 ** 70)` is 1 there, and refusing it as
+			// "exponent too large" was gojja2's own bound talking
+			// about an exponent nothing has to be raised to. The
+			// sign of -1 still depends on the exponent's parity, so
+			// that one is read from the low bit rather than skipped.
+			if trivial, ok := trivialPowBase(bx, by); ok {
+				return trivial, nil
+			}
 			if !by.IsInt64() {
 				return Undefined, errs.New(errs.OverflowError, "exponent too large")
 			}
-			bx, _ := a.BigInt()
 			if err := chargeIntBits(budget, "**",
 				estimatePowBits(bx, by.Int64())); err != nil {
 				return Undefined, err

@@ -451,8 +451,12 @@ func liftNegativePowerBase(e ast.Expr) ast.Expr {
 	if !ok || !c.Value.IsNumber() {
 		return e
 	}
-	negative, err := value.Ordered("<", c.Value, value.Int(0), value.DefaultPythonVersion)
-	if err != nil || !negative {
+	// "Begins with a minus", which is the mechanism, rather than "is less than
+	// zero", which is not: repr(-0.0) is "-0.0" and -0.0 is not negative, so
+	// `{% set m = 2 %}{{ (-0.0) ** m }}` is -(0.0 ** 2) = -0.0 on CPython
+	// where a comparison against zero left it as (-0.0) ** 2 = 0.0 here. With
+	// an exponent of 0 the two differ by more than a sign: -1.0 against 1.0.
+	if !strings.HasPrefix(value.ReprFor(c.Value, value.DefaultPythonVersion), "-") {
 		return e
 	}
 	positive, err := value.Neg(c.Value)
