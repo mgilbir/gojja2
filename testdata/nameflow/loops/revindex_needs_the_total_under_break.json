@@ -1,0 +1,6 @@
+{
+  "case": "loops/revindex_needs_the_total_under_break.jj2",
+  "variables": {
+    "d": "ofr"
+  }
+}

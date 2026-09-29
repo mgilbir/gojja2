@@ -291,7 +291,14 @@ func (l *loopObject) GetAttr(name string) (value.Value, bool) {
 	case "first":
 		return value.Bool(l.index == 0), true
 	case "last":
-		return value.Bool(l.index == n()-1), true
+		// jinja2's `last` is `_peek_next() is missing`: it pulls one more
+		// item and no further. Asking for the *length* instead ran a
+		// filtered loop's test over the whole of the rest of the input,
+		// so `{% for i in xs if d.popitem() %}{{ loop.last }}` emptied
+		// the dict where CPython pops exactly once more -- visible
+		// whenever the loop does not run to the end, which is what a
+		// `{% break %}` in the body arranges.
+		return value.Bool(!l.src.has(l.index + 1)), true
 	case "length":
 		return value.Int(int64(n())), true
 	case "depth":

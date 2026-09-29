@@ -1,0 +1,6 @@
+{
+  "case": "loops/first_does_not_look_ahead.jj2",
+  "variables": {
+    "d": "ofr"
+  }
+}

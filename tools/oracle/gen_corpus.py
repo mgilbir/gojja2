@@ -6462,6 +6462,44 @@ case("loops/filter_raises_under_last",
 case("loops/filter_not_forced_by_index",
      "{% for i in range(3) if d.pop('a') %}{{ loop.index|length }}{% endfor %}",
      d={"a": 1, "b": 2, "c": 3})
+# `loop.last` is a one-item lookahead -- jinja2's `_peek_next() is missing` --
+# and not the total. gojja2 asked for the length, which for a filtered loop means
+# running the test over the whole of the rest of the input: five more pops rather
+# than one. It shows only when the loop does not run to the end, which is what a
+# `{% break %}` arranges, and when the test survives one more pull but not all of
+# them -- which is why the existing filter_raises_under_last, whose test raises
+# on the *second* pull either way, could not tell the two apart.
+#
+# Found by the fuzzer, on a recursive loop whose `{% break %}` fired on the first
+# pass and whose else branch then ran -- the for-else indicator being set at the
+# *end* of the body, so a break on the first iteration reads as "never ran".
+_LC = {"extensions": ["loopcontrols"]}
+case("loops/last_looks_ahead_by_one",
+     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.last }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+case("loops/last_then_break",
+     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]"
+     "{% if loop.last == 0 %}{% break %}{% endif %}{% endfor %}",
+     __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+case("loops/last_then_break_recursive",
+     "{% for i in 'abcdef' if d.popitem() recursive %}[{{ i }}]"
+     "{% if loop.last == 0 %}{% break %}{% endif %}{% else %}empty{% endfor %}",
+     __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+case("loops/nextitem_looks_ahead_by_one",
+     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.nextitem }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+# The neighbours that *do* need the total, so the lookahead cannot be widened
+# back into one: both of these run the test over the rest even under a break.
+case("loops/length_needs_the_total_under_break",
+     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.length }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+case("loops/revindex_needs_the_total_under_break",
+     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.revindex }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+case("loops/first_does_not_look_ahead",
+     "{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.first }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC, d={"b": 2, "a": 1, "C": 3})
+
 # ...and a filtered loop whose test does not raise still answers the totals.
 case("loops/revindex_under_a_working_filter",
      "{% for i in range(3) if i %}{{ loop.revindex }}{{ loop.length }}{{ loop.last }}{% endfor %}")

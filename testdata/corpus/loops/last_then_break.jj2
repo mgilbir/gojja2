@@ -1,0 +1,14 @@
+{
+  "__settings__": {
+    "extensions": [
+      "loopcontrols"
+    ]
+  },
+  "d": {
+    "b": 2,
+    "a": 1,
+    "C": 3
+  }
+}
+---
+{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{% if loop.last == 0 %}{% break %}{% endif %}{% endfor %}

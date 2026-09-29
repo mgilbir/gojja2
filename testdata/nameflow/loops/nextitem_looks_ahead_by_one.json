@@ -1,0 +1,6 @@
+{
+  "case": "loops/nextitem_looks_ahead_by_one.jj2",
+  "variables": {
+    "d": "ofr"
+  }
+}

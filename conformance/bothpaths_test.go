@@ -98,10 +98,19 @@ func TestBothRenderPathsAgree(t *testing.T) {
 		"an ordered dictionary", len(paths)-int(skipped.Load()), len(paths), skipped.Load())
 	// A skip list that quietly grew to cover everything would make this
 	// test vacuous, so the number it may reach is pinned.
-	if n := skipped.Load(); n > 80 {
+	//
+	// 39 when this was written and 87 on 2026-09-29, which is what the pin
+	// is set above. The growth was read before it was allowed: every one of
+	// the 87 carries a context dictionary of more than one key on purpose --
+	// the dict-resize family, the group tuples, the unpack counts, the
+	// mappingproxy membership set, and the loop lookahead set, where
+	// `d.popitem()` needs at least two keys to be pullable twice. The
+	// predicate is doing its job; the corpus grew into it.
+	if n := skipped.Load(); n > 95 {
 		t.Errorf("%d cases were skipped for holding an ordered dictionary; "+
-			"it was 39 when this was written, and a number this much "+
-			"larger means the predicate is matching more than it should", n)
+			"it was 39 when this was written and 87 in September 2026, "+
+			"and a number this much larger means the predicate is "+
+			"matching more than it should", n)
 	}
 }
 
