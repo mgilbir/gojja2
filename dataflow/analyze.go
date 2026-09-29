@@ -226,16 +226,24 @@ func (a *analyzer) steerTarget(target *syntax.Node, srcs symset) {
 }
 
 // steerEmit records that these symbols decide how much of the surrounding body
-// is emitted: into the capture that is collecting it, or into the document.
+// is emitted, into the capture that is collecting it.
+//
+// Nothing to do when there is no capture: every caller applies Steers to these
+// symbols itself, one or two lines earlier, because a name that decides how
+// much of a body runs steers whether or not anything is collecting it. That is
+// true of all five -- the two in ifStmt and forStmt apply it directly, and the
+// other three hand on a set captureBody collected, whose members were applied
+// where they were recorded. The arm that applied it a second time here was
+// carried until `make mutate` reported it as a survivor: removing it changes no
+// effect in any shape, which is what a survivor means when the answer is not a
+// missing test.
 func (a *analyzer) steerEmit(srcs symset) {
 	if len(srcs) == 0 {
 		return
 	}
 	if n := len(a.steered); n > 0 {
 		a.steered[n-1].add(srcs)
-		return
 	}
-	a.apply(srcs, Steers)
 }
 
 func (a *analyzer) depend(target *syntax.Symbol, srcs symset) {
