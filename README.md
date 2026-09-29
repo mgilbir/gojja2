@@ -119,7 +119,7 @@ rather than asserted.
 
 ## Conformance
 
-**7395 of 7452 gradable cases (99.2%)** match CPython jinja2 — eight corpora
+**7506 of 7563 gradable cases (99.2%)** match CPython jinja2 — eight corpora
 drawn from ten upstream projects, including Jinja's own test suite, MiniJinja's
 fixtures, minja, llama.cpp, the chat templates real models ship, a documentation
 theme and four project generators. Only their *inputs* are used; every expected

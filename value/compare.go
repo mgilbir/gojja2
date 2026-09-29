@@ -508,7 +508,15 @@ func swappedOp(op string) string {
 func compareSeq(op string, a, b []Value, depth int, py PythonVersion) (int, bool, error) {
 	n := min(len(a), len(b))
 	for i := range n {
-		if Equal(a[i], b[i]) {
+		// The search for the first differing element is
+		// PyObject_RichCompareBool, which asks identity first: a NaN that
+		// sits in both lists as one object is not a difference, so
+		// `[n, 1] < [n, 2]` is decided by the 1 and the 2.
+		equal, err := EqualBoolErr(a[i], b[i], py)
+		if err != nil {
+			return 0, false, err
+		}
+		if equal {
 			continue
 		}
 		ord, ok, err := compare(op, a[i], b[i], depth+1, py)

@@ -389,6 +389,8 @@ func (c *cyclerObject) GetAttr(name string) (value.Value, bool) {
 		// jinja2's Cycler stores its rotation here. It is not a method,
 		// which is why `cycler(...)|xmlattr` fails calling a tuple.
 		return value.NewTuple(c.items...), true
+	case "pos":
+		return value.Int(int64(c.pos)), true
 	case "current":
 		if len(c.items) == 0 {
 			return value.Undefined, true
@@ -457,7 +459,17 @@ type joinerObject struct {
 	used bool
 }
 
-func (j *joinerObject) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
+// GetAttr answers the two attributes jinja2's Joiner sets in __init__. Neither
+// is a method, so both are plain values a template can read back.
+func (j *joinerObject) GetAttr(name string) (value.Value, bool) {
+	switch name {
+	case "sep":
+		return j.sep, true
+	case "used":
+		return value.Bool(j.used), true
+	}
+	return value.Undefined, false
+}
 func (j *joinerObject) TypeName() string                   { return "Joiner" }
 func (j *joinerObject) QualifiedName() string              { return "jinja2.utils.Joiner" }
 func (j *joinerObject) Repr() string                       { return pyObjectRepr(j.QualifiedName(), j) }

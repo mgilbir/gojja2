@@ -352,6 +352,24 @@ func intToBytes(st *State, b *big.Int, args *value.CallArgs) (value.Value, error
 	return value.Bytes(out), nil
 }
 
+// validHexExponent reports whether s is an optional sign and then decimal
+// digits, all of them ASCII. Go's parser would also take an underscore between
+// the digits, which float.fromhex does not.
+func validHexExponent(s string) bool {
+	if s != "" && (s[0] == '+' || s[0] == '-') {
+		s = s[1:]
+	}
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // floatFromHex is float.fromhex, which is not strconv.ParseFloat with a
 // different base.
 //
@@ -390,7 +408,7 @@ func floatFromHex(s string) (value.Value, error) {
 	mantissa, exponent := t, "p0"
 	if i := strings.IndexAny(t, "pP"); i >= 0 {
 		mantissa, exponent = t[:i], "p"+t[i+1:]
-		if exponent == "p" {
+		if !validHexExponent(exponent[1:]) {
 			return bad()
 		}
 	}

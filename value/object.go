@@ -212,10 +212,13 @@ func SequenceItem(seq Sequence, key Value) (Value, bool) {
 // Container is an Object that answers `x in obj` itself.
 //
 // It exists for the types where scanning is the wrong algorithm rather than
-// merely a slow one: Python's range decides membership by arithmetic, so
-// `{{ 5 in range(10000000000) }}` is a division and not a walk of ten billion
-// elements. The second result reports whether the object has an opinion;
-// without one the generic scan runs, charged element by element.
+// merely a slow one. The second result reports whether the object has an
+// opinion; without one the generic scan runs, charged element by element.
+//
+// No built-in object implements it any more: a range, which is the case that
+// motivated it, decides membership by arithmetic through ContainsErr, the
+// sibling that can also refuse. It stays for a host object that wants the
+// shortcut without the refusal.
 type Container interface {
 	Object
 	Contains(item Value) (found, known bool)

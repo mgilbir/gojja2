@@ -569,11 +569,22 @@ func translateLookup(table value.Value, c rune, py value.PythonVersion) (value.V
 		}
 		return value.Undefined, false, nil
 	}
-	if v, ok := lookupItem(table, key, py); ok {
-		return v, true, nil
+	// An undefined defines __getitem__ and raises its own error from it.
+	if table.IsUndefined() {
+		return value.Undefined, false, table.UndefinedError()
 	}
-	if table.Kind() == value.KindObject {
-		return value.Undefined, false, nil
+	// An object is a table only if it defines __getitem__: a mapping is
+	// asked for the key and a sequence (a range, a group) for the position,
+	// and a miss in either is the LookupError that leaves the character
+	// alone. Any other object -- a namespace, a cycler, a dict view -- is
+	// not subscriptable, and str.translate says so.
+	if o, ok := table.Interface().(value.Mapping); ok {
+		v, found := o.GetItem(key)
+		return v, found, nil
+	}
+	if o, ok := table.Interface().(value.Sequence); ok && table.Kind() == value.KindObject {
+		v, found := value.SequenceItem(o, key)
+		return v, found, nil
 	}
 	return value.Undefined, false, notSubscriptable(table)
 }
@@ -1566,9 +1577,17 @@ func resolveFormatField(field string, base fieldBase, auto *int, py value.Python
 type fieldAccessor struct {
 	name    string
 	isIndex bool
+	// stray marks the text after a `]` that is neither `.` nor `[`. CPython
+	// refuses it when the iterator reaches that step, so the accessors before
+	// it run first and a failure among them is the one reported.
+	stray bool
 }
 
 func (a fieldAccessor) apply(v value.Value, py value.PythonVersion) (value.Value, error) {
+	if a.stray {
+		return value.Undefined, errs.New(errs.ValueError,
+			"Only '.' or '[' may follow ']' in format field specifier")
+	}
 	if a.isIndex {
 		return fieldSubscript(v, a.name, py)
 	}
@@ -1677,6 +1696,11 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 	if item, ok := lookupItem(v, key, py); ok {
 		return item, nil
 	}
+	// A mapping that lacks the key says so as a dict does: KeyError, with the
+	// key's repr. A mappingproxy is one.
+	if _, ok := v.Interface().(value.Mapping); ok {
+		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, py))
+	}
 	// A groupby group is a namedtuple, and both of the complaints CPython
 	// makes about indexing one come from tuple itself rather than from the
 	// subclass's name -- "tuple indices ...", "tuple index out of range".
@@ -1760,6 +1784,7 @@ func splitFieldName(field string) (string, []fieldAccessor) {
 				fieldAccessor{name: field[1:close], isIndex: true})
 			field = field[close+1:]
 		default:
+			accessors = append(accessors, fieldAccessor{stray: true})
 			field = ""
 		}
 	}

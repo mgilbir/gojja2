@@ -9216,6 +9216,278 @@ for _n, _src in [
 ]:
     case("filters/wordwrap_" + _n, _src)
 
+# A coverage pass over methods.go, numbers.go, globals.go and value/. The
+# shapes below were found by asking what a template could reach in each
+# uncovered block; the first group disagreed with CPython, the rest agreed and
+# are graded so the paths stay agreed.
+#
+# str.translate is `table[ord(c)]` per character, so an object is a table only
+# if it has __getitem__. A range is indexed by position (table 97 of
+# range(100, 300) is 197), a mappingproxy by key, and anything else -- a
+# namespace, a cycler, a dict view -- is "not subscriptable"; an Undefined
+# raises its own error from __getitem__ rather than being called one.
+case("methods/translate_range_table", "{{ 'abca'.translate(range(100, 300)) }}")
+case("methods/translate_short_range_table", "{{ 'abca'.translate(range(98)) }}|{{ 'abca'.translate(range(0)) }}")
+case("methods/translate_mappingproxy_table",
+     "{% set mp = {97: 'X', 98: none}.keys().mapping %}{{ 'abca'.translate(mp) }}")
+for _n, _tbl in [
+    ("namespace", "namespace()"),
+    ("cycler", "cycler(1)"),
+    ("dict_keys", "{}.keys()"),
+    ("dict_items", "{}.items()"),
+    ("undefined", "nope"),
+    ("undefined_attribute", "[1].nope"),
+]:
+    case("methods/translate_table_" + _n, "{{ 'abc'.translate(" + _tbl + ") }}")
+case("methods/translate_undefined_table_of_nothing", "{{ ''.translate(nope) }}")
+
+# A replacement field's `[key]` is followed by `.`, `[` or the end. Anything
+# else is refused when the iterator reaches it, so a failure among the steps
+# before it is the one reported. A mappingproxy that lacks the key is a
+# KeyError, as a dict is.
+for _n, _src in [
+    ("letter", "{{ '{0[a]x}'.format({'a': 3}) }}"),
+    ("bracket", "{{ '{0[a]]}'.format({'a': 1}) }}"),
+    ("after_two_steps", "{{ '{0[a][b]x}'.format({'a': {'b': 1}}) }}"),
+    ("after_attribute", "{{ '{0.a[1]x}'.format(namespace(a=[0, 2])) }}"),
+    ("keeps_the_earlier_failure", "{{ '{0[9]x}'.format([1]) }}"),
+    ("keeps_the_missing_argument", "{{ '{0[0]x}'.format() }}"),
+    ("before_the_spec", "{{ '{0[a]x:>5}'.format({'a': 1}) }}"),
+    ("before_the_conversion", "{{ '{0[a]x!r}'.format({'a': 1}) }}"),
+    ("named_field", "{{ '{a[x]y}'.format(a={'x': 1}) }}"),
+]:
+    case("methods/format_after_bracket_" + _n, _src)
+case("methods/format_mappingproxy_subscript",
+     "{% set mp = {'a': 1}.keys().mapping %}{{ '{0[a]}'.format(mp) }}")
+case("methods/format_mappingproxy_missing_key",
+     "{% set mp = {'a': 1}.keys().mapping %}{{ '{0[b]}'.format(mp) }}")
+case("methods/format_mappingproxy_int_key",
+     "{% set mp = {1: 'z'}.keys().mapping %}{{ '{0[1]}'.format(mp) }}")
+case("methods/format_range_subscript", "{{ '{0[1]}'.format(range(5)) }}")
+
+# float.fromhex's exponent is an optional sign and decimal digits. Go's parser
+# would also take underscores between them, and float.hex() of a non-finite
+# float is its own spelling.
+for _n, _src in [
+    ("exponent_underscore", "{{ (1.0).fromhex('0x1p1_0') }}"),
+    ("exponent_signed_underscore", "{{ (1.0).fromhex('0x1p+1_0') }}"),
+    ("exponent_leading_underscore", "{{ (1.0).fromhex('0x1p_1') }}"),
+    ("exponent_double_underscore", "{{ (1.0).fromhex('0x1p1__0') }}"),
+    ("exponent_sign_only", "{{ (1.0).fromhex('0x1p+') }}"),
+    ("exponent_minus_only", "{{ (1.0).fromhex('0x1p-') }}"),
+    ("exponent_bare_p", "{{ (1.0).fromhex('0x1p') }}"),
+    ("exponent_letter", "{{ (1.0).fromhex('0x1pz') }}"),
+    ("exponent_fraction", "{{ (1.0).fromhex('0x1p1.5') }}"),
+    ("exponent_space", "{{ (1.0).fromhex('0x1p 5') }}"),
+    ("exponent_arabic_digit", "{{ (1.0).fromhex('0x1p٣') }}"),
+    ("sign_only", "{{ (1.0).fromhex('+') }}"),
+    ("minus_only", "{{ (1.0).fromhex('-') }}"),
+    ("prefix_only_upper", "{{ (1.0).fromhex('0X') }}"),
+    ("signed_prefix_only", "{{ (1.0).fromhex('-0x') }}"),
+    ("point_only", "{{ (1.0).fromhex('.') }}"),
+    ("prefixed_point_only", "{{ (1.0).fromhex('0x.') }}"),
+    ("point_then_exponent", "{{ (1.0).fromhex('0x.p1') }}"),
+    ("non_hex_digit", "{{ (1.0).fromhex('0x1g') }}"),
+    ("two_points", "{{ (1.0).fromhex('0x1..8') }}"),
+    ("sign_after_prefix", "{{ (1.0).fromhex('0x-1') }}"),
+    ("two_signs", "{{ (1.0).fromhex('--1') }}"),
+    ("underscore_in_mantissa", "{{ (1.0).fromhex('0x1_0') }}"),
+    ("overflowing_exponent", "{{ (1.0).fromhex('0x1p99999999999999999999') }}"),
+]:
+    case("methods/float_fromhex_" + _n, _src)
+case("methods/float_fromhex_accepts",
+     "{{ (1.0).fromhex('0x1p-0') }}|{{ (1.0).fromhex('0x1P+3') }}|{{ (1.0).fromhex('0x1.8p1') }}|"
+     "{{ (1.0).fromhex('0x1p-99999999999999999999') }}|{{ (1.0).fromhex('0x1e5') }}")
+case("methods/float_fromhex_marker_without_digits", "{{ (1.0).fromhex('1P') }}")
+case("methods/float_fromhex_non_finite",
+     "{{ (1.0).fromhex('nan') }}|{{ (1.0).fromhex('-NaN') }}|{{ (1.0).fromhex('+inf') }}|"
+     "{{ (1.0).fromhex(' -Infinity ') }}")
+case("methods/float_hex_non_finite",
+     "{% set i = x|float %}{{ i.hex() }}|{{ (-i).hex() }}|{{ (i - i).hex() }}|{{ (-(i - i)).hex() }}",
+     x="inf")
+case("methods/float_of_a_nan_is_not_an_integer_ratio",
+     "{% set i = x|float %}{{ (i - i).as_integer_ratio() }}", x="inf")
+
+# jinja2's Cycler sets `items` and `pos`, its Joiner `sep` and `used`, in
+# __init__; none is a method, so a template reads them back.
+case("globals/cycler_pos",
+     "{% set c = cycler(1, 2) %}{{ c.pos }}|{{ c.next() }}|{{ c.pos }}|{{ c.next() }}|{{ c.pos }}|"
+     "{{ c.reset() }}|{{ c.pos }}|{{ c.items }}")
+case("globals/joiner_used",
+     "{% set j = joiner('-') %}{{ j.used }}|{{ j() }}|{{ j.used }}|{{ j() }}|{{ j.used }}")
+case("globals/joiner_sep",
+     "{% set j = joiner('-') %}{{ j.sep }}|{{ j.sep.__class__ }}|"
+     "{% set k = joiner() %}{{ k.sep }}|{% set m = joiner(1) %}{{ m.sep }}|{{ m.sep.__class__ }}")
+case("globals/joiner_sep_after_calls",
+     "{% set j = joiner('-') %}{{ j() }}{{ j() }}{{ j.sep }}")
+case("globals/joiner_unknown_attribute", "{% set j = joiner('-') %}{{ j.bogus }}|{{ j.pos }}")
+case("globals/cycler_unknown_attribute", "{% set c = cycler(1) %}{{ c.bogus }}|{{ c.used }}")
+
+# Ranges are equal by the sequence they stand for.
+case("globals/range_equality_shapes",
+     "{{ range(0) == range(1, 1) }}|{{ range(1, 3) == range(2, 4) }}|{{ range(2, 3) == range(2, 4, 2) }}|"
+     "{{ range(0, 3, 2) == range(0, 4, 2) }}|{{ range(3) == [0, 1, 2] }}|{{ [0, 1, 2] == range(3) }}|"
+     "{{ range(3) == 3 }}|{{ range(0, 6, 2) == range(0, 6, 3) }}")
+case("globals/range_membership", "{{ 1 in range(5) }}|{{ 7 in range(5) }}|{{ 'a' in range(5) }}|{{ 1.0 in range(5) }}")
+
+# Truth of the objects a template can hold: only a container's emptiness
+# decides, and a cycler, joiner, namespace, macro or loop is always true.
+case("value/truth_of_objects",
+     "{% macro m() %}{% endmacro %}"
+     "{% if namespace() %}y{% else %}n{% endif %}|{% if joiner() %}y{% else %}n{% endif %}|"
+     "{% if cycler(1) %}y{% else %}n{% endif %}|{% if m %}y{% else %}n{% endif %}|"
+     "{% if range %}y{% else %}n{% endif %}|{% if range(0) %}y{% else %}n{% endif %}|"
+     "{% if range(1) %}y{% else %}n{% endif %}|"
+     "{% for x in [1] %}{% if loop %}y{% else %}n{% endif %}{% endfor %}|"
+     "{% if {}.keys() %}y{% else %}n{% endif %}|{% if {1: 2}.keys() %}y{% else %}n{% endif %}|"
+     "{% if {}.values() %}y{% else %}n{% endif %}|{% if {}.items() %}y{% else %}n{% endif %}|"
+     "{% if {}.keys().mapping %}y{% else %}n{% endif %}|{% if {1: 2}.keys().mapping %}y{% else %}n{% endif %}|"
+     "{% for g in [{'a': 1}]|groupby('a') %}{% if g %}y{% else %}n{% endif %}{% endfor %}|"
+     "{{ namespace() or 'z' }}|{{ range(0) or 'z' }}|{{ {}.keys() or 'z' }}")
+
+# Equality of objects is identity unless the object says otherwise.
+case("value/equality_of_objects",
+     "{% set n = namespace() %}{% macro m() %}{% endmacro %}{% macro q() %}{% endmacro %}"
+     "{{ namespace() == namespace() }}|{{ cycler(1) == cycler(1) }}|{{ n == n }}|"
+     "{{ range == range }}|{{ lipsum == lipsum }}|{{ range == dict }}|{{ range != range }}|"
+     "{{ m == m }}|{{ m == q }}|{{ m != m }}|"
+     "{{ n == 1 }}|{{ 1 == n }}|{{ n == 'a' }}|{{ n == none }}|{{ joiner() == joiner() }}|"
+     "{{ cycler(1) == 1 }}|{{ 1 == cycler(1) }}")
+case("value/dict_equality_shapes",
+     "{% set d = {'a': 1} %}{% set e = {'b': 1} %}"
+     "{{ d == e }}|{{ e == d }}|{{ d != e }}|{{ d == {'a': 2} }}|{{ d == {'a': 1, 'b': 2} }}|"
+     "{{ {'a': [1]} == {'a': [1]} }}|{{ {'a': [1]} == {'a': [2]} }}")
+case("value/proxy_equality_shapes",
+     "{% set mp = {'a': 1}.keys().mapping %}"
+     "{{ mp == mp }}|{{ mp == {'a': 1} }}|{{ {'a': 1} == mp }}|{{ mp == 1 }}|{{ mp != {'a': 2} }}|{{ mp == [1] }}")
+case("value/group_equality_shapes",
+     "{% for g in [{'a': 1}]|groupby('a') %}"
+     "{{ g == (g.grouper, g.list) }}|{{ (g.grouper, g.list) == g }}|{{ g == g }}|{{ g != (1, []) }}|"
+     "{{ g < (2, []) }}|{{ (0, []) < g }}|{{ g.list == g[1] }}|{{ g == g.list }}|{{ g == 5 }}|"
+     "{{ [g] == [(1, [{'a': 1}])] }}|{{ [g, 1] == [(1, [{'a': 1}]), 1] }}{% endfor %}")
+
+# `in` over the objects a template holds: a range by arithmetic, a group by
+# scanning its two elements, a loop by iterating it (and finding nothing, as
+# LoopContext.__iter__ is a fresh iterator of the remaining items), a
+# mappingproxy by hashing its key.
+case("value/membership_of_objects",
+     "{% for x in [1] %}{{ 1 in loop }}|{{ x in loop }}|{{ 5 in loop }}{% endfor %}|"
+     "{% for g in [{'a': 1}, {'a': 1}]|groupby('a') %}"
+     "{{ 1 in g }}|{{ g.grouper in g }}|{{ g in g }}|{{ g.list in g }}|{{ (1, g.list) in g }}{% endfor %}|"
+     "{% set mp = {'a': 1}.keys().mapping %}{{ 'a' in mp }}|{{ 'b' in mp }}|{{ 'a' in {}.keys().mapping }}|"
+     "{{ 1 in {}.values() }}|{{ 1 in {1: 1}.values() }}|{{ 1 in nope }}|{{ nope in [] }}|{{ nope in [1] }}")
+for _n, _src in [
+    ("cycler", "{{ 1 in cycler(1) }}"),
+    ("namespace", "{{ 1 in namespace() }}"),
+    ("joiner", "{{ 1 in joiner() }}"),
+    ("none", "{{ 1 in none }}"),
+    ("int", "{{ 'a' in 5 }}"),
+    ("unhashable_in_proxy", "{% set mp = {'a': 1}.keys().mapping %}{{ [] in mp }}"),
+]:
+    case("value/membership_refused_" + _n, _src)
+
+# Set-like views compare as sets. A difference builds a real set, and the
+# comparison between a set and a view, a proxy, or a list is a subset test or a
+# refusal.
+for _n, _src in [
+    ("view_and_set",
+     "{% set d = {1: 2} %}{% set s = d.keys() - [] %}"
+     "{{ d.keys() <= s }}|{{ s <= d.keys() }}|{{ s >= d.keys() }}|{{ s < d.keys() }}|{{ d.keys() > s }}"),
+    ("set_and_itself",
+     "{% set s = {1: 2}.keys() - [] %}{{ s <= s }}|{{ s < s }}|{{ s == s }}|{{ s == {1: 2}.keys() }}|"
+     "{{ {1: 2}.keys() == s }}|{{ s != {1: 2}.keys() }}"),
+    ("set_and_smaller_view",
+     "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ s > {1: 0}.keys() }}|{{ s >= {1: 0}.keys() }}|"
+     "{{ {1: 0}.keys() <= s }}|{{ {5: 0}.keys() <= s }}"),
+    ("items_and_keys",
+     "{% set d = {1: 2, 3: 4} %}{{ {(1, 2): 0}.keys() <= d.items() }}|{{ d.items() >= {(1, 2): 0}.keys() }}"),
+    ("empty_views_of_two_kinds",
+     "{% set s = {1: 2}.keys() - [] %}{{ {}.keys() == s - s }}|{{ s - s == {}.items() }}|{{ s - s == {}.values() }}"),
+    ("tuple_keys",
+     "{% set d = {(1, 2): 3} %}{% set s = d.keys() - [] %}{{ (1, 2) in s }}|{{ s <= d.keys() }}|{{ [s] == [d.keys()] }}"),
+    ("refused_set_and_mapping_proxy",
+     "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ s <= {1: 2, 3: 4, 5: 6}.keys().mapping }}"),
+    ("refused_mapping_proxy_and_set",
+     "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ {1: 2, 3: 4, 5: 6}.keys().mapping >= s }}"),
+    ("refused_view_and_mapping_proxy",
+     "{{ {1: 2, 3: 4}.keys() <= {1: 2, 3: 4, 5: 6}.keys().mapping }}"),
+]:
+    case("value/set_compare_" + _n, _src)
+for _n, _src in [
+    ("set_and_list", "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ s <= [1, 3, 4] }}"),
+    ("list_and_set", "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ [1, 3, 4] >= s }}"),
+    ("set_and_values", "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ s <= {1: 2}.values() }}"),
+    ("set_and_string", "{% set s = {1: 2}.keys() - [] %}{{ s <= 'a' }}"),
+    ("values_and_values", "{% set d = {1: 2} %}{{ d.values() <= d.values() }}"),
+    ("view_and_list", "{{ {1: 2}.keys() <= [1] }}"),
+]:
+    case("value/set_compare_refused_" + _n, _src)
+case("value/set_equality_lengths",
+     "{{ {}.keys() == {1: 2}.keys() }}|{{ {1: 2}.keys() == {}.keys() }}|"
+     "{{ {1: 2}.keys() == {1: 2, 3: 4}.keys() }}|{{ {1: 2, 3: 4}.keys() == {1: 2}.keys() }}|"
+     "{% set s = {1: 2}.keys() - [] %}{{ s == {1: 2, 3: 4}.keys() }}|{{ {1: 2, 3: 4}.keys() == s }}")
+case("value/set_equality_other_kinds",
+     "{% set s = {1: 2}.keys() - [] %}{{ s == [1] }}|{{ s == 'a' }}|{{ s == namespace() }}|{{ namespace() == s }}")
+
+# A list or tuple compares element by element, and an element that is unequal
+# and unordered -- a NaN -- makes the sequences unordered: every ordering is
+# False, while equality is still decided by identity first.
+case("value/nan_in_sequence_ordering",
+     "{% set i = x|float %}{% set n = i - i %}"
+     "{{ [n] < [1.0] }}|{{ [1.0] < [n] }}|{{ [1, n] >= [1, 2] }}|{{ [n] == [n] }}|"
+     "{{ (1, n) <= (1, 3.0) }}|{{ [1, n] == [1, n] }}|{{ [n, 1] < [n, 2] }}",
+     x="inf")
+
+# Integer edges the 64-bit fast path has to hand to the wide one.
+case("value/int64_edges",
+     "{% set x = 9223372036854775807 %}{% set y = -x - 1 %}"
+     "{{ y * -1 }}|{{ -1 * y }}|{{ y * y }}|{{ y // -1 }}|{{ y % -1 }}|{{ -y }}|{{ y|abs }}|"
+     "{{ y - 1 }}|{{ y + -1 }}|{{ x + 1 }}|{{ x * 2 }}|{{ y * 2 }}|{{ y * 1 }}|{{ 1 * y }}|{{ y * 0 }}")
+case("value/float_floor_division_shapes",
+     "{% set a = 9007199254740993.0 %}"
+     "{{ 0.3 // 0.1 }}|{{ 1 // 0.1 }}|{{ 1e17 // 0.1 }}|{{ 5.5 // 1.1 }}|{{ 1e300 // 3.0 }}|{{ 7.0 // 0.5 }}|"
+     "{{ 0.7 // 0.1 }}|{{ 2.3 // 0.1 }}|{{ a // 3.0 }}|{{ a // 0.3 }}|{{ 1e22 // 7.0 }}|"
+     "{{ 123456789.0 // 0.001 }}|{{ 1e15 // 0.3 }}|{{ 4.35 // 0.05 }}|{{ 1.1 // 0.1 }}")
+case("value/power_of_trivial_bases_and_a_wide_exponent",
+     "{% set b = 2 ** 70 %}{{ 1 ** b }}|{{ 0 ** b }}|{{ (-1) ** b }}|{{ (-1) ** (b + 1) }}")
+case("value/power_negative_wide_exponent",
+     "{% set b = -(2 ** 70) %}{{ 2 ** b }}")
+case("value/float_power_wide_exponent", "{% set b = 2 ** 70 %}{{ 2.0 ** b }}")
+
+# A str, list or tuple is a table too: each answers for the code points it is
+# long enough to index and leaves the rest alone. maketrans reads an integer
+# key as it is and a one-character string as its ordinal.
+for _n, _src in [
+    ("str", "{% set t = 'x' * 98 %}{{ 'abca'.translate(t) }}"),
+    ("short_str", "{% set t = 'abc' %}{{ 'ab'.translate(t) }}"),
+    ("list", "{% set t = ['x'] * 98 %}{{ 'abca'.translate(t) }}"),
+    ("short_list", "{% set t = ['x', 5, none] %}{{ 'abca'.translate(t) }}"),
+    ("tuple", "{% set t = ('xy',) * 100 %}{{ 'abca'.translate(t) }}"),
+    ("int_out_of_range", "{% set t = [1114112] * 100 %}{{ 'abca'.translate(t) }}"),
+    ("negative_int", "{% set t = [-1] * 100 %}{{ 'abca'.translate(t) }}"),
+    ("float_entry", "{% set t = [1.5] * 100 %}{{ 'abca'.translate(t) }}"),
+]:
+    case("methods/translate_" + _n + "_table", _src)
+case("methods/maketrans_mixed_keys",
+     "{{ 'abc'.maketrans({97: 'X', 'b': 'Y'}) }}|{{ 'abc'.translate('abc'.maketrans({97: 'X', 'b': none})) }}|"
+     "{{ 'abca'.maketrans({97: 'X', 97: 'Y'}) }}")
+case("methods/maketrans_float_key", "{{ 'abc'.maketrans({1.5: 'X'}) }}")
+case("methods/dict_setdefault_shapes",
+     "{% set d = {'a': 1} %}{{ d.setdefault('a') }}|{{ d.setdefault('a', 5) }}|{{ d.setdefault('z') }}|"
+     "{{ d.setdefault('y', 7) }}|{{ d }}")
+case("methods/dict_setdefault_unhashable", "{{ {}.setdefault([], 1) }}")
+
+# `in` over a loop walks the loop the body is running in, which yields
+# (item, loop) pairs and advances the enclosing loop as it goes.
+case("value/loop_membership_walks_the_loop",
+     "{% for x in [1, 2, 3] %}{{ 3 in loop }}|{{ loop.index }}|{% endfor %}")
+case("value/loop_membership_finds_a_pair",
+     "{% for x in [1, 2, 3] %}{{ (2, loop) in loop }}|{{ loop.index }}|{% endfor %}")
+case("value/loop_membership_finds_the_last_pair",
+     "{% for x in [1, 2, 3] %}{{ (3, loop) in loop }}|{{ loop.index }}|{% endfor %}")
+case("value/loop_membership_misses_a_pair",
+     "{% for x in [1, 2, 3] %}{{ (3, 1) in loop }}|{{ loop in loop }}|{{ loop.index }}|{% endfor %}")
+
 
 def main() -> int:
     if DST.exists():
