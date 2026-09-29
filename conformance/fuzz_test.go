@@ -38,6 +38,18 @@ import (
 // reported a divergence because an earlier one had added a key to `d`. The
 // oracle does json.loads per request, so this is also what makes the two sides
 // start from the same place.
+// The two pinned hash seeds the differential runs its oracles under. Any fixed
+// pair makes a set's iteration order a property of the run rather than a coin
+// flip; these two are chosen because they order a three-key set *differently*,
+// which is what lets `{{ (d.keys() - [])|urlencode }}` be discarded on every run
+// instead of one in sixty. Two seeds can still agree about some other set, and
+// then that case diverges deterministically rather than flakily -- which is the
+// point: a fixed failure can be read and handled, a flake cannot.
+const (
+	fuzzHashSeed   = "5"
+	secondHashSeed = "1"
+)
+
 type harness struct {
 	oracle    *conformance.Oracle
 	rawCtx    json.RawMessage
@@ -48,6 +60,58 @@ type harness struct {
 	// the other would compare two specifications and call the difference a
 	// bug.
 	py value.PythonVersion
+	// version is what GOJJA2_FUZZ_PYTHON asked for, kept so that a second
+	// oracle can be started for the reproducibility check below.
+	version string
+	// second is a *separate* oracle process, started lazily and used only to
+	// ask CPython whether it agrees with itself. It has to be another
+	// process rather than another request: string hashing is randomised per
+	// interpreter, so a set's iteration order is fixed within one oracle and
+	// differs between two.
+	second *conformance.Oracle
+}
+
+// reproducible reports whether CPython gives the same answer twice, in two
+// processes.
+//
+// Comparable screens the answers nothing can reproduce by *reading* them -- an
+// address, a generator repr, a multi-element set. That misses the case where
+// the order of a set decided the answer without appearing in it:
+// `{{ (d.keys() - [])|urlencode }}` unpacks the first key it reaches, so on the
+// awkward context it is "not enough values to unpack (expected 2, got 0)" or
+// "got 1" depending on which key that is, and three runs of the same
+// interpreter disagree. gojja2 sorts, so its answer is stable and neither can be
+// graded against the other.
+//
+// Only asked once a divergence has already been found, so the second process is
+// started at the first one and never at all in a clean run.
+func (h *harness) reproducible(t testing.TB, c conformance.GeneratedCase, first *conformance.OracleResult) bool {
+	t.Helper()
+	if h.second == nil {
+		o, err := conformance.StartOracleWithHashSeed(h.version, secondHashSeed)
+		if err != nil {
+			// No second opinion available: grade it, rather than
+			// silently dropping every divergence.
+			return true
+		}
+		h.second = o
+		t.Cleanup(func() { _ = o.Close() })
+	}
+	raw, _, err := h.contextFor(c)
+	if err != nil {
+		return true
+	}
+	again, err := h.second.Render(conformance.OracleRequest{
+		Name:      fuzzTemplateName,
+		Source:    c.Source,
+		Context:   raw,
+		Settings:  caseSettings(c),
+		Templates: h.templatesFor(c),
+	})
+	if err != nil {
+		return true
+	}
+	return first.Expected().Equal(again.Expected())
 }
 
 // context decodes a fresh copy of the shared context. See the type comment.
@@ -75,7 +139,10 @@ func newHarness(t testing.TB) *harness {
 	if err != nil {
 		t.Fatalf("GOJJA2_FUZZ_PYTHON: %v", err)
 	}
-	oracle, err := conformance.StartOracleFor(version)
+	// A pinned hash seed, so that a set's iteration order is a fixed property
+	// of this run rather than a coin flip; harness.reproducible compares it
+	// against a second oracle pinned to a different one.
+	oracle, err := conformance.StartOracleWithHashSeed(version, fuzzHashSeed)
 	if err != nil {
 		t.Skipf("%v", err)
 	}
@@ -93,6 +160,7 @@ func newHarness(t testing.TB) *harness {
 		rawCtx:    raw,
 		templates: conformance.FuzzTemplates(),
 		py:        py,
+		version:   version,
 	}
 }
 
@@ -274,6 +342,14 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 // check compares one template, returning nil when the two agree or when the
 // case cannot be graded.
 func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.Divergence {
+	d, _ := h.checkWithOracle(t, c)
+	return d
+}
+
+// checkWithOracle is check, also handing back what the oracle said, so that a
+// caller about to report can ask a second process whether CPython agrees with
+// itself. The shrinker uses check and never pays for that.
+func (h *harness) checkWithOracle(t testing.TB, c conformance.GeneratedCase) (*conformance.Divergence, *conformance.OracleResult) {
 	raw, _, err := h.contextFor(c)
 	if err != nil {
 		t.Fatalf("context: %v", err)
@@ -289,20 +365,20 @@ func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.
 		t.Fatalf("oracle: %v", err)
 	}
 	if !conformance.Comparable(want) {
-		return nil
+		return nil, want
 	}
 
 	out, panicked, renderErr := h.renderGojja2(c)
 	if panicked != "" {
-		return &conformance.Divergence{Kind: conformance.KindPanic, Detail: panicked}
+		return &conformance.Divergence{Kind: conformance.KindPanic, Detail: panicked}, want
 	}
 	if conformance.ResourceError(renderErr) {
 		// The generator is free to ask for a billion iterations. The
 		// oracle's side of that is already discarded by Comparable;
 		// this is the same discard for ours.
-		return nil
+		return nil, want
 	}
-	return conformance.Compare(want.Expected(), out, renderErr)
+	return conformance.Compare(want.Expected(), out, renderErr), want
 }
 
 // minimize shrinks a diverging template and re-reads the divergence from the
@@ -401,8 +477,13 @@ func FuzzTemplate(f *testing.F) {
 			input = input[:512]
 		}
 		c := conformance.GenerateCase(input)
-		d := h.check(t, c)
+		d, want := h.checkWithOracle(t, c)
 		if d == nil {
+			return
+		}
+		// CPython has to agree with itself before its answer is used to
+		// fail anything; see reproducible.
+		if !h.reproducible(t, c, want) {
 			return
 		}
 		min, minD := h.minimize(t, c, 300)
@@ -427,6 +508,11 @@ func TestDifferential(t *testing.T) {
 	setRuns := map[string]int{}
 	ctxRuns := map[string]int{}
 	var failures int
+	// unstable counts the cases whose CPython answer was not reproducible in
+	// a second process; see harness.reproducible. Reported rather than
+	// swallowed: a run that started discarding everything would otherwise
+	// look clean.
+	var unstable int
 	undefinedRuns := map[string]int{}
 	lexRuns := map[string]int{}
 	tagRuns := map[string]int{}
@@ -455,8 +541,12 @@ func TestDifferential(t *testing.T) {
 		countLexSettings(c, lexRuns)
 		countTags(c, tagRuns)
 
-		d := h.check(t, c)
+		d, want := h.checkWithOracle(t, c)
 		if d == nil {
+			continue
+		}
+		if !h.reproducible(t, c, want) {
+			unstable++
 			continue
 		}
 		failures++
@@ -471,6 +561,10 @@ func TestDifferential(t *testing.T) {
 	// varying them would otherwise look exactly like a clean one: the axis
 	// was added after sixty thousand templates a run had all used the
 	// default Undefined without anything saying so.
+	if unstable > 0 {
+		t.Logf("differential: %d case(s) discarded -- CPython did not "+
+			"reproduce its own answer in a second process", unstable)
+	}
 	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), "+
 		"%d autoescaping, %d by name, %d empty; undefined %d strict, %d chainable, %d debug; "+
 		"lexer %d trim, %d lstrip, %d keep-newline, %d crlf, %d cr, "+

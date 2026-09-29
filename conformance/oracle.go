@@ -203,6 +203,30 @@ func StartOracle() (*Oracle, error) { return StartOracleFor("") }
 // was asked for, so starting an oracle that is not the interpreter it claims to
 // be is refused exactly as before.
 func StartOracleFor(version string) (*Oracle, error) {
+	return startOracle(version, "")
+}
+
+// StartOracleWithHashSeed is StartOracleFor with PYTHONHASHSEED pinned.
+//
+// CPython randomises string hashing per process, so a set's iteration order is
+// fixed within one oracle and differs between two. That is not something either
+// side can be graded on -- gojja2 sorts -- and Comparable screens the answers
+// where the order *shows*, which misses the ones where it merely decided:
+// `{{ (d.keys() - [])|urlencode }}` unpacks the first key it reaches, and three
+// runs of the same interpreter disagree about which that is.
+//
+// Two oracles with two *pinned* seeds turn that from a coin flip into a fixed
+// property: the differential compares their answers and discards the case when
+// they differ, and the result is the same on every run. Sampling two random
+// seeds instead left one case in sixty still failing.
+//
+// Only the differential uses this. The goldens come from tools/oracle, which is
+// unaffected, and a case whose answer depends on a hash seed cannot become one.
+func StartOracleWithHashSeed(version, hashSeed string) (*Oracle, error) {
+	return startOracle(version, hashSeed)
+}
+
+func startOracle(version, hashSeed string) (*Oracle, error) {
 	root, err := RepoRoot()
 	if err != nil {
 		return nil, err
@@ -247,6 +271,9 @@ func StartOracleFor(version string) (*Oracle, error) {
 		}
 	}
 	cmd.Dir = filepath.Join(root, "tools", "oracle")
+	if hashSeed != "" {
+		cmd.Env = append(os.Environ(), "PYTHONHASHSEED="+hashSeed)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
