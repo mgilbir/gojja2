@@ -115,6 +115,16 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		// itself, so this is the shape that measures it.
 		"tojson indent": {`{% set v = deep|tojson(indent=10) %}`,
 			gojja2.ErrOutputTooLarge, 0, 0, nil},
+		// value/strformat.go, formatFloat; value/pyformat.go, floatBody,
+		// integerDigits and padDigits: a precision is a size the template
+		// chose, and strconv, fmt and strings.Repeat allocate it. Uncharged,
+		// `{:.99999999999999f}` killed the process with a fatal out of
+		// memory that no recover catches.
+		"format float precision":  {`{% set v = '{:.100000f}'.format(f) %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},
+		"percent float precision": {`{% set v = '%.100000f' % f %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},
+		"percent int precision":   {`{% set v = '%.100000d' % n1 %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},
+		"markup percent int precision": {`{% set v = ('%.100000d'|safe) % n1 %}`,
+			gojja2.ErrOutputTooLarge, 0, 0, nil},
 		// methods.go, pad
 		"str center": {`{% set v = x.center(2097152) %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},
 		"str ljust":  {`{% set v = x.ljust(2097152) %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},

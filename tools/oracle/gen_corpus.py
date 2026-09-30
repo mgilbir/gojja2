@@ -7744,6 +7744,62 @@ case("format/percent_needs_a_mapping_not_a_list", "{{ '%(a)s' % [1] }}")
 # The *object* arms of both lookups, which nothing could reach until a dict view
 # learned to hand out its mappingproxy: a Mapping that is not a dict.
 case("format/percent_key_of_a_mapping_object", "{{ '%(z)s' % d.keys().mapping }}", d={"a": 1})
+
+# A precision past INT_MAX is CPython's refusal, not an allocation: str.format's
+# float path says "precision too big" after it has recognised the type code and
+# converted an integer, and before it looks at an infinity; printf-style
+# formatting says it while parsing, whatever the conversion. gojja2 handed the
+# number to strconv and fmt, which tried to allocate it -- a process-killing
+# "fatal error: out of memory", found by FuzzAutoescape on GitHub's runner --
+# or, for %, printed "%!(NOVERB)". Everything up to INT_MAX is attempted on both
+# sides and charged here before it is built; those sizes are not cases, because
+# CPython's answer is a MemoryError.
+_BIG = "99999999999999"
+for _n, _src, _ctx in [
+    ("float_f", "{{ '{:.PRECf}'.format(x) }}", {"x": 1.5}),
+    ("float_e", "{{ '{:.PRECe}'.format(x) }}", {"x": 1.5}),
+    ("float_g", "{{ '{:.PRECg}'.format(x) }}", {"x": 1.5}),
+    ("float_n", "{{ '{:.PRECn}'.format(x) }}", {"x": 1.5}),
+    ("float_percent", "{{ '{:.PREC%}'.format(x) }}", {"x": 1.5}),
+    ("float_no_type", "{{ '{:.PREC}'.format(x) }}", {"x": 1.5}),
+    ("float_grouped", "{{ '{:,.PRECf}'.format(x) }}", {"x": 1.5}),
+    ("float_filled", "{{ '{:=^.PRECf}'.format(x) }}", {"x": 1.5}),
+    ("float_z", "{{ '{:z.PRECf}'.format(x) }}", {"x": 1.5}),
+    ("int_as_float", "{{ '{:.PRECf}'.format(n) }}", {"n": 3}),
+    ("bool_as_float", "{{ '{:.PRECf}'.format(true) }}", {}),
+    ("infinity", "{% set b = 1e308 %}{% set i = b * 10 %}{{ '{:.PRECf}'.format(i) }}", {}),
+    ("nan", "{% set b = 1e308 %}{% set i = b * 10 %}{{ '{:.PRECf}'.format(i - i) }}", {}),
+    ("boundary", "{{ '{:.2147483648f}'.format(x) }}", {"x": 1.5}),
+    ("unknown_type_first", "{{ '{:.PRECq}'.format(x) }}", {"x": 1.5}),
+    ("overflow_first", "{{ '{:.PRECf}'.format(10**400) }}", {}),
+    ("int_code_refuses_precision", "{{ '{:.PRECd}'.format(n) }}", {"n": 3}),
+    ("str_truncates", "{{ '{:.PRECs}'.format(s) }}|{{ '{:.2147483648s}'.format(s) }}", {"s": "ab"}),
+    ("too_many_digits", "{{ '{:.99999999999999999999f}'.format(x) }}", {"x": 1.5}),
+]:
+    case("format/precision_too_big_" + _n, _src.replace("PREC", _BIG), **_ctx)
+for _n, _src, _ctx in [
+    ("f", "{{ '%.PRECf' % x }}", {"x": 1.5}),
+    ("e", "{{ '%.PRECe' % x }}", {"x": 1.5}),
+    ("d", "{{ '%.PRECd' % n }}", {"n": 1}),
+    ("x", "{{ '%.PRECx' % n }}", {"n": 255}),
+    ("s", "{{ '%.PRECs' % s }}", {"s": "ab"}),
+    ("r", "{{ '%.PRECr' % s }}", {"s": "ab"}),
+    ("c", "{{ '%.PRECc' % n }}", {"n": 65}),
+    ("unknown_verb", "{{ '%.PRECq' % n }}", {"n": 1}),
+    ("infinity", "{% set b = 1e308 %}{% set i = b * 10 %}{{ '%.PRECf' % i }}", {}),
+    ("boundary", "{{ '%.2147483648f' % x }}", {"x": 1.5}),
+    ("keyed", "{{ '%(a).2147483648f' % d }}", {"d": {"a": 1}}),
+    ("second_conversion", "{{ '%s %.2147483648s' % (s, s) }}", {"s": "a"}),
+    ("width_too_big", "{{ '%99999999999999999999d' % n }}", {"n": 1}),
+    ("width_boundary", "{{ '%9223372036854775808d' % n }}", {"n": 1}),
+    ("star_precision_c_int", "{{ '%.*f' % (2**31, x) }}", {"x": 1.5}),
+    ("star_precision_c_int_negative", "{{ '%.*f' % (-(2**31) - 1, x) }}", {"x": 1.5}),
+    ("star_precision_negative_clamps", "{{ '%.*f' % (-5, x) }}", {"x": 1.5}),
+    ("star_width_ssize_t", "{{ '%*d' % (2**63, n) }}", {"n": 1}),
+    ("star_width_ssize_t_negative", "{{ '%*d' % (-(2**63) - 1, n) }}", {"n": 1}),
+    ("star_not_an_int", "{{ '%*d' % ('a', n) }}", {"n": 1}),
+]:
+    case("format/percent_precision_too_big_" + _n, _src.replace("PREC", _BIG), **_ctx)
 case("format/percent_of_a_mapping_object", "{{ '%(a)s' % d.keys().mapping }}", d={"a": 1})
 case("filters/random_of_a_mapping_object", "{{ {'a': 1}.keys().mapping|random }}")
 case("filters/random_of_an_integer_keyed_mapping_object", "{{ {0: 'z'}.keys().mapping|random }}")

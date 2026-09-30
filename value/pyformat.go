@@ -96,7 +96,7 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 		// `"%*s" % (5, "x")` read the 5 as the string and the "x" as
 		// the width, so every starred conversion failed.
 		if conv.starWidth {
-			w, err := takeStarInt(&positional, &next)
+			w, err := takeStarInt(&positional, &next, false)
 			if err != nil {
 				return Undefined, err
 			}
@@ -107,7 +107,7 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 			conv.width, conv.hasWidth = w, true
 		}
 		if conv.starPrec {
-			p, err := takeStarInt(&positional, &next)
+			p, err := takeStarInt(&positional, &next, true)
 			if err != nil {
 				return Undefined, err
 			}
@@ -136,6 +136,7 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 			}
 		}
 
+		conv.budget = budget
 		text, err := conv.apply(arg, escaping, budget)
 		if err != nil {
 			return Undefined, err
@@ -278,6 +279,10 @@ type conversion struct {
 	// bytes is set when the format string is a bytes, which changes what
 	// %b, %s, %r and %c accept. See FormatPercent.
 	bytes bool
+	// budget pays for what a precision asks for before it is built: a
+	// float's digits and an integer's zero padding are both sized by a
+	// number the template chose.
+	budget Budget
 	// at is the offset just past the verb, which is the position
 	// CPython names when the verb is not one it knows.
 	at int
@@ -324,8 +329,11 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 			i++
 		}
 		if i > start {
-			c.width, _ = strconv.Atoi(spec[start:i])
-			c.hasWidth = true
+			w, ok := boundedDigits(spec[start:i], math.MaxInt64)
+			if !ok {
+				return 0, errs.New(errs.ValueError, "width too big")
+			}
+			c.width, c.hasWidth = int(w), true
 		}
 	}
 
@@ -339,8 +347,11 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 			for i < len(spec) && spec[i] >= '0' && spec[i] <= '9' {
 				i++
 			}
-			c.prec, _ = strconv.Atoi(spec[start:i])
-			c.hasPrec = true
+			p, ok := boundedDigits(spec[start:i], math.MaxInt32)
+			if !ok {
+				return 0, errs.New(errs.ValueError, "precision too big")
+			}
+			c.prec, c.hasPrec = int(p), true
 		}
 	}
 
@@ -356,15 +367,44 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 	return i + 1, nil
 }
 
-func takeStarInt(positional *[]Value, next *int) (int, error) {
+// boundedDigits reads a run of ASCII digits, refusing one above limit -- the
+// check CPython's printf parser makes as it accumulates, PY_SSIZE_T_MAX for a
+// width and INT_MAX for a precision. strconv.Atoi clamped an out-of-range run
+// to MaxInt64 and reported it in an error nothing read, so a long precision
+// became 9223372036854775807: fmt printed "%!(NOVERB)" for a float and %d
+// tried to allocate that many zeros.
+func boundedDigits(s string, limit int64) (int64, bool) {
+	var n int64
+	for i := 0; i < len(s); i++ {
+		d := int64(s[i] - '0')
+		if n > (limit-d)/10 {
+			return 0, false
+		}
+		n = n*10 + d
+	}
+	return n, true
+}
+
+// takeStarInt reads the argument a `*` stands for. CPython converts a width
+// with PyLong_AsSsize_t and a precision with PyLong_AsInt, so each overflows
+// at its own C type -- `'%.*f' % (2**31, 1.5)` is "Python int too large to
+// convert to C int" -- where a bare Int64 check called an integer that was
+// merely large "not an int".
+func takeStarInt(positional *[]Value, next *int, precision bool) (int, error) {
 	if *next >= len(*positional) {
 		return 0, errs.New(errs.TypeError, "not enough arguments for format string")
 	}
 	v := (*positional)[*next]
 	*next++
-	n, ok := v.Int64()
-	if !ok {
+	if !v.IsInteger() {
 		return 0, errs.New(errs.TypeError, "* wants int")
+	}
+	n, fits := v.Int64()
+	if !fits {
+		return 0, errs.New(errs.OverflowError, "Python int too large to convert to C ssize_t")
+	}
+	if precision && (n > math.MaxInt32 || n < math.MinInt32) {
+		return 0, errs.New(errs.OverflowError, "Python int too large to convert to C int")
 	}
 	return int(n), nil
 }
@@ -711,6 +751,9 @@ func (c *conversion) integerDigits(v Value, base int, allowFloat bool) (string, 
 	// For an integer, precision is a minimum number of digits. Python
 	// keeps the single zero that C's "%.0d" of zero drops.
 	if c.hasPrec && len(digits) < c.prec {
+		if err := chargeBytes(c.budget, int64(c.prec-len(digits))); err != nil {
+			return "", false, err
+		}
 		digits = strings.Repeat("0", c.prec-len(digits)) + digits
 	}
 	return digits, negative, nil
@@ -775,6 +818,12 @@ func (c *conversion) floatBody(v Value) (formatted, error) {
 		spec += "#"
 	}
 	spec += "." + strconv.Itoa(prec) + string(verb)
+	// The digits a precision asks for are allocated by Sprintf, so they are
+	// paid for first. Up to INT_MAX is CPython's to attempt; the parser
+	// refused anything past it.
+	if err := chargeBytes(c.budget, int64(prec)); err != nil {
+		return formatted{}, err
+	}
 	body := fmt.Sprintf(spec, math.Abs(f))
 	return formatted{prefix: sign, body: body, numeric: true}, nil
 }
@@ -808,7 +857,10 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 		if err != nil {
 			return formatted{}, true, err
 		}
-		digits, negative := c.padDigits(n)
+		digits, negative, err := c.padDigits(n)
+		if err != nil {
+			return formatted{}, true, err
+		}
 		return formatted{prefix: c.sign(negative), body: digits, numeric: true}, true, nil
 
 	case 'e', 'E', 'f', 'F', 'g', 'G':
@@ -824,12 +876,15 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 
 // padDigits renders an integer's magnitude and applies the minimum-digit
 // precision, which is the part %d shares between the two paths.
-func (c *conversion) padDigits(b *big.Int) (string, bool) {
+func (c *conversion) padDigits(b *big.Int) (string, bool, error) {
 	digits := new(big.Int).Abs(b).Text(10)
 	if c.hasPrec && len(digits) < c.prec {
+		if err := chargeBytes(c.budget, int64(c.prec-len(digits))); err != nil {
+			return "", false, err
+		}
 		digits = strings.Repeat("0", c.prec-len(digits)) + digits
 	}
-	return digits, b.Sign() < 0
+	return digits, b.Sign() < 0, nil
 }
 
 // markupInt is Python's int() over the helper: a number truncates, a string is

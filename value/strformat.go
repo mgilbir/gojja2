@@ -68,6 +68,7 @@ func FormatValue(v Value, spec string, py PythonVersion, budget Budget) (string,
 	if err != nil {
 		return "", err
 	}
+	f.budget = budget
 	body, numeric, err := f.body(v, spec)
 	if err != nil {
 		return "", err
@@ -92,6 +93,9 @@ type formatSpec struct {
 	// Python 3.11 added it (PEP 682), which is every version modelled here,
 	// so it needs no version gate.
 	zcoerce bool
+	// budget pays for the digits a float's precision asks for, before
+	// strconv allocates them.
+	budget Budget
 }
 
 func parseFormatSpec(spec string, v Value) (formatSpec, error) {
@@ -488,6 +492,23 @@ func group(digits string, sep byte, size int) string {
 }
 
 func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
+	// CPython's format_float_internal refuses a precision past INT_MAX --
+	// after the type code is recognised and before it looks at the value,
+	// so an infinity is refused too -- and attempts everything below it.
+	// strconv allocates the digits it is asked for, so they are paid for
+	// first: `{:.99999999999999f}` took the process down with "fatal error:
+	// out of memory", which no recover can catch.
+	switch f.typ {
+	case 'f', 'F', 'e', 'E', 'g', 'G', 'n', '%', 0:
+	default:
+		return "", unknownCode(f.typ, v)
+	}
+	if f.hasPrec && f.prec > math.MaxInt32 {
+		return "", errs.New(errs.ValueError, "precision too big")
+	}
+	if err := chargeBytes(f.budget, int64(f.prec)); err != nil {
+		return "", err
+	}
 	prec := f.prec
 	if !f.hasPrec {
 		prec = 6
