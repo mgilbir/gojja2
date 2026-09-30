@@ -67,9 +67,33 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 	for i := range short {
 		short[i] = "x"
 	}
+	// A wide dictionary three long keys down. pprint wraps it one entry per
+	// line, and every line is indented past the keys above it: the indent
+	// adds up to far more than the repr the same walk is charged for.
+	entries := map[string]any{}
+	for i := range 200 {
+		entries[fmt.Sprintf("e%d", i)] = 1
+	}
+	indented := any(entries)
+	for range 3 {
+		indented = map[string]any{strings.Repeat("k", 100): indented}
+	}
+	// Sixty single-entry dicts, each keyed by a hundred characters.
+	var chain any = "x"
+	for range 60 {
+		chain = map[string]any{strings.Repeat("k", 100): chain}
+	}
+	// Three of those keys, then bytes long enough to wrap a literal per line.
+	var wrapped any = []byte(strings.Repeat("a", 8000))
+	for range 3 {
+		wrapped = map[string]any{strings.Repeat("k", 100): wrapped}
+	}
 	vars := map[string]any{
-		"s": strings.Repeat("a", 1<<16),
-		"b": []byte(strings.Repeat("a", 1<<16)),
+		"indented": indented,
+		"chain":    chain,
+		"wrapped":  wrapped,
+		"s":        strings.Repeat("a", 1<<16),
+		"b":        []byte(strings.Repeat("a", 1<<16)),
 		// Two thousand one-character strings: a walk long enough to
 		// exhaust the iteration bound while the bytes they add up to
 		// stay well inside the output bound, so a per-item step is the
@@ -85,6 +109,10 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		// one, which is what leaves a per-item step as the only thing
 		// that can refuse.
 		"s2k": strings.Repeat("a", 2000),
+		// The same length with nothing in it that the one-key sets below
+		// hold, so a walk over it never finds what it is looking for and
+		// cannot stop early.
+		"z2k": strings.Repeat("z", 2000),
 		// Shorter than one charge block, so the escaping walk never
 		// reaches its in-loop charge and the tail charge is the only
 		// one that can refuse.
@@ -243,6 +271,29 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		// nothing.
 		"set method argument": {`{% set v = (pairs.keys() - []).union(s2k) %}`,
 			gojja2.ErrTooManyIterations, 0, 1000, nil},
+		// set_methods.go, setIntersectionArgument: intersection and the
+		// subset tests take any iterable, and it stops early only once
+		// every member has been found -- so an argument that holds none
+		// of them is walked to the end.
+		"set intersection argument": {`{% set v = (pairs.keys() - []).intersection(z2k) %}`,
+			gojja2.ErrTooManyIterations, 0, 1000, nil},
+		// set_methods.go, setScan: isdisjoint stops at the first member
+		// it finds, and this argument has none.
+		"set scan argument": {`{% set v = (pairs.keys() - []).isdisjoint(z2k) %}`,
+			gojja2.ErrTooManyIterations, 0, 1000, nil},
+		// filters.go, pformatItems: the separator carries the indent and is
+		// written once per entry, so a wide container indented far by the
+		// keys above it costs entries * indent. The bound is above the repr
+		// and the one charge for the pad, and below the separators.
+		"pprint separators": {`{% set v = indented|pprint %}`, gojja2.ErrOutputTooLarge, 20000, 100000, nil},
+		// filters.go, pprintIndent: one entry per container, so the pad is
+		// built and never repeated. The repr charged at every level is about
+		// as large as the indents, and the bound sits between the reprs and
+		// the reprs plus the indents.
+		"pprint indent": {`{% set v = chain|pprint %}`, gojja2.ErrOutputTooLarge, 220000, 100000, nil},
+		// filters.go, pformatBytes: the same separator, for a bytes that
+		// wraps into a literal per line.
+		"pprint bytes separators": {`{% set v = wrapped|pprint %}`, gojja2.ErrOutputTooLarge, 20000, 100000, nil},
 		// dictview.go, mappingProxy.pairs: a proxy over something that
 		// is not a dict is read through the wrapped object's own
 		// items(), and that walk is the charge. A proxy over a proxy

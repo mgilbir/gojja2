@@ -2181,6 +2181,10 @@ func pformatBytes(st *State, b *strings.Builder, data, rep string,
 	last := len(data) / 4 * 4
 	current, delim := "", ""
 	write := func(piece string) error {
+		// The indent is charged when it is built, and written once per line.
+		if err := st.ChargeBytes(int64(len(delim))); err != nil {
+			return err
+		}
 		b.WriteString(delim)
 		b.WriteString(value.ReprFor(value.Bytes([]byte(piece)), st.PythonVersion()))
 		if delim == "" {
@@ -2278,6 +2282,12 @@ func pformatItems[T any](st *State, b *strings.Builder, items []T, indent, allow
 			return err
 		}
 		if i > 0 {
+			// The pad was charged once, and the separator carrying it is
+			// written once per entry: a container of many entries indented
+			// far by the keys above it is entries * indent bytes.
+			if err := st.ChargeBytes(int64(len(separator))); err != nil {
+				return err
+			}
 			b.WriteString(separator)
 		}
 		room := 1
