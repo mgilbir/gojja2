@@ -406,6 +406,21 @@ func attrPath(s *State, v value.Value, parts []value.Value) (value.Value, error)
 			}
 			return value.Undefined, v.UndefinedError()
 		}
+		// A subscript that can raise says so through its sibling, as it
+		// does in a template: getitem catches TypeError and LookupError,
+		// and the undefined behind a mappingproxy raises neither.
+		if ge, ok := v.Interface().(interface {
+			GetItemErr(value.Value) (value.Value, bool, error)
+		}); ok {
+			item, found, err := ge.GetItemErr(part)
+			if err != nil {
+				return value.Undefined, err
+			}
+			if found {
+				v = item
+				continue
+			}
+		}
 		v = envGetItem(s, v, part)
 	}
 	return v, nil
@@ -3188,12 +3203,13 @@ func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	if attr, ok := lookupAttr(s, v, attrName); ok {
 		return attr, nil
 	}
-	// getattr() on an Undefined raises -- except for a dunder name, which
+	// getattr() on an Undefined raises -- except for a dunder name (both
+	// ends, `__x__`: `__x` is an ordinary name), which
 	// Undefined.__getattr__ reports as an ordinary missing attribute. That
 	// is why `nope|attr("items")` fails immediately while
 	// `nope|attr("__subclasses__")` yields an undefined that only fails
 	// when it is used.
-	if v.IsUndefined() && !strings.HasPrefix(attrName, "__") {
+	if v.IsUndefined() && (!strings.HasPrefix(attrName, "__") || !strings.HasSuffix(attrName, "__")) {
 		// ChainableUndefined.__getattr__ hands back the same undefined
 		// for a name that is not a dunder, which is the whole point of
 		// the class: `a.b.c` on a missing `a` stays undefined rather

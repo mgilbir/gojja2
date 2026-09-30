@@ -1,0 +1,6 @@
+{
+  "case": "divergence/autoescape_flag_strict_folded_output.jj2",
+  "variables": {
+    "nope": "f"
+  }
+}

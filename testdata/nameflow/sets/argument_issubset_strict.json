@@ -1,0 +1,6 @@
+{
+  "case": "sets/argument_issubset_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

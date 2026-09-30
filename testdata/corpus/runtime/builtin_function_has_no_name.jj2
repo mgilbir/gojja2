@@ -1,0 +1,3 @@
+{}
+---
+[{{ range.name }}][{{ lipsum.name }}][{{ cycler.name }}][{{ joiner.name }}][{{ namespace.name }}][{{ 'a'.upper.name }}][{{ [].append.name }}][{{ range.name is defined }}][{{ lipsum|attr('name') }}]

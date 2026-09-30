@@ -28,14 +28,14 @@ import (
 // probing CPython, so "takes exactly one argument (2 given)" and "takes no
 // arguments (1 given)" are its words and not a guess.
 var setMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
-	"union":                       setCombine(setUnion),
-	"intersection":                setCombine(setIntersect),
-	"difference":                  setCombine(setSubtract),
-	"symmetric_difference":        setCombine(setSymmetric),
-	"update":                      setCombineInPlace(setUnion),
-	"intersection_update":         setCombineInPlace(setIntersect),
-	"difference_update":           setCombineInPlace(setSubtract),
-	"symmetric_difference_update": setCombineInPlace(setSymmetric),
+	"union":                       setCombine(setUnion, setArgumentOf),
+	"intersection":                setCombine(setIntersect, setIntersectionArgument),
+	"difference":                  setCombine(setSubtract, setArgumentOf),
+	"symmetric_difference":        setCombine(setSymmetric, setArgumentOf),
+	"update":                      setCombineInPlace(setUnion, setArgumentOf),
+	"intersection_update":         setCombineInPlace(setIntersect, setIntersectionArgument),
+	"difference_update":           setCombineInPlace(setSubtract, setArgumentOf),
+	"symmetric_difference_update": setCombineInPlace(setSymmetric, setArgumentOf),
 	"issubset":                    setRelation(false),
 	"issuperset":                  setRelation(true),
 	"isdisjoint":                  methodSetIsdisjoint,
@@ -63,9 +63,6 @@ func setOf(r value.Value) (*value.Set, bool) {
 func setArgument(st *State, v value.Value) (*value.Set, error) {
 	seq, err := value.Iterate(v)
 	if err != nil {
-		if refusal := value.StrictRefusal(v); refusal != nil {
-			return nil, refusal
-		}
 		return nil, err
 	}
 	var items []value.Value
@@ -76,6 +73,84 @@ func setArgument(st *State, v value.Value) (*value.Set, error) {
 		items = append(items, item)
 	}
 	return value.NewSet(items, st.PythonVersion(), st)
+}
+
+// setArgumentReader reads one argument of a combining method, given the set it
+// is being combined with.
+type setArgumentReader func(st *State, v value.Value, have *value.Set) (*value.Set, error)
+
+// setArgumentOf reads the whole argument, hashing every element.
+func setArgumentOf(st *State, v value.Value, _ *value.Set) (*value.Set, error) {
+	return setArgument(st, v)
+}
+
+// setIntersectionArgument reads what an intersection needs of its argument.
+//
+// set_intersection walks an argument that is not itself a set one element at a
+// time and stops as soon as the result holds every member of the receiver --
+// nothing after that can add to it -- so an element after that point is never
+// hashed: `{'b', 'c'}.intersection(['b', 'c', [1]])` is the set, not "unhashable
+// type: 'list'". The check follows an element that was found, not each element,
+// so an empty receiver reads the whole argument. intersection_update is written
+// over the same call, in every version; issubset is from 3.12, before which it
+// built the whole set first.
+//
+// What is returned holds only the members of have that were found, which is all
+// an intersection and a subset test read of it.
+func setIntersectionArgument(st *State, v value.Value, have *value.Set) (*value.Set, error) {
+	if _, isSet := v.Interface().(*value.Set); isSet {
+		return setArgument(st, v)
+	}
+	seq, err := value.Iterate(v)
+	if err != nil {
+		return nil, err
+	}
+	found, err := value.NewSet(nil, st.PythonVersion(), st)
+	if err != nil {
+		return nil, err
+	}
+	for item := range seq {
+		if err := st.Step(1); err != nil {
+			return nil, err
+		}
+		if err := value.CheckHashable(item, st.PythonVersion(), value.AsPlainHash); err != nil {
+			return nil, err
+		}
+		if !have.Has(item) {
+			continue
+		}
+		if err := found.Add(item, st.PythonVersion(), st); err != nil {
+			return nil, err
+		}
+		if found.Len() == have.Len() {
+			break
+		}
+	}
+	return found, nil
+}
+
+// setScan asks, for each element of an iterable in turn, whether the set holds
+// it, and stops at the first whose answer is wantFound. isdisjoint and
+// issuperset are written this way in CPython for an argument that is not a
+// set: they never build one, so an element after the deciding one is not even
+// hashed and `s.issuperset(['missing', [1]])` is False, not "unhashable type".
+func setScan(st *State, s *value.Set, arg value.Value, wantFound bool) (bool, error) {
+	seq, err := value.Iterate(arg)
+	if err != nil {
+		return false, err
+	}
+	for item := range seq {
+		if err := st.Step(1); err != nil {
+			return false, err
+		}
+		if err := value.CheckHashable(item, st.PythonVersion(), value.AsSetElement); err != nil {
+			return false, err
+		}
+		if s.Has(item) == wantFound {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // setUnion, setIntersect, setSubtract and setSymmetric are the four
@@ -120,14 +195,14 @@ func setSymmetric(have, other *value.Set) []value.Value {
 // setCombine builds a new set: union, intersection and difference take any
 // number of arguments and fold left, symmetric_difference takes exactly one.
 // The arity table is what enforces the difference.
-func setCombine(fold func(have, with *value.Set) []value.Value) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+func setCombine(fold func(have, with *value.Set) []value.Value, read setArgumentReader) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(st *State, r value.Value, a *value.CallArgs) (value.Value, error) {
 		acc, ok := setOf(r)
 		if !ok {
 			return value.Undefined, nil
 		}
 		for _, arg := range a.Pos {
-			with, err := setArgument(st, arg)
+			with, err := read(st, arg, acc)
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -153,7 +228,7 @@ func setCombine(fold func(have, with *value.Set) []value.Value) func(*State, val
 
 // setCombineInPlace is setCombine landing back in the receiver and answering
 // None, which is what every mutating method in Python answers.
-func setCombineInPlace(fold func(have, with *value.Set) []value.Value) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+func setCombineInPlace(fold func(have, with *value.Set) []value.Value, read setArgumentReader) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(st *State, r value.Value, a *value.CallArgs) (value.Value, error) {
 		s, ok := setOf(r)
 		if !ok {
@@ -163,7 +238,7 @@ func setCombineInPlace(fold func(have, with *value.Set) []value.Value) func(*Sta
 		// so a refusal leaves the set as it was.
 		folded := s
 		for _, arg := range a.Pos {
-			with, err := setArgument(st, arg)
+			with, err := read(st, arg, folded)
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -190,7 +265,20 @@ func setRelation(superset bool) func(*State, value.Value, *value.CallArgs) (valu
 		if !ok {
 			return value.Undefined, nil
 		}
-		other, err := setArgument(st, a.Pos[0])
+		if _, isSet := a.Pos[0].Interface().(*value.Set); superset && !isSet {
+			missed, err := setScan(st, s, a.Pos[0], false)
+			if err != nil {
+				return value.Undefined, err
+			}
+			return value.Bool(!missed), nil
+		}
+		var other *value.Set
+		var err error
+		if superset || !st.PythonVersion().IssubsetStopsWhenFull() {
+			other, err = setArgument(st, a.Pos[0])
+		} else {
+			other, err = setIntersectionArgument(st, a.Pos[0], s)
+		}
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -211,6 +299,13 @@ func methodSetIsdisjoint(st *State, r value.Value, a *value.CallArgs) (value.Val
 	s, ok := setOf(r)
 	if !ok {
 		return value.Undefined, nil
+	}
+	if _, isSet := a.Pos[0].Interface().(*value.Set); !isSet {
+		shared, err := setScan(st, s, a.Pos[0], true)
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.Bool(!shared), nil
 	}
 	other, err := setArgument(st, a.Pos[0])
 	if err != nil {

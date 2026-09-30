@@ -85,6 +85,17 @@ func (v PythonVersion) AtLeast(n PythonVersion) bool { return v >= n }
 // codebase and is how a fork gets applied in one place and forgotten in
 // another. Each rule says which release moved it and what the corpus case is.
 
+// IssubsetStopsWhenFull reports whether `s.issubset(xs)` for an argument that is
+// not a set reads it the way set_intersection does, stopping once every member
+// of s has been found.
+//
+// 3.12 wrote issubset over set_intersection, so an element after that point is
+// never hashed: `{'b', 'c'}.issubset(['b', 'c', [1]])` is True there and
+// "unhashable type: 'list'" on 3.11, which built the whole set first.
+// intersection itself has always stopped early. Corpus:
+// sets/argument_issubset_stops_when_full.
+func (v PythonVersion) IssubsetStopsWhenFull() bool { return v.AtLeast(Python312) }
+
 // SliceKeysAreHashable reports whether a slice used as a mapping key is a
 // KeyError rather than a TypeError.
 //

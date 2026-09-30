@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-six divergences below, **one** is worth going looking for:
+Of the twenty-eight divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -52,6 +52,8 @@ are safety controls rather than behavioural choices, and they live in
 | [lipsum() and random](#lipsum-and-random) | a different random draw | No -- likewise |
 | [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there; so is `==` on two bound methods of literals | Only for a literal-vs-literal `sameas` or method comparison, which is a tautology |
 | [Comparison order inside a long sort](#comparison-order-inside-a-long-sort) | which pair a failing sort names | Only inside an error message, above 64 elements |
+| [An `{% autoescape %}` flag that is a StrictUndefined](#an--autoescape--flag-that-is-a-strictundefined) | raises at the tag; jinja2 raises at the first output that escapes | Only a body whose output is empty or folded at compile time |
+| [A macro's view of the loop it was defined in](#a-macros-view-of-the-loop-it-was-defined-in) | a macro keeps the values its loop had when it was defined; jinja2's reads them live, and `missing` after the loop | Only a macro that is called after its iteration has passed |
 | [A `{% set %}` block writing to a name that was never set](#a--set--block-writing-to-a-name-that-was-never-set) | both raise `TypeError`; jinja2 names a sentinel of its own | No -- only the type in the message |
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
@@ -714,6 +716,57 @@ as a single run.
 Above that, CPython splits the list into runs and merges them, and gojja2 uses
 a stable sort of its own. The result is identical; only which pair a failing
 comparison names can differ.
+
+### An `{% autoescape %}` flag that is a StrictUndefined
+
+`{% autoescape nope %}` stores what it is given and jinja2 asks for its truth
+only where a run-time output has to decide whether to escape. Under
+`StrictUndefined` the truth of an undefined raises, so the error comes from the
+first such output inside the body, not from the tag:
+
+```jinja
+{% autoescape nope %}{{ '<' }}{% endautoescape %}     "<" on CPython, UndefinedError here
+{% autoescape nope %}{% endautoescape %}              "" on CPython, UndefinedError here
+{% autoescape nope %}{{ 1 }}{% endautoescape %}       "1" on CPython, UndefinedError here
+{% set x = '<' %}{% autoescape nope %}{{ x }}{% endautoescape %}   UndefinedError in both
+```
+
+Anything in the body that escapes at run time raises in both, including raw
+template text, so the difference is confined to a body whose output is empty or
+was folded to a constant before the render. The flag's truth is asked once, at
+the tag, because everything downstream reads a boolean; deferring it would mean
+carrying a "raises when asked" flag through every one of the sites that read the
+escaping setting. `testdata/corpus/divergence/autoescape_flag_strict_folded_output.jj2`
+and its two siblings are listed in `testdata/known_failures.txt`.
+
+### A macro's view of the loop it was defined in
+
+jinja2 compiles a loop body into the function around it, so a macro written
+inside a loop reads the loop's variables the way a Python closure reads a cell:
+whatever they hold at the moment the macro is *called*. gojja2 builds a fresh
+frame for every iteration, and a macro keeps the one it was defined in.
+
+```jinja
+{% set ns = namespace(f=[]) %}
+{% for i in [1, 2] %}{% macro m() %}{{ i }}{% endmacro %}{% set _ = ns.f.append(m) %}{% endfor %}
+{{ ns.f[0]() }}|{{ ns.f[1]() }}     "missing|missing" on CPython, "1|2" here
+```
+
+Called while the loop is still running, the same macro reads the *current*
+iteration: `[{{ ns.f[0]() }}]` written after the append prints `[1][2]` on
+CPython, where the macro from the first pass reads the second pass's value, and
+`[1][1]` here. A name assigned in the body with `{% set %}` behaves the same way,
+except that after the loop it is unbound and prints as nothing. A macro that is
+called within the iteration that defined it, which is what a macro in a loop is
+for, agrees.
+
+The cause is jinja2's code generator, not the language: matching it means giving
+a loop one shared frame, resetting the loop's names to jinja2's `missing`
+sentinel when it ends, and letting that sentinel print. Nothing else in a
+template can tell the two apart, so gojja2 keeps the frame per iteration, which
+is the one that agrees whenever the macro is used where it was defined.
+`testdata/corpus/divergence/macro_reads_the_loop_variable_after_the_loop.jj2` and
+its two siblings are listed in `testdata/known_failures.txt`.
 
 ### A `{% set %}` block writing to a name that was never set
 

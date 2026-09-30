@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% set x = '<' %}{% autoescape nope %}{{ x }}{% endautoescape %}

@@ -9497,6 +9497,369 @@ case("value/loop_membership_misses_a_pair",
      "{% for x in [1, 2, 3] %}{{ (3, 1) in loop }}|{{ loop in loop }}|{{ loop.index }}|{% endfor %}")
 
 
+# --- coverage pass 7: eval.go, exec.go, optimize.go, runtime.go, set_methods.go,
+# dictview.go ------------------------------------------------------------------
+
+# A mappingproxy over an undefined is reached as `d.keys().mapping.__class__(nope)`.
+# str(), iter(), len(), bool(), ==, hash() and `in` of a proxy are those of the
+# mapping it wraps, so over a StrictUndefined every one of them raises; a proxy
+# over a plain Undefined answers as the undefined does, and a ChainableUndefined
+# behind it hands back itself for a subscript.
+_PU = "{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}"
+_STRICT = {"undefined": "strict"}
+_CHAIN = {"undefined": "chainable"}
+for _n, _src in [
+    ("prints", "{{ C(nope) }}"),
+    ("prints_nested", "{{ C(C(nope)) }}"),
+    ("string_filter", "{{ C(nope)|string }}"),
+    ("concatenated", "{{ C(nope) ~ 'x' }}"),
+    ("upper_filter", "{{ C(nope)|upper }}"),
+    ("format_field", "{{ '{}'.format(C(nope)) }}"),
+    ("percent_s", "{{ '%s' % C(nope) }}"),
+    ("iterable_test", "{{ C(nope) is iterable }}"),
+    ("equal_to_itself", "{% set m = C(nope) %}{{ m == m }}"),
+    ("as_a_dict_key", "{{ {C(nope): 1} }}"),
+    ("as_a_subscript", "{{ d[C(nope)] }}"),
+    ("subscripted_by_undefined", "{{ C(d)[nope] }}"),
+    ("attribute_filter", "{{ [C(nope)]|map(attribute='x')|list }}"),
+    ("groupby_attribute", "{{ [C(nope)]|groupby('x') }}"),
+    ("sliced_by_undefined", "{{ d[C(nope):] }}"),
+]:
+    case("dictview/proxy_of_undefined_" + _n + "_strict", _PU + _src, __settings__=_STRICT)
+
+# The same shapes under the default class, where an undefined prints as nothing.
+for _n, _src in [
+    ("prints", "[{{ C(nope) }}][{{ C(C(nope)) }}][{{ C(nope)|string }}][{{ C(nope) ~ 'x' }}]"),
+    ("subscript", "{{ C(nope)['a'] }}"),
+    ("attribute", "{{ C(nope).a }}"),
+    ("attribute_filter", "{{ [C(nope)]|map(attribute='x')|list }}"),
+    ("equality", "{% set m = C(nope) %}{% set n = C(m) %}{{ m == m }}|{{ m != m }}|{{ m == n }}|"
+     "{{ n == m }}|{{ n == n }}|{{ m == nope }}|{{ nope == m }}|{{ m in [m] }}"),
+    ("as_a_key", "{% set k = C(nope) %}{{ {k: 1}[k] }}|{{ k in d }}|{{ [k, k]|unique|list|length }}|"
+     "{{ {k: 1, C(nope): 2}|length }}"),
+    ("slice", "{{ C(nope)[1:] }}"),
+    ("reversed", "{{ C(nope)|reverse|list }}"),
+    ("last", "{{ C(nope)|last }}"),
+    ("reversed_nested", "{{ C(C(nope))|reverse|list }}"),
+    ("xmlattr", "{{ C(nope)|xmlattr }}"),
+]:
+    case("dictview/proxy_of_undefined_" + _n, _PU + _src)
+
+for _n, _src in [
+    ("subscript", "{{ C(nope)['a'] }}|{{ C(nope).a }}|{{ C(nope).a.b }}|{{ C(nope)['a']['b'] }}"),
+    ("attribute_filter", "{{ [C(nope)]|map(attribute='x')|list }}|{{ [C(nope)]|map(attribute='x.y')|list }}"),
+    ("slice", "{{ C(nope)[1:] }}"),
+    ("equality", "{% set m = C(nope) %}{{ m == m }}|{{ m != m }}|{{ m == nope }}"),
+]:
+    case("dictview/proxy_of_undefined_" + _n + "_chainable", _PU + _src, __settings__=_CHAIN)
+
+# A proxy over a dict is what `mappingproxy` is usually asked to be; these are
+# the shapes whose answers come from the wrapped object.
+_PD = _PU + "{% set m = C(d) %}"
+for _n, _src in [
+    ("attribute_falls_back_to_the_item", "{{ m.a }}|{{ m['a'] }}|{{ m.zz }}|{{ m['zz'] }}|{{ m.keys()|list }}"),
+    ("reversed", "{{ m|reverse|list }}|{{ m|last }}"),
+    ("xmlattr", "{{ m|xmlattr }}"),
+    ("sliced", "{{ m[1:] }}"),
+    ("subscripted_by_unhashable", "[{{ m[[1]] }}][{{ m[{}] }}][{{ d[[1]] }}][{{ d[{}] }}]"),
+    ("as_a_key_is_refused", "{{ {m: 1} }}"),
+    ("as_a_key_is_refused_nested", "{{ {C(m): 1} }}"),
+    ("in_a_dict_is_refused", "{{ m in d }}"),
+]:
+    case("dictview/proxy_of_dict_" + _n, _PU + "{% set m = C(d) %}" + _src)
+
+# ...and over a string, a bytes and a range, which are hashable, subscript and
+# slice as themselves, and refuse only what they refuse alone.
+for _n, _src in [
+    ("string_slice", "{{ C('abc')[1:] }}|{{ C('abc')[::-1] }}|{{ C('abc')[0] }}|{{ C('abc')[-1] }}|{{ C('abc')[9] }}"),
+    ("range_slice", "{{ C(range(5))[1:3] }}|{{ C(range(5))[::-1] }}|{{ C(range(5))[2] }}"),
+    ("bad_slice_bound", "{{ C('abc')[1.5:] }}"),
+    ("string_reversed", "{{ C('abc')|reverse|list }}"),
+    ("bytes_reversed", "{{ C('ab'.encode())|reverse|list }}"),
+    ("range_reversed", "{{ C(range(3))|reverse|list }}|{{ C(range(3))|last }}"),
+    ("string_xmlattr", "{{ C('ab')|xmlattr }}"),
+    ("string_is_a_key", "{% set k = C('ab') %}{{ {k: 1}|length }}|{{ {k: 1}['ab'] }}|{{ 'ab' in {k: 1} }}|"
+     "{{ k in d }}|{{ d.get(k) }}|{{ [k, k]|unique|list|length }}"),
+    ("range_is_a_key", "{% set k = C(range(3)) %}{{ {k: 1}|length }}|{{ {k: 1}[range(3)] }}|{{ k in d }}"),
+    ("bytes_is_a_key", "{% set b = 'ab'.encode() %}{% set k = C(b) %}{{ {k: 1}|length }}|{{ {k: 1}[b] }}|{{ k in d }}"),
+    ("string_is_a_set_member", "{% set s = d.keys() - [] %}{% set k = C('ab') %}"
+     "{{ s.add(k) }}|{{ k in s }}|{{ s|length }}|{{ s.discard(k) }}|{{ s|length }}"),
+]:
+    case("dictview/proxy_of_scalar_" + _n, _PU + _src)
+
+# --- a set method's argument ---------------------------------------------------
+_SM = "{% set d = {'a': 1, 'b': 2, 'c': 3} %}{% set s = d.keys() - ['a'] %}"
+for _n, _src in [
+    ("union", "{{ s.union(nope) }}"),
+    ("update", "{{ s.update(nope) }}"),
+    ("issubset", "{{ s.issubset(nope) }}"),
+    ("issuperset", "{{ s.issuperset(nope) }}"),
+    ("isdisjoint", "{{ s.isdisjoint(nope) }}"),
+    # issuperset and isdisjoint walk a non-set argument one element at a time
+    # and stop at the first that decides, so what follows is never hashed.
+    ("issuperset_stops_at_a_miss", "{{ s.issuperset(['a', nope]) }}"),
+    ("isdisjoint_stops_at_a_hit", "{{ s.isdisjoint(['b', nope]) }}"),
+    ("issuperset_reaches_it", "{{ s.issuperset(['b', nope]) }}"),
+    ("isdisjoint_reaches_it", "{{ s.isdisjoint(['z', nope]) }}"),
+    ("intersection_stops_when_full", "{{ s.intersection(['b', 'c', nope])|list|sort }}"),
+    ("intersection_reaches_it", "{{ s.intersection(['b', nope, 'c']) }}"),
+    ("issubset_stops_when_full", "{{ s.issubset(['b', 'c', nope]) }}"),
+]:
+    case("sets/argument_" + _n + "_strict", _SM + _src, __settings__=_STRICT)
+for _n, _src in [
+    ("issuperset_stops_at_a_miss", "{{ s.issuperset(['a', [1]]) }}|{{ s.issuperset(['a', {}]) }}"),
+    ("isdisjoint_stops_at_a_hit", "{{ s.isdisjoint(['b', [1]]) }}"),
+    ("issuperset_reaches_it", "{{ s.issuperset(['b', [1]]) }}"),
+    ("isdisjoint_reaches_it", "{{ s.isdisjoint(['z', [1]]) }}"),
+    ("issuperset_of_a_view", "{{ s.issuperset(d.keys()) }}|{{ s.issuperset(['b', 'c']) }}|{{ s.issuperset('bc') }}|"
+     "{{ s.issuperset([]) }}"),
+    ("isdisjoint_of_a_view", "{{ s.isdisjoint(d.keys()) }}|{{ s.isdisjoint(['z']) }}|{{ s.isdisjoint('a') }}|"
+     "{{ s.isdisjoint([]) }}"),
+    # An intersection stops reading a non-set argument once the result holds the
+    # whole receiver, so an element after that point is never hashed; issubset
+    # does the same from 3.12.
+    ("issubset_stops_when_full", "{{ s.issubset(['b', 'c', [1]]) }}|{{ s.issubset(['c', 'z', 'b', {}]) }}"),
+    ("issubset_reaches_it", "{{ s.issubset(['b', [1]]) }}"),
+    ("intersection_stops_when_full",
+     "{{ s.intersection(['b', 'c', [1]])|list|sort }}|{{ s.intersection(['c', 'b', 'b', [1]])|list|sort }}|"
+     "{{ s.intersection(['z', 'c', 'b', [2]])|list|sort }}"),
+    ("intersection_reaches_it", "{{ s.intersection(['b', [1]]) }}"),
+    ("intersection_one_member_stops", "{% set one = d.keys() - ['a', 'b'] %}{{ one.intersection(['c', [1]])|list }}"),
+    ("intersection_of_an_empty_set_reads_all", "{% set e = d.keys() - ['a', 'b', 'c'] %}{{ e.intersection(['b', [1]]) }}"),
+    ("intersection_second_argument", "{{ s.intersection(['b', 'c', [1]], ['b'])|list }}"),
+    ("intersection_second_argument_reaches_it", "{{ s.intersection(['b', 'c'], ['b', [1]]) }}"),
+    ("intersection_update_stops_when_full", "{{ s.intersection_update(['b', 'c', [1]]) }}|{{ s|list|sort }}"),
+    ("intersection_update_reaches_it", "{{ s.intersection_update(['c', [1]]) }}"),
+    ("union_hashes_everything", "{{ s.union(['b', 'c', [1]]) }}"),
+    ("difference_hashes_everything", "{{ s.difference(['b', 'c', [1]]) }}"),
+    ("issuperset_not_iterable", "{{ s.issuperset(1) }}"),
+    ("isdisjoint_not_iterable", "{{ s.isdisjoint(none) }}"),
+]:
+    case("sets/argument_" + _n, _SM + _src)
+
+# --- format fields and attribute lookups on an undefined ----------------------
+for _n, _src in [
+    ("format_empty_spec", "{{ '{}'.format(nope) }}"),
+    ("format_conversion_s", "{{ '{!s}'.format(nope) }}"),
+    ("format_keyword", "{{ '{a}'.format(a=nope) }}"),
+    ("format_map", "{{ '{a}'.format_map({'a': nope}) }}"),
+]:
+    case("undefined/" + _n + "_strict", _src, __settings__=_STRICT)
+case("undefined/format_conversion_r_strict", "{{ '{!r}'.format(nope) }}", __settings__=_STRICT)
+for _n, _src in [
+    ("format_attribute", "{{ '{0.a}'.format(nope) }}"),
+    ("format_attribute_chain", "{{ '{0.a.b}'.format(nope) }}"),
+    ("format_subscript", "{{ '{0[a]}'.format(nope) }}"),
+    ("format_dunder_attribute", "{{ '{0.__a__}'.format(nope) }}"),
+    ("format_half_dunder_attribute", "{{ '{0.__a}'.format(nope) }}"),
+    ("format_bare_dunder_attribute", "{{ '{0.__}'.format(nope) }}"),
+    ("attr_filter_dunder", "{{ nope|attr('__a__') }}"),
+    ("attr_filter_half_dunder", "{{ nope|attr('__a') }}"),
+    ("attr_filter_trailing_dunder", "{{ nope|attr('a__') }}"),
+    ("attr_filter_bare_dunder", "{{ nope|attr('__') }}"),
+]:
+    if _n != "format_subscript":  # the default class is errors/field_index_on_an_undefined
+        case("undefined/" + _n, _src)
+    case("undefined/" + _n + "_strict", _src, __settings__=_STRICT)
+    case("undefined/" + _n + "_chainable", _src, __settings__=_CHAIN)
+case("undefined/format_empty_spec", "[{{ '{}'.format(nope) }}][{{ '{!s:>3}'.format(nope) }}][{{ '{!r}'.format(nope) }}]")
+
+# --- a scoped block sees every enclosing frame --------------------------------
+for _n, _src in [
+    ("nested_loops", "{% for i in [1, 2] %}{% for j in [1] %}{% block b scoped %}{{ i }}{{ j }}{% endblock %}"
+     "{% endfor %}{% endfor %}"),
+    ("nested_loops_macro", "{% for i in [1, 2] %}{% for j in [1] %}{% block b scoped %}"
+     "{% macro m() %}{{ i }}{{ j }}{% endmacro %}{{ m() }}{% endblock %}{% endfor %}{% endfor %}"),
+    ("nested_loop_index", "{% for i in [1, 2] %}{% for j in [1] %}{% block b scoped %}"
+     "[{{ loop.index }}{{ loop.length }}]{% endblock %}{% endfor %}{% endfor %}"),
+    ("nested_shadowed", "{% for i in [1, 2] %}{% for i in [7] %}{% block b scoped %}[{{ i }}]{% endblock %}"
+     "{% endfor %}{% endfor %}"),
+    ("outer_body_set", "{% for i in [1, 2] %}{% set y = i * 5 %}{% for j in [1] %}{% block b scoped %}"
+     "{{ y }}{{ i }}{{ j }}{% endblock %}{% endfor %}{% endfor %}"),
+    ("with_inside_loops", "{% for i in [1, 2] %}{% with a = i %}{% for j in [1] %}{% block b scoped %}"
+     "[{{ a }}{{ i }}{{ j }}]{% endblock %}{% endfor %}{% endwith %}{% endfor %}"),
+    ("macro_argument", "{% macro m(p) %}{% for i in [1] %}{% block b scoped %}[{{ p }}{{ i }}]{% endblock %}"
+     "{% endfor %}{% endmacro %}{{ m(3) }}"),
+    ("three_deep", "{% for i in [1] %}{% for j in [2] %}{% block b scoped %}{% for k in [3] %}"
+     "{% block c scoped %}[{{ i }}{{ j }}{{ k }}]{% endblock %}{% endfor %}{% endblock %}{% endfor %}{% endfor %}"),
+    ("root_name_from_the_arguments", "{% for i in [1] %}{% for j in [1] %}{% block b scoped %}[{{ x }}]"
+     "{% endblock %}{% endfor %}{% endfor %}{% set x = 1 %}"),
+    ("set_inside_stays_inside", "{% for i in [1] %}{% for j in [1] %}{% block b scoped %}{% set i = 9 %}{{ i }}"
+     "{% endblock %}{{ i }}{% endfor %}{% endfor %}"),
+]:
+    case("scope/scoped_block_" + _n, _src, **SCOPE)
+
+# --- builtin functions carry no `name` -----------------------------------------
+case("runtime/builtin_function_has_no_name",
+     "[{{ range.name }}][{{ lipsum.name }}][{{ cycler.name }}][{{ joiner.name }}][{{ namespace.name }}]"
+     "[{{ 'a'.upper.name }}][{{ [].append.name }}][{{ range.name is defined }}][{{ lipsum|attr('name') }}]")
+
+# --- subscripts and slices in eval.go ------------------------------------------
+case("subscript/bytes_index",
+     "{% set b = 'abc'.encode() %}{{ b[0] }}|{{ b[-1] }}|{{ b[-3] }}|{{ b[2] }}|[{{ b[3] }}]|[{{ b[-4] }}]|"
+     "[{{ b[none] }}]|[{{ b['x'] }}]|{{ b[true] }}")
+case("subscript/scalar_index_is_undefined",
+     "{% set n = 5 %}{% set z = none %}{% set f = 1.5 %}"
+     "[{{ n[0] }}][{{ n[-1] }}][{{ n['a'] }}][{{ z[0] }}][{{ z['a'] }}][{{ true[0] }}][{{ f[0] }}][{{ n[none] }}]")
+case("subscript/scalar_slice_is_refused_int", "{% set n = 5 %}{{ n[1:2] }}")
+case("subscript/scalar_slice_is_refused_none", "{% set z = none %}{{ z[1:2] }}")
+_G = "{% set g = [{'a': 1}, {'a': 2}]|groupby('a')|first %}"
+for _n, _src in [
+    ("indexes", "{{ g[0] }}|{{ g[1] }}|{{ g[-1] }}|[{{ g[2] }}]|[{{ g[-3] }}]|[{{ g[none] }}]|[{{ g['a'] }}]"),
+    ("slices", "{{ g[0:1] }}|{{ g[::-1] }}|{{ g[1:] }}|{{ g[5:] }}"),
+    ("slice_step_zero", "{{ g[::0] }}"),
+    ("slice_bad_bound", "{{ g[1.5:] }}"),
+    ("fields_and_list", "{{ g.grouper }}|{{ g.list }}|{{ g|list }}|{{ g|length }}"),
+]:
+    case("grouptuple/subscript_" + _n, _G + _src)
+case("subscript/safe_string_slice_stays_safe",
+     "{{ ('<b>x</b>'|safe)[0:3] }}|{{ ('<b>'|safe)[1] }}|{{ ('<b>'|safe)[::-1] }}|{{ '<b>'[0:2] }}|{{ '<b>'[1] }}",
+     __settings__={"autoescape": True})
+
+# A splatted `**` argument is folded with dict.update, which takes an iterable of
+# pairs where the unfolded call insists on a mapping; a repeated name replaces
+# the first, and a pair of the wrong length is left to the call to refuse.
+for _n, _arg in [
+    ("tuple_pair", "[('d', '-')]"),
+    ("list_pair", "[['d', '-']]"),
+    ("repeated_name", "[('d', '-'), ('d', '+')]"),
+    ("two_character_string_is_a_pair", "['dd']"),
+    ("tuple_of_pairs", "(('d', '-'),)"),
+    ("empty_list", "[]"),
+    ("dict", "{'d': '-'}"),
+    ("triple", "[('d', '-', 'x')]"),
+    ("single", "[('d',)]"),
+    ("not_a_pair", "[1]"),
+    ("one_character_string", "['a']"),
+    ("integer_key", "[(1, '-')]"),
+    ("a_string", "'ab'"),
+    ("none", "none"),
+    ("dict_items", "{'d': '-'}.items()"),
+]:
+    case("folding/kwargs_splat_" + _n, "{{ [1, 2]|join(**" + _arg + ") }}")
+    case("folding/kwargs_splat_runtime_" + _n, "{% set a = " + _arg + " %}{{ [1, 2]|join(**a) }}")
+
+# The index a {% filter %} block's TypeError names counts the pieces written to
+# the buffer it is in, and a {% call %} body is a buffer of its own.
+case("folding/filter_block_in_a_call_body_counts",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}ab{% filter length %}x{% endfilter %}{% endcall %}")
+case("folding/filter_block_in_a_call_body_counts_two",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}{{ 1 }}{{ 2 }}{% filter length %}x{% endfilter %}{% endcall %}")
+case("folding/filter_block_first_in_a_call_body",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}{% filter length %}x{% endfilter %}{% endcall %}")
+
+
+# A macro defined in a loop body reads the loop's variables from the loop's live
+# frame, as a Python closure reads a cell: the value at the moment it is called,
+# and jinja2's `missing` once the loop is over. gojja2 gives each iteration a
+# frame of its own, so a macro keeps the values it was defined with. Recorded in
+# docs/divergences.md.
+_MC = "{% set ns = namespace(f=[]) %}"
+case("divergence/macro_reads_the_loop_variable_after_the_loop",
+     _MC + "{% for i in [1, 2] %}{% macro m() %}{{ i }}{% endmacro %}{% set _ = ns.f.append(m) %}{% endfor %}"
+     "{{ ns.f[0]() }}|{{ ns.f[1]() }}")
+case("divergence/macro_reads_the_current_loop_value",
+     _MC + "{% for i in [1, 2] %}{% macro m() %}{{ i }}{% endmacro %}{% set _ = ns.f.append(m) %}"
+     "[{{ ns.f[0]() }}]{% endfor %}")
+case("divergence/macro_reads_a_body_set_after_the_loop",
+     _MC + "{% for i in [1, 2] %}{% set x = i * 10 %}{% macro m() %}{{ x }}{% endmacro %}"
+     "{% set _ = ns.f.append(m) %}{% endfor %}[{{ ns.f[0]() }}][{{ ns.f[1]() }}]")
+
+
+# A proxy over a str is that str as a key: it hashes to it and is equal to it, in
+# a dict small enough to scan and in one big enough to carry a string index.
+_BIG = "{'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'ab': 9}"
+case("dictview/proxy_of_scalar_string_key_meets_a_plain_one",
+     _PU + "{% set k = C('ab') %}{{ {'ab': 1}[k] }}|{{ k in {'ab': 1} }}|{{ {'ab': 1}.get(k) }}|"
+     "{{ {'ab': 1, k: 2} }}|{{ {k: 2, 'ab': 1} }}|{{ {k: 1}['ab'] }}|{{ 'ab' in {k: 1} }}|{{ {k: 1}.get('ab') }}")
+case("dictview/proxy_of_scalar_string_key_in_a_big_dict",
+     _PU + "{% set k = C('ab') %}{% set b = " + _BIG + " %}{{ b[k] }}|{{ k in b }}|{{ b.get(k) }}|"
+     "{% set c = " + _BIG + " %}{% set _ = c.update({k: 5}) %}{{ c['ab'] }}|{{ c|length }}|"
+     "{% set e = {'x': 1, k: 2} %}{{ e['ab'] }}|{{ e|length }}|"
+     "{% set g = {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, k: 9} %}"
+     "{{ g['ab'] }}|{{ 'ab' in g }}|{{ g.get('ab') }}|{{ g|length }}")
+case("dictview/proxy_of_scalar_string_key_deleted_as_the_plain_string",
+     _PU + "{% set k = C('ab') %}{% set e = {k: 1, 'x': 2} %}{{ e.pop('ab') }}|{{ e }}|{{ 'ab' in e }}|{{ e.get('ab') }}|"
+     "{{ e['x'] }}|{{ e|length }}|{% set _ = e.update({'ab': 3}) %}{{ e }}|"
+     "{% set f = {'ab': 1, 'x': 2} %}{{ f.pop(k) }}|{{ f }}|{{ k in f }}|{{ f['x'] }}")
+case("dictview/proxy_of_undefined_in_a_tuple_key_strict", _PU + "{{ {(C(nope), 1): 1} }}", __settings__=_STRICT)
+case("dictview/proxy_of_dict_in_a_tuple_key", _PU + "{{ {(C(d), 1): 1} }}")
+case("dictview/proxy_of_undefined_is_a_set_member_or_refused",
+     _PU + "{% set s = d.keys() - [] %}{% set m = C(nope) %}{{ s.add(m) }}|{{ m in s }}|{{ s|length }}|{{ s.discard(m) }}|"
+     "{{ s|length }}")
+
+# A range is hashed by the sequence it stands for, as it is compared.
+case("value/range_as_a_dict_key",
+     "{{ {range(3): 1}[range(0, 3, 1)] }}|{{ {range(3): 1, range(0, 3): 2}|length }}|{{ range(3) in {range(3): 1} }}|"
+     "{{ {range(0): 1, range(1, 1): 2}|length }}|{{ {range(0, 1, 2): 1, range(0, 1, 5): 2}|length }}|"
+     "{{ {range(0, 4, 2): 1, range(0, 3, 2): 2}|length }}|{{ [range(2), range(2)]|unique|list|length }}|"
+     "{{ {range(0, 6, 2): 1, range(0, 6, 3): 2}|length }}|{{ {range(3): 1}[range(4)] }}")
+case("value/range_as_a_set_member",
+     "{% set s = {'a': 1}.keys() - [] %}{{ s.add(range(3)) }}|{{ range(0, 3) in s }}|{{ s.add(range(3)) }}|{{ s|length }}|"
+     "{{ range(4) in s }}")
+
+# A literal dict with a key that cannot be hashed is refused at run time; folding
+# it must not turn it into something smaller.
+for _n, _src in [
+    ("list_key", "{{ {[1]: 2} }}"),
+    ("dict_key", "{{ {{}: 1} }}"),
+    ("tuple_key_holding_a_list", "{{ {(1, [2]): 3} }}"),
+    ("nested_value", "{{ {1: {[2]: 3}} }}"),
+    ("in_a_dead_branch", "{{ 'ok' if true else {[1]: 2} }}"),
+]:
+    case("folding/dict_literal_unhashable_" + _n, _src)
+
+# A literal sequence sliced by bounds only known at run time is not folded.
+_SB = "{% set n = 2 %}{% set m = 3 %}"
+for _n, _base in [
+    ("list", "[1, 2, 3, 4]"), ("string", "'abcd'"), ("tuple", "(1, 2, 3, 4)"), ("range", "range(5)"),
+]:
+    case("slice/const_base_run_time_bound_" + _n,
+         _SB + "{{ %s[:n] }}|{{ %s[n:] }}|{{ %s[::n] }}|{{ %s[n:m] }}|{{ %s[1:m:n] }}|{{ %s[-n:] }}"
+         % ((_base,) * 6))
+    case("slice/const_base_argument_bound_" + _n,
+         "{{ %s[:n] }}|{{ %s[n:] }}|{{ %s[::n] }}|{{ %s[n:m] }}|{{ %s[1:m:n] }}|{{ %s[-n:] }}"
+         % ((_base,) * 6), n=2, m=3)
+for _n, _base in [("dict", "{'a': 1}"), ("none", "none"), ("int", "5")]:
+    case("slice/const_base_run_time_bound_refused_" + _n, _SB + "{{ %s[:n] }}" % _base)
+case("slice/const_base_run_time_bound_bad_bound", "{% set n = 'x' %}{{ [1, 2, 3][:n] }}")
+case("slice/const_base_run_time_bound_undefined", "{{ [1, 2, 3][:nope] }}")
+case("slice/const_base_run_time_bound_undefined_strict", "{{ [1, 2, 3][:nope] }}", __settings__=_STRICT)
+
+# An {% autoescape %} whose flag is not known until run time is not folded
+# through: the literals inside it are escaped, or not, when it is.
+_AE = ("{{ '<b>' }}|{{ '<' ~ 'b' }}|{{ ['<']|join }}|{{ '<b>'|upper }}|{{ ('<b>'|safe)|upper }}|"
+       "{{ [1, '<']|join('&') }}|{{ {'a': '<'} }}|{{ 'a<'|replace('a', '&') }}")
+for _n, _flag in [
+    ("true", "a"), ("false", "b"), ("and", "a and b"), ("not", "not b"), ("string", "a|string"),
+    ("empty_list", "[]"), ("list", "[0]"), ("none", "none"),
+]:
+    case("escape/autoescape_block_run_time_flag_" + _n,
+         "{% set a = true %}{% set b = false %}{% autoescape " + _flag + " %}" + _AE + "{% endautoescape %}|{{ '<' }}")
+case("escape/autoescape_block_run_time_flag_nested",
+     "{% set a = true %}{% autoescape a %}{% autoescape false %}" + _AE + "{% endautoescape %}{{ '<' }}"
+     "{% endautoescape %}{{ '<' }}")
+case("escape/autoescape_block_run_time_flag_inner",
+     "{% set a = false %}{% autoescape true %}{% autoescape a %}{{ '<' }}{% endautoescape %}{{ '<' }}{% endautoescape %}")
+case("escape/autoescape_block_undefined_flag", "{% autoescape nope %}{{ '<' }}{% endautoescape %}")
+# Under StrictUndefined the flag's truth is asked where the body first escapes
+# something at run time, not at the tag. CPython therefore renders a body whose
+# output is empty or folded at compile time; gojja2 asks at the tag. A body that
+# escapes anything at run time raises in both. Recorded in docs/divergences.md.
+case("escape/autoescape_block_strict_flag_reaches_the_body",
+     "{% set x = '<' %}{% autoescape nope %}{{ x }}{% endautoescape %}", __settings__=_STRICT)
+case("escape/autoescape_block_strict_flag_reaches_raw_text",
+     "{% autoescape nope %}text{% endautoescape %}", __settings__=_STRICT)
+case("divergence/autoescape_flag_strict_folded_output",
+     "{% autoescape nope %}{{ '<' }}{% endautoescape %}", __settings__=_STRICT)
+case("divergence/autoescape_flag_strict_empty_body", "{% autoescape nope %}{% endautoescape %}",
+     __settings__=_STRICT)
+case("divergence/autoescape_flag_strict_folded_number", "{% autoescape nope %}{{ 1 }}{% endautoescape %}",
+     __settings__=_STRICT)
+case("escape/autoescape_block_undefined_flag_chainable", "{% autoescape nope.x %}{{ '<' }}{% endautoescape %}",
+     __settings__=_CHAIN)
+
+
 def main() -> int:
     if DST.exists():
         shutil.rmtree(DST)

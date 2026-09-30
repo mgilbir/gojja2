@@ -1,0 +1,3 @@
+{}
+---
+{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}ab{% filter length %}x{% endfilter %}{% endcall %}

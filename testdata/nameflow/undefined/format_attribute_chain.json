@@ -1,0 +1,6 @@
+{
+  "case": "undefined/format_attribute_chain.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

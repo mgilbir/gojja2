@@ -1,0 +1,6 @@
+{
+  "case": "dictview/proxy_of_undefined_as_a_key.jj2",
+  "variables": {
+    "nope": "ofr"
+  }
+}

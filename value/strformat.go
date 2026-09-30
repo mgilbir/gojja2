@@ -48,6 +48,11 @@ func FormatValue(v Value, spec string, py PythonVersion, budget Budget) (string,
 	if spec == "" {
 		// StrFor: an empty spec is str(), and a container's str() is its
 		// repr, which escapes by the interpreter's isprintable.
+		// StrictUndefined and what wraps one refuse: object.__format__
+		// with an empty spec is str(self).
+		if err := StrictRefusal(v); err != nil {
+			return "", err
+		}
 		return StrFor(v, py), nil
 	}
 	// A type with no __format__ of its own inherits object's, which takes

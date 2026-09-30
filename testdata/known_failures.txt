@@ -225,3 +225,22 @@ own/errors/break_in_recursive_loop_else.jj2  # likewise
 own/errors/break_in_macro.jj2                # likewise
 own/errors/break_in_block.jj2                # likewise
 own/errors/break_in_call_block.jj2           # likewise
+
+# --- a macro's view of the loop it was defined in ------------------------------
+# jinja2 compiles a loop body into the enclosing Python function, so a macro
+# defined there closes over the loop's variables as cells: it reads whatever
+# they hold when it is called, and `missing` (which prints as "missing") once
+# the loop has ended. gojja2 builds a frame per iteration, so the macro keeps
+# the value it was defined with. Matching it would mean modelling jinja2's code
+# generator rather than its language. See docs/divergences.md.
+own/divergence/macro_reads_the_loop_variable_after_the_loop.jj2   jinja2 prints "missing|missing"
+own/divergence/macro_reads_the_current_loop_value.jj2             the cell holds the current iteration's value
+own/divergence/macro_reads_a_body_set_after_the_loop.jj2          a body-assigned name is unbound after the loop
+
+# --- an {% autoescape %} flag that is a StrictUndefined ------------------------
+# jinja2 keeps the flag as it is and asks for its truth where a run-time output
+# escapes, so a body with nothing of the sort renders. gojja2 asks at the tag.
+# See docs/divergences.md.
+own/divergence/autoescape_flag_strict_folded_output.jj2   CPython renders "<"; the truth is never asked
+own/divergence/autoescape_flag_strict_empty_body.jj2      CPython renders nothing; the truth is never asked
+own/divergence/autoescape_flag_strict_folded_number.jj2   CPython renders "1"; the truth is never asked

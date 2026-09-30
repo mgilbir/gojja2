@@ -1,0 +1,3 @@
+{}
+---
+{% set a = false %}{% autoescape true %}{% autoescape a %}{{ '<' }}{% endautoescape %}{{ '<' }}{% endautoescape %}

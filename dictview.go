@@ -238,8 +238,18 @@ func (m *mappingProxy) GetItem(key value.Value) (value.Value, bool) {
 // it, as ContainsErr is: the plain Mapping interface can only say "no such
 // key", and that renders as nothing.
 func (m *mappingProxy) GetItemErr(key value.Value) (value.Value, bool, error) {
-	if m.d.IsUndefined() {
+	if m.d.IsUndefined() && m.d.UndefinedBehavior() != value.UndefinedChainable {
 		return value.Undefined, true, m.d.UndefinedError()
+	}
+	// A dict's own lookup can refuse: an unhashable key is a TypeError,
+	// which getitem catches and answers with an undefined, and a
+	// StrictUndefined key raises its own error, which it does not.
+	if d, ok := m.d.Dict(); ok {
+		v, found, err := d.Get(key, m.py)
+		if err != nil && errs.KindOf(err) != errs.TypeError {
+			return value.Undefined, false, err
+		}
+		return v, found && err == nil, nil
 	}
 	v, ok := m.GetItem(key)
 	return v, ok, nil
@@ -369,8 +379,37 @@ func (m *mappingProxy) Iterate() iter.Seq[value.Value] {
 }
 
 // Unhashable: a proxy hashes exactly as well as what it wraps, which is to say
-// `{{ m in d }}` is "unhashable type: 'dict'".
-func (m *mappingProxy) Unhashable() bool { return true }
+// `{{ m in d }}` is "unhashable type: 'dict'" over a dict and an ordinary
+// lookup over a string, a bytes, a range or an undefined. Before 3.12 the
+// proxy had no __hash__ of its own and was never hashable.
+func (m *mappingProxy) Unhashable() bool {
+	if !m.py.ProxyHashNamesTheMapping() {
+		return true
+	}
+	// A StrictUndefined behind it is not unhashable but refuses, which is
+	// what StrictRefusal reports.
+	err := value.Hashable(m.d, m.py, value.AsDictKey)
+	return err != nil && value.StrictRefusal(m.d) == nil
+}
+
+// HashesAs is the value a hashable proxy stands for as a key: its hash is the
+// wrapped object's, and it is equal to whatever that object is, so
+// `{mappingproxy('ab'): 1}['ab']` finds it. An undefined is the exception --
+// Undefined.__eq__ is `type(self) is type(other)` and the proxy hands the
+// comparison to it, so it is equal to nothing but itself, which the identity
+// of the proxy already says.
+func (m *mappingProxy) HashesAs() (value.Value, bool) {
+	if m.d.IsUndefined() {
+		return value.Undefined, false
+	}
+	return m.d, true
+}
+
+// StrictRefusal: str(), iter(), len(), bool(), ==, hash() and `in` of a proxy
+// are those of the mapping it wraps, so a proxy over a StrictUndefined raises
+// wherever the undefined would. `{{ mappingproxy(nope) }}` is the undefined
+// error, not an empty line.
+func (m *mappingProxy) StrictRefusal() error { return value.StrictRefusal(m.d) }
 
 func (m *mappingProxy) TypeName() string { return "mappingproxy" }
 
@@ -379,6 +418,10 @@ func (m *mappingProxy) TypeName() string { return "mappingproxy" }
 // dict key" half -- stays the proxy either way.
 func (m *mappingProxy) UnhashableAs() value.Value {
 	if m.py.ProxyHashNamesTheMapping() {
+		// A proxy of a proxy reaches through both.
+		if inner, ok := m.d.Interface().(*mappingProxy); ok {
+			return inner.UnhashableAs()
+		}
 		return m.d
 	}
 	return value.FromObject(m)
@@ -395,8 +438,15 @@ func (m *mappingProxy) Repr() string {
 // EqualsErr compares what is behind the proxy: `m == d` and `d == m` are both
 // True, because mappingproxy delegates __eq__ to the mapping it wraps.
 func (m *mappingProxy) EqualsErr(other value.Value, py value.PythonVersion) (bool, bool, error) {
-	if o, ok := other.Interface().(*mappingProxy); ok {
-		other = o.d
+	// Another proxy is compared through what it wraps only when what this
+	// one wraps hands the comparison back. A dict does (NotImplemented, then
+	// the reflected proxy compares its mapping), but an undefined answers
+	// for itself -- `type(self) is type(other)` -- and a proxy of a proxy
+	// repeats this very step, so neither may skip past the other's wrapper.
+	if o, ok := other.Interface().(*mappingProxy); ok && !m.d.IsUndefined() {
+		if _, nested := m.d.Interface().(*mappingProxy); !nested {
+			other = o.d
+		}
 	}
 	eq, err := value.EqualErr(m.d, other, py)
 	return eq, true, err

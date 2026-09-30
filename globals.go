@@ -280,6 +280,22 @@ func (r *rangeObject) Equals(other value.Value) (bool, bool) {
 	return r.length.Cmp(big.NewInt(1)) == 0 || rStep.Cmp(oStep) == 0, true
 }
 
+// HashKey is what a range is as a dict key or a set member, and it is exactly
+// what Equals compares: the sequence it stands for. Equal ranges hash alike --
+// every empty range is one key, a one-element range ignores its step -- so
+// `{range(3): 1}[range(0, 3, 1)]` finds the entry, where hashing by identity
+// found nothing and let `{range(3): 1, range(3): 2}` hold both.
+func (r *rangeObject) HashKey() (string, bool) {
+	if r.length.Sign() == 0 {
+		return "range:empty", true
+	}
+	start, _, step := r.bounds()
+	if r.length.Cmp(big.NewInt(1)) == 0 {
+		return "range:1:" + start.String(), true
+	}
+	return "range:" + r.length.String() + ":" + start.String() + ":" + step.String(), true
+}
+
 func (r *rangeObject) TypeName() string { return "range" }
 
 func (r *rangeObject) Repr() string {
@@ -470,9 +486,9 @@ func (j *joinerObject) GetAttr(name string) (value.Value, bool) {
 	}
 	return value.Undefined, false
 }
-func (j *joinerObject) TypeName() string                   { return "Joiner" }
-func (j *joinerObject) QualifiedName() string              { return "jinja2.utils.Joiner" }
-func (j *joinerObject) Repr() string                       { return pyObjectRepr(j.QualifiedName(), j) }
+func (j *joinerObject) TypeName() string      { return "Joiner" }
+func (j *joinerObject) QualifiedName() string { return "jinja2.utils.Joiner" }
+func (j *joinerObject) Repr() string          { return pyObjectRepr(j.QualifiedName(), j) }
 
 func (j *joinerObject) Call(args *value.CallArgs) (value.Value, error) {
 	if err := bindArgs(runtimeSignatures["Joiner.__call__"], args, 1); err != nil {

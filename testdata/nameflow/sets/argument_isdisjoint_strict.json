@@ -1,0 +1,6 @@
+{
+  "case": "sets/argument_isdisjoint_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

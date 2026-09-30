@@ -496,9 +496,6 @@ func (f *builtinFunc) className() string {
 }
 
 func (f *builtinFunc) GetAttr(name string) (value.Value, bool) {
-	if name == "name" {
-		return value.String(f.name), true
-	}
 	if f.class != "" {
 		// A type object answers the attributes classObject answers,
 		// because that is what it is.

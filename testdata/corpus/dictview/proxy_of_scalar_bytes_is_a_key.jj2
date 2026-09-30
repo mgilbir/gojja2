@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}{% set b = 'ab'.encode() %}{% set k = C(b) %}{{ {k: 1}|length }}|{{ {k: 1}[b] }}|{{ k in d }}

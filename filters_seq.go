@@ -97,6 +97,30 @@ func filterFirst(s *State, v value.Value, _ *value.CallArgs) (value.Value, error
 // reversible reports whether reversed() would accept the value: a sequence or
 // a mapping, which have the indexing reversed() walks backwards through, but
 // not an object that merely knows its length or how to yield its items.
+// proxyReversedRefusal is what reversed() of a mappingproxy raises when the
+// object it wraps has no __reversed__. mappingproxy_reversed calls the wrapped
+// object's, so a dict or a range answers and a string, bytes or Undefined does
+// not -- the last as a bare AttributeError, because Undefined.__getattr__
+// raises for a dunder name with the name alone -- and a proxy of a proxy asks
+// the next one down.
+func proxyReversedRefusal(v value.Value) error {
+	m, ok := v.Interface().(*mappingProxy)
+	if !ok {
+		return nil
+	}
+	if next, nested := m.d.Interface().(*mappingProxy); nested {
+		return proxyReversedRefusal(value.FromObject(next))
+	}
+	switch m.d.Kind() {
+	case value.KindUndefined:
+		return errs.New(errs.AttributeError, "__reversed__")
+	case value.KindString, value.KindBytes:
+		return errs.New(errs.AttributeError,
+			"'%s' object has no attribute '__reversed__'", m.d.TypeName())
+	}
+	return nil
+}
+
 func reversible(v value.Value) bool {
 	switch v.Kind() {
 	case value.KindString, value.KindBytes, value.KindList, value.KindTuple,
@@ -166,6 +190,9 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 	if !reversible(v) {
 		return value.Undefined, errs.New(errs.TypeError,
 			"'%s' object is not reversible", v.TypeName())
+	}
+	if err := proxyReversedRefusal(v); err != nil {
+		return value.Undefined, err
 	}
 	// reversed() of a sequence is __len__ and __getitem__, not a walk, so the
 	// last element of something indexable is answered without touching the
@@ -365,6 +392,9 @@ func filterReverse(s *State, v value.Value, _ *value.CallArgs) (value.Value, err
 			return value.Safe(out), nil
 		}
 		return value.String(out), nil
+	}
+	if err := proxyReversedRefusal(v); err != nil {
+		return value.Undefined, err
 	}
 	items, err := materializeOr(s, v, errs.New(errs.FilterArgumentError,
 		"argument must be iterable"))

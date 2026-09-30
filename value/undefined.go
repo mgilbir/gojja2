@@ -306,9 +306,26 @@ func ObjectTypeRepr(v Value) string {
 // already refuses whatever the class, and fails at its own site. So this is
 // the whole of the difference, and the operations above are the only ones that
 // have to ask.
+//
+// An object that wraps another value and forwards all five to it says so
+// through [StrictWrapper]: `mappingproxy(nope)` prints, iterates, measures and
+// compares by asking the StrictUndefined inside, and that raises.
 func StrictRefusal(v Value) error {
-	if v.kind == KindUndefined && v.undef().behavior == UndefinedStrict {
-		return v.UndefinedError()
+	switch v.kind {
+	case KindUndefined:
+		if v.undef().behavior == UndefinedStrict {
+			return v.UndefinedError()
+		}
+	case KindObject:
+		if w, ok := v.Interface().(StrictWrapper); ok {
+			return w.StrictRefusal()
+		}
 	}
 	return nil
+}
+
+// StrictWrapper is an Object whose behaviour is the behaviour of a value it
+// holds, so that the holder refuses whatever that value refuses.
+type StrictWrapper interface {
+	StrictRefusal() error
 }

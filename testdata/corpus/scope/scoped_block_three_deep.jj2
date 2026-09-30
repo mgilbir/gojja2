@@ -1,0 +1,5 @@
+{
+  "x": 5
+}
+---
+{% for i in [1] %}{% for j in [2] %}{% block b scoped %}{% for k in [3] %}{% block c scoped %}[{{ i }}{{ j }}{{ k }}]{% endblock %}{% endfor %}{% endblock %}{% endfor %}{% endfor %}

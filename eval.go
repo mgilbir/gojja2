@@ -533,7 +533,12 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 		v, ok, err := d.Get(key, ex.pyVersion())
 		if err != nil {
 			// An unhashable key is a TypeError, which getitem
-			// catches like any other: `{{ d[[]] }}` is empty.
+			// catches like any other: `{{ d[[]] }}` is empty. A
+			// StrictUndefined key is not one -- hashing it raises the
+			// undefined's own error, which getitem does not catch.
+			if errs.KindOf(err) != errs.TypeError {
+				return value.Undefined, err
+			}
 			return ex.st.Undefined(value.UndefinedElement(base, key)), nil
 		}
 		if ok {
@@ -922,6 +927,12 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.Python
 				return value.Undefined, err
 			}
 			return value.NewTuple(items...), nil
+		}
+		// A proxy subscripts what it wraps, and a slice is a subscript:
+		// `mappingproxy('abc')[1:]` is 'bc', and over a dict it is the
+		// dict's own KeyError for the slice.
+		if m, ok := base.Interface().(*mappingProxy); ok {
+			return sliceOf(m.d, startV, stopV, stepV, py)
 		}
 		if seq, ok := base.Interface().(value.Sequence); ok {
 			start, stop, step, err := indices()

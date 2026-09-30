@@ -438,13 +438,24 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	if err != nil {
 		return value.Undefined, err
 	}
-	d, ok := v.Dict()
-	if !ok {
+	var entries []value.DictEntry
+	if d, ok := v.Dict(); ok {
+		entries = d.Entries()
+	} else if m, isProxy := v.Interface().(pairSource); isProxy {
+		// `d.items()` of a proxy is the wrapped object's own items().
+		pairs, err := m.pairs(s, "items")
+		if err != nil {
+			return value.Undefined, err
+		}
+		for _, kv := range pairs {
+			entries = append(entries, value.DictEntry{Key: kv[0], Value: kv[1]})
+		}
+	} else {
 		return value.Undefined, itemsAttributeError(v)
 	}
 
 	var parts []string
-	for _, e := range d.Entries() {
+	for _, e := range entries {
 		if e.Value.IsNone() || e.Value.IsUndefined() {
 			continue
 		}

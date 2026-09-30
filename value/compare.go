@@ -105,7 +105,16 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 	// itself, cyclic or not, and this is what makes `a == a` terminate.
 	if a.kind == b.kind && a.obj != nil && a.obj == b.obj {
 		switch a.kind {
-		case KindList, KindTuple, KindDict, KindObject, KindFunc:
+		case KindObject:
+			// An object that decides equality for itself is asked, even
+			// about itself: `==` does not short-circuit on identity, and
+			// a mappingproxy over an Undefined is not equal to itself
+			// (the undefined compares `type(self) is type(other)`). The
+			// containers' identity check is EqualBool's, above.
+			if _, own := a.obj.(EqualerErr); !own {
+				return true, nil
+			}
+		case KindList, KindTuple, KindDict, KindFunc:
 			return true, nil
 		}
 	}
@@ -146,6 +155,14 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 		// `d == m` are both True. An object that has no opinion about
 		// the other operand -- a dict view asked about a dict -- says
 		// so and falls through.
+		// An undefined on the left answers for itself and never hands the
+		// comparison on: Undefined.__eq__ is `type(self) is type(other)`,
+		// which is False, not NotImplemented. `nope == m` is therefore
+		// False even for a proxy over an undefined, whose own __eq__ would
+		// have said True to a bare undefined.
+		if a.kind == KindUndefined {
+			return false, nil
+		}
 		if a.kind == KindObject || b.kind == KindObject {
 			if equal, known, err := statedEqual(a, b, py); err != nil || known {
 				return equal, err

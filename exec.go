@@ -6,6 +6,7 @@ package gojja2
 import (
 	"errors"
 	"iter"
+	"runtime"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -246,8 +247,8 @@ func (ex *exec) renderPrint(v value.Value) (string, error) {
 // renderValueRaw is str(v) with the Undefined class applied and no escaping:
 // what Python's str() does to a value, including raising for a StrictUndefined.
 func (ex *exec) renderValueRaw(v value.Value) (string, error) {
-	if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
-		return "", v.UndefinedError()
+	if err := value.StrictRefusal(v); err != nil {
+		return "", err
 	}
 	return value.StrFor(v, ex.pyVersion()), nil
 }
@@ -556,7 +557,6 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 	// including what it did to the list being walked, which is why the walk
 	// is live rather than over a snapshot.
 	nextItem, stop := iter.Pull(seq)
-	_ = stop
 	// The test runs between pulls and can resize the source, so the same
 	// guard the unfiltered loop gets applies here -- checked after every
 	// pull rather than once a pass, because a test that answers false
@@ -606,7 +606,15 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 			}
 		}
 	}
-	return &filteredSource{next: next, report: ex.st.noteLoopFailure}, nil
+	src := &filteredSource{next: next, report: ex.st.noteLoopFailure}
+	// The pull holds a coroutine, which is released only when the sequence
+	// runs out or stop is called. A loop that ends early -- `{% break %}`, or
+	// a body that raises -- leaves it parked for good, one per render. It is
+	// not stopped when the loop ends because the loop object can outlive the
+	// loop, and what it has not yet pulled is still its to pull; it is stopped
+	// once nothing can reach the source any more.
+	runtime.AddCleanup(src, func(stop func()) { stop() }, stop)
+	return src, nil
 }
 
 func (ex *exec) execAssign(n *ast.Assign) error {
@@ -852,13 +860,24 @@ func (ex *exec) execBlock(n *ast.Block) error {
 
 	ref := &blockReference{st: ex.st, name: n.Name, index: 0}
 	if n.Scoped {
-		// A scoped block is handed its immediate frame's own bindings
-		// -- the loop variable and `loop` -- on top of context.vars.
-		// It is not given the whole enclosing chain, so a name the root
-		// frame owns but has not assigned yet still resolves from the
-		// render arguments.
+		// A scoped block is handed the bindings of every enclosing
+		// frame -- loop variables and `loop` at each level, `with`
+		// targets, macro arguments -- on top of context.vars, nearest
+		// frame winning: jinja2 derives the context from
+		// Symbols.dump_stores, which walks the whole chain of frames.
+		// The root frame is left out, so a name it owns but has not
+		// assigned yet still resolves from the render arguments.
 		scoped := newScope(ex.st.contextVars)
-		ex.sc.each(scoped.set)
+		var frames []*scope
+		for cur := ex.sc; cur != nil && cur != ex.st.ctx; cur = cur.parent {
+			frames = append(frames, cur)
+		}
+		if len(frames) == 0 {
+			frames = append(frames, ex.sc)
+		}
+		for i := len(frames) - 1; i >= 0; i-- {
+			frames[i].each(scoped.set)
+		}
 		ref.sc = scoped
 	}
 	v, err := ref.render()

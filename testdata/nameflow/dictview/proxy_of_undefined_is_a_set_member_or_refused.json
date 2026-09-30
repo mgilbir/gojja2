@@ -1,0 +1,6 @@
+{
+  "case": "dictview/proxy_of_undefined_is_a_set_member_or_refused.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

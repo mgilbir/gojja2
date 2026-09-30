@@ -1525,6 +1525,9 @@ func convertAndFormat(st *State, v value.Value, conv, spec string) (string, erro
 		// StrFor beside ReprFor below: a container's str() *is* its
 		// repr, so `{!s}` of a list escapes by the interpreter's
 		// isprintable exactly as `{!r}` does.
+		if err := value.StrictRefusal(v); err != nil {
+			return "", err
+		}
 		v = value.String(value.StrFor(v, st.PythonVersion()))
 	case "r":
 		v = value.String(value.ReprFor(v, st.PythonVersion()))
@@ -1607,6 +1610,19 @@ func (a fieldAccessor) apply(v value.Value, py value.PythonVersion) (value.Value
 	if a.name == "" {
 		return value.Undefined, errs.New(errs.ValueError,
 			"Empty attribute in format string")
+	}
+
+	// An undefined answers every attribute itself: a name that looks like a
+	// dunder is a bare AttributeError under every class, ChainableUndefined
+	// hands back itself for the rest, and the others raise their own error.
+	if v.IsUndefined() {
+		if strings.HasPrefix(a.name, "__") && strings.HasSuffix(a.name, "__") {
+			return value.Undefined, errs.New(errs.AttributeError, "%s", a.name)
+		}
+		if v.UndefinedBehavior() == value.UndefinedChainable {
+			return v, nil
+		}
+		return value.Undefined, v.UndefinedError()
 	}
 
 	// Attribute access, with no item fall-back.
@@ -1694,6 +1710,9 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 	// An undefined defines __getitem__ and raises its own error from it, so
 	// it never reaches the subscriptability question.
 	if v.Kind() == value.KindUndefined {
+		if v.UndefinedBehavior() == value.UndefinedChainable {
+			return v, nil
+		}
 		return value.Undefined, v.UndefinedError()
 	}
 

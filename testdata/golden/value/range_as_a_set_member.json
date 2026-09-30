@@ -1,0 +1,11 @@
+{
+  "case": "value/range_as_a_set_member.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "None|True|None|2|False"
+}

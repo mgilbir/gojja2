@@ -1,0 +1,6 @@
+{
+  "case": "undefined/format_bare_dunder_attribute.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

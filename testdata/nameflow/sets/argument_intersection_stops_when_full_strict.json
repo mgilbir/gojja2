@@ -1,0 +1,6 @@
+{
+  "case": "sets/argument_intersection_stops_when_full_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}
