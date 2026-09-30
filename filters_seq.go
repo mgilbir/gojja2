@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -241,31 +242,11 @@ func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 		return s.Undefined(value.UndefinedHint("No random item, sequence was empty.")), nil
 	}
 	i := rand.IntN(n)
-	switch v.Kind() {
-	case value.KindDict:
-		d, _ := v.Dict()
-		item, ok, err := d.Get(value.Int(int64(i)), s.PythonVersion())
-		if err != nil {
-			return value.Undefined, err
-		}
-		if !ok {
-			return value.Undefined, errs.New(errs.KeyError, "%d", i)
-		}
-		return item, nil
-	case value.KindObject:
-		if m, ok := v.Interface().(value.Mapping); ok {
-			item, found := m.GetItem(value.Int(int64(i)))
-			if !found {
-				return value.Undefined, errs.New(errs.KeyError, "%d", i)
-			}
-			return item, nil
-		}
-	}
-	items, err := materialize(s, v)
-	if err != nil {
-		return value.Undefined, err
-	}
-	return items[i], nil
+	// random.choice is `seq[i]`, which is the subscript str.format's `{0[1]}`
+	// performs: an item where the value has items, a KeyError for a mapping
+	// that lacks the index, and "not subscriptable" for everything that has a
+	// length without them -- a set, a dict view, `loop`.
+	return fieldSubscript(v, strconv.Itoa(i), s.PythonVersion())
 }
 
 // filterJoin concatenates, escaping items when autoescaping so that a list of

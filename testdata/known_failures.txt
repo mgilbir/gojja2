@@ -98,6 +98,30 @@ own/errors/keyword_repeated_in_a_call_block.jj2   # likewise
 own/errors/keyword_repeated_among_three.jj2       # likewise
 own/errors/keyword_repeated_in_a_dead_branch.jj2  # likewise
 
+# --- a slice among several subscripts -----------------------------------------
+# `x[1:2, 3]`: jinja2 writes the slice out as `1:2` inside a tuple, so the module
+# it generates does not parse, and CPython's SyntaxError names a line of that
+# module. gojja2 refuses the template at the same point with the same class and
+# the same words, and the line of the template. TestSliceAmongSubscriptsIsRefused
+# pins the class and the words. A subscript of constants folds first and is an
+# exact match: fold/slice_among_subscripts_* grades that half.
+own/errors/slice_among_subscripts_beats_a_repeated_keyword.jj2    # CPython names a line of the generated module
+own/errors/slice_among_subscripts_both_slices.jj2                 # CPython names a line of the generated module
+own/errors/slice_among_subscripts_bound_is_a_name.jj2             # CPython names a line of the generated module
+own/errors/slice_among_subscripts_chained.jj2                     # CPython names a line of the generated module
+own/errors/slice_among_subscripts_empty_bounds.jj2                # CPython names a line of the generated module
+own/errors/slice_among_subscripts_folded_under_strict.jj2         # CPython names a line of the generated module
+own/errors/slice_among_subscripts_follows_a_repeated_keyword.jj2  # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_a_dead_branch.jj2            # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_a_loop.jj2                   # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_a_macro.jj2                  # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_a_set.jj2                    # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_an_if_test.jj2               # CPython names a line of the generated module
+own/errors/slice_among_subscripts_inside_a_subscript.jj2          # CPython names a line of the generated module
+own/errors/slice_among_subscripts_name.jj2                        # CPython names a line of the generated module
+own/errors/slice_among_subscripts_slice_last.jj2                  # CPython names a line of the generated module
+own/fold/slice_among_subscripts_attribute_of_it.jj2               # likewise: the attribute of an undefined raises, so it is left for the render
+
 # --- a builtin type's generic alias -------------------------------------------
 # Python 3.9 made a builtin type subscriptable as a *type annotation*, so
 # `dict['k']` is a types.GenericAlias whose repr is `dict['k']`, not a lookup.

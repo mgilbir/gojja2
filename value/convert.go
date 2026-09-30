@@ -6,6 +6,7 @@ package value
 import (
 	"fmt"
 	"iter"
+	"math"
 	"math/big"
 	"reflect"
 	"slices"
@@ -392,8 +393,12 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 
 func compareReflectKeys(a, b reflect.Value) int {
 	ka, kb := FromGo(a.Interface()), FromGo(b.Interface())
-	if ord, ok := compareNumbers(ka, kb); ok && ka.IsNumber() && kb.IsNumber() {
-		return ord
+	// Only two numbers have a numeric order: compareNumbers reads an integer
+	// out of anything that is not a float, and a string has none.
+	if ka.IsNumber() && kb.IsNumber() {
+		if ord, ok := compareNumbers(ka, kb); ok {
+			return ord
+		}
 	}
 	sa, sb := Str(ka), Str(kb)
 	switch {
@@ -688,6 +693,30 @@ type methodObject struct {
 
 func (m *methodObject) GetAttr(string) (Value, bool) { return Undefined, false }
 
+// exactNumeric converts a template number to the numeric type a Go method
+// takes, when that loses nothing: a template's integer is an int64 and its
+// float a float64, so a method taking an int, a uint8 or a float32 could
+// otherwise never be called. A value the type cannot hold exactly -- 300 for a
+// uint8, 1.5 for an int -- is left as it was and refused by the caller.
+func exactNumeric(got reflect.Value, want reflect.Type) reflect.Value {
+	numeric := func(k reflect.Kind) bool {
+		return k >= reflect.Int && k <= reflect.Float64 && k != reflect.Uintptr
+	}
+	if !numeric(got.Kind()) || !numeric(want.Kind()) {
+		return got
+	}
+	conv := got.Convert(want)
+	if got.CanFloat() && math.IsNaN(got.Float()) {
+		return conv
+	}
+	// Lossless means it comes back as it went: 300 for a uint8 is 44, 2.5 for
+	// an int is 2, and -1 for a uint is a large positive number.
+	if conv.Convert(got.Type()).Interface() != got.Interface() {
+		return got
+	}
+	return conv
+}
+
 func (m *methodObject) Call(args *CallArgs) (Value, error) {
 	t := m.fn.Type()
 	if t.NumIn() != len(args.Pos) || len(args.Kwargs) > 0 {
@@ -698,6 +727,9 @@ func (m *methodObject) Call(args *CallArgs) (Value, error) {
 	for i, a := range args.Pos {
 		want := t.In(i)
 		got := reflect.ValueOf(ToGo(a))
+		if got.IsValid() && !got.Type().AssignableTo(want) {
+			got = exactNumeric(got, want)
+		}
 		if !got.IsValid() || !got.Type().AssignableTo(want) {
 			return Undefined, errs.New(errs.TypeError,
 				"%s(): argument %d is not a %s", m.name, i+1, want)

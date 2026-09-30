@@ -943,6 +943,9 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	// After all of those: a repeated keyword is CPython refusing the module
 	// jinja2 generated, which happens once the generator has finished, so
 	// anything the generator itself refuses comes first.
+	if folder.parseRefusal != nil {
+		return nil, folder.parseRefusal
+	}
 	if folder.lateRefusal != nil {
 		return nil, folder.lateRefusal
 	}

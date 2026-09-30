@@ -865,6 +865,9 @@ type blockReference struct {
 	// sc is the scope the block should render in; nil means the template
 	// context, which is the unscoped default.
 	sc *scope
+	// chunks is the piece count of the stream a {% block %} tag renders into;
+	// nil for a reference that joins the pieces into a value first.
+	chunks *int
 }
 
 // GetAttr answers `super`, which is the next definition of the same block --
@@ -949,6 +952,13 @@ func (b *blockReference) render() (value.Value, error) {
 		blockName:  b.name,
 		blockIndex: b.index,
 		blockScope: b.sc,
+	}
+	// A block body is a buffer of its own, and counts its pieces when the
+	// template it was written in has a filter block to number them for.
+	if b.chunks != nil {
+		ex.chunks = b.chunks
+	} else if entry.tmpl.countsChunks {
+		ex.chunks = new(int)
 	}
 	prev := b.st.tmpl
 	b.st.tmpl = entry.tmpl

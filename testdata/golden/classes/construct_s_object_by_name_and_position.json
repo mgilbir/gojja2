@@ -1,0 +1,14 @@
+{
+  "case": "classes/construct_s_object_by_name_and_position.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "argument for str() given by name ('object') and position (1)"
+  }
+}

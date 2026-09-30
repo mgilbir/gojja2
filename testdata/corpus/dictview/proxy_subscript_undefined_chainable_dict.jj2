@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{% set C = {'a': 1}.keys().mapping.__class__ %}{% set p = C(nope) %}{{ dict(p) }}

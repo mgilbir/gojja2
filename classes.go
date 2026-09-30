@@ -437,36 +437,31 @@ func constructFloat(s *State, args *value.CallArgs) (value.Value, error) {
 // call: a codec gojja2 does not implement diverges in exactly one place rather
 // than two, and the handler wordings are already graded there.
 func constructStr(s *State, args *value.CallArgs) (value.Value, error) {
-	pos, err := bindConversionArgs(s.PythonVersion(), "str", "object", args, 3)
+	got, err := bindConversionArgs(s.PythonVersion(), "str", "object", args, 3)
 	if err != nil {
 		return value.Undefined, err
 	}
-	if len(pos) == 0 {
+	if !got.hasObject {
 		return value.String(""), nil
 	}
-	if len(pos) == 1 {
+	if !got.hasEncoding && !got.hasErrors {
 		// strictStr rather than value.Str: a StrictUndefined refuses to
 		// become a string, and that refusal is what the template sees.
-		text, err := strictStrFor(pos[0], s.PythonVersion())
+		text, err := strictStrFor(got.object, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
 		return value.String(text), nil
 	}
-	// CPython checks the encoding's own type before it looks at the subject.
-	if !pos[1].IsString() {
-		return value.Undefined, errs.New(errs.TypeError,
-			"str() argument 'encoding' must be str, not %s", pos[1].TypeName())
-	}
 	switch {
-	case pos[0].Kind() == value.KindBytes:
-		return methodDecode(s, pos[0], &value.CallArgs{Pos: pos[1:]})
-	case pos[0].IsString():
+	case got.object.Kind() == value.KindBytes:
+		return methodDecode(s, got.object, got.codecArgs())
+	case got.object.IsString():
 		return value.Undefined, errs.New(errs.TypeError,
 			"decoding str is not supported")
 	}
 	return value.Undefined, errs.New(errs.TypeError,
-		"decoding to str: need a bytes-like object, %s found", pos[0].TypeName())
+		"decoding to str: need a bytes-like object, %s found", got.object.TypeName())
 }
 
 // constructMarkup is str() with the result marked safe. Markup does not escape
@@ -695,24 +690,36 @@ func constructSet(s *State, args *value.CallArgs) (value.Value, error) {
 // constructBytes is bytes(), bytes(count), bytes(iterable of ints) and
 // bytes(str, encoding[, errors]).
 func constructBytes(s *State, args *value.CallArgs) (value.Value, error) {
-	pos, err := bindConversionArgs(s.PythonVersion(), "bytes", "source", args, 3)
+	got, err := bindConversionArgs(s.PythonVersion(), "bytes", "source", args, 3)
 	if err != nil {
 		return value.Undefined, err
 	}
-	if len(pos) == 0 {
+	if !got.hasObject {
+		switch {
+		case got.hasEncoding:
+			return value.Undefined, errs.New(errs.TypeError,
+				"encoding without a string argument")
+		case got.hasErrors:
+			return value.Undefined, errs.New(errs.TypeError,
+				"errors without a string argument")
+		}
 		return value.Bytes(nil), nil
 	}
-	if len(pos) > 1 {
-		if !pos[1].IsString() {
-			return value.Undefined, errs.New(errs.TypeError,
-				"bytes() argument 'encoding' must be str, not %s",
-				pos[1].TypeName())
-		}
-		if !pos[0].IsString() {
+	pos := []value.Value{got.object}
+	if got.hasEncoding {
+		if !got.object.IsString() {
 			return value.Undefined, errs.New(errs.TypeError,
 				"encoding without a string argument")
 		}
-		return methodEncode(s, pos[0], &value.CallArgs{Pos: pos[1:]})
+		return methodEncode(s, got.object, got.codecArgs())
+	}
+	if got.hasErrors {
+		if got.object.IsString() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"string argument without an encoding")
+		}
+		return value.Undefined, errs.New(errs.TypeError,
+			"errors without a string argument")
 	}
 	built, done, err := value.ConstructBytes(pos[0])
 	if done {
@@ -743,20 +750,30 @@ func constructBytes(s *State, args *value.CallArgs) (value.Value, error) {
 	return value.Bytes(make([]byte, b.Int64())), nil
 }
 
+// conversionArgs is what str() and bytes() were given, by slot. A slot is
+// either given or not: str(errors='strict') has no object and no encoding, and
+// a placeholder in their place is an argument the caller never wrote.
+type conversionArgs struct {
+	// object is str's object and bytes's source.
+	object, encoding, errors value.Value
+	// given says which of the three were supplied.
+	hasObject, hasEncoding, hasErrors bool
+}
+
 // bindConversionArgs binds str's and bytes's shared (object, encoding, errors)
 // signature, which unlike the others does accept its parameters by keyword.
-func bindConversionArgs(py value.PythonVersion, name, first string, args *value.CallArgs, most int) ([]value.Value, error) {
+func bindConversionArgs(py value.PythonVersion, name, first string, args *value.CallArgs, most int) (conversionArgs, error) {
 	names := []string{first, "encoding", "errors"}
-	pos := append([]value.Value(nil), args.Pos...)
-	if len(pos) > most {
+	var got conversionArgs
+	if len(args.Pos) > most {
 		// bytes kept the older arity wording when int and str changed
 		// it, so the two halves of this signature moved apart in 3.13.
 		// Generalising them together is wrong, and was.
 		if name == "bytes" {
-			return nil, errs.New(errs.TypeError,
-				"bytes() takes at most %d arguments (%d given)", most, len(pos))
+			return got, errs.New(errs.TypeError,
+				"bytes() takes at most %d arguments (%d given)", most, len(args.Pos))
 		}
-		return nil, clinicArity(py, name, most, len(pos))
+		return got, clinicArity(py, name, most, len(args.Pos))
 	}
 	// With a keyword present CPython counts *every* argument against the
 	// maximum and reports that before it looks at any name: `int(s, 2,
@@ -765,26 +782,52 @@ func bindConversionArgs(py value.PythonVersion, name, first string, args *value.
 	// the count rather than `nope`. The positional-only overflow above keeps
 	// its own wording, which is where the two halves of this signature moved
 	// apart in 3.13 -- so this is a third case and not a rewrite of that one.
-	if n := len(pos) + len(args.Kwargs); len(args.Kwargs) > 0 && n > most {
-		return nil, errs.New(errs.TypeError,
+	if n := len(args.Pos) + len(args.Kwargs); len(args.Kwargs) > 0 && n > most {
+		return got, errs.New(errs.TypeError,
 			"%s() takes at most %d arguments (%d given)", name, most, n)
+	}
+	slots := [3]*value.Value{&got.object, &got.encoding, &got.errors}
+	has := [3]*bool{&got.hasObject, &got.hasEncoding, &got.hasErrors}
+	for i, v := range args.Pos {
+		*slots[i], *has[i] = v, true
 	}
 	for _, kw := range args.Kwargs {
 		i := slices.Index(names, kw.Name)
 		if i < 0 {
-			return nil, clinicKeyword(py, name, kw.Name)
+			return got, clinicKeyword(py, name, kw.Name)
 		}
-		if i < len(pos) {
-			return nil, errs.New(errs.TypeError,
+		if i < len(args.Pos) {
+			return got, errs.New(errs.TypeError,
 				"argument for %s() given by name ('%s') and position (%d)",
 				name, kw.Name, i+1)
 		}
-		for len(pos) < i {
-			pos = append(pos, value.Undefined)
-		}
-		pos = append(pos, kw.Value)
+		*slots[i], *has[i] = kw.Value, true
 	}
-	return pos, nil
+	// The two text arguments are typed before anything is done with the
+	// object, encoding first, whichever way they were passed.
+	if got.hasEncoding && !got.encoding.IsString() {
+		return got, errs.New(errs.TypeError,
+			"%s() argument 'encoding' must be str, not %s", name, got.encoding.TypeName())
+	}
+	if got.hasErrors && !got.errors.IsString() {
+		return got, errs.New(errs.TypeError,
+			"%s() argument 'errors' must be str, not %s", name, got.errors.TypeName())
+	}
+	return got, nil
+}
+
+// codecArgs is the (encoding, errors) pair for decode() or encode(), with the
+// encoding CPython falls back on when only errors was given.
+func (a conversionArgs) codecArgs() *value.CallArgs {
+	enc := value.String("utf-8")
+	if a.hasEncoding {
+		enc = a.encoding
+	}
+	pos := []value.Value{enc}
+	if a.hasErrors {
+		pos = append(pos, a.errors)
+	}
+	return &value.CallArgs{Pos: pos}
 }
 
 // Equals compares type objects by the class they name.

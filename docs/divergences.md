@@ -39,6 +39,7 @@ are safety controls rather than behavioural choices, and they live in
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
 | [A keyword written twice in one call](#a-keyword-written-twice-in-one-call) | both refuse it; the wording differs | No -- only the message differs |
 | [A break or a continue that binds to no loop](#a-break-or-a-continue-that-binds-to-no-loop) | both refuse it; the wording differs | No -- only the message differs |
+| [A slice among several subscripts](#a-slice-among-several-subscripts) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
 | [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | Only `self is iterable`, which answers differently |
@@ -275,6 +276,43 @@ propagated out of the call and broke the loop the macro was *called* from, so
 ```
 
 rendered nothing here and would not compile under CPython.
+
+### A slice among several subscripts
+
+```jinja
+{% set l = [1, 2, 3] %}{{ l[1:2, 3] }}
+```
+
+CPython raises `SyntaxError: invalid syntax (<template>, line 15)`. jinja2 writes
+a slice out as `start:stop:step`, and only a subscript that holds one alone puts
+that inside brackets; among several it comes out as `(1:2, 3)`, which Python's
+parser refuses. As with [a repeated parameter
+name](#a-macro-with-a-repeated-parameter-name), the line is a line of the
+generated module and there is no module here to name one of.
+
+gojja2 refuses the template too, with CPython's class and words and the line of
+the template, and stops there:
+
+```
+SyntaxError: invalid syntax
+```
+
+Where the refusal sits is jinja2's. It is a *parse* error, so it beats a compile
+error such as [a repeated keyword](#a-keyword-written-twice-in-one-call) whichever
+was written first, and it comes after the generator's own refusals, so a missing
+filter is named before it. A dead `{% if %}` branch and a macro body are
+generated too, so they are refused. A subscript of constants never reaches the
+generator: the print folds, `Environment.getitem` swallows the `TypeError`, and
+the answer is an undefined -- which prints as nothing, or as
+`{{ no such element: list object[(slice(1, 2, None), 3)] }}` under
+`DebugUndefined`. `fold/slice_among_subscripts_*` grades that half and it is an
+exact match; the refusals are admitted in `testdata/known_failures.txt`, and
+`TestSliceAmongSubscriptsIsRefused` pins their class and words.
+
+This was a *behavioural* divergence until the refusal was added: the template
+compiled and failed at render time with `a slice is only valid inside a
+subscript`, a message that exists nowhere in CPython, and the constant forms
+failed too where CPython renders them.
 
 ### Complex numbers
 

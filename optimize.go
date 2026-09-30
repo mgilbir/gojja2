@@ -233,9 +233,42 @@ func (f *constFolder) check(e ast.Expr) {
 	if f.dep.err != nil {
 		f.c.refusal = f.dep.err
 	}
+	if f.c.parseRefusal == nil {
+		f.c.parseRefusal = misplacedSlice(e, f.c.name, f.c.source)
+	}
 	if f.c.lateRefusal == nil {
 		f.c.lateRefusal = repeatedKeyword(e, f.c.name, f.c.source)
 	}
+}
+
+// misplacedSlice reports the first subscript in an expression that has a slice
+// among several: `x[1:2, 3]`.
+//
+// jinja2 writes a slice out as `start:stop:step` and only the subscript that
+// holds it alone puts that inside brackets; in a tuple it comes out as
+// `(1:2, 3)`, which Python cannot parse. It is a SyntaxError out of the
+// generated module, and a parse error at that, so it beats a compile error such
+// as a repeated keyword whatever order they were written in. Constants never
+// get here: a subscript of constants folded to an undefined first.
+func misplacedSlice(e ast.Expr, name, source string) error {
+	var refusal error
+	ast.Inspect(e, func(n ast.Node) bool {
+		if refusal != nil {
+			return false
+		}
+		g, ok := n.(*ast.Getitem)
+		if !ok {
+			return true
+		}
+		if t, ok := g.Arg.(*ast.Tuple); ok && hasSlice(t) {
+			err := errs.New(errs.SyntaxError, "invalid syntax")
+			err.Line, err.Name, err.Source = n.Line(), name, source
+			refusal = err
+			return false
+		}
+		return true
+	})
+	return refusal
 }
 
 // repeatedKeyword reports the first call, filter or test in an expression that
@@ -843,6 +876,20 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 			}
 			return c.constGetSlice(base, slice)
 		}
+		// A slice among several subscripts is a slice object inside the
+		// tuple getitem is handed -- `x[1:2, 3]` -- and no constant can be
+		// indexed by that: Environment.getitem swallows the TypeError or
+		// the KeyError into an undefined naming the whole tuple.
+		if tup, isTuple := n.Arg.(*ast.Tuple); isTuple && hasSlice(tup) {
+			keyRepr, ok := c.constSliceTuple(tup)
+			if !ok {
+				return value.Undefined, false
+			}
+			if base.IsUndefined() {
+				return c.chainOrDefer(base)
+			}
+			return value.UndefinedSubscript(base, keyRepr), true
+		}
 		key, ok := c.constEval(n.Arg)
 		if !ok {
 			return value.Undefined, false
@@ -1120,6 +1167,10 @@ type constEvaluator struct {
 	// whole module has been written, and every refusal the generator itself
 	// makes wins. It is kept aside for that reason and reported last.
 	lateRefusal error
+	// parseRefusal is a SyntaxError of the other kind, one Python's parser
+	// raises before its compiler gets to see anything, and so before the
+	// compiler's own. See misplacedSlice.
+	parseRefusal error
 }
 
 // refuse records a refusal that must end the compile, and reports the
@@ -1502,6 +1553,49 @@ func constIndex(base, key value.Value) (value.Value, bool) {
 		return value.Int(int64(raw[idx])), true
 	}
 	return value.Undefined, false
+}
+
+// hasSlice reports whether a subscript's tuple carries a slice, which jinja2's
+// parser wraps around anything that is not exactly one subscript.
+func hasSlice(t *ast.Tuple) bool {
+	for _, item := range t.Items {
+		if _, ok := item.(*ast.Slice); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// constSliceTuple spells the constant tuple a multi-subscript hands to getitem
+// as Python's repr does, and reports false when any part of it is not
+// constant. Slice.as_const and Tuple.as_const both ask that of every part.
+func (c *constEvaluator) constSliceTuple(t *ast.Tuple) (string, bool) {
+	parts := make([]string, len(t.Items))
+	for i, item := range t.Items {
+		slice, isSlice := item.(*ast.Slice)
+		if !isSlice {
+			v, ok := c.constEval(item)
+			if !ok {
+				return "", false
+			}
+			parts[i] = value.Repr(v)
+			continue
+		}
+		var bounds [3]string
+		for j, e := range []ast.Expr{slice.Start, slice.Stop, slice.Step} {
+			bounds[j] = "None"
+			if e == nil {
+				continue
+			}
+			v, ok := c.constEval(e)
+			if !ok {
+				return "", false
+			}
+			bounds[j] = value.Repr(v)
+		}
+		parts[i] = "slice(" + strings.Join(bounds[:], ", ") + ")"
+	}
+	return "(" + strings.Join(parts, ", ") + ")", true
 }
 
 // constSliceBounds reports whether every bound a slice carries is constant,

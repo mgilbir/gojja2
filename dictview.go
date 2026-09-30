@@ -255,6 +255,69 @@ func (m *mappingProxy) GetItemErr(key value.Value) (value.Value, bool, error) {
 	return v, ok, nil
 }
 
+// Subscript is `proxy[key]` where nothing catches the failure: the lookups
+// `%`, str.format and format_map make, which take what the wrapped object says.
+// [mappingProxy.GetItem] can only answer "no such key", and that is the wrong
+// complaint for everything but a dict -- a string is indexed by integers, so
+// `'%(a)s' % mappingproxy('ab')` is a TypeError about string indices, and an
+// undefined raises its own error whatever the key is.
+func (m *mappingProxy) Subscript(key value.Value) (value.Value, error) {
+	miss := func() (value.Value, error) {
+		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, m.py))
+	}
+	if m.d.IsUndefined() {
+		if m.d.UndefinedBehavior() == value.UndefinedChainable {
+			return m.d, nil
+		}
+		return value.Undefined, m.d.UndefinedError()
+	}
+	if d, ok := m.d.Dict(); ok {
+		v, found, err := d.Get(key, m.py)
+		if err != nil {
+			return value.Undefined, err
+		}
+		if !found {
+			return miss()
+		}
+		return v, nil
+	}
+	switch m.d.Kind() {
+	case value.KindString:
+		if !key.IsInteger() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"string indices must be integers, not '%s'", key.TypeName())
+		}
+		if v, ok := m.GetItem(key); ok {
+			return v, nil
+		}
+		return value.Undefined, errs.New(errs.IndexError, "string index out of range")
+	case value.KindBytes:
+		if !key.IsInteger() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"byte indices must be integers or slices, not %s", key.TypeName())
+		}
+		if v, ok := m.GetItem(key); ok {
+			return v, nil
+		}
+		return value.Undefined, errs.New(errs.IndexError, "index out of range")
+	}
+	if seq, ok := m.d.Interface().(value.Sequence); ok {
+		if !key.IsInteger() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s indices must be integers or slices, not %s", m.d.TypeName(), key.TypeName())
+		}
+		if v, in := value.SequenceItem(seq, key); in {
+			return v, nil
+		}
+		return value.Undefined, errs.New(errs.IndexError,
+			"%s object index out of range", m.d.TypeName())
+	}
+	if v, ok := m.GetItem(key); ok {
+		return v, nil
+	}
+	return miss()
+}
+
 func (m *mappingProxy) Keys() []value.Value {
 	if d, ok := m.d.Dict(); ok {
 		out := make([]value.Value, 0, d.Len())

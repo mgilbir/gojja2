@@ -1,0 +1,10 @@
+{
+  "v": "V",
+  "__settings__": {
+    "extensions": [
+      "do"
+    ]
+  }
+}
+---
+{% macro k(x) %}x{{ v }}y{% filter length %}abc{% endfilter %}{% endmacro %}{% set l = [2, 1] %}{% do l.sort(key=k) %}

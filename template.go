@@ -114,7 +114,7 @@ func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[strin
 		putWriter(bw)
 	}()
 	defer catchPanic(&err)
-	return t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env))
+	return t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env), nil)
 }
 
 // renderGo is Render and RenderString's shared path.
@@ -132,7 +132,7 @@ func (t *Template) renderGo(ctx context.Context, w io.Writer, vars map[string]an
 	defer catchPanic(&err)
 	st := t.newState(nil, 0, newBudget(ctx, t.env))
 	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, t.env.methods, st
-	return t.renderState(st, &stringWriter{w: bw})
+	return t.renderState(st, &stringWriter{w: bw}, nil)
 }
 
 // writerPool holds the output buffers between renders.
@@ -192,14 +192,20 @@ var ErrInternal = errors.New("gojja2: internal error")
 // `{% include %}` renders into a fresh State, so a counter that started at
 // zero each time would never fire and a self-including template would take the
 // stack out instead.
-func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int, b *budget) error {
-	return t.renderState(t.newState(vars, depth, b), out)
+func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int, b *budget, chunks *int) error {
+	return t.renderState(t.newState(vars, depth, b), out, chunks)
 }
 
 // renderState runs a prepared state, which is where the two entry points meet.
-func (t *Template) renderState(st *State, out writer) error {
-	ex := &exec{st: st, sc: st.ctx, out: out, stream: out, autoescape: st.autoescape}
-	if t.countsChunks {
+//
+// chunks is the piece count of the stream this render is part of, when it is
+// part of one: an {% include %} yields its pieces into the includer's stream in
+// jinja2, so a filter block inside it is numbered from where the includer had
+// got to. Nil starts a count of its own, for a template that has a filter block
+// to number.
+func (t *Template) renderState(st *State, out writer, chunks *int) error {
+	ex := &exec{st: st, sc: st.ctx, out: out, stream: out, autoescape: st.autoescape, chunks: chunks}
+	if ex.chunks == nil && t.countsChunks {
 		ex.chunks = new(int)
 	}
 

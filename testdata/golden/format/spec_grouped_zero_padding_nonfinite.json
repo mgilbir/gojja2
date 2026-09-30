@@ -1,0 +1,11 @@
+{
+  "case": "format/spec_grouped_zero_padding_nonfinite.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "00000000000000000inf|00000000000000000inf|00000000000000000inf|00000000000000000inf|0000000000000000inf%|-                inf|00000000000000000nan|00000000000000000nan|nan                 |"
+}

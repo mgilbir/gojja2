@@ -1716,6 +1716,13 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 		return value.Undefined, v.UndefinedError()
 	}
 
+	// An object that can say why a subscript failed does: a proxy over a
+	// string is refused by *type*, not by a missing key.
+	if sub, ok := v.Interface().(interface {
+		Subscript(value.Value) (value.Value, error)
+	}); ok {
+		return sub.Subscript(key)
+	}
 	// An object may still define __getitem__; anything else is not
 	// subscriptable at all, which is a different complaint from a miss.
 	if item, ok := lookupItem(v, key, py); ok {

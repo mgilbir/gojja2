@@ -90,7 +90,10 @@ func (ex *exec) capture(sc *scope, fn func(*exec) error) (string, error) {
 	sub.sc = sc
 	sub.out = &buf
 	sub.chunks = nil
-	if ex.chunks != nil {
+	// The template whose code runs in the buffer decides, and not only the
+	// frame it was called from: a macro imported from a template that has a
+	// filter block is counted although its caller's template has none.
+	if ex.chunks != nil || (ex.st.tmpl != nil && ex.st.tmpl.countsChunks) {
 		sub.chunks = new(int)
 	}
 	if err := fn(&sub); err != nil {
@@ -123,13 +126,19 @@ func (ex *exec) chunkCount() int {
 // writeTo is write aimed somewhere other than this frame's output, which only
 // a context-free {% include %} needs.
 func (ex *exec) writeTo(w writer, s string) error {
-	if err := ex.st.budget.account(len(s)); err != nil {
-		return err
-	}
 	// The nil check first: it is almost always nil, and comparing two
 	// interface values is not free on a path that runs once per write.
 	if ex.chunks != nil && w == ex.out {
 		*ex.chunks++
+	}
+	return ex.writeToUncounted(w, s)
+}
+
+// writeToUncounted is writeTo for text whose pieces were already counted, as
+// the output of an include or a block is by the frame that rendered it.
+func (ex *exec) writeToUncounted(w writer, s string) error {
+	if err := ex.st.budget.account(len(s)); err != nil {
+		return err
 	}
 	_, err := w.WriteString(s)
 	return err
@@ -329,12 +338,14 @@ func bodyRetainsScope(body []ast.Stmt) bool {
 	return false
 }
 
-// hasFilterBlock reports whether body contains a {% filter %} anywhere, which
-// is the only construct that asks how many pieces of output a frame holds.
+// hasFilterBlock reports whether body contains a construct that needs to know
+// how many pieces of output the frame holds: a {% filter %}, which asks, and an
+// {% include %} or {% extends %}, whose template may contain one and is
+// numbered from where this frame had got to.
 func hasFilterBlock(body []ast.Stmt) bool {
 	for _, stmt := range body {
 		switch n := stmt.(type) {
-		case *ast.FilterBlock:
+		case *ast.FilterBlock, *ast.Include, *ast.Extends:
 			return true
 		case *ast.For:
 			if hasFilterBlock(n.Body) || hasFilterBlock(n.Else) {
@@ -880,11 +891,15 @@ func (ex *exec) execBlock(n *ast.Block) error {
 		}
 		ref.sc = scoped
 	}
+	// The tag yields the block's pieces into this frame's stream, so the block
+	// counts into this frame's count -- unlike self.b() or super(), which
+	// join their pieces into a value first.
+	ref.chunks = ex.chunks
 	v, err := ref.render()
 	if err != nil {
 		return err
 	}
-	return ex.write(value.Str(v))
+	return ex.writeToUncounted(ex.out, value.Str(v))
 }
 
 func (ex *exec) execExtends(n *ast.Extends) error {
@@ -933,7 +948,10 @@ func (ex *exec) execInclude(n *ast.Include) error {
 		}
 	}
 	var buf strings.Builder
-	if err := tmpl.renderInto(&buf, vars, ex.st.depth, ex.st.budget); err != nil {
+	// jinja2 yields an include's pieces into the includer's own stream, so
+	// they are counted there: the included template numbers a filter block
+	// from where this frame had got to, and advances the count as it goes.
+	if err := tmpl.renderInto(&buf, vars, ex.st.depth, ex.st.budget, ex.chunks); err != nil {
 		return err
 	}
 	// A context-free include writes into the enclosing *function's* stream
@@ -942,7 +960,7 @@ func (ex *exec) execInclude(n *ast.Include) error {
 	if !n.WithContext {
 		target = ex.stream
 	}
-	return ex.writeTo(target, buf.String())
+	return ex.writeToUncounted(target, buf.String())
 }
 
 // loadTemplateName resolves a single template name, refusing a list.
@@ -1083,7 +1101,7 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 	// is why an include of the same template was right and an import of it
 	// was not.
 	var body strings.Builder
-	if err := tmpl.renderState(st, &body); err != nil {
+	if err := tmpl.renderState(st, &body, nil); err != nil {
 		return value.Undefined, err
 	}
 	return value.FromObject(&moduleObject{st: st, name: tmpl.name, body: body.String()}), nil

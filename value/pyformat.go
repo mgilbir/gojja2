@@ -238,6 +238,13 @@ func lookupFormatKey(mapping Value, key Value) (Value, error) {
 		}
 		return Undefined, mapping.UndefinedError()
 	case KindObject:
+		// An object that can say why a subscript failed does: a proxy over a
+		// string is refused by *type*, not by a missing key.
+		if sub, ok := mapping.Interface().(interface {
+			Subscript(Value) (Value, error)
+		}); ok {
+			return sub.Subscript(key)
+		}
 		if m, ok := mapping.Interface().(Mapping); ok {
 			v, ok := m.GetItem(key)
 			if !ok {
@@ -355,8 +362,9 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 		}
 	}
 
-	// Length modifiers are accepted and ignored, as in Python.
-	for i < len(spec) && strings.IndexByte("hlL", spec[i]) >= 0 {
+	// One length modifier is accepted and ignored, as in Python: `%ld` is
+	// `%d`, and `%lld` is an unsupported 'l'.
+	if i < len(spec) && strings.IndexByte("hlL", spec[i]) >= 0 {
 		i++
 	}
 

@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "do"
+    ]
+  }
+}
+---
+{% set d = {'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10} %}{% set e = dict(d) %}{% do e.pop('a') %}{% do e.update(k=1) %}{{ d|length }}|{{ e|length }}|{{ e['k'] }}

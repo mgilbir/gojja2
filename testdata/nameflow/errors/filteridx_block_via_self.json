@@ -1,0 +1,7 @@
+{
+  "case": "errors/filteridx_block_via_self.jj2",
+  "variables": {
+    "self": "or",
+    "v": "o"
+  }
+}

@@ -3349,6 +3349,59 @@ _FILTERIDX = [
 for _n, _src in _FILTERIDX:
     case(f"errors/filteridx_{_n}", _src, v="V")
 
+# The count belongs to the buffer the filter block writes into, and so to the
+# template whose code is running: a block body is a buffer of its own, and a
+# macro imported from a template with a filter block counts although the
+# template that calls it has none. Both used to say 0.
+_FI_BODY = "x{{ v }}y{% filter length %}abc{% endfilter %}"
+_FI_LIB = {"lib.txt": "{% macro m() %}" + _FI_BODY + "{% endmacro %}"}
+_FI_BASE = {"base.txt": "[{% block b %}p{% endblock %}]"}
+for _n, _src, _tpl in [
+    ("block_after_text", "{% block b %}" + _FI_BODY + "{% endblock %}", None),
+    ("block_alone", "{% block b %}{% filter length %}abc{% endfilter %}{% endblock %}", None),
+    ("block_in_a_child",
+     "{% extends 'base.txt' %}{% block b %}" + _FI_BODY + "{% endblock %}", _FI_BASE),
+    ("block_after_super",
+     "{% extends 'base.txt' %}{% block b %}{{ super() }}y{% filter length %}abc{% endfilter %}{% endblock %}",
+     _FI_BASE),
+    ("block_in_the_parent",
+     "{% extends 'base.txt' %}{% block b %}c{% endblock %}",
+     {"base.txt": "{% block b %}p{% endblock %}z{{ v }}{% filter length %}abc{% endfilter %}"}),
+    ("block_in_a_scoped_block",
+     "{% for i in [1] %}{% block b scoped %}q{{ i }}{% filter length %}abc{% endfilter %}{% endblock %}{% endfor %}",
+     None),
+    ("imported_macro", "{% import 'lib.txt' as l %}{{ l.m() }}", _FI_LIB),
+    ("from_imported_macro", "{% from 'lib.txt' import m %}{{ m() }}", _FI_LIB),
+    ("imported_macro_result_kept", "{% import 'lib.txt' as l %}{% set r = l.m() %}{{ r }}", _FI_LIB),
+    ("imported_macro_from_a_block",
+     "{% import 'lib.txt' as l %}{% block b %}{{ l.m() }}{% endblock %}", _FI_LIB),
+    ("imported_macro_with_context", "{% import 'lib.txt' as l with context %}{{ l.m() }}", _FI_LIB),
+    ("imported_call_block",
+     "{% import 'lib.txt' as l %}{% call l.m() %}c{% endcall %}", _FI_LIB),
+    ("included", "{% include 'lib.txt' %}", {"lib.txt": _FI_BODY}),
+    ("included_after_text", "q{% include 'lib.txt' %}", {"lib.txt": _FI_BODY}),
+    ("call_block_body",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}" + _FI_BODY + "{% endcall %}", None),
+    ("macro_defined_here_called_in_a_block",
+     "{% macro m() %}" + _FI_BODY + "{% endmacro %}{% block b %}{{ m() }}{% endblock %}", None),
+    ("macro_as_a_sort_key",
+     "{% macro k(x) %}" + _FI_BODY + "{% endmacro %}{% set l = [2, 1] %}{% do l.sort(key=k) %}", None),
+    # What follows a block or an include is numbered from where it left off.
+    ("block_then_filter",
+     "{% block b %}x{{ v }}y{% endblock %}{% filter length %}abc{% endfilter %}", None),
+    ("include_then_filter",
+     "q{% include 'lib.txt' %}{% filter length %}abc{% endfilter %}", {"lib.txt": "x{{ v }}y"}),
+    # A block reached as a value has a buffer of its own.
+    ("block_via_self", "{{ self.b() }}{% block b %}" + _FI_BODY + "{% endblock %}", None),
+    ("block_super_reaches_a_filter",
+     "{% extends 'base.txt' %}{% block b %}{{ super() }}{% endblock %}",
+     {"base.txt": "{% block b %}" + _FI_BODY + "{% endblock %}"}),
+]:
+    _hdr = {"__settings__": {"extensions": ["do"]}} if "sort" in _n else {}
+    if _tpl:
+        _hdr["__templates__"] = _tpl
+    case(f"errors/filteridx_{_n}", _src, v="V", **_hdr)
+
 
 # --- errors -------------------------------------------------------------------
 # PySlice_Unpack converts the *step* first and refuses a zero one there, before
@@ -9914,6 +9967,266 @@ case("divergence/autoescape_flag_strict_folded_number", "{% autoescape nope %}{{
      __settings__=_STRICT)
 case("escape/autoescape_block_undefined_flag_chainable", "{% autoescape nope.x %}{{ '<' }}{% endautoescape %}",
      __settings__=_CHAIN)
+
+
+# --- a coverage-guided pass over the value layer ------------------------------
+# Shapes a template reaches that no case graded, found by asking `go tool cover`
+# what the corpus never ran and then asking CPython what each one does.
+
+# A slice among several subscripts. jinja2 writes a slice out as `start:stop:step`
+# and only the subscript holding it alone puts that inside brackets; among
+# several it comes out as `(1:2, 3)`, which Python cannot parse. So it is a
+# SyntaxError out of the generated module -- unless the whole print folds first,
+# and then getitem swallows the TypeError into an undefined. The refusal is a
+# *parse* error, which beats a compile error such as a repeated keyword.
+_SLICE_AMONG = [
+    ("name", "{% set l = [1, 2, 3] %}{{ l[1:2, 3] }}"),
+    ("empty_bounds", "{% set l = [1, 2, 3] %}{{ l[:, 1] }}"),
+    ("both_slices", "{% set l = [1, 2, 3] %}{{ l[:, ::] }}"),
+    ("slice_last", "{% set d = {'a': 1} %}{{ d['a', 1:2] }}"),
+    ("bound_is_a_name", "{% set y = 1 %}{{ [1, 2, 3][1:y, 3] }}"),
+    ("chained", "{% set l = [[1]] %}{{ l[0:1, 3][0:1, 4] }}"),
+    ("inside_a_subscript", "{% set l = [[1]] %}{{ l[l[0:1, 3]] }}"),
+    ("in_a_loop", "{% for i in [1] %}{{ i[0:1, 3] }}{% endfor %}"),
+    ("in_an_if_test", "{% if [1][0:1, 3] %}x{% endif %}"),
+    ("in_a_set", "{% set x = [1, 2, 3][1:2, 3] %}{{ x }}"),
+    ("in_a_dead_branch", "{% if false %}{{ z[1:2, 3] }}{% endif %}ok"),
+    ("in_a_macro", "{% macro m() %}{{ z[1:2, 3] }}{% endmacro %}ok"),
+    ("beats_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{% set l = [1] %}{{ m(a=1, a=2) }}{{ l[1:2, 3] }}"),
+    ("follows_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{% set l = [1] %}{{ l[1:2, 3] }}{{ m(a=1, a=2) }}"),
+]
+for _n, _src in _SLICE_AMONG:
+    case("errors/slice_among_subscripts_" + _n, _src)
+case("errors/slice_among_subscripts_folded_under_strict", "{{ [1, 2, 3][1:2, 3] }}",
+     __settings__={"undefined": "strict"})
+# The generator's own refusals come first, whichever order they were written in.
+case("fold/order_a_lookup_beats_a_slice_among_subscripts",
+     "{% set l = [1] %}{{ l[1:2, 3] }}{{ 1|nosuchS }}")
+case("fold/order_a_slice_among_subscripts_beats_nothing_later",
+     "{{ 1|nosuchS }}{% set l = [1] %}{{ l[1:2, 3] }}")
+# A subscript of constants is folded to the undefined getitem makes of it.
+for _n, _src in [
+    ("list", "[{{ [1, 2, 3][1:2, 3] }}]"),
+    ("string", "[{{ 'abc'[:, 'x', 3.5] }}]"),
+    ("dict", "[{{ {'a': 1}[1:2, 3] }}]"),
+    ("markup", "[{{ ('a'|e)[1:2, 3] }}]"),
+    ("with_a_default", "{{ [1, 2, 3][1:2, 3]|default('d') }}"),
+    ("is_defined", "{{ [1, 2, 3][1:2, 3] is defined }}"),
+    ("concatenated", "{{ [1, 2, 3][1:2, 3] ~ 'a' }}"),
+    ("negative_bounds_stringified", "{{ [1, 2][-1:1, 'k']|string }}"),
+    ("under_a_condition", "{{ 1 if [1, 2, 3][1:2, 3] else 2 }}"),
+    ("attribute_of_it", "{{ [1, 2, 3][1:2, 3].x }}"),
+]:
+    case("fold/slice_among_subscripts_" + _n, _src)
+for _n, _src in [
+    ("list", "{{ [1, 2, 3][1:2, 3] }}"),
+    ("string", "{{ 'abc'[:, 'x', 3.5] }}"),
+    ("markup", "{{ ('a'|e)[1:2, 3] }}"),
+    ("stringified", "{{ [1, 2][-1:1, 'k']|string }}"),
+    ("concatenated", "{{ [1, 2, 3][1:2, 3] ~ 'a' }}"),
+]:
+    case("fold/slice_among_subscripts_debug_" + _n, _src, __settings__={"undefined": "debug"})
+case("fold/slice_among_subscripts_chainable", "{{ [1, 2, 3][1:2, 3].x.y }}|{{ [1, 2, 3][1:2, 3][0] }}",
+     __settings__={"undefined": "chainable"})
+
+# `%ld` is `%d`: one length modifier is skipped, and only one.
+case("format/percent_length_modifier_skipped",
+     "{% set v = 5 %}{% set f = 1.5 %}{{ '%ld|%hd|%Ld|%li|%lf|%Lf|%hu' % (v, v, v, v, f, f, v) }}")
+for _n, _fmt in [("ll", "%lld"), ("hh", "%hhd"), ("lh", "%lhd"), ("l_then_f", "%llf")]:
+    case("format/percent_length_modifier_twice_" + _n, "{% set v = 5 %}{{ '" + _fmt + "' % v }}")
+case("format/percent_key_with_nested_parentheses",
+     "{% set d = {'a(b)': 1, 'c(d(e))': 2} %}{{ '%(a(b))s|%(c(d(e)))s' % d }}")
+case("format/percent_key_unbalanced_parentheses",
+     "{% set d = {'a(b': 1} %}{{ '%(a(b)s' % d }}")
+case("format/percent_capital_F", "{% set v = 1.5 %}{{ '%F|%.0F|%#.0F|%10.2F' % (v, v, v, v) }}")
+case("format/percent_precision_pads_a_wide_integer",
+     "{% set v = 10 ** 20 %}{{ '%.30d|%.30i|%.25u|%+.25d|%030.25d|%.30d' % (v, v, v, v, v, -v) }}")
+case("format/percent_precision_pads_a_small_integer", "{% set v = 5 %}{{ '%.30d|%.3d|%-8.4d|' % (v, v, v) }}")
+case("format/spec_grouped_zero_padding_exponent",
+     "{% set f = 1e20 %}{{ '{:030,.0e}|{:030,.2e}|{:030,g}|{:030_.0e}|{:030,E}'.format(f, f, f, f, f) }}"
+     "|{% set g = 1e-7 %}{{ '{:030,g}'.format(g) }}")
+case("format/spec_grouped_zero_padding_radix",
+     "{% set n = 255 %}{{ '{:#030_x}|{:#030_X}|{:#030_b}|{:#030_o}|{:030_x}'.format(n, n, n, n, n) }}")
+case("format/spec_grouped_zero_padding_nonfinite",
+     "{% set i = (range(1)|first + 1e308) * 10 %}{% set n = i - i %}"
+     "{{ '{:020,}|{:020,f}|{:020_.2f}|{:020,e}|{:020,%}|{:=20,}'.format(i, i, i, i, i, -i) }}"
+     "|{{ '{:020,.2f}|{:020,}|{:<20,}|'.format(n, n, n) }}")
+
+# A tuple that reaches itself through a list marks itself as the tuple it is.
+_DO = {"extensions": ["do"]}
+case("repr/recursive_tuple_through_a_list",
+     "{% set l = [] %}{% set t = (l,) %}{% do l.append(t) %}{{ t }}|{{ '%r' % [t] }}|{{ '%a' % (t,) }}|{{ l }}",
+     __settings__=_DO)
+case("repr/recursive_tuple_through_a_dict",
+     "{% set d = {} %}{% set t = (d,) %}{% do d.update({'k': t}) %}{{ t }}|{{ d }}", __settings__=_DO)
+# ascii() escapes what a groupby group renders for itself, at each width.
+for _n, _ch in [("latin1", 0xE9), ("bmp", 0x4E2D), ("astral", 0x1F600), ("replacement", 0xFFFD)]:
+    case("repr/ascii_of_a_group_" + _n,
+         "{% set g = [{'k': '" + chr(_ch) + "'}]|groupby('k') %}{{ '%a' % [g[0]] }}|{{ '%a' % (g[0],) }}|{{ '%r' % [g[0]] }}")
+
+# A dict past the size that builds a string index, copied and then changed.
+_D10 = "{% set d = {'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10} %}"
+case("value/dict_copy_past_the_index_size",
+     _D10 + "{% set e = d.copy() %}{% do e.update({'z': 1}) %}{% do e.pop('a') %}"
+     "{{ d|length }}|{{ e|length }}|{{ 'a' in d }}|{{ 'a' in e }}|{{ e['z'] }}|{{ d['j'] }}", __settings__=_DO)
+case("value/dict_constructor_past_the_index_size",
+     _D10 + "{% set e = dict(d) %}{% do e.pop('a') %}{% do e.update(k=1) %}{{ d|length }}|{{ e|length }}|{{ e['k'] }}",
+     __settings__=_DO)
+# A callable is a key that hashes by identity.
+case("value/callable_as_a_dict_key",
+     "{% macro m() %}{% endmacro %}{{ {m: 1}|length }}|{{ {m: 1}[m] }}|{{ m in {m: 1} }}|{{ {lipsum: 1}|length }}"
+     "|{{ lipsum in {lipsum: 1} }}|{{ {namespace: 1}|length }}|{{ {cycler: 1}|length }}|{{ {m: 1, lipsum: 2}|length }}")
+# A set walked only as far as its first item.
+_S1 = "{% set s = {'a': 1}.keys() - 'x' %}"
+for _n, _src in [
+    ("first", "{{ s|first }}"), ("batch_first", "{{ s|batch(1)|first }}"),
+    ("slice_first", "{{ s|slice(1)|first|first }}"), ("map_first", "{{ s|map('string')|first }}"),
+    ("select_first", "{{ s|select|first }}"), ("unique_first", "{{ s|unique|first }}"),
+    ("loop_break", "{% for x in s %}{{ x }}{% break %}{% endfor %}"),
+]:
+    case("sets/walk_stops_early_" + _n, _S1 + _src, __settings__={"extensions": ["loopcontrols"]})
+# A range slice with no step is refused whatever its width.
+for _n, _src in [
+    ("small", "{{ range(10)[::0] }}"), ("wide", "{% set r = range(2 ** 70) %}{{ r[::0] }}"),
+    ("wide_bounded", "{% set r = range(2 ** 70) %}{{ r[1:5:0] }}"),
+]:
+    case("slice/range_step_zero_" + _n, _src)
+# A class names its module.
+case("classes/module_of_a_class",
+     "{{ (1).__class__.__module__ }}|{{ ''.__class__.__module__ }}|{{ ('a'|e).__class__.__module__ }}"
+     "|{{ [].__class__.__module__ }}|{{ ('a'|e).__class__.__qualname__ }}")
+case("classes/mappingproxy_of_a_group",
+     "{% set C = {'a': 1}.keys().mapping.__class__ %}{% set g = [{'k': 1}]|groupby('k') %}{{ C(g[0]) }}")
+
+# str() and bytes() take encoding and errors by keyword, in any combination, and
+# an argument that was not given is not an undefined one.
+_CONV = ("{% set S = ''.__class__ %}{% set B = 'a'.encode().__class__ %}"
+         "{% set b = 'a" + chr(0xE9) + "'.encode('latin-1') %}")
+for _cls, _srcs in [("S", ["b", "'a'", "5", "none", "nope", "[1]"]),
+                    ("B", ["'a'", "b", "5", "none", "nope", "'" + chr(0xE9) + "'"])]:
+    for _si, (_sn, _src) in enumerate(zip("bstinl" if _cls == "S" else "sbtinu", _srcs)):
+        for _kn, _kw in [
+            ("plain", ""), ("enc", ", 'utf8'"), ("enc_err", ", 'utf8', 'strict'"),
+            ("kw_errors", ", errors='strict'"), ("kw_encoding", ", encoding='utf8'"),
+            ("kw_both", ", encoding='utf8', errors='strict'"),
+            ("kw_both_reversed", ", errors='strict', encoding='utf8'"),
+            ("errors_replace", ", errors='replace'"), ("errors_not_str", ", errors=5"),
+            ("pos_errors_not_str", ", 'utf8', 5"), ("encoding_not_str", ", encoding=5"),
+            ("ascii_replace", ", 'ascii', 'replace'"),
+        ]:
+            # Past the two subjects the codec accepts, the answer is the same
+            # refusal whichever way the arguments are spelt; keep the spellings
+            # that reach a different check.
+            if _si >= 2 and _kn not in ("plain", "kw_errors", "kw_both", "pos_errors_not_str"):
+                continue
+            case("classes/construct_%s_%s_%s" % (_cls.lower(), _sn, _kn),
+                 _CONV + "{{ %s(%s%s) }}" % (_cls, _src, _kw))
+    for _kn, _kw in [
+        ("none", ""), ("encoding", "encoding='utf8'"), ("errors", "errors='strict'"),
+        ("both", "encoding='utf8', errors='strict'"), ("both_reversed", "errors='strict', encoding='utf8'"),
+        ("errors_not_str", "errors=5"), ("encoding_not_str", "encoding=5"),
+        ("object_by_name", "object=b" if _cls == "S" else "source='a'"),
+        ("object_and_encoding_by_name",
+         "object=b, encoding='utf8'" if _cls == "S" else "source='a', encoding='utf8'"),
+        ("object_by_name_and_position",
+         "b, object=b" if _cls == "S" else "'a', source='a'"),
+    ]:
+        case("classes/construct_%s_%s" % (_cls.lower(), _kn), _CONV + "{{ %s(%s) }}" % (_cls, _kw))
+
+# random.choice is `seq[i]`: a value with a length and no subscript is refused,
+# and `loop` used to be an internal error.
+_R = "{% set d = {'a': 1} %}"
+for _n, _src in [
+    ("dict_keys", _R + "{{ d.keys()|random }}"), ("dict_values", _R + "{{ d.values()|random }}"),
+    ("dict_items", _R + "{{ d.items()|random }}"),
+    ("set", "{% set s = {'a': 1}.keys() - 'x' %}{{ s|random }}"),
+    ("loop", "{% for x in [1] %}{{ loop|random }}{% endfor %}"),
+]:
+    case("errors/random_not_subscriptable_" + _n, _src)
+case("filters/random_of_an_empty_view_or_set",
+     "{% set d = {} %}[{{ d.keys()|random }}][{{ d.items()|random }}][{{ ({'a': 1}.keys() - 'a')|random }}]")
+case("filters/random_of_a_proxy_by_index",
+     "{% set C = {'a': 1}.keys().mapping.__class__ %}{{ C({0: 5})|random }}")
+case("errors/random_of_a_proxy_missing_the_index",
+     "{% set C = {'a': 1}.keys().mapping.__class__ %}{{ C({'a': 5})|random }}")
+
+
+# A mappingproxy forwards its subscript to what it wraps, so `%`, str.format and
+# format_map -- which take the failure as it comes -- get the wrapped object's own
+# complaint: a string is indexed by integers, an undefined raises whatever the
+# key is, a range names itself. The first three answered a KeyError for all of
+# them. Each consumer below is a different door into the same subscript, and the
+# second table reads the wrapped value as a mapping through the ones that walk it.
+_PXY = "{% set C = {'a': 1}.keys().mapping.__class__ %}"
+_WRAPPED = [("str", "'ab'"), ("bytes", "'ab'.encode()"), ("undefined", "nope"),
+            ("range", "range(3)"), ("dict", "{'a': 1}"), ("nested", "C({'a': 1})")]
+for _wn, _w in _WRAPPED:
+    for _cn, _c in [
+        ("percent_name", "{{ '%(a)s' % p }}"), ("percent_index", "{{ '%(0)s' % p }}"),
+        ("format_index", "{{ '{0[1]}'.format(p) }}"), ("format_past_the_end", "{{ '{0[9]}'.format(p) }}"),
+        ("format_name", "{{ '{0[a]}'.format(p) }}"), ("format_map", "{{ '{a}'.format_map(p) }}"),
+    ]:
+        case("dictview/proxy_subscript_%s_%s" % (_wn, _cn), _PXY + "{% set p = C(" + _w + ") %}" + _c)
+    for _cn, _c in [
+        ("list", "{{ p|list }}"), ("length", "{{ p|length }}"), ("first", "{{ p|first }}"),
+        ("contains", "{{ 'a' in p }}|{{ 0 in p }}"), ("loop", "{% for k in p %}{{ k }},{% endfor %}"),
+        ("dict", "{{ dict(p) }}"), ("items", "{{ p|items|list }}"), ("keys", "{{ p.keys()|list }}"),
+        ("dictsort", "{{ p|dictsort }}"), ("join", "{{ p|join(',') }}"),
+    ]:
+        case("dictview/proxy_walk_%s_%s" % (_wn, _cn), _PXY + "{% set p = C(" + _w + ") %}" + _c)
+for _u in ("strict", "chainable"):
+    for _cn, _c in [
+        ("percent_name", "{{ '%(a)s' % p }}"), ("format_index", "{{ '{0[1]}'.format(p) }}"),
+        ("format_map", "{{ '{a}'.format_map(p) }}"), ("list", "{{ p|list }}"), ("dict", "{{ dict(p) }}"),
+    ]:
+        case("dictview/proxy_subscript_undefined_%s_%s" % (_u, _cn),
+             _PXY + "{% set p = C(nope) %}" + _c, __settings__={"undefined": _u})
+
+
+# A filter block in an `elif` body is counted like any other. (What a macro or a
+# call block there keeps of its loop's iteration is pinned by
+# loop_scope_reuse_test.go: what it sees once the loop has moved on is a
+# documented divergence, so CPython cannot grade it.)
+case("errors/filteridx_in_an_elif",
+     "x{% if false %}{% elif true %}{% filter length %}abc{% endfilter %}{% endif %}")
+case("errors/filteridx_in_a_second_elif",
+     "x{{ v }}{% if false %}{% elif false %}{% elif true %}{% filter length %}abc{% endfilter %}{% endif %}", v="V")
+
+# A subscript that a str or a list cannot take falls back to the attribute of
+# that name, which is how Environment.getitem reads `x['upper']`.
+case("subscript/string_key_falls_back_to_a_method",
+     "{{ 'abc'['upper']() }}|{{ [3, 1, 2]['index'](1) }}|{{ (1, 2)['count'](2) }}|{{ 'a-b'['split']('-') }}")
+case("subscript/string_key_falls_back_to_an_attribute_or_nothing",
+     "[{{ 'abc'['nope'] }}]|[{{ [1]['nope'] }}]|{{ [1]['append'] is defined }}|{{ 'abc'['upper'] is callable }}")
+
+# markupsafe's % takes numbers through int() and float(), and a string through
+# their parsers: whitespace trims, underscores separate digits, nothing else.
+_MUP = [
+    ("precision_pads_a_small_integer", "{% set v = 5 %}{{ ('%.30d|%.3d|%+.4i|% .6u'|safe) % (v, v, v, v) }}"),
+    ("precision_pads_a_wide_integer", "{% set v = 10 ** 20 %}{{ ('%.30d'|safe) % v }}|{{ ('%.30d'|safe) % -v }}"),
+    ("precision_pads_a_truncated_float", "{% set v = 5.7 %}{{ ('%.4d'|safe) % v }}"),
+    ("precision_pads_a_bool", "{% set v = true %}{{ ('%.4d'|safe) % v }}"),
+    ("int_of_a_blank_string", "{% set v = ' ' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_an_empty_string", "{% set v = '' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_padded_string", "{% set v = ' 12 ' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_an_underscored_string", "{% set v = '1_0' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_doubled_underscore", "{% set v = '1__0' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_float_string", "{% set v = '1.5' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_an_arabic_digit", "{% set v = '" + chr(0x663) + "' %}{{ ('%d'|safe) % v }}"),
+    ("float_of_a_blank_string", "{% set v = ' ' %}{{ ('%f'|safe) % v }}"),
+    ("float_of_an_empty_string", "{% set v = '' %}{{ ('%e'|safe) % v }}"),
+    ("float_of_an_underscored_string", "{% set v = '1_0.5' %}{{ ('%f'|safe) % v }}"),
+    ("int_of_none", "{% set v = none %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_list", "{% set v = [1] %}{{ ('%d'|safe) % v }}"),
+    ("int_of_an_undefined", "{% set v = nope %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_blank_string_among_others", "{% set v = ' ' %}{{ ('%s|%d'|safe) % ('a', v) }}"),
+]
+for _n, _src in _MUP:
+    case("markup/percent_" + _n, _src)
+case("markup/percent_int_of_an_undefined_strict", "{% set v = nope %}{{ ('%d'|safe) % v }}",
+     __settings__={"undefined": "strict"})
 
 
 def main() -> int:

@@ -137,6 +137,15 @@ func UndefinedElement(owner, key Value) Value {
 	}}
 }
 
+// UndefinedSubscript is UndefinedElement for a key that has no Value: the tuple
+// `(slice(1, 2, None), 3)` a subscript like `x[1:2, 3]` would hand to
+// getitem. The caller spells the key the way Python's repr does.
+func UndefinedSubscript(owner Value, keyRepr string) Value {
+	return Value{kind: KindUndefined, obj: &undefinedInfo{
+		keyRepr: keyRepr, hasKey: true, owner: ObjectTypeRepr(owner),
+	}}
+}
+
 // UndefinedSlice returns the undefined produced by a slice the container will
 // not take: `{{ "ab"[1:"x"] }}`. The key is a Python slice object, which has
 // no Value here, so it is rendered as Python reprs one -- every bound present,
