@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "do"
+    ]
+  }
+}
+---
+{% do 1 %}{% do 'x'|upper %}{% do [1,2]|length %}[end]

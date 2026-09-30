@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "default"
+  }
+}
+---
+{% autoescape true %}{% set v | map(attribute='x')|first %}{% endset %}{% endautoescape %}

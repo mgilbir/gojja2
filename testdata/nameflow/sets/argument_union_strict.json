@@ -1,0 +1,6 @@
+{
+  "case": "sets/argument_union_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

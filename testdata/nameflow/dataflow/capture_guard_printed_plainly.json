@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/capture_guard_printed_plainly.jj2",
+  "variables": {
+    "c": "f"
+  }
+}

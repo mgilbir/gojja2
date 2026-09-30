@@ -1,0 +1,3 @@
+{}
+---
+{{ 1 is le 1 }}|{{ 1 is le 2 }}|{{ 2 is le 1 }}|{{ 'a' is le 'b' }}|{{ 1.0 is le 1 }}|{{ [1] is le [1] }}|{{ none is le none }}|{{ 1 is le(1) }}

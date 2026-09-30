@@ -11,11 +11,17 @@ import (
 
 // Set is Python's set, as far as a template can reach one.
 //
-// Only one operation produces it: the difference of a dict's keys or items view
-// with an iterable. jinja2's grammar has no `&` or `^`, and `|` is the filter
-// operator, so `d.keys() - xs` is the whole of the set arithmetic a template can
-// write -- and `set - list` is refused in CPython too, so the result cannot even
-// be the left operand of another one.
+// One operation produces it: the difference of a dict's keys or items view with
+// an iterable. jinja2's grammar has no `&` or `^`, and `|` is the filter
+// operator, so `d.keys() - xs` is the only set arithmetic a template can
+// *write* as an operator -- and `set - list` is refused in CPython, so an
+// iterable cannot be the right operand of a second one. Another set can:
+// `(d.keys() - x) - (d.keys() - y)` is a set difference, and this used to say
+// it was not.
+//
+// Everything else a set does, it does through its methods, all seventeen of
+// which are in set_methods.go. Those take any iterable where the operator takes
+// a set, which is CPython's rule and not a convenience.
 //
 // # Order
 //
@@ -68,13 +74,105 @@ func NewSet(elements []Value, py PythonVersion, budget Budget) (*Set, error) {
 	return s, nil
 }
 
-// GetAttr: a set has methods in Python, and none of them are reachable here --
-// the only set a template can hold came from a view difference, and nothing in
-// jinja2's grammar calls a method on the result of one.
+// GetAttr answers nothing here: the set's methods are bound in the gojja2
+// package, beside every other built-in type's, because that is where the arity
+// table CPython's wordings are generated into lives. This used to say the
+// methods were unreachable, on the grounds that only a view difference makes a
+// set -- but `{% set s = d.keys() - xs %}{{ s.add(1) }}` is a method call on
+// one, and all seventeen of them were missing.
 func (s *Set) GetAttr(string) (Value, bool) { return Undefined, false }
 
-func (s *Set) TypeName() string      { return "set" }
-func (s *Set) QualifiedName() string { return "builtins.set" }
+// Elements are the set's members, in the order it keeps them: sorted by repr,
+// for the reason the type comment gives. The slice is the set's own and must
+// not be held past a mutation.
+func (s *Set) Elements() []Value { return s.items }
+
+// Has reports membership without hashing the item again, for a caller that has
+// already checked -- a set's own elements are hashable by construction.
+func (s *Set) Has(v Value) bool {
+	_, ok := s.index.GetKnown(v)
+	return ok
+}
+
+// Add inserts an element, keeping the order sorted. It refuses an unhashable
+// one exactly as building a set does.
+func (s *Set) Add(v Value, py PythonVersion, budget Budget) error {
+	if err := CheckHashable(v, py, AsSetElement); err != nil {
+		return err
+	}
+	if s.Has(v) {
+		return nil
+	}
+	if err := chargeItems(budget, 1); err != nil {
+		return err
+	}
+	s.index.SetKnown(v, None)
+	s.items = append(s.items, v)
+	s.resort()
+	return nil
+}
+
+// Discard removes an element if it is there, reporting whether it was.
+func (s *Set) Discard(v Value) bool {
+	if !s.Has(v) {
+		return false
+	}
+	s.index.DeleteKnown(v)
+	kept := s.items[:0]
+	for _, item := range s.items {
+		if _, in := s.index.GetKnown(item); in {
+			kept = append(kept, item)
+		}
+	}
+	s.items = kept
+	return true
+}
+
+// Pop removes and answers the first element in the set's order. CPython pops
+// the first in *its* order, which is the hash table's; the two orders are the
+// documented divergence and this is one more place it shows.
+func (s *Set) Pop() (Value, bool) {
+	if len(s.items) == 0 {
+		return Undefined, false
+	}
+	v := s.items[0]
+	s.index.DeleteKnown(v)
+	s.items = s.items[1:]
+	return v, true
+}
+
+// Reset replaces every element, which is how the in-place operations --
+// update, the three ..._update and clear -- land their result.
+func (s *Set) Reset(elements []Value, py PythonVersion, budget Budget) error {
+	next, err := NewSet(elements, py, budget)
+	if err != nil {
+		return err
+	}
+	s.items, s.index = next.items, next.index
+	return nil
+}
+
+func (s *Set) resort() {
+	sort.SliceStable(s.items, func(i, j int) bool {
+		return Repr(s.items[i]) < Repr(s.items[j])
+	})
+}
+
+func (s *Set) TypeName() string { return "set" }
+
+// Unhashable reports that a set cannot be a dict key or a set element. Python's
+// set defines __eq__ without __hash__ -- only frozenset is hashable -- so
+// `{{ (d.keys() - 'a') is filter }}` is "unhashable type: 'set'" and
+// `{{ {(d.keys() - 'a'): 1} }}` is a TypeError. Without this a set hashed by
+// identity and both answered.
+func (s *Set) Unhashable() bool { return true }
+
+// QualifiedName is plain "set": object_type_repr qualifies a class with its
+// module only *outside* builtins, so a set is "set object" where a Joiner is
+// "jinja2.utils.Joiner object". Writing "builtins.set" made 3.14's
+// "cannot use 'builtins.set' as a dict key" and would have made an undefined
+// built from a set report the wrong owner.
+func (s *Set) QualifiedName() string { return "set" }
 func (s *Set) Len() int              { return len(s.items) }
 
 // Repr is Python's, including the empty case: `set()` and not `{}`, which is
@@ -105,26 +203,47 @@ func (s *Set) Iterate() iter.Seq[Value] {
 	}
 }
 
-func (s *Set) Contains(item Value) (found, known bool) {
+// ContainsErr answers `x in <set>` with the complaint hashing the item can make,
+// which a template can provoke with any value at all: a set hashes what it is
+// asked about, so `{{ {} in (d.keys() - 'a') }}` is "unhashable type: 'dict'" and
+// not False.
+//
+// There is no Contains beside it. There was, because Container is one of the
+// interfaces searchable() accepts -- but Iterate already makes a set an Iterable,
+// which searchable() accepts too, and ContainsErr answers before either is
+// consulted. Removing it left the whole suite green; it was the last function
+// whole-suite coverage had never executed.
+func (s *Set) ContainsErr(item Value, py PythonVersion) (found, known bool, err error) {
+	if _, isSet := item.Interface().(*Set); isSet {
+		// A set is unhashable, and `x in s` is the one place CPython
+		// does not stop there: set_contains catches the TypeError, makes
+		// a *frozenset* of the key and looks that up instead, so
+		// `{1} in {2}` is False rather than a refusal. Nothing here can
+		// build a frozenset, so the answer is always False -- but it is
+		// an answer, which is what a chained `a not in s not in s`
+		// needs. A dict does not do this: `{1} in d.keys()` refuses.
+		return false, true, nil
+	}
+	if err := CheckHashable(item, py, AsSetElement); err != nil {
+		return false, true, err
+	}
 	_, ok := s.index.GetKnown(item)
-	return ok, true
+	return ok, true, nil
 }
 
-// Equals compares as a set: same size, same members, order irrelevant.
+// Equals answers only against something that is not a set, which is never
+// equal to one: `s == ['a']` is False.
+//
+// Two sets are compared by equalAsSets in compare.go, which runs before any
+// Equaler is asked and is where the rule -- same size, every member of one in
+// the other -- is kept. This carried a second copy of it that nothing reached:
+// replacing it with a wrong answer left the suite green. So a set here has no
+// opinion, and the caller's own rule decides.
 func (s *Set) Equals(other Value) (bool, bool) {
-	o, ok := other.Interface().(*Set)
-	if !ok {
-		return false, true
+	if _, ok := other.Interface().(*Set); ok {
+		return false, false
 	}
-	if len(s.items) != len(o.items) {
-		return false, true
-	}
-	for _, v := range s.items {
-		if _, in := o.index.GetKnown(v); !in {
-			return false, true
-		}
-	}
-	return true, true
+	return false, true
 }
 
 // setReverseDifference is `other - view`, which a template reaches by writing

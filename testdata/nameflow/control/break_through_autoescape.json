@@ -1,0 +1,6 @@
+{
+  "case": "control/break_through_autoescape.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

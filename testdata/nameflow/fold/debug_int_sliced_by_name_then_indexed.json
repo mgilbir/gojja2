@@ -1,0 +1,6 @@
+{
+  "case": "fold/debug_int_sliced_by_name_then_indexed.jj2",
+  "variables": {
+    "n3": "ofr"
+  }
+}

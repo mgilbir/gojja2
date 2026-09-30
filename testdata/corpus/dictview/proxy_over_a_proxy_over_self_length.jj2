@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}{{ C(C(self))|length }}

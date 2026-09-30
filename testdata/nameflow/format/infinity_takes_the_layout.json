@@ -1,0 +1,6 @@
+{
+  "case": "format/infinity_takes_the_layout.jj2",
+  "variables": {
+    "big": "or"
+  }
+}

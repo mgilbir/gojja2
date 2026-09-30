@@ -1,0 +1,6 @@
+{
+  "case": "nonfinite/percent_c_of_nan.jj2",
+  "variables": {
+    "s_nan": "or"
+  }
+}

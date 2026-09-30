@@ -33,6 +33,15 @@ func Tokenize(syn Syntax, source, name string) ([]Token, error) {
 	// far -- `{{ 'a': b }}` fails on the colon there, not on the brace
 	// after it. Returning the prefix lets the parser reproduce that order.
 	err := l.run()
+	// jinja2's TokenStream.close() builds the EOF token from the *last*
+	// token's lineno rather than from where the source ends, and
+	// "Unexpected end of template" reports that line. So a template whose
+	// last token spans several lines is reported at the line that token
+	// began on: `{% set x %}body\n` is line 1, not 2.
+	l.line = 1
+	if n := len(l.out); n > 0 {
+		l.line = l.out[n-1].Line
+	}
 	l.emit(EOF, "")
 	return l.out, err
 }
@@ -617,7 +626,18 @@ func (l *lexer) lexExprToken() error {
 		return nil
 	}
 	if n := l.matchName(); n > 0 {
-		l.emit(Name, l.advance(n))
+		line := l.line
+		text := l.advance(n)
+		// jinja2 matches a name out of a class that is wider than an
+		// identifier and then checks isidentifier() on what it matched,
+		// so a run that is not one is reported as the *name* rather than
+		// at the character: `{{ a\u00b2 }}` is "Invalid character in
+		// identifier" where `{{ a\u0898 }}`, whose mark is outside the
+		// class, ends the name and fails on the character after it.
+		if !value.IsIdentifier(text, l.syn.PythonVersion) {
+			return l.errorf(line, "Invalid character in identifier")
+		}
+		l.emit(Name, text)
 		return nil
 	}
 	if n, ok := l.matchString(); ok {
@@ -639,7 +659,12 @@ func (l *lexer) lexExprToken() error {
 		return nil
 	}
 	r, _ := utf8.DecodeRuneInString(l.src[l.pos:])
-	return l.errorf(l.line, "unexpected char %s at %d", value.Repr(value.String(string(r))), l.pos)
+	// The offset is in *code points*, because CPython counts them in a str:
+	// jinja2 says 4 for `é{{ $ }}` where the byte offset is 5. Reporting
+	// bytes agreed for every ASCII template, which is every template in the
+	// corpus until the generated differential wrote one with 'Ɤꟍ' in it.
+	return l.errorf(l.line, "unexpected char %s at %d",
+		value.Repr(value.String(string(r))), utf8.RuneCountInString(l.src[:l.pos]))
 }
 
 // trackBalance maintains the bracket stack that decides whether an end
@@ -676,16 +701,14 @@ func (l *lexer) matchOperator() (Kind, int, bool) {
 	return EOF, 0, false
 }
 
-// matchName scans a Python identifier.
+// matchName scans a maximal run of jinja2's name class, which is what its lexer
+// matches a NAME token out of. Whether the run *is* an identifier is a separate
+// question, asked by the caller; see value.NameClass.
 func (l *lexer) matchName() int {
 	i := 0
 	for i < len(l.src[l.pos:]) {
 		r, size := utf8.DecodeRuneInString(l.src[l.pos+i:])
-		if i == 0 {
-			if !isIdentStart(r) {
-				return 0
-			}
-		} else if !isIdentContinue(r) {
+		if !value.NameClass(r, l.syn.PythonVersion) {
 			break
 		}
 		i += size
@@ -712,16 +735,6 @@ func (l *lexer) matchString() (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-func isIdentStart(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.Is(unicode.Nl, r)
-}
-
-func isIdentContinue(r rune) bool {
-	return isIdentStart(r) || unicode.IsDigit(r) ||
-		unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r) ||
-		unicode.Is(unicode.Nd, r) || unicode.Is(unicode.Pc, r)
 }
 
 // --- whitespace helpers ------------------------------------------------------

@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_concat_three_operands.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

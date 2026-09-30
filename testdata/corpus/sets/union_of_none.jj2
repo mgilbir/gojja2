@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2, 'c': 3} %}{% set s = d.keys() - ['a'] %}{% set t = d.keys() - ['b', 'c'] %}{{ s.union(none) }}

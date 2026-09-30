@@ -1,0 +1,6 @@
+{
+  "case": "errors/filteridx_imported_macro_with_context.jj2",
+  "variables": {
+    "v": "-"
+  }
+}

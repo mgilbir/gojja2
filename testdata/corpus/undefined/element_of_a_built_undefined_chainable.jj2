@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+[{{ (nope.__class__(1, 2, 3, 4))[0] }}]|{{ (nope.__class__(1, 2, 3, 4))[0] is defined }}|[{{ (nope.__class__(1, 2, 3, 'x'))[0] }}]

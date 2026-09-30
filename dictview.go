@@ -7,6 +7,7 @@ import (
 	"iter"
 	"strings"
 
+	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/value"
 )
 
@@ -85,7 +86,456 @@ func (v *dictView) entries() []value.Value {
 	return out
 }
 
-func (v *dictView) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
+func (v *dictView) GetAttr(name string) (value.Value, bool) {
+	switch name {
+	case "mapping":
+		// Every view carries a read-only proxy of the dict it came from
+		// (3.10). `{{ d.keys().mapping }}` printed nothing here.
+		return value.FromObject(&mappingProxy{d: v.d, py: v.py}), true
+	}
+	// Only the set-like views have a method at all.
+	if v.kind == viewValues {
+		return value.Undefined, false
+	}
+	return boundObjectMethod(dictViewMethods, v.kind.name(), name,
+		value.FromObject(v), v.py)
+}
+
+// boundObjectMethod is builtinMethod for a type of gojja2's own: the table
+// decides which names exist, and the arity table -- keyed by the name CPython
+// calls the type -- decides what the count errors say.
+func boundObjectMethod(table map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error),
+	typeName, name string, recv value.Value, py value.PythonVersion) (value.Value, bool) {
+	fn, ok := table[name]
+	if !ok {
+		return value.Undefined, false
+	}
+	return Method(name, typeName, "", recv, func(s *State, a *value.CallArgs) (value.Value, error) {
+		if err := checkMethodArity(typeName, name, a, py); err != nil {
+			return value.Undefined, err
+		}
+		return fn(s, recv, a)
+	}), true
+}
+
+// isdisjoint walks the argument and asks the view about each element, which is
+// what decides the refusals: a keys view hashes what it is given, so an
+// unhashable element is a TypeError, while an items view unpacks first and a
+// two-element *list* is simply not in it.
+func (v *dictView) isdisjoint(s *State, other value.Value) (value.Value, error) {
+	seq, err := value.Iterate(other)
+	if err != nil {
+		if refusal := value.StrictRefusal(other); refusal != nil {
+			return value.Undefined, refusal
+		}
+		return value.Undefined, err
+	}
+	for item := range seq {
+		if err := s.Step(1); err != nil {
+			return value.Undefined, err
+		}
+		found, _, err := v.ContainsErr(item, v.py)
+		if err != nil {
+			return value.Undefined, err
+		}
+		if found {
+			return value.False, nil
+		}
+	}
+	return value.True, nil
+}
+
+// mappingProxy is types.MappingProxyType: the read-only dict every view carries
+// as `.mapping`. It is a dict in nearly every way a template can observe -- it
+// indexes, iterates, sizes, compares equal to the dict itself and is `is
+// mapping` -- and differs in three: its repr says so, it has only the five
+// read-only methods, and it hashes like the dict, which is to say not at all.
+type mappingProxy struct {
+	// d is the dict itself, so the proxy tracks it, which is the whole
+	// point of a proxy.
+	d  value.Value
+	py value.PythonVersion
+}
+
+// GetAttr: the five read-only methods, keyed to this type because the wording
+// is -- `m.copy(1)` is "mappingproxy.copy() takes no arguments (1 given)" where
+// the dict's own says "dict.copy()". `m.mapping` does not exist: a proxy of a
+// proxy is not a thing.
+func (m *mappingProxy) GetAttr(name string) (value.Value, bool) {
+	return boundObjectMethod(mappingProxyMethods, "mappingproxy", name,
+		value.FromObject(m), m.py)
+}
+
+// The proxy delegates to whatever it wraps, because mappingproxy_subscript is
+// `PyObject_GetItem(pp->mapping, key)` and nothing more. The constructor takes
+// what PyMapping_Check does minus list and tuple, so that is a dict, a string,
+// a bytes, a range, another proxy or an undefined -- and each indexes here as
+// it would on its own.
+func (m *mappingProxy) GetItem(key value.Value) (value.Value, bool) {
+	if d, ok := m.d.Dict(); ok {
+		v, found, err := d.Get(key, m.py)
+		if err != nil || !found {
+			return value.Undefined, false
+		}
+		return v, true
+	}
+	if inner, ok := m.d.Interface().(value.Mapping); ok {
+		return inner.GetItem(key)
+	}
+	// An undefined raises from its own __getitem__, whatever the key is.
+	// This interface has nowhere to put that, so it answers a miss and
+	// GetItemErr below is what the evaluator asks.
+	if m.d.IsUndefined() {
+		return value.Undefined, false
+	}
+	switch m.d.Kind() {
+	case value.KindString:
+		i, ok := key.Int64()
+		if !ok {
+			return value.Undefined, false
+		}
+		runes := []rune(m.d.AsString())
+		if i < 0 {
+			i += int64(len(runes))
+		}
+		if i < 0 || i >= int64(len(runes)) {
+			return value.Undefined, false
+		}
+		return value.String(string(runes[i])), true
+	case value.KindBytes:
+		// A bytes indexes to the integer byte, as everywhere else.
+		i, ok := key.Int64()
+		if !ok {
+			return value.Undefined, false
+		}
+		raw := m.d.AsString()
+		if i < 0 {
+			i += int64(len(raw))
+		}
+		if i < 0 || i >= int64(len(raw)) {
+			return value.Undefined, false
+		}
+		return value.Int(int64(raw[i])), true
+	}
+	if seq, ok := m.d.Interface().(value.Sequence); ok {
+		return value.SequenceItem(seq, key)
+	}
+	// An object whose __getitem__ gojja2 answers through the attribute
+	// path -- `self['body']` is the one -- indexes through the proxy the
+	// same way, because the proxy only forwards the subscript.
+	if key.Kind() == value.KindString {
+		return lookupAttr(nil, m.d, key.AsString())
+	}
+	return value.Undefined, false
+}
+
+// GetItemErr is [mappingProxy.GetItem] for the one wrapped value whose
+// subscript raises rather than answering.
+//
+// `mappingproxy(nope)[0]` is the undefined's own error, because
+// mappingproxy_subscript is PyObject_GetItem and Undefined.__getitem__ is
+// _fail_with_undefined_error. Reported through a sibling with somewhere to put
+// it, as ContainsErr is: the plain Mapping interface can only say "no such
+// key", and that renders as nothing.
+func (m *mappingProxy) GetItemErr(key value.Value) (value.Value, bool, error) {
+	if m.d.IsUndefined() && m.d.UndefinedBehavior() != value.UndefinedChainable {
+		return value.Undefined, true, m.d.UndefinedError()
+	}
+	// A dict's own lookup can refuse: an unhashable key is a TypeError,
+	// which getitem catches and answers with an undefined, and a
+	// StrictUndefined key raises its own error, which it does not.
+	if d, ok := m.d.Dict(); ok {
+		v, found, err := d.Get(key, m.py)
+		if err != nil && errs.KindOf(err) != errs.TypeError {
+			return value.Undefined, false, err
+		}
+		return v, found && err == nil, nil
+	}
+	v, ok := m.GetItem(key)
+	return v, ok, nil
+}
+
+// Subscript is `proxy[key]` where nothing catches the failure: the lookups
+// `%`, str.format and format_map make, which take what the wrapped object says.
+// [mappingProxy.GetItem] can only answer "no such key", and that is the wrong
+// complaint for everything but a dict -- a string is indexed by integers, so
+// `'%(a)s' % mappingproxy('ab')` is a TypeError about string indices, and an
+// undefined raises its own error whatever the key is.
+func (m *mappingProxy) Subscript(key value.Value) (value.Value, error) {
+	miss := func() (value.Value, error) {
+		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, m.py))
+	}
+	if m.d.IsUndefined() {
+		if m.d.UndefinedBehavior() == value.UndefinedChainable {
+			return m.d, nil
+		}
+		return value.Undefined, m.d.UndefinedError()
+	}
+	if d, ok := m.d.Dict(); ok {
+		v, found, err := d.Get(key, m.py)
+		if err != nil {
+			return value.Undefined, err
+		}
+		if !found {
+			return miss()
+		}
+		return v, nil
+	}
+	switch m.d.Kind() {
+	case value.KindString:
+		if !key.IsInteger() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"string indices must be integers, not '%s'", key.TypeName())
+		}
+		if v, ok := m.GetItem(key); ok {
+			return v, nil
+		}
+		return value.Undefined, errs.New(errs.IndexError, "string index out of range")
+	case value.KindBytes:
+		if !key.IsInteger() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"byte indices must be integers or slices, not %s", key.TypeName())
+		}
+		if v, ok := m.GetItem(key); ok {
+			return v, nil
+		}
+		return value.Undefined, errs.New(errs.IndexError, "index out of range")
+	}
+	if seq, ok := m.d.Interface().(value.Sequence); ok {
+		if !key.IsInteger() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s indices must be integers or slices, not %s", m.d.TypeName(), key.TypeName())
+		}
+		if v, in := value.SequenceItem(seq, key); in {
+			return v, nil
+		}
+		return value.Undefined, errs.New(errs.IndexError,
+			"%s object index out of range", m.d.TypeName())
+	}
+	if v, ok := m.GetItem(key); ok {
+		return v, nil
+	}
+	return miss()
+}
+
+func (m *mappingProxy) Keys() []value.Value {
+	if d, ok := m.d.Dict(); ok {
+		out := make([]value.Value, 0, d.Len())
+		for _, e := range d.Entries() {
+			out = append(out, e.Key)
+		}
+		return out
+	}
+	if inner, ok := m.d.Interface().(value.Mapping); ok {
+		return inner.Keys()
+	}
+	// A string, whose keys are what iterating it yields.
+	seq, err := value.Iterate(m.d)
+	if err != nil {
+		return nil
+	}
+	var out []value.Value
+	for item := range seq {
+		out = append(out, item)
+	}
+	return out
+}
+
+func (m *mappingProxy) Len() int {
+	if d, ok := m.d.Dict(); ok {
+		return d.Len()
+	}
+	n, err := value.Len(m.d)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// pairs is what a dict-shaped consumer reads from a proxy: dict.update, dict(),
+// |items and |dictsort. None of them walks its argument as a Mapping.
+// PyDict_Merge calls b.keys() and indexes b by each key, and jinja2's two
+// filters call value.items(). A proxy's methods are the wrapped object's, so
+// over anything but a dict they answer whatever that object does --
+// `dict(mappingproxy('ab'))` is "'str' object has no attribute 'keys'" --
+// where walking the proxy's own Keys and GetItem invented a pair for each
+// character of the string.
+//
+// via is "keys" or "items", whichever method the consumer calls.
+//
+// Consumers reach it through pairSource rather than *mappingProxy: dict.update
+// is one of them and sits in dictMethods, and a static call from there into a
+// method that looks attributes up closes an initialisation cycle back to
+// dictMethods. A call through an interface is not a dependency.
+type pairSource interface {
+	pairs(s *State, via string) ([][2]value.Value, error)
+}
+
+func (m *mappingProxy) pairs(s *State, via string) ([][2]value.Value, error) {
+	if d, ok := m.d.Dict(); ok {
+		out := make([][2]value.Value, 0, d.Len())
+		for _, e := range d.Entries() {
+			out = append(out, [2]value.Value{e.Key, e.Value})
+		}
+		return out, nil
+	}
+	got, err := proxyMethod(via)(s, value.FromObject(m), &value.CallArgs{})
+	if err != nil {
+		return nil, err
+	}
+	seq, err := value.Iterate(got)
+	if err != nil {
+		return nil, err
+	}
+	var out [][2]value.Value
+	for item := range seq {
+		if err := s.Step(1); err != nil {
+			return nil, err
+		}
+		if via == "keys" {
+			v, found, err := m.GetItemErr(item)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, errs.New(errs.KeyError, "%s", value.ReprFor(item, s.PythonVersion()))
+			}
+			out = append(out, [2]value.Value{item, v})
+			continue
+		}
+		k, v, err := unpackPair(item, s.PythonVersion())
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, [2]value.Value{k, v})
+	}
+	return out, nil
+}
+
+// LenErr and IterateErr are len() and iter() of the wrapped object, error and
+// all: mappingproxy_len is PyObject_Size(pp->mapping) and mappingproxy_getiter
+// PyObject_GetIter(pp->mapping). Len and Keys above have no way to say the
+// wrapped object refused, and answered 0 and nothing -- for a proxy over the
+// template reference, and over a StrictUndefined, whose __len__ raises.
+func (m *mappingProxy) LenErr() (int, error) {
+	if d, ok := m.d.Dict(); ok {
+		return d.Len(), nil
+	}
+	return value.Len(m.d)
+}
+
+func (m *mappingProxy) IterateErr() (iter.Seq[value.Value], error) {
+	if _, ok := m.d.Dict(); ok {
+		return m.Iterate(), nil
+	}
+	return value.Iterate(m.d)
+}
+
+func (m *mappingProxy) Iterate() iter.Seq[value.Value] {
+	return func(yield func(value.Value) bool) {
+		for _, k := range m.Keys() {
+			if !yield(k) {
+				return
+			}
+		}
+	}
+}
+
+// Unhashable: a proxy hashes exactly as well as what it wraps, which is to say
+// `{{ m in d }}` is "unhashable type: 'dict'" over a dict and an ordinary
+// lookup over a string, a bytes, a range or an undefined. Before 3.12 the
+// proxy had no __hash__ of its own and was never hashable.
+func (m *mappingProxy) Unhashable() bool {
+	if !m.py.ProxyHashNamesTheMapping() {
+		return true
+	}
+	// A StrictUndefined behind it is not unhashable but refuses, which is
+	// what StrictRefusal reports.
+	err := value.Hashable(m.d, m.py, value.AsDictKey)
+	return err != nil && value.StrictRefusal(m.d) == nil
+}
+
+// HashesAs is the value a hashable proxy stands for as a key: its hash is the
+// wrapped object's, and it is equal to whatever that object is, so
+// `{mappingproxy('ab'): 1}['ab']` finds it. An undefined is the exception --
+// Undefined.__eq__ is `type(self) is type(other)` and the proxy hands the
+// comparison to it, so it is equal to nothing but itself, which the identity
+// of the proxy already says.
+func (m *mappingProxy) HashesAs() (value.Value, bool) {
+	if m.d.IsUndefined() {
+		return value.Undefined, false
+	}
+	return m.d, true
+}
+
+// StrictRefusal: str(), iter(), len(), bool(), ==, hash() and `in` of a proxy
+// are those of the mapping it wraps, so a proxy over a StrictUndefined raises
+// wherever the undefined would. `{{ mappingproxy(nope) }}` is the undefined
+// error, not an empty line.
+func (m *mappingProxy) StrictRefusal() error { return value.StrictRefusal(m.d) }
+
+func (m *mappingProxy) TypeName() string { return "mappingproxy" }
+
+// UnhashableAs names what the refusal complains about, which 3.12 changed:
+// before it, the proxy itself. The *outer* name -- 3.14's "cannot use 'X' as a
+// dict key" half -- stays the proxy either way.
+func (m *mappingProxy) UnhashableAs() value.Value {
+	if m.py.ProxyHashNamesTheMapping() {
+		// A proxy of a proxy reaches through both.
+		if inner, ok := m.d.Interface().(*mappingProxy); ok {
+			return inner.UnhashableAs()
+		}
+		return m.d
+	}
+	return value.FromObject(m)
+}
+
+// Str is the dict's, and Repr is not: `{{ m }}` prints `{'a': 1}` where
+// `{{ m|pprint }}` prints `mappingproxy({'a': 1})`.
+func (m *mappingProxy) Str() string { return value.StrFor(m.d, m.py) }
+
+func (m *mappingProxy) Repr() string {
+	return "mappingproxy(" + value.ReprFor(m.d, m.py) + ")"
+}
+
+// EqualsErr compares what is behind the proxy: `m == d` and `d == m` are both
+// True, because mappingproxy delegates __eq__ to the mapping it wraps.
+func (m *mappingProxy) EqualsErr(other value.Value, py value.PythonVersion) (bool, bool, error) {
+	// Another proxy is compared through what it wraps only when what this
+	// one wraps hands the comparison back. A dict does (NotImplemented, then
+	// the reflected proxy compares its mapping), but an undefined answers
+	// for itself -- `type(self) is type(other)` -- and a proxy of a proxy
+	// repeats this very step, so neither may skip past the other's wrapper.
+	if o, ok := other.Interface().(*mappingProxy); ok && !m.d.IsUndefined() {
+		if _, nested := m.d.Interface().(*mappingProxy); !nested {
+			other = o.d
+		}
+	}
+	eq, err := value.EqualErr(m.d, other, py)
+	return eq, true, err
+}
+
+// OrderDelegate makes <, <=, > and >= the wrapped object's, as
+// mappingproxy_richcompare makes them. See value.OrderDelegate.
+func (m *mappingProxy) OrderDelegate() value.Value { return m.d }
+
+// ContainsErr delegates, because mappingproxy_check_key is
+// `PySequence_Contains(pp->mapping, key)` -- the wrapped object answers, with
+// its own rules and its own refusals. A proxy over a string is a string here:
+// `0 in mappingproxy('ab')` is "'in <string>' requires string as left operand"
+// and `'a' in mappingproxy('ab')` is True, where hashing the key and looking it
+// up as a dict would made the first True and the second False.
+func (m *mappingProxy) ContainsErr(item value.Value, py value.PythonVersion) (found, known bool, err error) {
+	if d, ok := m.d.Dict(); ok {
+		if err := value.CheckHashable(item, py, value.AsDictKey); err != nil {
+			return false, true, err
+		}
+		_, got, err := d.Get(item, py)
+		return got, true, err
+	}
+	got, err := value.Contains(item, m.d, nil, py)
+	return got, true, err
+}
 
 func (v *dictView) TypeName() string { return v.kind.name() }
 
@@ -118,66 +568,109 @@ func (v *dictView) Iterate() iter.Seq[value.Value] {
 	}
 }
 
-func (v *dictView) Contains(item value.Value) (found, known bool) {
-	// A keys view answers by lookup rather than by scanning, which is what
-	// makes `k in d.keys()` cost what `k in d` costs.
+// ContainsErr is Contains with an error channel, and the caller consults it
+// *before* the item's own refusals: what a view examines decides whether those
+// refusals apply at all.
+//
+//   - a keys view looks the item up, which hashes it, so an unhashable one is a
+//     TypeError and a StrictUndefined refuses. That is also what makes
+//     `k in d.keys()` cost what `k in d` costs;
+//   - an items view unpacks before it looks, so anything that is not a
+//     two-element pair simply is not in it -- `nope in d.items()` is False even
+//     under StrictUndefined -- while the *key* of a pair is hashed, so
+//     `(nope, 1) in d.items()` raises;
+//   - a values view compares element by element, which scan below does.
+//
+// There is no Contains beside it. There was, because Container is one of the
+// interfaces searchable() accepts -- but Iterate already makes a view an
+// Iterable, which searchable() accepts too, and this answers before either is
+// consulted. Removing it left the whole suite green.
+func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found, known bool, err error) {
+	d, ok := v.d.Dict()
+	if !ok {
+		return false, false, nil
+	}
+	if v.kind == viewValues {
+		found, err := v.scan(item, py)
+		return found, true, err
+	}
+	key := item
+	if v.kind == viewItems {
+		// A *tuple* of two, and nothing else: dict_items.__contains__
+		// checks PyTuple_Check before the size, so a two-element list is
+		// not a pair and is simply not in the view. Accepting any
+		// sequence made `[['x'], 1] in d.items()` hash the inner list
+		// and refuse where CPython answers False.
+		pair, ok := item.Seq()
+		if !ok || item.Kind() != value.KindTuple || pair.Len() != 2 {
+			return false, true, nil
+		}
+		key = pair.At(0)
+	}
+	if err := value.CheckHashable(key, py, value.AsDictKey); err != nil {
+		return false, true, err
+	}
+	got, ok, err := d.Get(key, py)
+	if err != nil || !ok {
+		return false, true, err
+	}
 	if v.kind == viewKeys {
-		d, ok := v.d.Dict()
-		if !ok {
-			return false, true
-		}
-		if err := value.CheckHashable(item, v.py, value.AsDictKey); err != nil {
-			return false, false
-		}
-		_, got, err := d.Get(item, v.py)
-		if err != nil {
-			return false, false
-		}
-		return got, true
+		return true, true, nil
 	}
+	pair, _ := item.Seq()
+	eq, err := value.EqualBoolErr(pair.At(1), got, py)
+	return eq, true, err
+}
+
+// scan is the values view's element-by-element search, which is a real `==` per
+// element -- so a StrictUndefined among the *values* refuses rather than
+// answering False. `{% set q = {'a': nope} %}{{ 1 in q.values() }}` answered
+// False because the scan compared with a form that has nowhere to put an error.
+func (v *dictView) scan(item value.Value, py value.PythonVersion) (bool, error) {
 	for _, have := range v.entries() {
-		if value.Equal(item, have) {
-			return true, true
+		// The element on the left, as every containment scan in
+		// CPython has it.
+		eq, err := value.EqualBoolErr(have, item, py)
+		if err != nil {
+			return false, err
+		}
+		if eq {
+			return true, nil
 		}
 	}
-	return false, true
+	return false, nil
 }
 
 func (v *dictView) Repr() string {
 	var b strings.Builder
 	b.WriteString(v.kind.name())
 	b.WriteByte('(')
-	b.WriteString(value.Repr(value.NewList(v.entries()...)))
+	b.WriteString(value.ReprFor(value.NewList(v.entries()...), v.py))
 	b.WriteByte(')')
 	return b.String()
 }
 
-// Equals compares a keys or items view the way Python does, as a set. A values
-// view has no __eq__ at all there, so two of them are equal only by identity --
-// `{'a':1}.values() == {'a':1}.values()` is False.
-func (v *dictView) Equals(other value.Value) (bool, bool) {
+// EqualsErr is a view's own opinion about ==, and by the time it is asked the
+// interesting case has already been answered.
+//
+// Two keys views, or two items views, are both set-like, so `equalAsSets` in
+// the value package compares them as sets: the lengths, then every element of
+// one looked for in the other *through the view*. That is what makes
+// `{'a': nope}.items() == {'a': 1}.items()` raise while the keys of the same
+// two answer True -- an items view carries the values and a keys view does not.
+// This is reached only when that did not apply: a values view, which
+// PyDictViewSet_Check refuses, or a view against something that is not a view.
+//
+// So what is left is identity, which is what CPython has for a values view:
+// dict_values defines no __eq__, so `{'a':1}.values() == {'a':1}.values()` is
+// False. The element scan that used to be here was a second copy of the set
+// comparison and could not run -- it asks about two same-kind views, and no
+// pair of those gets this far. A panic in its place survived the suite, 4,784
+// corpus cases and a 30,000-template soak.
+func (v *dictView) EqualsErr(other value.Value, _ value.PythonVersion) (bool, bool, error) {
 	o, ok := other.Interface().(*dictView)
 	if !ok || o.kind != v.kind {
-		return false, true
+		return false, true, nil
 	}
-	if v.kind == viewValues {
-		return v == o, true
-	}
-	mine, theirs := v.entries(), o.entries()
-	if len(mine) != len(theirs) {
-		return false, true
-	}
-	for _, item := range mine {
-		found := false
-		for _, cand := range theirs {
-			if value.Equal(item, cand) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false, true
-		}
-	}
-	return true, true
+	return v == o, true, nil
 }

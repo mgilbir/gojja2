@@ -1,0 +1,7 @@
+{
+  "case": "dataflow/guard_over_a_name_strict.jj2",
+  "variables": {
+    "c": "fr",
+    "nope": "o"
+  }
+}

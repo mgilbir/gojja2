@@ -1,0 +1,3 @@
+{}
+---
+{% set t = ('xy',) * 100 %}{{ 'abca'.translate(t) }}

@@ -1,0 +1,5 @@
+{
+  "v": "V"
+}
+---
+{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}x{{ v }}y{% filter length %}abc{% endfilter %}{% endcall %}

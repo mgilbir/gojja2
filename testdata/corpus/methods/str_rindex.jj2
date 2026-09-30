@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.rindex('b') }}|{{ 'abcb'.rindex('b') }}

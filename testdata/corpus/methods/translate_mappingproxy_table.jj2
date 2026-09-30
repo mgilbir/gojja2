@@ -1,0 +1,3 @@
+{}
+---
+{% set mp = {97: 'X', 98: none}.keys().mapping %}{{ 'abca'.translate(mp) }}

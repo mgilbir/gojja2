@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is callable }}|{{ 0 is callable }}|{{ -1 is callable }}|{{ 1.5 is callable }}|{{ true is callable }}|{{ false is callable }}|{{ none is callable }}|{{ 'a' is callable }}|{{ '' is callable }}|{{ 'A' is callable }}|{{ [1] is callable }}|{{ [] is callable }}|{{ ((1,)) is callable }}|{{ {} is callable }}|{{ {'a':1} is callable }}|{{ range(3) is callable }}|{{ nope is callable }}|{{ ('x'|safe) is callable }}|{{ dict is callable }}|{{ d.keys() is callable }}

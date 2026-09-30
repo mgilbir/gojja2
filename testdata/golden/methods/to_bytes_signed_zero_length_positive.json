@@ -1,0 +1,14 @@
+{
+  "case": "methods/to_bytes_signed_zero_length_positive.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "OverflowError",
+    "message": "int too big to convert"
+  }
+}

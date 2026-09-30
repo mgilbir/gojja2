@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"slices"
@@ -89,7 +90,7 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 			return value.NewTuple(value.BigInt(asBig(base)), value.Int(1)), nil
 		}), true
 	case "to_bytes":
-		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+		return boundNumeric(s, base, name, func(st *State, args *value.CallArgs) (value.Value, error) {
 			if err := clinicCall(st.PythonVersion(), "to_bytes", args,
 				[]string{"length", "byteorder", "signed"}, 2, 3); err != nil {
 				return value.Undefined, err
@@ -99,7 +100,7 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 	case "from_bytes":
 		// A classmethod, so the receiver contributes nothing but the
 		// route to it: a template cannot name int, only an int.
-		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+		return boundNumeric(s, base, name, func(st *State, args *value.CallArgs) (value.Value, error) {
 			if err := clinicCall(st.PythonVersion(), "from_bytes", args,
 				[]string{"bytes", "byteorder", "signed"}, 2, 3); err != nil {
 				return value.Undefined, err
@@ -141,7 +142,7 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 	case "fromhex":
 		// A classmethod, reached through a float for the same reason
 		// from_bytes is reached through an int.
-		return boundNumeric(s, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+		return boundNumeric(s, base, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
 			if len(args.Kwargs) > 0 {
 				return value.Undefined, errs.New(errs.TypeError,
 					"float.fromhex() takes no keyword arguments")
@@ -177,7 +178,7 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 // methods showed up when their neighbours were probed.
 func boundNoArgs(s *State, base value.Value, name string,
 	fn func() (value.Value, error)) value.Value {
-	return boundNumeric(s, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+	return boundNumeric(s, base, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
 		if len(args.Kwargs) > 0 {
 			return value.Undefined, errs.New(errs.TypeError,
 				"%s.%s() takes no keyword arguments", base.TypeName(), name)
@@ -224,8 +225,8 @@ func clinicCall(py value.PythonVersion, name string, args *value.CallArgs,
 	return nil
 }
 
-func boundNumeric(s *State, name string, fn func(*State, *value.CallArgs) (value.Value, error)) value.Value {
-	return Func(name, func(callState *State, args *value.CallArgs) (value.Value, error) {
+func boundNumeric(s *State, recv value.Value, name string, fn func(*State, *value.CallArgs) (value.Value, error)) value.Value {
+	return Method(name, recv.TypeName(), "", recv, func(callState *State, args *value.CallArgs) (value.Value, error) {
 		if callState == nil {
 			callState = s
 		}
@@ -234,8 +235,11 @@ func boundNumeric(s *State, name string, fn func(*State, *value.CallArgs) (value
 }
 
 // floatHex is float.hex(): a leading hex digit, thirteen after the point, and a
-// binary exponent with no leading zeros. Go writes the same form but trims the
-// mantissa and pads the exponent, so both are adjusted.
+// binary exponent with a sign and no leading zeros. The fifty-two fraction bits
+// are exactly those thirteen digits, so this is written from the bits rather
+// than through Go -- Go's %x normalises a subnormal to a leading 1 and an
+// exponent below -1022, where CPython's frexp/ldexp pair stops at DBL_MIN_EXP
+// and writes the leading digit as 0.
 func floatHex(x float64) (string, error) {
 	switch {
 	case math.IsNaN(x):
@@ -252,17 +256,13 @@ func floatHex(x float64) (string, error) {
 	if x == 0 {
 		return sign + "0x0.0p+0", nil
 	}
-	s := strconv.FormatFloat(x, 'x', 13, 64)
-	mant, exp, found := strings.Cut(s, "p")
-	if !found {
-		return sign + s, nil
+	bits := math.Float64bits(x)
+	frac := bits & (1<<52 - 1)
+	lead, exp := 1, int(bits>>52&0x7ff)-1023
+	if exp == -1023 {
+		lead, exp = 0, -1022
 	}
-	// Go writes the exponent with a sign and at least two digits.
-	signCh, digits := exp[:1], strings.TrimLeft(exp[1:], "0")
-	if digits == "" {
-		digits = "0"
-	}
-	return sign + mant + "p" + signCh + digits, nil
+	return fmt.Sprintf("%s0x%d.%013xp%+d", sign, lead, frac, exp), nil
 }
 
 // floatRatio is float.as_integer_ratio(): the exact ratio, since every finite
@@ -317,15 +317,30 @@ func intToBytes(st *State, b *big.Int, args *value.CallArgs) (value.Value, error
 	}
 	out := make([]byte, length)
 	mag := new(big.Int).Abs(b)
-	if signed && b.Sign() < 0 {
-		// Two's complement in `length` bytes.
-		mod := new(big.Int).Lsh(big.NewInt(1), uint(length)*8)
-		mag = new(big.Int).Add(b, mod)
-		if mag.Sign() < 0 {
+	if signed {
+		// The signed range is [-2**(8L-1), 2**(8L-1)-1], and nothing
+		// wider: (-200).to_bytes(1) does not fit although its two's
+		// complement in one byte does, and 200 does not fit either.
+		// This checked the *complement* instead, so both rendered.
+		// Zero bytes hold zero and nothing else -- and the shift would
+		// be by -1, which is a very large uint.
+		fits := b.Sign() == 0
+		if length == 0 && st.PythonVersion().MinusOneFitsInZeroBytes() {
+			// Zero bytes held -1 as well as 0 until 3.13.
+			fits = fits || b.Cmp(big.NewInt(-1)) == 0
+		}
+		if length > 0 {
+			limit := new(big.Int).Lsh(big.NewInt(1), uint(length)*8-1)
+			fits = b.Cmp(limit) < 0 && b.Cmp(new(big.Int).Neg(limit)) >= 0
+		}
+		if !fits {
 			return value.Undefined, errs.New(errs.OverflowError, "int too big to convert")
 		}
-	}
-	if mag.BitLen() > length*8 {
+		if b.Sign() < 0 {
+			// Two's complement in `length` bytes.
+			mag = new(big.Int).Add(b, new(big.Int).Lsh(big.NewInt(1), uint(length)*8))
+		}
+	} else if mag.BitLen() > length*8 {
 		return value.Undefined, errs.New(errs.OverflowError, "int too big to convert")
 	}
 	mag.FillBytes(out)
@@ -335,6 +350,24 @@ func intToBytes(st *State, b *big.Int, args *value.CallArgs) (value.Value, error
 		}
 	}
 	return value.Bytes(out), nil
+}
+
+// validHexExponent reports whether s is an optional sign and then decimal
+// digits, all of them ASCII. Go's parser would also take an underscore between
+// the digits, which float.fromhex does not.
+func validHexExponent(s string) bool {
+	if s != "" && (s[0] == '+' || s[0] == '-') {
+		s = s[1:]
+	}
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // floatFromHex is float.fromhex, which is not strconv.ParseFloat with a
@@ -375,7 +408,7 @@ func floatFromHex(s string) (value.Value, error) {
 	mantissa, exponent := t, "p0"
 	if i := strings.IndexAny(t, "pP"); i >= 0 {
 		mantissa, exponent = t[:i], "p"+t[i+1:]
-		if exponent == "p" {
+		if !validHexExponent(exponent[1:]) {
 			return bad()
 		}
 	}

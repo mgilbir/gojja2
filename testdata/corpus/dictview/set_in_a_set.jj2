@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set e = {} %}{{ (d.keys() - []) in (d.keys() - []) }}|{{ (e.keys() - []) in (d.keys() - []) }}|{{ (d.keys() - []) not in (d.keys() - []) }}

@@ -1,0 +1,3 @@
+{}
+---
+{% set e = {} %}{{ e.items() == e.keys() }}|{{ e.keys() == e.items() }}|{{ e.items() != e.keys() }}|{{ e.items() == e.keys() != 0 }}

@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}[{{ C('ab'.encode())[1] }}][{{ C('ab'.encode())[-1] }}][{{ C('ab'.encode())[9] }}][{{ C('ab'.encode())['x'] }}]

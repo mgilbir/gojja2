@@ -1,0 +1,6 @@
+{
+  "case": "control/break_in_recursive_after_descent.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

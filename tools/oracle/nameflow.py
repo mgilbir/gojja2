@@ -59,6 +59,19 @@ REQUIRED = 4
 OWNS = ("param", "undefined")
 
 
+def steered_roles(roles: int) -> int:
+    """What a value's roles mean for a name that decided what it held.
+
+    OUTPUT becomes FLOW -- the name changed the document without appearing in
+    it -- and FLOW and REQUIRED carry over as they are.
+    """
+    out = 0
+    if roles & (OUTPUT | FLOW):
+        out |= FLOW
+    out |= roles & REQUIRED
+    return out
+
+
 @dataclass
 class Sym:
     """One storage location: a context variable, or a binding in some frame."""
@@ -67,6 +80,10 @@ class Sym:
     context: bool = False          # resolved from the caller's variables
     roles: int = 0                 # roles attached directly to this symbol
     deps: set[int] = field(default_factory=set)   # symbols its value came from
+    # Symbols that decided what this one holds without being part of it: a
+    # branch inside a block-set body changes the captured string while putting
+    # nothing of its own in it. Only FLOW and REQUIRED travel back along these.
+    steers: set[int] = field(default_factory=set)
     unknown: bool = False          # something about it could not be followed
 
 
@@ -92,6 +109,9 @@ class Analysis:
         # Following a reference to another template needs a way to reach it,
         # and a way not to follow a cycle round for ever.
         self.resolver = None
+        # StrictUndefined: reading an unpassed name raises, so an arm that
+        # reads one can stop the render. See can_fail_in.
+        self.strict = False
         self.visiting = set()
         self.cache = {}
         # Namespaces being followed field by field, and the ones that got away.
@@ -101,12 +121,16 @@ class Analysis:
         # A stack of block-set captures: while one is open, output is collected
         # rather than emitted, because it becomes a value instead of a document.
         self.capture: list[set[int]] = []
+        # The same stack again, holding what *decided* how much of each body is
+        # emitted rather than what the text is made of.
+        self.steered: list[set[int]] = []
         # Macros by name, so a call can bind arguments to parameters instead of
         # giving up. Only macros defined in this template and called by their
         # own name; anything else is an opaque call.
         self.in_macro: set[int] = set()
         self.macro_params: dict[int, list] = {}
         self.macro_out: dict[int, set[int]] = {}
+        self.macro_steers: dict[int, set[int]] = {}
 
     # --- symbols ---------------------------------------------------------
 
@@ -289,6 +313,7 @@ class Analysis:
         self.visiting.add(name)
         sub = Analysis()
         sub.resolver, sub.visiting, sub.cache = self.resolver, self.visiting, self.cache
+        sub.strict = self.strict
         sub.em = syntax_emit.Emitter(self.em.globals)
         sub.em.stmt(tree)
         sub.push(tree)
@@ -331,6 +356,35 @@ class Analysis:
             self.capture[-1] |= srcs
             return
         self.apply(srcs, OUTPUT)
+
+    def steer_emit(self, srcs):
+        """These decide how much of the surrounding body is emitted.
+
+        Into the capture collecting it, or -- with none open -- into the
+        document, where it is the FLOW the caller already applied.
+        """
+        if not srcs:
+            return
+        if self.steered:
+            self.steered[-1] |= srcs
+            return
+        self.apply(srcs, FLOW)
+
+    def steer_bind(self, target, srcs):
+        """Record that `srcs` decided what `target` holds, without being in it."""
+        if not srcs:
+            return
+        if isinstance(target, (nodes.Name, nodes.NSRef)):
+            sym = self.node_sym(target)
+            if isinstance(target, nodes.NSRef):
+                field_sym = self.namespace_field(sym, target.attr)
+                if field_sym is not None:
+                    field_sym.steers |= srcs
+                    return
+            sym.steers |= srcs
+        elif isinstance(target, (nodes.Tuple, nodes.List)):
+            for item in target.items:
+                self.steer_bind(item, srcs)
 
     def apply(self, srcs, roles):
         for sid in srcs:
@@ -375,14 +429,16 @@ class Analysis:
             if ns is not None:
                 return {self.namespace_field(ns, n.attr).id}
             out = self.expr(n.node)
-            # Reaching *through* an undefined raises, and the thing most likely
-            # to be one is an attribute that was not there. `x.a` cannot fail
-            # whatever x holds -- a missing attribute is undefined and prints
-            # empty -- while `(x.a).b` can, because `x.a` is undefined for most
-            # x. A plain name or a constant as the subject is what makes the
-            # one-step case safe; anything computed can hand back an undefined.
-            if not isinstance(n.node, (nodes.Name, nodes.Const)):
-                self.apply(out, REQUIRED)
+            # An attribute that is not there raises under StrictUndefined, at
+            # the access itself, so `x.a` decides whether the render finishes:
+            # `{{ neg.denominator }}` renders for an int and stops the render
+            # dead for a string. This used to exempt a one-step access on a
+            # plain name or a constant, on the grounds that a missing attribute
+            # is undefined and prints empty -- true of three of the four
+            # Undefined classes and false of the one that exists to refuse.
+            # A namespace field returns above, before this: the field is named
+            # in the template, so whether it is there is not in doubt.
+            self.apply(out, REQUIRED)
             return out
 
         if isinstance(n, nodes.NSRef):
@@ -517,17 +573,22 @@ class Analysis:
             s.roles |= REQUIRED
         elif isinstance(target, (nodes.Tuple, nodes.List)):
             # Unpacking: which element lands where is not tracked, so every
-            # target derives from the whole right-hand side.
+            # target derives from the whole right-hand side -- and the
+            # unpacking itself can stop the render whatever is done with the
+            # names, for a value that is not iterable or is the wrong length.
+            self.apply(srcs, REQUIRED)
             for item in target.items:
                 self.bind(item, srcs)
         else:
             self.taint(srcs)
 
-    def capture_body(self, body) -> set[int]:
-        """What a block-set or filter block's body would have printed."""
+    def capture_body(self, body) -> tuple[set[int], set[int]]:
+        """What a block-set or filter block's body would have printed, and what
+        decided how much of it there was."""
         self.capture.append(set())
+        self.steered.append(set())
         self.stmts(body)
-        return self.capture.pop()
+        return self.capture.pop(), self.steered.pop()
 
     def call_macro(self, sym, call) -> set[int]:
         """Bind a call's arguments to the macro's parameters, and return what
@@ -547,6 +608,13 @@ class Analysis:
             if srcs and param is not None:
                 param.deps |= srcs
         self.in_macro.discard(sym.id)
+        # What steered the macro's body steers this call's result, which is not
+        # a symbol -- so the choice is between saying nothing and saying it
+        # here. A call can be handed to anything that raises.
+        steers = self.macro_steers.get(sym.id) or set()
+        if steers:
+            self.apply(steers, REQUIRED)
+            self.steer_emit(steers)
         return self.macro_out[sym.id]
 
     def if_stmt(self, n, chain_fails):
@@ -554,6 +622,9 @@ class Analysis:
         self.apply(test, FLOW)
         if chain_fails:
             self.apply(test, REQUIRED)
+        # Inside a captured body the arm decides what the *value* is, and what
+        # consumes that value can fail for one string and not another.
+        self.steer_emit(test)
         self.stmts(n.body)
         for elif_ in getattr(n, "elif_", None) or ():
             self.if_stmt(elif_, chain_fails)
@@ -569,8 +640,9 @@ class Analysis:
             # else off the outermost if, so an elif's own subtree does not hold
             # the arm that runs when it is false -- and it decides whether that
             # arm runs.
-            self.if_stmt(n, can_fail_in(n.body) or can_fail_in(n.elif_)
-                         or can_fail_in(n.else_))
+            self.if_stmt(n, can_fail_in(n.body, self.strict)
+                         or can_fail_in(n.elif_, self.strict)
+                         or can_fail_in(n.else_, self.strict))
 
         elif isinstance(n, nodes.For):
             # The iterable is evaluated outside the loop's own frame.
@@ -589,8 +661,12 @@ class Analysis:
                 loop.deps |= srcs
             loop_test = self.expr(n.test)
             self.apply(loop_test, FLOW)
-            if can_fail_in(n.body):
+            if can_fail_in(n.body, self.strict):
                 self.apply(loop_test, REQUIRED)
+            # How many times the body runs decides what a capture around it
+            # holds, exactly as a branch does.
+            self.steer_emit(loop_test)
+            self.steer_emit(srcs)
             self.stmts(n.body)
             self.stmts(n.else_)
             self.pop()
@@ -606,18 +682,29 @@ class Analysis:
 
         elif isinstance(n, nodes.AssignBlock):
             self.push(n)
-            srcs = self.capture_body(n.body)
+            srcs, steers = self.capture_body(n.body)
             self.pop()
             if n.filter is not None:
                 srcs |= self.expr(n.filter)
             self.bind(n.target, srcs)
+            # What steered the body steers the variable, so a later use that
+            # can fail -- `{{ v|last }}` -- reaches back to it...
+            self.steer_bind(n.target, steers)
+            if n.filter is not None:
+                # ...and a filter here runs whether or not the variable is ever
+                # used, so it can fail on the spot.
+                self.apply(steers, REQUIRED)
 
         elif isinstance(n, nodes.FilterBlock):
             self.push(n)
-            srcs = self.capture_body(n.body)
+            srcs, steers = self.capture_body(n.body)
             self.pop()
             srcs |= self.expr(n.filter)
             self.emit(srcs)
+            # The filter runs over whatever the body left, so what decided that
+            # can decide whether it fails.
+            self.apply(steers, REQUIRED)
+            self.steer_emit(steers)
 
         elif isinstance(n, nodes.Macro):
             self.push(n)
@@ -628,12 +715,14 @@ class Analysis:
             for param, default in zip(n.args[len(n.args) - len(n.defaults):],
                                       n.defaults):
                 self.bind(param, self.expr(default))
-            out = self.capture_body(n.body)
+            out, steers = self.capture_body(n.body)
             self.pop()
             if sym is not None:
                 self.macro_params[sym.id] = params
                 self.macro_out[sym.id] = out
+                self.macro_steers[sym.id] = steers
             else:
+                self.steer_emit(steers)
                 # The macro's name is not a binding in any scope: jinja2's
                 # first-mention rule resolved it outward to the caller's
                 # variables, which is what a dead `{% if %}` mentioning the
@@ -748,6 +837,13 @@ class Analysis:
                     if roles != d.roles or unknown != d.unknown:
                         d.roles, d.unknown = roles, unknown
                         changed = True
+                for dep in s.steers:
+                    d = self.syms[dep]
+                    roles = d.roles | steered_roles(s.roles)
+                    unknown = d.unknown or s.unknown
+                    if roles != d.roles or unknown != d.unknown:
+                        d.roles, d.unknown = roles, unknown
+                        changed = True
 
     def result(self) -> dict[str, dict]:
         self.seal_namespaces()
@@ -789,21 +885,40 @@ def can_raise(n) -> bool:
 # and writing a field needs something to write it to: the `=` form wants a
 # namespace, and the block form does an item assignment that a list, a string or
 # a None refuses.
+# Break and Continue are in it for a different reason: neither fails, but both
+# decide whether the statements after them in the loop body run at all, which is
+# the same question. A generated template found the hole -- a `{% continue %}`
+# guarded by a name, in a loop whose body could fail after it -- and both this
+# and dataflow/walk.go said the name could not matter.
 _CAN_FAIL = tuple(getattr(nodes, n) for n in
                   ("Add", "Sub", "Mul", "Div", "FloorDiv", "Mod", "Pow", "And",
                    "Or", "Not", "Neg", "Pos", "Compare", "Operand", "Test",
                    "Filter", "Call", "Getitem", "Pair", "For", "Include",
-                   "Extends", "Import", "FromImport", "NSRef")
+                   "Extends", "Import", "FromImport", "NSRef",
+                   "Break", "Continue",
+                   # Getattr beside Getitem, which had been here alone:
+                   # reaching through an undefined raises, so an arm holding
+                   # `{{ nope.attr }}` can stop the render.
+                   "Getattr")
                   if hasattr(nodes, n))
 
 
-def can_fail_in(body) -> bool:
+def can_fail_in(body, strict: bool = False) -> bool:
+    """Whether anything in a body can stop the render.
+
+    Under StrictUndefined a *name* can: reading one that was not passed raises
+    rather than rendering empty, so `{% if c %}{{ nope }}{% endif %}` fails
+    exactly when c is truthy and c decides whether the render fails. Coarse, and
+    deliberately so -- this cannot tell a name the caller passes from one it does
+    not. See dataflow.WithStrictUndefined, which says the same thing in Go.
+    """
     if body is None:
         return False
+    kinds = _CAN_FAIL + ((nodes.Name,) if strict else ())
     for n in body if isinstance(body, list) else [body]:
-        if isinstance(n, _CAN_FAIL):
+        if isinstance(n, kinds):
             return True
-        for _ in n.find_all(_CAN_FAIL):
+        for _ in n.find_all(kinds):
             return True
     return False
 
@@ -822,7 +937,7 @@ def imported_names(n):
     return [x if isinstance(x, str) else x[1] for x in n.names]
 
 
-def analyze(tree, globals_=(), resolver=None) -> dict[str, dict]:
+def analyze(tree, globals_=(), resolver=None, strict=False) -> dict[str, dict]:
     """Classify every context variable a parsed template reads.
 
     `globals_` are names the environment supplies -- range, dict, lipsum and
@@ -834,6 +949,7 @@ def analyze(tree, globals_=(), resolver=None) -> dict[str, dict]:
     """
     a = Analysis()
     a.resolver = resolver
+    a.strict = strict
     a.em = syntax_emit.Emitter(globals_)
     a.em.stmt(tree)
     a.push(tree)

@@ -117,6 +117,12 @@ func loadKnownFailures(t *testing.T, root string) map[string]string {
 		if fields := strings.SplitN(name, " ", 2); len(fields) == 2 {
 			name, reason = fields[0], strings.TrimSpace(fields[1])
 		}
+		// A second row for the same case overwrites the first reason
+		// without a word, and it is what a mis-pasted block looks like: one
+		// section sat in this file twice, unnoticed.
+		if _, dup := known[name]; dup {
+			t.Errorf("%s lists %s twice", knownFailuresPath, name)
+		}
 		known[name] = reason
 	}
 	if err := sc.Err(); err != nil {

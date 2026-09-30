@@ -1,0 +1,6 @@
+{
+  "s_inf": "inf",
+  "s_nan": "nan"
+}
+---
+{{ [1,2]|batch(s_nan|float)|list }}

@@ -443,6 +443,16 @@ analysis rather than a scan for names — `{% set y = x %}{{ y }}` prints `x` wi
 it at an output position, and `{{ "yes" if flag else "no" }}` prints neither
 operand while `flag` decides which.
 
+One environment setting changes the answer, and the analysis has to be told:
+under `StrictUndefined`, *reading* a name that was not passed raises rather than
+rendering empty, so the arm of `{% if c %}{{ nope }}{% endif %}` can stop the
+render and `c` decides whether it does. Pass `dataflow.WithStrictUndefined()`
+when the environment uses that class. It widens `Required` coarsely -- an arm
+that reads any name is an arm that can fail -- which is the honest shape of the
+setting; without it the same template's `c` only steers, which is the right
+answer for every other class, `ChainableUndefined` and `DebugUndefined`
+included.
+
 `Opaque` means the answer has no reliable negative — a route the analysis could
 not follow. Nothing is ever reported as unable to reach the output when it might.
 It is rarer than it sounds: across the chat templates real models ship, under 1%

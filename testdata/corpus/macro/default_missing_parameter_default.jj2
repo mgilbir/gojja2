@@ -1,0 +1,5 @@
+{
+  "__settings__": {}
+}
+---
+{% macro m(x) %}[{{ x|default('d') }}]{% endmacro %}{{ m() }}

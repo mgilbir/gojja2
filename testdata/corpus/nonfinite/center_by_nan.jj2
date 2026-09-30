@@ -1,0 +1,6 @@
+{
+  "s_inf": "inf",
+  "s_nan": "nan"
+}
+---
+{{ 'ab'|center(s_nan|float) }}

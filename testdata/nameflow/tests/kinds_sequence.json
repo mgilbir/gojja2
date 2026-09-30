@@ -1,0 +1,6 @@
+{
+  "case": "tests/kinds_sequence.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

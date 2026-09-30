@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{% autoescape false %}{% set v | first %}{% endset %}[{{ v }}]{% endautoescape %}

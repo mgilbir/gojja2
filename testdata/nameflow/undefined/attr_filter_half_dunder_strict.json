@@ -1,0 +1,6 @@
+{
+  "case": "undefined/attr_filter_half_dunder_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

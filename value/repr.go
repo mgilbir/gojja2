@@ -112,6 +112,25 @@ func HTML(v Value) (string, bool) {
 // template, rather than only by a Go caller.
 func Repr(v Value) string { return ReprFor(v, DefaultPythonVersion) }
 
+// TruncatedRepr is CPython's `%.200R`: the repr cut to 200 *characters*.
+//
+// int()'s complaint about a literal is formatted that way, so a long one loses
+// its tail -- and its closing quote with it, since the cut is of the rendered
+// repr and not of the string inside it. float()'s is not truncated, which is
+// why this is a helper rather than a rule about reprs.
+func TruncatedRepr(v Value, py PythonVersion) string {
+	const max = 200
+	s := ReprFor(v, py)
+	n := 0
+	for i := range s {
+		if n == max {
+			return s[:i]
+		}
+		n++
+	}
+	return s
+}
+
 // ReprFor is [Repr] reproducing one interpreter.
 //
 // repr escapes by str.isprintable, and CPython carries its own Unicode: 3.11

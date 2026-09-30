@@ -69,20 +69,20 @@ func TestSyntaxDifferential(t *testing.T) {
 	}
 	t.Logf("syntax differential: %d generated templates compared against "+
 		"CPython jinja2 (seed %d), %d empty; %d of the analysis's negatives "+
-		"checked by rendering; lexer %d trim, %d lstrip, %d keep-newline",
+		"checked by rendering; lexer %d trim, %d lstrip, %d keep-newline, "+
+		"%d crlf, %d cr, %d custom delimiters, %d line statements, "+
+		"%d line comments",
 		checked, seed, skipped, claims,
-		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"])
+		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
+		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"], lexRuns["lineprefix"],
+		lexRuns["linecomment"])
 }
 
 // compareSyntax returns a description of the first divergence, or "".
 func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claims *int) string {
 	t.Helper()
 
-	sources := make(map[string]string, len(h.templates)+1)
-	for name, text := range h.templates {
-		sources[name] = text
-	}
-	sources[fuzzTemplateName] = c.Source
+	sources := h.sourcesFor(c)
 
 	// The version goes on both sides or the run compares two
 	// configurations rather than two engines. The tree and the scope facts
@@ -107,7 +107,7 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claim
 		Name:      fuzzTemplateName,
 		Source:    c.Source,
 		Settings:  caseSettings(c),
-		Templates: h.templates,
+		Templates: h.templatesFor(c),
 	})
 	if err != nil {
 		t.Fatalf("oracle: %v", err)
@@ -138,13 +138,19 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claim
 			firstDifference(ref.Info, string(gotInfo))
 	}
 
-	flow := dataflow.Analyze(tree, dataflow.WithResolver(func(name string) *syntax.Tree {
+	// The generated case's Undefined class is part of the question: under
+	// strict an arm that reads a name can stop the render.
+	flowOpts := []dataflow.Option{dataflow.WithResolver(func(name string) *syntax.Tree {
 		other, err := env.GetTemplate(name)
 		if err != nil {
 			return nil
 		}
 		return other.Syntax()
-	}))
+	})}
+	if c.Undefined == "strict" {
+		flowOpts = append(flowOpts, dataflow.WithStrictUndefined())
+	}
+	flow := dataflow.Analyze(tree, flowOpts...)
 	gotVars := map[string]string{}
 	for name, e := range flow.Context(tree) {
 		gotVars[name] = encodeEffect(e)
@@ -261,7 +267,11 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 		for i := range input {
 			input[i] = byte(rng.UintN(256))
 		}
-		c := conformance.GenerateCase(input)
+		// The default environment, because this asks about the
+		// *template*: two that encode alike must render alike, and a
+		// difference in settings is not a missing distinction in the
+		// vocabulary. See GenerateDefaultCase.
+		c := conformance.GenerateDefaultCase(input)
 		if strings.TrimSpace(c.Source) == "" {
 			continue
 		}
@@ -273,11 +283,7 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 			out = "\x00error: " + err.Error()
 		}
 
-		sources := make(map[string]string, len(h.templates)+1)
-		for name, text := range h.templates {
-			sources[name] = text
-		}
-		sources[fuzzTemplateName] = c.Source
+		sources := h.sourcesFor(c)
 		env, err := gojja2.New(append(caseOptions(c),
 			gojja2.WithLoader(gojja2.DictLoader(sources)),
 			gojja2.WithPythonVersion(h.py))...)
@@ -292,18 +298,19 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		// Autoescaping and the Undefined class are the environment's,
-		// not the template's, so two templates that encode the same
-		// under different settings are not a collision. The Undefined
-		// class was missed when it became a generated setting, and the
-		// pair it invented looked exactly like a missing distinction in
-		// the vocabulary: `{{+ (n)[0] -}}` printed nothing and
-		// `{{ (n)[0] -}}` printed a debug hint, for no reason in the
-		// syntax at all.
-		key := c.Undefined + "\x00" + string(raw)
-		if c.Autoescape {
-			key = "escaped\x00" + key
-		}
+		// The *environment* goes in the key beside the tree, because two
+		// templates that encode the same under different settings are
+		// not a collision. It comes from caseSettings rather than from a
+		// list written here: the Undefined class was missed when it
+		// became a generated setting, and the pair it invented looked
+		// exactly like a missing distinction in the vocabulary --
+		// `{{+ (n)[0] -}}` printed nothing and `{{ (n)[0] -}}` printed a
+		// debug hint, for no reason in the syntax at all. The lexer
+		// settings were missed the same way when the delimiters became
+		// one: an auxiliary template rewritten for `<<`/`>>` does not
+		// lex where the default one loads, so an `{% include %}` that
+		// encodes identically renders an error.
+		key := string(raw)
 
 		prev, ok := byTree[key]
 		if !ok {

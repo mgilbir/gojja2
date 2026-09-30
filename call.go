@@ -67,6 +67,13 @@ func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 		}
 		seq, err := value.Iterate(v)
 		if err != nil {
+			// An undefined is *iterated* rather than type-checked:
+			// the default, debug and chainable classes yield
+			// nothing, and the strict one raises its own error
+			// where this said "not StrictUndefined".
+			if refusal := value.StrictRefusal(v); refusal != nil {
+				return nil, refusal
+			}
 			// Unnamed, unlike the ** message below: jinja2 always
 			// passes something before the star -- the filtered
 			// value, or the macro being called -- so CPython
@@ -98,6 +105,13 @@ func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 		}
 		d, ok := v.Dict()
 		if !ok {
+			// `**x` asks x for `keys`, which every Undefined class
+			// refuses -- the chainable one answers itself and then
+			// refuses the call -- so an undefined here raises its
+			// own error rather than being called not a mapping.
+			if v.IsUndefined() {
+				return nil, v.UndefinedError()
+			}
 			return nil, errs.New(errs.TypeError,
 				"%s argument after ** must be a mapping, not %s",
 				callee, v.TypeName())
@@ -244,7 +258,7 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 		foundCaller = m.explicitCaller
 	}
 
-	if m.caller && !foundCaller {
+	if m.caller && !m.explicitCaller && !foundCaller {
 		caller, ok := take("caller")
 		if !ok || caller.IsNone() {
 			caller = ex.st.Undefined(value.UndefinedHint("No caller defined"))
@@ -305,7 +319,15 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 			sc.set(param.Name, v)
 			continue
 		}
-		sc.set(param.Name, ex.st.Undefined(value.NewUndefined(param.Name)))
+		// jinja2 binds a missing parameter to an undefined carrying a
+		// *hint* -- `undefined(f"parameter {name!r} was not provided")`
+		// -- not to one named after the parameter. The difference shows
+		// wherever an undefined speaks: "parameter 'x' was not provided"
+		// under StrictUndefined, and the hint's own rendering under
+		// DebugUndefined.
+		sc.set(param.Name, ex.st.Undefined(value.UndefinedHint(
+			"parameter %s was not provided",
+			value.ReprFor(value.String(param.Name), ex.pyVersion()))))
 	}
 
 	if err := declareFrameLocals(sc, ex.st, m.node, m.node.Body, sc.parent); err != nil {
@@ -323,6 +345,14 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 	//     whatever the call site does.
 	//   - Whether the result is Markup is decided at the *call*, because
 	//     Macro.__call__ takes the caller's eval context and wraps on that.
+	//     That is the *runtime* context -- the one {% autoescape %} moves
+	//     for its dynamic extent -- and not the setting the call site was
+	//     compiled under. The two differ inside a block: jinja2 compiles a
+	//     block against a fresh eval context, so a `{{ m() }}` written in
+	//     one prints with escape(), while the macro it calls wraps by
+	//     whatever the *parent* had in force where the block is rendered.
+	//     A block written inside `{% autoescape false %}` in the base and
+	//     filled by a child therefore escapes what the macro returns.
 	//
 	// The filters inside the body follow the call too, through the render
 	// state that {% autoescape %} moves for the dynamic extent of its body.
@@ -341,13 +371,14 @@ func (ex *exec) callMacro(m *macroObject, args *value.CallArgs) (value.Value, er
 		// and one defined inside a block keeps that block's super()
 		// wherever it travels to.
 		sub.blockName, sub.blockIndex = m.blockName, m.blockIndex
+		sub.blockScope = m.blockScope
 		return sub.execBody(m.node.Body)
 	})
 	ex.st.tmpl = prevTmpl
 	if err != nil {
 		return value.Undefined, err
 	}
-	return markup(text, ex.autoescape), nil
+	return markup(text, ex.st.autoescape), nil
 }
 
 // execCallBlock runs `{% call %}`: the block body becomes a `caller` macro the
@@ -385,11 +416,14 @@ func (ex *exec) execCallBlock(n *ast.CallBlock) error {
 	if err != nil {
 		return err
 	}
-	text, err := ex.renderValue(v)
-	if err != nil {
-		return err
-	}
-	return ex.write(text)
+	// Written as it stands, not escaped and not finalized: jinja2's
+	// visit_CallBlock uses start_write/end_write, which yield the value
+	// with none of the wrapping `{{ ... }}` gets. It shows wherever the
+	// macro answers a plain string under escaping -- a `{% call %}` in a
+	// block the parent wrapped in `{% autoescape false %}` printed
+	// `&gt;` here and `>` there. The same rule as a {% filter %} block's
+	// result; see execFilterBlock.
+	return ex.write(value.Str(v))
 }
 
 // --- filters and tests -------------------------------------------------------
@@ -641,6 +675,13 @@ func unpackCount(v value.Value) (int, bool) {
 func (ex *exec) unpack(t *ast.Tuple, v value.Value, mode nsMode) error {
 	seq, err := value.Iterate(v)
 	if err != nil {
+		// A StrictUndefined refuses iteration, and that refusal is what
+		// the template should see -- the same rule materializeOr
+		// follows. Substituting "cannot unpack" describes a type the
+		// value does not have and hides which name was undefined.
+		if strict := value.StrictRefusal(v); strict != nil {
+			return strict
+		}
 		return errs.New(errs.TypeError, "cannot unpack non-iterable %s object", v.TypeName())
 	}
 	var items []value.Value

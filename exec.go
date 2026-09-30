@@ -6,6 +6,7 @@ package gojja2
 import (
 	"errors"
 	"iter"
+	"runtime"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -45,8 +46,15 @@ type exec struct {
 	volatileEscape bool
 
 	// blockName and blockIndex locate the block being rendered, for super().
+	// blockScope is the scope it was entered with -- the loop variable and
+	// `loop` for a `scoped` block, nil otherwise -- which super() has to
+	// render the parent with: jinja2 builds its BlockReference from the
+	// *current* context, so a scoped block's super() sees what the block
+	// itself sees. Without it `{% block a scoped %}{{ super() }}` inside a
+	// parent's `{% for %}` rendered nothing.
 	blockName  string
 	blockIndex int
+	blockScope *scope
 	// loop is the innermost `loop` value, for recursive loop() calls.
 	loop value.Value
 	// chunks counts the pieces written into this frame's output, which is
@@ -82,7 +90,10 @@ func (ex *exec) capture(sc *scope, fn func(*exec) error) (string, error) {
 	sub.sc = sc
 	sub.out = &buf
 	sub.chunks = nil
-	if ex.chunks != nil {
+	// The template whose code runs in the buffer decides, and not only the
+	// frame it was called from: a macro imported from a template that has a
+	// filter block is counted although its caller's template has none.
+	if ex.chunks != nil || (ex.st.tmpl != nil && ex.st.tmpl.countsChunks) {
 		sub.chunks = new(int)
 	}
 	if err := fn(&sub); err != nil {
@@ -115,13 +126,19 @@ func (ex *exec) chunkCount() int {
 // writeTo is write aimed somewhere other than this frame's output, which only
 // a context-free {% include %} needs.
 func (ex *exec) writeTo(w writer, s string) error {
-	if err := ex.st.budget.account(len(s)); err != nil {
-		return err
-	}
 	// The nil check first: it is almost always nil, and comparing two
 	// interface values is not free on a path that runs once per write.
 	if ex.chunks != nil && w == ex.out {
 		*ex.chunks++
+	}
+	return ex.writeToUncounted(w, s)
+}
+
+// writeToUncounted is writeTo for text whose pieces were already counted, as
+// the output of an include or a block is by the frame that rendered it.
+func (ex *exec) writeToUncounted(w writer, s string) error {
+	if err := ex.st.budget.account(len(s)); err != nil {
+		return err
 	}
 	_, err := w.WriteString(s)
 	return err
@@ -177,12 +194,6 @@ func (ex *exec) execStmtInner(stmt ast.Stmt) error {
 	case *ast.ExprStmt:
 		_, err := ex.eval(n.Node)
 		return err
-	case *ast.Scope:
-		inner := newScope(ex.sc)
-		if err := declareFrameLocals(inner, ex.st, n, n.Body, inner.parent); err != nil {
-			return err
-		}
-		return ex.child(inner).execBody(n.Body)
 	case *ast.AutoescapeBlock:
 		return ex.execAutoescape(n)
 	case *ast.Break:
@@ -242,11 +253,20 @@ func (ex *exec) renderPrint(v value.Value) (string, error) {
 }
 
 // renderValue turns a value into the text that reaches the output.
-func (ex *exec) renderValue(v value.Value) (string, error) {
-	if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
-		return "", v.UndefinedError()
+// renderValueRaw is str(v) with the Undefined class applied and no escaping:
+// what Python's str() does to a value, including raising for a StrictUndefined.
+func (ex *exec) renderValueRaw(v value.Value) (string, error) {
+	if err := value.StrictRefusal(v); err != nil {
+		return "", err
 	}
-	text := value.StrFor(v, ex.pyVersion())
+	return value.StrFor(v, ex.pyVersion()), nil
+}
+
+func (ex *exec) renderValue(v value.Value) (string, error) {
+	text, err := ex.renderValueRaw(v)
+	if err != nil {
+		return "", err
+	}
 	if ex.autoescape && !v.IsSafe() {
 		// Output is str(x) plainly and escape(x) when autoescaping, so
 		// a value that carries its own escaped form hands that over
@@ -309,10 +329,6 @@ func bodyRetainsScope(body []ast.Stmt) bool {
 			if bodyRetainsScope(n.Body) {
 				return true
 			}
-		case *ast.Scope:
-			if bodyRetainsScope(n.Body) {
-				return true
-			}
 		case *ast.AutoescapeBlock:
 			if bodyRetainsScope(n.Body) {
 				return true
@@ -322,12 +338,14 @@ func bodyRetainsScope(body []ast.Stmt) bool {
 	return false
 }
 
-// hasFilterBlock reports whether body contains a {% filter %} anywhere, which
-// is the only construct that asks how many pieces of output a frame holds.
+// hasFilterBlock reports whether body contains a construct that needs to know
+// how many pieces of output the frame holds: a {% filter %}, which asks, and an
+// {% include %} or {% extends %}, whose template may contain one and is
+// numbered from where this frame had got to.
 func hasFilterBlock(body []ast.Stmt) bool {
 	for _, stmt := range body {
 		switch n := stmt.(type) {
-		case *ast.FilterBlock:
+		case *ast.FilterBlock, *ast.Include, *ast.Extends:
 			return true
 		case *ast.For:
 			if hasFilterBlock(n.Body) || hasFilterBlock(n.Else) {
@@ -359,10 +377,6 @@ func hasFilterBlock(body []ast.Stmt) bool {
 				return true
 			}
 		case *ast.Block:
-			if hasFilterBlock(n.Body) {
-				return true
-			}
-		case *ast.Scope:
 			if hasFilterBlock(n.Body) {
 				return true
 			}
@@ -445,7 +459,17 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 	// The cursor lives on the loop object rather than in this loop, because
 	// `loop` is the iterator: a body that consumes it -- `{{ loop|list }}`
 	// -- advances this walk, and the walk has to see that.
-	ran := false
+	// completed is jinja2's own iteration indicator, and it says more than
+	// "the loop ran": jinja2 writes it at the *end* of the loop body, so a
+	// pass that left early through break or continue never clears it. The
+	// else branch therefore runs unless some pass reached the body's end --
+	// `{% for i in seq %}{% continue %}{% else %}E{% endfor %}` prints E.
+	// Setting it on entry instead reads as the same thing until loopcontrols
+	// is enabled, which is why it was that for so long.
+	completed := false
+	// broke records a `{% break %}`, which ends the walk without ending the
+	// statement.
+	broke := false
 	// A body that cannot let its scope outlive the iteration gets one
 	// frame reused for the whole loop instead of one per pass. See
 	// bodyRetainsScope: only a macro keeps a reference to the scope it was
@@ -462,7 +486,6 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		if err := ex.st.budget.step(); err != nil {
 			return err
 		}
-		ran = true
 		// Each iteration gets a fresh scope, so a `{% set %}` in the
 		// body does not carry into the next pass -- jinja2 rebinds
 		// every body-assigned symbol from the enclosing scope at the
@@ -491,21 +514,39 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		err := body.execBody(n.Body)
 		switch {
 		case errors.Is(err, errBreakLoop):
-			return nil
+			// A break leaves the loop but not the statement: the
+			// else branch still asks whether any pass finished, so
+			// breaking out of the first one runs it.
+			broke = true
 		case errors.Is(err, errContinueLoop):
 			continue
 		case err != nil:
 			return err
+		default:
+			completed = true
+		}
+		if broke {
+			break
 		}
 	}
-	// A filter that failed part way stops the loop rather than ending it.
-	if err := src.err(); err != nil {
+	// A body that consumed the loop *object* pulls through this same source
+	// -- `{{ loop|length }}`, `{{ dict(loop) }}`, `{% for a, b in loop %}`,
+	// even `{{ loop|string }}`, whose repr asks for the length -- and a
+	// `{% break %}` would then leave the failure unreported. jinja2 raises it
+	// where the consumption happened, so it is taken here rather than left to
+	// the check below, which a break deliberately skips.
+	if err := ex.st.takeLoopFailure(); err != nil {
 		return err
 	}
-	// The else branch runs when nothing did, which is what jinja2 tracks
-	// rather than asking the source how long it is -- asking would run a
-	// filtered loop's test over every item before the first pass.
-	if !ran {
+	// A filter that failed part way stops the loop rather than ending it.
+	// A break stops it *before* that pull, so there is nothing to report.
+	if err := src.err(); err != nil && !broke {
+		return err
+	}
+	// The else branch runs when no pass finished, which is what jinja2
+	// tracks rather than asking the source how long it is -- asking would run
+	// a filtered loop's test over every item before the first pass.
+	if !completed {
 		return ex.execBody(n.Else)
 	}
 	return nil
@@ -527,7 +568,6 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 	// including what it did to the list being walked, which is why the walk
 	// is live rather than over a snapshot.
 	nextItem, stop := iter.Pull(seq)
-	_ = stop
 	// The test runs between pulls and can resize the source, so the same
 	// guard the unfiltered loop gets applies here -- checked after every
 	// pull rather than once a pass, because a test that answers false
@@ -577,7 +617,15 @@ func (ex *exec) loopSourceFor(n *ast.For, iterable value.Value) (loopSource, err
 			}
 		}
 	}
-	return &filteredSource{next: next}, nil
+	src := &filteredSource{next: next, report: ex.st.noteLoopFailure}
+	// The pull holds a coroutine, which is released only when the sequence
+	// runs out or stop is called. A loop that ends early -- `{% break %}`, or
+	// a body that raises -- leaves it parked for good, one per render. It is
+	// not stopped when the loop ends because the loop object can outlive the
+	// loop, and what it has not yet pulled is still its to pull; it is stopped
+	// once nothing can reach the source any more.
+	runtime.AddCleanup(src, func(stop func()) { stop() }, stop)
+	return src, nil
 }
 
 func (ex *exec) execAssign(n *ast.Assign) error {
@@ -605,13 +653,49 @@ func (ex *exec) execAssignBlock(n *ast.AssignBlock) error {
 		return err
 	}
 
-	v := markup(text, ex.autoescape)
+	// Two wraps, and jinja2 uses a different context for each. The filter's
+	// *input* is `Markup(concat(buf))` when the frame this tag was compiled
+	// in escapes -- visit_Filter decides that at compile time -- while the
+	// *result* is `(Markup if context.eval_ctx.autoescape else identity)`,
+	// which is the runtime context. With no filter there is only the
+	// second. The two differ inside a block, whose own eval context is
+	// fresh while the context's is whatever the parent has in force.
+	v := markup(text, ex.st.autoescape)
 	if n.Filter != nil {
+		v = markup(text, ex.autoescape)
 		// The filter chain was parsed with a nil input; the captured
 		// body is what flows into it.
 		v, err = ex.applyFilterChain(n.Filter, v)
 		if err != nil {
 			return err
+		}
+		// jinja2 wraps the *result* under autoescape --
+		// `(Markup if autoescape else identity)(filter(...))` -- so a
+		// filter that answers something other than a string leaves a
+		// Markup of its str() behind, not the value. `{% set v | length
+		// %}abc{% endset %}{{ v + 1 }}` is a TypeError there and was 4
+		// here, and `{% set v | list %}` printed escaped quotes where
+		// jinja2's Markup prints them as they are. With escaping off
+		// the value keeps its type, which is what identity() means.
+		// The *runtime* eval context decides, not the setting this tag
+		// was compiled under: jinja2 writes `(Markup if
+		// context.eval_ctx.autoescape else identity)(...)`, and the two
+		// differ inside a block, whose own eval context is fresh while
+		// the context's is whatever the parent has in force. A `{% set
+		// v | list %}` in a block the base wrapped in `{% autoescape
+		// false %}` keeps a plain string, which the block's own print
+		// then escapes.
+		if ex.st.autoescape {
+			// Markup(x) stringifies, so a StrictUndefined raises here
+			// rather than being assigned: `{% set v | first %}{%
+			// endset %}` over an empty body is "No first item" under
+			// strict *and* autoescape, and nothing at all without
+			// escaping, where identity() keeps the undefined.
+			text, err := ex.renderValueRaw(v)
+			if err != nil {
+				return err
+			}
+			v = value.Safe(text)
 		}
 	}
 	// nsItem, not nsAttr: a `{% set %}` with a body assigns an *item*, and
@@ -693,6 +777,16 @@ func (ex *exec) execMacro(n *ast.Macro) error {
 
 func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaults []ast.Expr) (*macroObject, error) {
 	undeclared := findUndeclared(node.Body, "varargs", "kwargs", "caller")
+	// A parameter of that name is the macro's own, and jinja2 leaves the
+	// special out rather than binding over it: `{% macro m(kwargs) %}
+	// {{ kwargs }}{% endmacro %}{{ m(1) }}` prints 1, not an empty dict.
+	// It is jinja2's skip_special_params, and `caller` works the same way
+	// one line further down -- the declared parameter takes the argument,
+	// and its default if there is none.
+	declared := map[string]bool{}
+	for _, p := range args {
+		declared[p.Name] = true
+	}
 	m := &macroObject{
 		name:       name,
 		node:       node,
@@ -706,14 +800,14 @@ func (ex *exec) makeMacro(name string, node *ast.Macro, args []*ast.Name, defaul
 		volatileEscape: ex.volatileEscape,
 		blockName:      ex.blockName,
 		blockIndex:     ex.blockIndex,
-		catchVarargs:   undeclared["varargs"],
-		catchKwargs:    undeclared["kwargs"],
+		blockScope:     ex.blockScope,
+		catchVarargs:   undeclared["varargs"] && !declared["varargs"],
+		catchKwargs:    undeclared["kwargs"] && !declared["kwargs"],
+		// The attribute jinja2 exposes as `accesses_caller`, which is
+		// set for a declared `caller` too; what it must not do is add a
+		// second parameter of that name. See bindMacroArgs.
 		caller:         undeclared["caller"],
-	}
-	for _, p := range args {
-		if p.Name == "caller" {
-			m.explicitCaller = true
-		}
+		explicitCaller: declared["caller"],
 	}
 	return m, nil
 }
@@ -748,11 +842,13 @@ func (ex *exec) execFilterBlock(n *ast.FilterBlock) error {
 		return errs.New(errs.TypeError,
 			"sequence item %d: expected str instance, %s found", ex.chunkCount(), v.TypeName())
 	}
-	out, err := ex.renderValue(v)
-	if err != nil {
-		return err
-	}
-	if err := ex.write(out); err != nil {
+	// Written as it stands, *not* through the output path: jinja2 appends the
+	// filter's result to the buffer rather than emitting it, so it is neither
+	// escaped nor finalized. It usually makes no difference, because a filter
+	// over a Markup answers Markup -- but `{% filter join('-') %}` answers a
+	// plain str holding the body's escapes, and escaping it again turned
+	// `&#39;` into `&amp;#39;`.
+	if err := ex.write(value.Str(v)); err != nil {
 		return err
 	}
 	return nil
@@ -775,20 +871,35 @@ func (ex *exec) execBlock(n *ast.Block) error {
 
 	ref := &blockReference{st: ex.st, name: n.Name, index: 0}
 	if n.Scoped {
-		// A scoped block is handed its immediate frame's own bindings
-		// -- the loop variable and `loop` -- on top of context.vars.
-		// It is not given the whole enclosing chain, so a name the root
-		// frame owns but has not assigned yet still resolves from the
-		// render arguments.
+		// A scoped block is handed the bindings of every enclosing
+		// frame -- loop variables and `loop` at each level, `with`
+		// targets, macro arguments -- on top of context.vars, nearest
+		// frame winning: jinja2 derives the context from
+		// Symbols.dump_stores, which walks the whole chain of frames.
+		// The root frame is left out, so a name it owns but has not
+		// assigned yet still resolves from the render arguments.
 		scoped := newScope(ex.st.contextVars)
-		ex.sc.each(scoped.set)
+		var frames []*scope
+		for cur := ex.sc; cur != nil && cur != ex.st.ctx; cur = cur.parent {
+			frames = append(frames, cur)
+		}
+		if len(frames) == 0 {
+			frames = append(frames, ex.sc)
+		}
+		for i := len(frames) - 1; i >= 0; i-- {
+			frames[i].each(scoped.set)
+		}
 		ref.sc = scoped
 	}
+	// The tag yields the block's pieces into this frame's stream, so the block
+	// counts into this frame's count -- unlike self.b() or super(), which
+	// join their pieces into a value first.
+	ref.chunks = ex.chunks
 	v, err := ref.render()
 	if err != nil {
 		return err
 	}
-	return ex.write(value.Str(v))
+	return ex.writeToUncounted(ex.out, value.Str(v))
 }
 
 func (ex *exec) execExtends(n *ast.Extends) error {
@@ -837,7 +948,10 @@ func (ex *exec) execInclude(n *ast.Include) error {
 		}
 	}
 	var buf strings.Builder
-	if err := tmpl.renderInto(&buf, vars, ex.st.depth, ex.st.budget); err != nil {
+	// jinja2 yields an include's pieces into the includer's own stream, so
+	// they are counted there: the included template numbers a filter block
+	// from where this frame had got to, and advances the count as it goes.
+	if err := tmpl.renderInto(&buf, vars, ex.st.depth, ex.st.budget, ex.chunks); err != nil {
 		return err
 	}
 	// A context-free include writes into the enclosing *function's* stream
@@ -846,13 +960,20 @@ func (ex *exec) execInclude(n *ast.Include) error {
 	if !n.WithContext {
 		target = ex.stream
 	}
-	return ex.writeTo(target, buf.String())
+	return ex.writeToUncounted(target, buf.String())
 }
 
 // loadTemplateName resolves a single template name, refusing a list.
 func (ex *exec) loadTemplateName(e ast.Expr) (*Template, error) {
 	v, err := ex.eval(e)
 	if err != nil {
+		return nil, err
+	}
+	// jinja2's _load_template checks for a loader before it looks at the
+	// name at all, so an environment with no loader reports itself and not
+	// the unhashable list or the undefined below it. Both of those were
+	// reported ahead of it here.
+	if err := ex.st.env.requireLoader(); err != nil {
 		return nil, err
 	}
 	switch v.Kind() {
@@ -884,6 +1005,14 @@ func (ex *exec) loadTemplateExpr(e ast.Expr) (*Template, error) {
 	case v.IsString():
 		return ex.st.env.GetTemplate(v.AsString())
 	case v.IsUndefined():
+		// get_or_select_template treats an undefined as a single name,
+		// so this goes through get_template -- and its loader check
+		// comes first. A *selection* does not: an empty list is refused
+		// by select_template before any name is looked up, which is why
+		// only this branch asks.
+		if err := ex.st.env.requireLoader(); err != nil {
+			return nil, err
+		}
 		return nil, v.UndefinedError()
 	}
 	return ex.st.env.selectTemplateValue(v)
@@ -897,7 +1026,7 @@ func (ex *exec) execImport(n *ast.Import) error {
 	ex.sc.set(n.Target, module)
 	if ex.sc == ex.st.ctx {
 		ex.st.contextVars.set(n.Target, module)
-		ex.st.export(n.Target)
+		ex.st.unexport(n.Target)
 	}
 	return nil
 }
@@ -925,7 +1054,7 @@ func (ex *exec) execFromImport(n *ast.FromImport) error {
 		ex.sc.set(entry.Alias, v)
 		if ex.sc == ex.st.ctx {
 			ex.st.contextVars.set(entry.Alias, v)
-			ex.st.export(entry.Alias)
+			ex.st.unexport(entry.Alias)
 		}
 	}
 	return nil
@@ -972,7 +1101,7 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 	// is why an include of the same template was right and an import of it
 	// was not.
 	var body strings.Builder
-	if err := tmpl.renderState(st, &body); err != nil {
+	if err := tmpl.renderState(st, &body, nil); err != nil {
 		return value.Undefined, err
 	}
 	return value.FromObject(&moduleObject{st: st, name: tmpl.name, body: body.String()}), nil
@@ -982,6 +1111,16 @@ func (ex *exec) importModule(nameExpr ast.Expr, withContext bool) (value.Value, 
 //
 // jinja2 does not export a name beginning with an underscore, which is the one
 // rule here; the set is what moduleObject answers from.
+// unexport removes a name from the exports, which is what binding it with an
+// {% import %} does: jinja2's generator writes `context.exported_vars.discard`
+// for every top-level import target, so a module that imports another does not
+// re-export it -- `{% import 'inner' as sub %}` leaves `m.sub` undefined in the
+// template that imports *it*, and discards the name even where an earlier
+// `{% set sub = ... %}` had exported it. A later `{% set %}` adds it back.
+func (s *State) unexport(name string) {
+	delete(s.exports, name)
+}
+
 func (s *State) export(name string) {
 	if strings.HasPrefix(name, "_") {
 		return

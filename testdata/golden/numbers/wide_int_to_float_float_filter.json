@@ -1,0 +1,14 @@
+{
+  "case": "numbers/wide_int_to_float_float_filter.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "OverflowError",
+    "message": "int too large to convert to float"
+  }
+}

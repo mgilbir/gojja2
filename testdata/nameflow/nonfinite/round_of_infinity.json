@@ -1,0 +1,6 @@
+{
+  "case": "nonfinite/round_of_infinity.jj2",
+  "variables": {
+    "s_inf": "or"
+  }
+}

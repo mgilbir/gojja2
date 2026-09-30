@@ -1,0 +1,3 @@
+{}
+---
+{{ 1 is equalto 1 }}|{{ 1 is equalto 2 }}|{{ 2 is equalto 1 }}|{{ 'a' is equalto 'b' }}|{{ 1.0 is equalto 1 }}|{{ [1] is equalto [1] }}|{{ none is equalto none }}|{{ 1 is equalto(1) }}

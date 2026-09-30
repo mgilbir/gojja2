@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set s = d.keys() - ['b'] %}{% set m = d.keys().mapping %}{{ m.__class__.get(m, 'a') }}|{{ m.__class__.items(m) }}

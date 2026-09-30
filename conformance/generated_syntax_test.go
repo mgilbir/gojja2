@@ -108,13 +108,15 @@ func TestGeneratedCorporaAgree(t *testing.T) {
 				}
 				continue
 			}
-			flow := dataflow.Analyze(tree, dataflow.WithResolver(func(n string) *syntax.Tree {
-				other, err := env.GetTemplate(n)
-				if err != nil {
-					return nil
-				}
-				return other.Syntax()
-			}))
+			flow := dataflow.Analyze(tree,
+				append(c.DataflowOptions(),
+					dataflow.WithResolver(func(n string) *syntax.Tree {
+						other, err := env.GetTemplate(n)
+						if err != nil {
+							return nil
+						}
+						return other.Syntax()
+					}))...)
 			gotVars := map[string]string{}
 			for name, e := range flow.Context(tree) {
 				gotVars[name] = encodeEffect(e)

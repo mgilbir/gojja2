@@ -31,7 +31,7 @@ func registerDefaultFilters(env *Environment) {
 	// assembles it with "".join(...), and joining on a plain str gives a
 	// plain str.
 	add("title", func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		text, err := strictStr(v)
+		text, err := strictStrFor(v, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -149,20 +149,20 @@ func definedFilter(f Filter) Filter {
 //
 // i is the byte offset of the code point, which is what tells |capitalize its
 // first one from the rest.
-// strictStr is str() on a filter's subject: the text, or the error a
-// StrictUndefined raises rather than becoming "".
+// strictStrFor is str() on a filter's subject for one interpreter: the text, or
+// the error a StrictUndefined raises rather than becoming "".
 //
-// Every filter that renders its subject as text goes through here, because
-// under that class the coercion is the operation that fails -- `{{ nope|upper }}`
-// raises in jinja2 and quietly produced "" here, which is the strictness
-// setting not applying.
-func strictStr(v value.Value) (string, error) {
-	return strictStrFor(v, value.DefaultPythonVersion)
-}
-
-// strictStrFor is strictStr reproducing one interpreter, which matters wherever
-// the value may be a container: str() of one is its repr, and a repr escapes by
-// printability. See value.StrFor.
+// Every filter that renders its subject as text goes through here, because under
+// that class the coercion is the operation that fails -- `{{ nope|upper }}`
+// raises in jinja2 and quietly produced "" here, which is the strictness setting
+// not applying.
+//
+// The version is not optional. There used to be a `strictStr` beside this that
+// passed DefaultPythonVersion, and nineteen of the twenty callers used it: str()
+// of a *container* is its repr, and a repr escapes by isprintable, so every one
+// of those filters answered the pin's escaping whatever WithPythonVersion said.
+// `{{ '\ua7da'.splitlines(true)|upper }}` under 3.14 was the shape that showed
+// it, through the list repr |upper asks for.
 func strictStrFor(v value.Value, py value.PythonVersion) (string, error) {
 	if err := value.StrictRefusal(v); err != nil {
 		return "", err
@@ -172,7 +172,7 @@ func strictStrFor(v value.Value, py value.PythonVersion) (string, error) {
 
 func runeFilter(f func(i int, r rune, u *value.UnicodeOverrides) string) Filter {
 	return func(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-		text, err := strictStr(v)
+		text, err := strictStrFor(v, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -267,6 +267,23 @@ func materializeOr(s *State, v value.Value, notIterable error) ([]value.Value, e
 	return collect(s, seq)
 }
 
+// lengthHint is the question CPython asks before it allocates a list.
+//
+// list(), sorted() and random.choice() all narrow the object's length to a
+// Py_ssize_t -- PyObject_LengthHint for the first two, len() for the third --
+// so a range longer than that is refused *there* and never walked:
+// `{{ range(2**70)|list }}` is an OverflowError on CPython, where gojja2 spent
+// the whole render budget walking toward a list it could never hold.
+//
+// Only the overflow travels. An object with no length simply has no hint, which
+// is not an error, and the walk that follows still charges per element.
+func lengthHint(v value.Value) error {
+	if _, err := value.LenValue(v); err != nil && errors.Is(err, errs.OverflowError) {
+		return err
+	}
+	return nil
+}
+
 // collect walks an iterator into a slice, charging as it goes.
 func collect(s *State, seq iter.Seq[value.Value]) ([]value.Value, error) {
 	var out []value.Value
@@ -301,7 +318,7 @@ func attrParts(attribute value.Value) []value.Value {
 	parts := make([]value.Value, 0, len(fields))
 	for _, part := range fields {
 		if n, ok := pyDigitsToInt(part); ok {
-			parts = append(parts, value.Int(n))
+			parts = append(parts, n)
 			continue
 		}
 		parts = append(parts, value.String(part))
@@ -313,25 +330,33 @@ func attrParts(attribute value.Value) []value.Value {
 //
 // str.isdigit accepts no sign and no spaces, so "-1" and " 1" are names; it
 // does accept other scripts' digits, and int() reads those, so "١" is 1.
-func pyDigitsToInt(part string) (int64, bool) {
+func pyDigitsToInt(part string) (value.Value, bool) {
 	if part == "" {
-		return 0, false
+		return value.Undefined, false
 	}
 	var n int64
+	var wide *big.Int
 	for _, r := range part {
 		d := pyDigitValue(r)
 		if d < 0 {
-			return 0, false
+			return value.Undefined, false
 		}
-		// An attribute specification long enough to overflow is not
-		// an index anyone meant; Python would build the integer, and
-		// the lookup would miss either way.
-		if n > (math.MaxInt64-int64(d))/10 {
-			return 0, false
+		// Python builds the integer however wide it is, and a lookup
+		// with it is a lookup with an int -- which finds no key spelled
+		// as the digits. Reading it as a name instead found one.
+		if wide == nil && n > (math.MaxInt64-int64(d))/10 {
+			wide = big.NewInt(n)
+		}
+		if wide != nil {
+			wide.Mul(wide, big.NewInt(10)).Add(wide, big.NewInt(int64(d)))
+			continue
 		}
 		n = n*10 + int64(d)
 	}
-	return n, true
+	if wide != nil {
+		return value.BigInt(wide), true
+	}
+	return value.Int(n), true
 }
 
 // pyDigitValue is the decimal value of a rune str.isdigit accepts, or -1.
@@ -380,6 +405,21 @@ func attrPath(s *State, v value.Value, parts []value.Value) (value.Value, error)
 				continue
 			}
 			return value.Undefined, v.UndefinedError()
+		}
+		// A subscript that can raise says so through its sibling, as it
+		// does in a template: getitem catches TypeError and LookupError,
+		// and the undefined behind a mappingproxy raises neither.
+		if ge, ok := v.Interface().(interface {
+			GetItemErr(value.Value) (value.Value, bool, error)
+		}); ok {
+			item, found, err := ge.GetItemErr(part)
+			if err != nil {
+				return value.Undefined, err
+			}
+			if found {
+				v = item
+				continue
+			}
 		}
 		v = envGetItem(s, v, part)
 	}
@@ -650,8 +690,8 @@ func boolArg(args *value.CallArgs, i int, name string, def bool) (bool, error) {
 
 // --- text filters ------------------------------------------------------------
 
-func filterTrim(_ *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	text, err := strictStr(v)
+func filterTrim(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -680,23 +720,21 @@ func filterString(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 // filterReplace implements jinja2's do_replace, whose autoescaping rule is
 // finer than it looks; see below.
 func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	old, ok := arg(args, 0, "old")
-	if !ok {
-		return value.Undefined, errs.New(errs.FilterArgumentError,
-			"replace() missing required argument 'old'")
-	}
-	new, ok := arg(args, 1, "new")
-	if !ok {
-		return value.Undefined, errs.New(errs.FilterArgumentError,
-			"replace() missing required argument 'new'")
-	}
+	// Neither is checked for: arity.go carries do_replace's signature and
+	// checkArity refuses the call first, with CPython's own wording --
+	// "do_replace() missing 2 required positional arguments: 'old' and
+	// 'new'". The guards that stood here answered something else and could
+	// not be reached to say it. Corpus: errors/replace_no_arguments,
+	// errors/replace_one_argument.
+	old, _ := arg(args, 0, "old")
+	new, _ := arg(args, 1, "new")
 	count, err := intArg(args, 2, "count", -1, cSSizeT)
 	if err != nil {
 		return value.Undefined, err
 	}
 
 	if !s.autoescape {
-		src, err := strictStr(v)
+		src, err := strictStrFor(v, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -723,7 +761,7 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	// shape of that condition is Python operator precedence, and it is
 	// reproduced rather than tidied.
 	markup := v.IsSafe()
-	src, err := strictStr(v)
+	src, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -795,7 +833,7 @@ func filterCenter(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err != nil {
 		return value.Undefined, err
 	}
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -863,7 +901,7 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	// jinja2 writes `s += newline` and then s.splitlines(), so the append
 	// is the reason a trailing line survives -- and splitlines is the
 	// reason a carriage return breaks a line here too.
-	subject, err := strictStr(v)
+	subject, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1000,7 +1038,7 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 		return value.Undefined, err
 	}
 
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1076,7 +1114,11 @@ func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	wrapString := "\n"
+	// jinja2 defaults the wrapstring to the *environment's* newline sequence,
+	// not to "\n": `{{ 'a\r\nb'|wordwrap(1) }}` rejoins with "\r\n" under
+	// WithNewlineSequence("\r\n"). Joining with "\n" regardless was invisible
+	// until the option had a corpus case at all.
+	wrapString := s.NewlineSequence()
 	if w, ok := arg(args, 2, "wrapstring"); ok && !w.IsNone() {
 		// jinja2's body is `wrapstring.join([... for line in
 		// s.splitlines()])`, and Python resolves the attribute on the
@@ -1115,7 +1157,7 @@ func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	}
 
 	var out []string
-	subject, err := strictStr(v)
+	subject, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1286,6 +1328,9 @@ func lastHyphenBefore(chunk string, limit int) int {
 // whitespace runs, and words, optionally broken after an internal hyphen.
 func wrapChunks(s *State, text string, breakOnHyphens bool) ([]string, error) {
 	var chunks []string
+	// Looked up once for the whole text, as the classifiers do: the word
+	// classes below are the interpreter's, not Go's.
+	u := value.UnicodeFor(s.PythonVersion())
 	runes := []rune(text)
 	i := 0
 	for i < len(runes) {
@@ -1306,7 +1351,7 @@ func wrapChunks(s *State, text string, breakOnHyphens bool) ([]string, error) {
 			chunks = append(chunks, word)
 			continue
 		}
-		chunks = append(chunks, splitOnHyphens(word)...)
+		chunks = append(chunks, splitOnHyphens(word, u)...)
 	}
 	return chunks, nil
 }
@@ -1325,7 +1370,7 @@ func wrapChunks(s *State, text string, breakOnHyphens bool) ([]string, error) {
 // Two or more hyphens are an em-dash instead, and become a chunk of their own
 // when they sit between a word character and a word character: `a--b` is three
 // chunks where `a-b` is one.
-func splitOnHyphens(word string) []string {
+func splitOnHyphens(word string, u *value.UnicodeOverrides) []string {
 	runes := []rune(word)
 	var out []string
 	start := 0
@@ -1334,7 +1379,8 @@ func splitOnHyphens(word string) []string {
 			continue
 		}
 		if run := dashRun(runes, i); run >= 2 {
-			if i > 0 && isWordPunct(runes[i-1]) && i+run < len(runes) && isWordChar(runes[i+run]) {
+			if i > 0 && isWordPunct(runes[i-1], u) &&
+				i+run < len(runes) && isWordChar(runes[i+run], u) {
 				if i > start {
 					out = append(out, string(runes[start:i]))
 				}
@@ -1344,7 +1390,7 @@ func splitOnHyphens(word string) []string {
 			i += run - 1
 			continue
 		}
-		if splitsAfterHyphen(runes, i) {
+		if splitsAfterHyphen(runes, i, u) {
 			out = append(out, string(runes[start:i+1]))
 			start = i + 1
 		}
@@ -1361,44 +1407,51 @@ func dashRun(runes []rune, i int) int {
 	return n
 }
 
-// isWordLetter is Python's [^\d\W]: a word character that is not a digit.
-func isWordLetter(r rune) bool { return r == '_' || unicode.IsLetter(r) }
+// isWordChar is Python's `\w`, which for a str pattern is Py_UNICODE_ISALNUM
+// plus the underscore -- str.isalpha, isdecimal, isdigit or isnumeric, any of
+// them.
+//
+// It was `unicode.IsLetter || unicode.IsDigit || '_'`, which is the same idea
+// read off Go's tables rather than the interpreter's: 9,039 code points wrong
+// against the pin, 14,049 against 3.11, and the count moving with whichever
+// Unicode release the toolchain carried. Composing the classifiers gojja2
+// already has for isalpha and isnumeric is exact on all 1,112,064 code points
+// for every interpreter, so this needs no table of its own.
+func isWordChar(r rune, u *value.UnicodeOverrides) bool {
+	return r == '_' || u.IsAlpha(r, value.AlphaDefault(r)) || pyIsNumeric(r, u)
+}
 
-// isWordChar is Python's \w.
-func isWordChar(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+// isWordLetter is Python's `[^\d\W]`: a word character that is not a decimal
+// digit. `\d` is isdecimal, so a superscript two is one of these and an ASCII
+// digit is not -- which reading it as unicode.IsLetter got backwards for 10,097
+// code points.
+func isWordLetter(r rune, u *value.UnicodeOverrides) bool {
+	return isWordChar(r, u) && !pyIsDecimal(r, u)
 }
 
 // isWordPunct is textwrap's word_punct, the class an em-dash must follow.
-func isWordPunct(r rune) bool {
-	return isWordChar(r) || strings.ContainsRune(`!"'&.,?`, r)
+func isWordPunct(r rune, u *value.UnicodeOverrides) bool {
+	return isWordChar(r, u) || strings.ContainsRune(`!"'&.,?`, r)
 }
 
 // splitsAfterHyphen reports whether the single hyphen at i is one a line may
 // end after: (?<=LL-|L-L-) at the hyphen, and (?=L-?L) past it.
-func splitsAfterHyphen(runes []rune, i int) bool {
-	twoLetters := i >= 2 && isWordLetter(runes[i-1]) && isWordLetter(runes[i-2])
-	letterHyphenLetter := i >= 3 && isWordLetter(runes[i-1]) &&
-		runes[i-2] == '-' && isWordLetter(runes[i-3])
+func splitsAfterHyphen(runes []rune, i int, u *value.UnicodeOverrides) bool {
+	twoLetters := i >= 2 && isWordLetter(runes[i-1], u) && isWordLetter(runes[i-2], u)
+	letterHyphenLetter := i >= 3 && isWordLetter(runes[i-1], u) &&
+		runes[i-2] == '-' && isWordLetter(runes[i-3], u)
 	if !twoLetters && !letterHyphenLetter {
 		return false
 	}
 	j := i + 1
-	if j >= len(runes) || !isWordLetter(runes[j]) {
+	if j >= len(runes) || !isWordLetter(runes[j], u) {
 		return false
 	}
 	j++
 	if j < len(runes) && runes[j] == '-' {
 		j++
 	}
-	return j < len(runes) && isWordLetter(runes[j])
-}
-
-// isWordRune is what jinja2's wordcount counts a word out of: `[\p{L}\p{N}_]`.
-// It is not the same as splitting on whitespace -- "[]" has one field and no
-// words. Go's \w is ASCII-only; Python's is not, so the class is spelled out.
-func isWordRune(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
+	return j < len(runes) && isWordLetter(runes[j], u)
 }
 
 // filterWordcount counts runs of word characters.
@@ -1412,7 +1465,8 @@ func isWordRune(r rune) bool {
 func filterWordcount(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	var n int64
 	inWord := false
-	subject, err := strictStr(v)
+	u := value.UnicodeFor(s.PythonVersion())
+	subject, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1420,7 +1474,7 @@ func filterWordcount(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 		if err := s.Poll(); err != nil {
 			return value.Undefined, err
 		}
-		if !isWordRune(r) {
+		if !isWordChar(r, u) {
 			inWord = false
 			continue
 		}
@@ -1448,7 +1502,7 @@ var stripTagsRe = regexp.MustCompile(`(?s)<!--.*?-->|<[^>]*>`)
 // ReplaceAll. Fields was also an allocation the size of the input, holding every
 // word of it separately and charged to nobody.
 func filterStriptags(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1620,7 +1674,7 @@ func resolveCharref(ref string) string {
 // where CPython emits it escaped.
 func filterFormat(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	safe := v.IsSafe()
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1631,13 +1685,13 @@ func filterFormat(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		d := value.NewDict()
 		dict, _ := d.Dict()
 		for _, kw := range args.Kwargs {
-			dict.SetString(kw.Name, escapeArg(safe, kw.Value))
+			dict.SetString(kw.Name, escapeArg(safe, kw.Value, s.PythonVersion()))
 		}
 		out, err = value.Mod(format, d, s, s.PythonVersion())
 	} else {
 		pos := make([]value.Value, len(args.Pos))
 		for i, arg := range args.Pos {
-			pos[i] = escapeArg(safe, arg)
+			pos[i] = escapeArg(safe, arg, s.PythonVersion())
 		}
 		out, err = value.Mod(format, value.NewTuple(pos...), s, s.PythonVersion())
 	}
@@ -1656,7 +1710,7 @@ func filterFormat(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 // `"%d" % 5` still sees an int; escaping it to the string "5" here would make
 // `{{ "%d"|safe|format(5) }}` fail with "a real number is required". Their
 // rendered forms contain nothing to escape either way.
-func escapeArg(safe bool, v value.Value) value.Value {
+func escapeArg(safe bool, v value.Value, py value.PythonVersion) value.Value {
 	if !safe {
 		return v
 	}
@@ -1664,7 +1718,7 @@ func escapeArg(safe bool, v value.Value) value.Value {
 	case value.KindInt, value.KindFloat, value.KindBool, value.KindNone:
 		return v
 	}
-	return escapeIfNeeded(v)
+	return escapeIfNeeded(v, py)
 }
 
 // filterPprint renders a value the way Python's pprint.pformat does: repr()
@@ -1685,9 +1739,11 @@ func filterPprint(st *State, v value.Value, _ *value.CallArgs) (value.Value, err
 
 // maxPPrintDepth bounds how deeply pprint descends, for the same reason
 // maxJSONDepth does: the nesting is chosen at render time and the walk would
-// otherwise exhaust the stack. CPython's pprint hits its own wall at 326
-// levels, three interpreter frames per level, and reports it as a failure to
-// take the repr -- which is where it happens.
+// otherwise exhaust the stack. CPython's pprint hits its own wall first, at 326
+// levels, three interpreter frames per level -- and reports it as a failure to
+// take the repr, which is where it happens. That one did not move with 3.12:
+// pprint recurses in Python, so it reaches the Python limit rather than the C
+// one. See docs/limits.md.
 const maxPPrintDepth = 1000
 
 // RecursionMessageRepr is what CPython reports when it runs out of stack
@@ -1784,6 +1840,9 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, cyclic bool, inde
 		}
 		return pformatString(st, b, v.AsString(), rep, indent, allowance, level+1)
 
+	case value.KindBytes:
+		return pformatBytes(st, b, v.AsString(), rep, indent, allowance, level+1)
+
 	case value.KindList, value.KindTuple:
 		s, _ := v.Seq()
 		open, close := "[", "]"
@@ -1821,9 +1880,56 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, cyclic bool, inde
 		b.WriteString("}")
 
 	default:
-		b.WriteString(rep)
+		set, ok := v.Interface().(*value.Set)
+		if !ok {
+			b.WriteString(rep)
+			break
+		}
+		// pprint's _pprint_set: the elements one per line in braces,
+		// laid out exactly as a list's are in brackets. CPython sorts
+		// them first and so does this set, which is what makes the two
+		// agree here where their *reprs* do not -- see
+		// docs/divergences.md, "The order a set prints in".
+		items := make([]value.Value, 0, set.Len())
+		for item := range set.Iterate() {
+			items = append(items, item)
+		}
+		// CPython sorts with pprint._safe_key, which is the values' own
+		// ordering wherever they have one and (type name, id) where they
+		// do not. The set arrives here in *repr* order, which is a total
+		// order over mixed types and is what the set's own repr uses --
+		// but it is not CPython's here: a set of integers pprints as
+		// 0, 1, 2 there and 0, 1, 10 in repr order. So the copy this
+		// prints is re-sorted by value, and falls back to the order it
+		// came in where two elements cannot be compared. That last case
+		// is the one CPython keys on id(), which no other process can
+		// reproduce; see docs/divergences.md.
+		sortForPPrint(st, items)
+		b.WriteString("{")
+		err := pformatItems(st, b, items, indent, allowance+1,
+			func(b *strings.Builder, item value.Value, at, room int) error {
+				return pformatSeen(st, b, item, cyclic, at, room, level+1, seen)
+			})
+		if err != nil {
+			return err
+		}
+		b.WriteString("}")
 	}
 	return nil
+}
+
+// sortForPPrint orders a set's elements the way pprint._safe_key does: by value
+// where the two can be compared, and leaving them as they came where they
+// cannot. Stable, so the incomparable pairs keep the set's own total order
+// rather than an arbitrary one.
+func sortForPPrint(st *State, items []value.Value) {
+	sort.SliceStable(items, func(i, j int) bool {
+		less, err := value.Ordered("<", items[i], items[j], st.PythonVersion())
+		if err != nil {
+			return false
+		}
+		return less
+	})
 }
 
 // safeRepr is the repr pprint measures with when the value contains itself.
@@ -2030,7 +2136,11 @@ func pformatString(st *State, b *strings.Builder, text, rep string, indent, allo
 			return err
 		}
 		if i > 0 {
-			b.WriteString("\n" + pprintIndent(indent))
+			pad, err := pprintIndent(st, indent)
+			if err != nil {
+				return err
+			}
+			b.WriteString("\n" + pad)
 		}
 		b.WriteString(chunk)
 	}
@@ -2040,20 +2150,101 @@ func pformatString(st *State, b *strings.Builder, text, rep string, indent, allo
 	return nil
 }
 
+// pformatBytes is pprint's _pprint_bytes: a bytes whose repr does not fit is
+// split into four-byte-aligned pieces, one literal per line, wrapped in
+// parentheses at the top level -- which is what makes adjacent literals one
+// value in Python source.
+//
+// Four bytes or fewer are printed whole however little room is left, because
+// CPython checks the length of the *value* and not of its repr. Nothing wrapped
+// a bytes here at all before: the pprint dispatch had arms for str, list, tuple
+// and dict, and everything else fell through to its repr on one line. A
+// coverage-guided run found it, on a 256-byte maketrans table.
+func pformatBytes(st *State, b *strings.Builder, data, rep string,
+	indent, allowance, level int) error {
+	if len(data) <= 4 {
+		b.WriteString(rep)
+		return nil
+	}
+	parens := level == 1
+	if parens {
+		indent++
+		allowance++
+		b.WriteString("(")
+	}
+	// _wrap_bytes_repr: gather whole four-byte groups while the repr of what
+	// has been gathered still fits. The allowance is charged against the
+	// group that *starts* the last whole four, so a length that is already a
+	// multiple of four never charges it -- CPython's loop never reaches that
+	// index.
+	width := pprintWidth - indent
+	last := len(data) / 4 * 4
+	current, delim := "", ""
+	write := func(piece string) error {
+		// The indent is charged when it is built, and written once per line.
+		if err := st.ChargeBytes(int64(len(delim))); err != nil {
+			return err
+		}
+		b.WriteString(delim)
+		b.WriteString(value.ReprFor(value.Bytes([]byte(piece)), st.PythonVersion()))
+		if delim == "" {
+			pad, err := pprintIndent(st, indent)
+			if err != nil {
+				return err
+			}
+			delim = "\n" + pad
+		}
+		return nil
+	}
+	for i := 0; i < len(data); i += 4 {
+		if err := st.Poll(); err != nil {
+			return err
+		}
+		end := min(i+4, len(data))
+		part := data[i:end]
+		candidate := current + part
+		if i == last {
+			width -= allowance
+		}
+		if len(value.ReprFor(value.Bytes([]byte(candidate)), st.PythonVersion())) > width {
+			if current != "" {
+				if err := write(current); err != nil {
+					return err
+				}
+			}
+			current = part
+			continue
+		}
+		current = candidate
+	}
+	if current != "" {
+		if err := write(current); err != nil {
+			return err
+		}
+	}
+	if parens {
+		b.WriteString(")")
+	}
+	return nil
+}
+
 // pprintIndent is the leading space for one pprint line.
 //
-// The indent grows with the depth of the value being printed, and that depth
-// is the caller's -- a deeply nested structure handed in from Go would
-// otherwise size an allocation per line from it. Indenting past the line width
-// carries no information, so it is capped there.
-func pprintIndent(n int) string {
+// The indent grows with the depth of the value being printed and with the
+// width of the keys on the way down, so it is charged before it is built: a
+// deeply nested structure would otherwise size an allocation per container from
+// it. It is not capped at the line width. Indenting past the line width carries
+// no information, but pprint writes every column of it all the same -- a value
+// ninety lists deep puts its second line at column ninety -- so a cap answered
+// with fewer spaces than CPython does.
+func pprintIndent(st *State, n int) (string, error) {
 	if n <= 0 {
-		return ""
+		return "", nil
 	}
-	if n > pprintWidth {
-		n = pprintWidth
+	if err := st.ChargeBytes(int64(n)); err != nil {
+		return "", err
 	}
-	return strings.Repeat(" ", n)
+	return strings.Repeat(" ", n), nil
 }
 
 // splitLinesKeepingEnds is Python's str.splitlines(True).
@@ -2081,12 +2272,22 @@ func pformatItems[T any](st *State, b *strings.Builder, items []T, indent, allow
 	write func(*strings.Builder, T, int, int) error,
 ) error {
 	inner := indent + 1
-	separator := ",\n" + pprintIndent(inner)
+	pad, err := pprintIndent(st, inner)
+	if err != nil {
+		return err
+	}
+	separator := ",\n" + pad
 	for i, item := range items {
 		if err := st.Poll(); err != nil {
 			return err
 		}
 		if i > 0 {
+			// The pad was charged once, and the separator carrying it is
+			// written once per entry: a container of many entries indented
+			// far by the keys above it is entries * indent bytes.
+			if err := st.ChargeBytes(int64(len(separator))); err != nil {
+				return err
+			}
 			b.WriteString(separator)
 		}
 		room := 1
@@ -2222,7 +2423,7 @@ func markSeen(seen map[any]bool, key any) map[any]bool {
 
 // --- escaping filters --------------------------------------------------------
 
-func filterSafe(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+func filterSafe(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	// Markup(x) asks x for its own escaped form when it has one, which is
 	// how `{{ module|safe }}` is the module's body and not its repr -- and
 	// why the one value whose __html__ cannot be called fails here too.
@@ -2232,7 +2433,7 @@ func filterSafe(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html), nil
 	}
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -2249,7 +2450,7 @@ func filterEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html), nil
 	}
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -2315,7 +2516,7 @@ func filterForceEscape(s *State, v value.Value, _ *value.CallArgs) (value.Value,
 	if html, ok := value.HTML(v); ok {
 		v = value.String(html)
 	}
-	text, err := strictStr(v)
+	text, err := strictStrFor(v, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -2541,7 +2742,15 @@ func filterFloat(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 	if !hasDef {
 		def = value.Float(0)
 	}
-	if f, ok := v.Float64(); ok {
+	if v.IsNumber() {
+		// do_float catches TypeError and ValueError and answers the
+		// default; float() of a wide integer raises OverflowError,
+		// which it does not catch. This answered an infinity instead,
+		// and the default made it look deliberate.
+		f, err := value.FloatOrOverflow(v)
+		if err != nil {
+			return value.Undefined, err
+		}
 		return value.Float(f), nil
 	}
 	if text, ok := numericText(v); ok {
@@ -2599,42 +2808,47 @@ func filterRound(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		if err != nil {
 			return value.Undefined, err
 		}
-		f, ok := scaled.Float64()
-		if !ok {
-			return value.Undefined, errs.New(errs.TypeError,
-				"must be real number, not %s", scaled.TypeName())
+		// math.ceil and math.floor answer a Python *int*, and the
+		// division that follows is int/int when the scale is one too --
+		// so the whole thing is exact until the last step, which
+		// CPython rounds once. Going through a float64 first loses the
+		// value it cannot hold: `9007199254740993|round(2, 'ceil')` is
+		// 9007199254740992.0 there and was ...994.0 here.
+		var rounded value.Value
+		if scaled.IsInteger() {
+			// An integer is already what ceil and floor would answer.
+			rounded = scaled
+		} else {
+			f, ok := scaled.Float64()
+			if !ok {
+				return value.Undefined, errs.New(errs.TypeError,
+					"must be real number, not %s", scaled.TypeName())
+			}
+			// They refuse a value that is not a number -- which is
+			// where an infinity raises, rather than dividing through
+			// as an infinity of its own.
+			if math.IsInf(f, 0) {
+				return value.Undefined, errs.New(errs.OverflowError,
+					"cannot convert float infinity to integer")
+			}
+			if math.IsNaN(f) {
+				return value.Undefined, errs.New(errs.ValueError,
+					"cannot convert float NaN to integer")
+			}
+			g := math.Floor(f)
+			if method == "ceil" {
+				g = math.Ceil(f)
+			}
+			// A Python int has no signed zero, so dividing one
+			// yields +0.0 -- `-0.0|round(1, "floor")` renders "0.0"
+			// there and rendered "-0.0" here.
+			rounded = value.BigInt(new(big.Int).SetInt64(int64(g)))
+			if math.Abs(g) >= 1<<62 {
+				r, _ := new(big.Float).SetFloat64(g).Int(nil)
+				rounded = value.BigInt(r)
+			}
 		}
-		divisor, _ := scale.Float64()
-		if divisor == 0 {
-			// 10**-400 underflows to 0.0, and Python then divides by
-			// it. gojja2 answered NaN, which is not a number any
-			// template asked for.
-			return value.Undefined, value.ErrZeroDivision(s.PythonVersion(), "float division by zero")
-		}
-		// math.ceil and math.floor answer a Python int, so they refuse a
-		// value that is not one -- which is where an infinity raises,
-		// rather than dividing through as an infinity of its own.
-		if math.IsInf(f, 0) {
-			return value.Undefined, errs.New(errs.OverflowError,
-				"cannot convert float infinity to integer")
-		}
-		if math.IsNaN(f) {
-			return value.Undefined, errs.New(errs.ValueError,
-				"cannot convert float NaN to integer")
-		}
-		rounded := math.Floor(f)
-		if method == "ceil" {
-			rounded = math.Ceil(f)
-		}
-		// math.ceil and math.floor return a Python *int*, which has no
-		// signed zero, so dividing it yields +0.0. Go's return a float
-		// and keep the sign, which made `-0.0|round(1, "floor")` render
-		// "-0.0" where jinja2 renders "0.0". Assigning the literal
-		// normalises -0.0 to +0.0 and leaves every other value alone.
-		if rounded == 0 {
-			rounded = 0
-		}
-		return value.Float(rounded / divisor), nil
+		return value.Div(rounded, scale, s.PythonVersion())
 	}
 
 	// round() looks __round__ up on the value, so a type that has none is
@@ -2854,8 +3068,13 @@ func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.
 	if err != nil {
 		return value.Undefined, err
 	}
-	bytes, ok := v.Float64()
-	if !ok {
+	bytes, ferr := value.FloatOrOverflow(v)
+	if ferr != nil {
+		// jinja2 calls float(value), and float() of a wide integer is
+		// an OverflowError it does not catch.
+		return value.Undefined, ferr
+	}
+	if ok := v.IsNumber(); !ok {
 		// jinja2 calls float(value), so the failure is float()'s -- and
 		// float() takes a bytes as readily as a str.
 		text, textual := numericText(v)
@@ -2866,8 +3085,12 @@ func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.
 		}
 		f, ok := value.ParseFloat(strings.TrimSpace(text), s.PythonVersion())
 		if !ok {
+			// ReprFor: repr escapes by isprintable, which the
+			// interpreter decides, so the string this message quotes
+			// escapes the way *that* interpreter would print it.
 			return value.Undefined, errs.New(errs.ValueError,
-				"could not convert string to float: %s", value.Repr(v))
+				"could not convert string to float: %s",
+				value.ReprFor(v, s.PythonVersion()))
 		}
 		bytes = f
 	}
@@ -2884,16 +3107,54 @@ func filterFilesizeformat(s *State, v value.Value, args *value.CallArgs) (value.
 	}
 	if bytes < base {
 		// jinja2 writes int(bytes) here, which truncates: 1.5 bytes is
-		// "1 Bytes", not the "2 Bytes" a rounding format would give.
-		return value.String(fmt.Sprintf("%d Bytes", int64(bytes))), nil
+		// "1 Bytes", not the "2 Bytes" a rounding format would give --
+		// and refuses a value that is not a number at all. A negative
+		// infinity lands here (it *is* less than the base) and an
+		// int64 conversion wrapped it to -9223372036854775808.
+		if math.IsInf(bytes, 0) {
+			return value.Undefined, overflowToInt(bytes)
+		}
+		// Only an infinity needs saying: a NaN never reaches here,
+		// because every comparison with one is false and `bytes < base`
+		// above is what lets a value in. It falls through to the scaling
+		// loop instead, which formats it as "nan". A check for it here
+		// was unreachable.
+		//
+		// int() of a float is exact however wide it is -- int(-1e308) is
+		// 309 digits -- so the truncation goes through a big.Float. An
+		// int64 conversion saturated it to -9223372036854775808, and
+		// every magnitude past 2**63 shared that one answer.
+		n, _ := big.NewFloat(bytes).Int(nil)
+		return value.String(n.String() + " Bytes"), nil
+	}
+	// Python's `f"{x:.1f}"` writes a non-finite in words -- "nan", "inf",
+	// "-inf" -- where Go's %.1f writes "NaN" and "+Inf". Only this filter
+	// formats a scaled float directly; everywhere else goes through the
+	// format machinery, which already knows.
+	oneDecimal := func(x float64) string {
+		switch {
+		case math.IsNaN(x):
+			return "nan"
+		case math.IsInf(x, 1):
+			return "inf"
+		case math.IsInf(x, -1):
+			return "-inf"
+		}
+		return fmt.Sprintf("%.1f", x)
 	}
 	for i, prefix := range prefixes {
-		unit := math.Pow(base, float64(i+2))
-		if bytes < unit || i == len(prefixes)-1 {
-			return value.String(fmt.Sprintf("%.1f %s", base*bytes/unit, prefix)), nil
+		// jinja2's base is an int, so `base ** (i + 2)` is an exact integer
+		// and the comparison against the float is exact too. 1000**8 is
+		// not a float -- its odd factor, 5**24, needs 56 bits -- so the
+		// float 1e24 is *below* it, and lands in the ZB row as
+		// "1000.0 ZB". Comparing against a float power called it "1.0 YB".
+		exact := new(big.Int).Exp(big.NewInt(int64(base)), big.NewInt(int64(i+2)), nil)
+		unit, _ := new(big.Float).SetInt(exact).Float64()
+		if i == len(prefixes)-1 || belowExact(bytes, exact) {
+			return value.String(oneDecimal(base*bytes/unit) + " " + prefix), nil
 		}
 	}
-	return value.String(fmt.Sprintf("%.1f %s", bytes, prefixes[len(prefixes)-1])), nil
+	return value.String(oneDecimal(bytes) + " " + prefixes[len(prefixes)-1]), nil
 }
 
 // --- misc --------------------------------------------------------------------
@@ -2932,11 +3193,9 @@ func filterDefault(_ *State, v value.Value, args *value.CallArgs) (value.Value, 
 // filterAttr fetches an attribute without the item-lookup fallback `.` has, so
 // `d|attr("items")` is the method and `d["items"]` would be the entry.
 func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	name, ok := arg(args, 0, "name")
-	if !ok {
-		return value.Undefined, errs.New(errs.FilterArgumentError,
-			"attr() missing required argument 'name'")
-	}
+	// Refused by checkArity first; see filterReplace. Corpus:
+	// errors/attr_no_argument.
+	name, _ := arg(args, 0, "name")
 	// do_attr starts with inspect.getattr_static, which looks the name up
 	// in the type's dictionaries -- so an unhashable name is refused by
 	// the lookup before anything checks that it is a string at all, and a
@@ -2954,12 +3213,13 @@ func filterAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	if attr, ok := lookupAttr(s, v, attrName); ok {
 		return attr, nil
 	}
-	// getattr() on an Undefined raises -- except for a dunder name, which
+	// getattr() on an Undefined raises -- except for a dunder name (both
+	// ends, `__x__`: `__x` is an ordinary name), which
 	// Undefined.__getattr__ reports as an ordinary missing attribute. That
 	// is why `nope|attr("items")` fails immediately while
 	// `nope|attr("__subclasses__")` yields an undefined that only fails
 	// when it is used.
-	if v.IsUndefined() && !strings.HasPrefix(attrName, "__") {
+	if v.IsUndefined() && (!strings.HasPrefix(attrName, "__") || !strings.HasSuffix(attrName, "__")) {
 		// ChainableUndefined.__getattr__ hands back the same undefined
 		// for a name that is not a dunder, which is the whole point of
 		// the class: `a.b.c` on a missing `a` stays undefined rather
@@ -3028,4 +3288,16 @@ func augmentedAssign(err error) error {
 		e.Msg = strings.Replace(e.Msg, "for +:", "for +=:", 1)
 	}
 	return err
+}
+
+// belowExact reports f < n with no rounding of either side, which is how Python
+// compares a float with an int. A NaN is below nothing.
+func belowExact(f float64, n *big.Int) bool {
+	switch {
+	case math.IsNaN(f):
+		return false
+	case math.IsInf(f, 0):
+		return f < 0
+	}
+	return new(big.Float).SetFloat64(f).Cmp(new(big.Float).SetInt(n)) < 0
 }

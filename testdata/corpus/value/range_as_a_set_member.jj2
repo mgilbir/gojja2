@@ -1,0 +1,3 @@
+{}
+---
+{% set s = {'a': 1}.keys() - [] %}{{ s.add(range(3)) }}|{{ range(0, 3) in s }}|{{ s.add(range(3)) }}|{{ s|length }}|{{ range(4) in s }}

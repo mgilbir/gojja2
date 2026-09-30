@@ -137,6 +137,15 @@ func UndefinedElement(owner, key Value) Value {
 	}}
 }
 
+// UndefinedSubscript is UndefinedElement for a key that has no Value: the tuple
+// `(slice(1, 2, None), 3)` a subscript like `x[1:2, 3]` would hand to
+// getitem. The caller spells the key the way Python's repr does.
+func UndefinedSubscript(owner Value, keyRepr string) Value {
+	return Value{kind: KindUndefined, obj: &undefinedInfo{
+		keyRepr: keyRepr, hasKey: true, owner: ObjectTypeRepr(owner),
+	}}
+}
+
 // UndefinedSlice returns the undefined produced by a slice the container will
 // not take: `{{ "ab"[1:"x"] }}`. The key is a Python slice object, which has
 // no Value here, so it is rendered as Python reprs one -- every bound present,
@@ -306,9 +315,26 @@ func ObjectTypeRepr(v Value) string {
 // already refuses whatever the class, and fails at its own site. So this is
 // the whole of the difference, and the operations above are the only ones that
 // have to ask.
+//
+// An object that wraps another value and forwards all five to it says so
+// through [StrictWrapper]: `mappingproxy(nope)` prints, iterates, measures and
+// compares by asking the StrictUndefined inside, and that raises.
 func StrictRefusal(v Value) error {
-	if v.kind == KindUndefined && v.undef().behavior == UndefinedStrict {
-		return v.UndefinedError()
+	switch v.kind {
+	case KindUndefined:
+		if v.undef().behavior == UndefinedStrict {
+			return v.UndefinedError()
+		}
+	case KindObject:
+		if w, ok := v.Interface().(StrictWrapper); ok {
+			return w.StrictRefusal()
+		}
 	}
 	return nil
+}
+
+// StrictWrapper is an Object whose behaviour is the behaviour of a value it
+// holds, so that the holder refuses whatever that value refuses.
+type StrictWrapper interface {
+	StrictRefusal() error
 }

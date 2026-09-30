@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "do"
+    ]
+  }
+}
+---
+{% set l = [1,2] %}{% set c = l.copy() %}{% do l.append(3) %}{{ c }}|{{ l }}

@@ -1,0 +1,14 @@
+{
+  "case": "folding/kwargs_splat_runtime_dict_items.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "jinja2.filters.do_join() argument after ** must be a mapping, not dict_items"
+  }
+}

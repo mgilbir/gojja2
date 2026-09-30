@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is boolean }}|{{ 0 is boolean }}|{{ -1 is boolean }}|{{ 1.5 is boolean }}|{{ true is boolean }}|{{ false is boolean }}|{{ none is boolean }}|{{ 'a' is boolean }}|{{ '' is boolean }}|{{ 'A' is boolean }}|{{ [1] is boolean }}|{{ [] is boolean }}|{{ ((1,)) is boolean }}|{{ {} is boolean }}|{{ {'a':1} is boolean }}|{{ range(3) is boolean }}|{{ nope is boolean }}|{{ ('x'|safe) is boolean }}|{{ dict is boolean }}|{{ d.keys() is boolean }}

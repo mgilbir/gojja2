@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "undefined": "strict",
+    "autoescape": true
+  }
+}
+---
+{{ ['a'|safe, 'b']|join('-', attribute='name') }}

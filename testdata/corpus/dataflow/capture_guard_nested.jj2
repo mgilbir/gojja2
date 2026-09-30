@@ -1,0 +1,5 @@
+{
+  "c": 1
+}
+---
+{% set outer %}{% set inner | last %}{% if c %}xx{% endif %}{% endset %}[{{ inner }}]{% endset %}{{ outer }}

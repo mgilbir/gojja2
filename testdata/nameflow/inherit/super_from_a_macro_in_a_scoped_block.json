@@ -1,0 +1,6 @@
+{
+  "case": "inherit/super_from_a_macro_in_a_scoped_block.jj2",
+  "variables": {
+    "super": "or"
+  }
+}

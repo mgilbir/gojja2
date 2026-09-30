@@ -1,0 +1,5 @@
+{
+  "n3": 3
+}
+---
+{{ n3.__class__.real.__class__ }}|{{ range(3).__class__.start.__class__ }}

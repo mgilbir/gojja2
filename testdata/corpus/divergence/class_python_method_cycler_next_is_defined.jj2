@@ -1,0 +1,3 @@
+{}
+---
+{{ cycler(1).__class__.next is defined }}

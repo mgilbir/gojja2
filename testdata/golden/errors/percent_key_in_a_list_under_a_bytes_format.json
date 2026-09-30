@@ -1,0 +1,14 @@
+{
+  "case": "errors/percent_key_in_a_list_under_a_bytes_format.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "list indices must be integers or slices, not bytes"
+  }
+}

@@ -3,8 +3,11 @@
 
 package lexer
 
-// Syntax is the configurable part of the template syntax: the delimiters and
-// the whitespace policy. It mirrors the corresponding Environment options.
+import "github.com/mgilbir/gojja2/value"
+
+// Syntax is the configurable part of the template syntax: the delimiters, the
+// whitespace policy and the interpreter being reproduced. It mirrors the
+// corresponding Environment options.
 type Syntax struct {
 	BlockStart    string
 	BlockEnd      string
@@ -28,6 +31,11 @@ type Syntax struct {
 	// NewlineSequence is what every newline in template data is rendered
 	// as. Defaults to "\n".
 	NewlineSequence string
+	// PythonVersion is the interpreter being reproduced, which the lexer
+	// needs because the class it matches a *name* out of is `\w` plus
+	// jinja2's frozen extras -- and `\w` is CPython's, so it moves between
+	// releases. See value.NameClass.
+	PythonVersion value.PythonVersion
 }
 
 // DefaultSyntax returns jinja2's default delimiters and whitespace policy.
@@ -40,6 +48,7 @@ func DefaultSyntax() Syntax {
 		CommentStart:    "{#",
 		CommentEnd:      "#}",
 		NewlineSequence: "\n",
+		PythonVersion:   value.DefaultPythonVersion,
 	}
 }
 
@@ -67,6 +76,12 @@ func (s Syntax) withDefaults() Syntax {
 	}
 	if s.NewlineSequence == "" {
 		s.NewlineSequence = d.NewlineSequence
+	}
+	// The zero PythonVersion is not a version, so a caller that names no
+	// interpreter gets the pin rather than an error from the first name it
+	// lexes.
+	if !s.PythonVersion.Known() {
+		s.PythonVersion = d.PythonVersion
 	}
 	return s
 }

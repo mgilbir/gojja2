@@ -1,0 +1,6 @@
+{
+  "case": "policies/rel_beside_nofollow.jj2",
+  "variables": {
+    "u": "or"
+  }
+}

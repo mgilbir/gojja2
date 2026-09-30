@@ -1,0 +1,3 @@
+{}
+---
+{% if true %}{{ 1|nosuchA }}{% endif %}{% block a %}{{ 1|nosuchB }}{% endblock %}

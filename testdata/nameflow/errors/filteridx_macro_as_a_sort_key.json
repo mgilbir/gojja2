@@ -1,0 +1,6 @@
+{
+  "case": "errors/filteridx_macro_as_a_sort_key.jj2",
+  "variables": {
+    "v": "-"
+  }
+}

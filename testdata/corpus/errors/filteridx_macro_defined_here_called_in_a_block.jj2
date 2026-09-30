@@ -1,0 +1,5 @@
+{
+  "v": "V"
+}
+---
+{% macro m() %}x{{ v }}y{% filter length %}abc{% endfilter %}{% endmacro %}{% block b %}{{ m() }}{% endblock %}

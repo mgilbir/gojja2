@@ -1,0 +1,6 @@
+{
+  "case": "escape/autoescape_block_strict_flag_reaches_raw_text.jj2",
+  "variables": {
+    "nope": "f"
+  }
+}

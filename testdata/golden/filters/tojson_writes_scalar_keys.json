@@ -1,0 +1,11 @@
+{
+  "case": "filters/tojson_writes_scalar_keys.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "{\"1.5\": \"x\"}|{\"true\": 1}|{\"false\": 1}|{\"null\": 1}|{\"1180591620717411303424\": 1}|{\"-0.0\": 1, \"1e+16\": 2}"
+}

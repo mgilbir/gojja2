@@ -1,0 +1,14 @@
+{
+  "case": "errors/fill_none_is_named_bytes_rjust.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "rjust() argument 2 must be a byte string of length 1, not None"
+  }
+}

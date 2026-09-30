@@ -1,0 +1,6 @@
+{
+  "case": "format/infinity_fill_is_not_grouped.jj2",
+  "variables": {
+    "big": "or"
+  }
+}

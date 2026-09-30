@@ -1,0 +1,7 @@
+{
+  "case": "fold/debug_undefined_sliced_by_name.jj2",
+  "variables": {
+    "n3": "ofr",
+    "nope": "or"
+  }
+}

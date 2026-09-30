@@ -1,0 +1,11 @@
+{
+  "case": "classes/construct_set_empty_and_iterables.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "[]|[1, 2]|['a', 'b', 'c']|[0, 1, 2]|['a', 'b']|[('a', 1), ('b', 2)]"
+}

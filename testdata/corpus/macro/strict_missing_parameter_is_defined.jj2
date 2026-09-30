@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% macro m(x) %}[{{ x is defined }}]{% endmacro %}{{ m() }}

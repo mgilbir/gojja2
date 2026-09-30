@@ -44,6 +44,8 @@ import json
 import platform
 import sys
 
+import jinja2
+
 import nameflow
 import syntax_emit
 from jinjaoracle import (apply_limits, build_environment, guarded,
@@ -94,7 +96,8 @@ def analyze(request: dict) -> dict:
         "tree": syntax_emit.canonical(tree, env.globals),
         "info": syntax_emit.canonical_info(tree, env.globals),
         "variables": {k: encode_effects(v) for k, v in
-                      nameflow.analyze(tree, env.globals, resolver).items()},
+                      nameflow.analyze(tree, env.globals, resolver,
+                                       env.undefined is jinja2.StrictUndefined).items()},
     }
 
 

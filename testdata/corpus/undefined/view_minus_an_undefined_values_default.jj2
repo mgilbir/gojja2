@@ -1,0 +1,5 @@
+{
+  "__settings__": {}
+}
+---
+{% set q = {'a': 1} %}{{ q.values() - nope }}

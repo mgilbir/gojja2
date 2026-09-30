@@ -1,0 +1,6 @@
+{
+  "case": "format/nan_has_no_sign.jj2",
+  "variables": {
+    "big": "or"
+  }
+}

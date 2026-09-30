@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.encode().endswith(('x'.encode(), 'y'.encode())) }}

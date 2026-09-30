@@ -1,0 +1,6 @@
+{
+  "case": "errors/percent_x_of_an_undefined_is_unqualified.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

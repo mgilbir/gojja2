@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.maketrans({97: 'X', 'b': 'Y'}) }}|{{ 'abc'.translate('abc'.maketrans({97: 'X', 'b': none})) }}|{{ 'abca'.maketrans({97: 'X', 97: 'Y'}) }}

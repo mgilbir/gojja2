@@ -1,0 +1,6 @@
+{
+  "case": "control/loop_controls_read_the_loop_var.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

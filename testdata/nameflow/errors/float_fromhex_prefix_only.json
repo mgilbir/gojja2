@@ -1,0 +1,4 @@
+{
+  "case": "errors/float_fromhex_prefix_only.jj2",
+  "variables": {}
+}

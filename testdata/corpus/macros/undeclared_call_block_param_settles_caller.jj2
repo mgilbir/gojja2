@@ -1,0 +1,3 @@
+{}
+---
+{% macro takes() %}<{{ caller(1) }}>{% endmacro %}{% macro m(x) %}{% call(caller) takes() %}x{% endcall %}{% endmacro %}[{{ m(1) }}]{% call m(1) %}C{% endcall %}

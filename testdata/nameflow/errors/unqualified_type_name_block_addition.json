@@ -1,0 +1,6 @@
+{
+  "case": "errors/unqualified_type_name_block_addition.jj2",
+  "variables": {
+    "self": "or"
+  }
+}

@@ -1,0 +1,3 @@
+{}
+---
+{{ 'ab'.isascii() }}|{{ 'é'.isascii() }}|{{ ''.isascii() }}|{{ 'ab'.encode().isascii() }}

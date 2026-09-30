@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 1e308 %}{% set a = b * 10 %}{{ a|tojson }}|{{ (-a)|tojson }}|{{ (a - a)|tojson }}|{{ [a, -a, a - a]|tojson }}|{{ {'x': a}|tojson(indent=2) }}

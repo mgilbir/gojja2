@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 'ab'.encode() %}{% set n = 1 %}{{ b.join(n) }}

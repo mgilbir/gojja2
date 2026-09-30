@@ -1,0 +1,11 @@
+{
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{% for x in seq %}{% print x, loop.index %}{% endfor %}|{% macro m() %}{% print 'm' %}{% endmacro %}{{ m() }}|{% block b %}{% print 'b' %}{% endblock %}|{% filter upper %}{% print 'f' %}{% endfilter %}|{% set v %}{% print 's' %}{% endset %}{{ v }}

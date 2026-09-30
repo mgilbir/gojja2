@@ -1,0 +1,3 @@
+{}
+---
+{% set v = 5 %}{% set f = 1.5 %}{{ '%ld|%hd|%Ld|%li|%lf|%Lf|%hu' % (v, v, v, v, f, f, v) }}

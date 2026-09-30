@@ -85,6 +85,17 @@ func (v PythonVersion) AtLeast(n PythonVersion) bool { return v >= n }
 // codebase and is how a fork gets applied in one place and forgotten in
 // another. Each rule says which release moved it and what the corpus case is.
 
+// IssubsetStopsWhenFull reports whether `s.issubset(xs)` for an argument that is
+// not a set reads it the way set_intersection does, stopping once every member
+// of s has been found.
+//
+// 3.12 wrote issubset over set_intersection, so an element after that point is
+// never hashed: `{'b', 'c'}.issubset(['b', 'c', [1]])` is True there and
+// "unhashable type: 'list'" on 3.11, which built the whole set first.
+// intersection itself has always stopped early. Corpus:
+// sets/argument_issubset_stops_when_full.
+func (v PythonVersion) IssubsetStopsWhenFull() bool { return v.AtLeast(Python312) }
+
 // SliceKeysAreHashable reports whether a slice used as a mapping key is a
 // KeyError rather than a TypeError.
 //
@@ -93,12 +104,35 @@ func (v PythonVersion) AtLeast(n PythonVersion) bool { return v >= n }
 // `slice(0, 1, None)`. Corpus: errshape/slice_of_a_dict, errors/truncate_dict.
 func (v PythonVersion) SliceKeysAreHashable() bool { return v.AtLeast(Python312) }
 
+// ProxyHashNamesTheMapping reports whether hashing a read-only proxy complains
+// about the *mapping behind it*. 3.11 named the proxy -- "unhashable type:
+// 'mappingproxy'" -- and 3.12 reaches through to the dict. 3.14 keeps that as
+// the inner half of its longer form, where the outer name is the proxy's:
+// "cannot use 'mappingproxy' as a dict key (unhashable type: 'dict')".
+// Corpus: dictview/mapping_is_unhashable.
+func (v PythonVersion) ProxyHashNamesTheMapping() bool { return v.AtLeast(Python312) }
+
+// MinusOneFitsInZeroBytes reports whether `(-1).to_bytes(0, signed=True)` is
+// b” rather than an OverflowError.
+//
+// Zero bytes hold no value at all, and -1 was accepted there until 3.13 --
+// every other length has the range CPython documents, and 0 fits in zero bytes
+// in every version. Corpus: methods/to_bytes_signed_zero_length_negative.
+func (v PythonVersion) MinusOneFitsInZeroBytes() bool { return !v.AtLeast(Python313) }
+
 // BoolArgsAreTruthy reports whether an argument declared as a bool is tested
 // for truth rather than coerced to an integer.
 //
 // 3.12 relaxed the argument clinic, so `{{ x|sort(reverse=none) }}` and
 // `{{ "ab".splitlines(1.5) }}` render instead of raising "cannot be interpreted
-// as an integer". Corpus: errors/sort_reverse_none, errors/method_none_keepends.
+// as an integer" -- and the other face of the same change is that a value past a
+// C int is taken rather than overflowing, which is why
+// `{{ [3,1]|sort(reverse=2147483648) }}` renders from 3.12 on. There was a
+// second rule for that half, IndexAcceptsWideInt, which nothing ever called;
+// TestEveryVersionRuleIsConsulted is what found it.
+// Corpus: errors/sort_reverse_none, errors/method_none_keepends,
+// errors/index_overflow_c_int_sort, errors/index_overflow_c_int_negative,
+// errors/index_overflow_c_int_splitlines.
 func (v PythonVersion) BoolArgsAreTruthy() bool { return v.AtLeast(Python312) }
 
 // IntHasIsInteger reports whether int carries is_integer().
@@ -108,13 +142,6 @@ func (v PythonVersion) BoolArgsAreTruthy() bool { return v.AtLeast(Python312) }
 // is a float method only, and `{{ (0).is_integer() }}` raises the ordinary
 // missing-attribute error. Corpus: methods/int_is_integer.
 func (v PythonVersion) IntHasIsInteger() bool { return v.AtLeast(Python312) }
-
-// IndexAcceptsWideInt reports whether an index too large for a C int is taken
-// rather than refused.
-//
-// 3.12 stopped raising "Python int too large to convert to C int" for these.
-// Corpus: errors/index_overflow_c_int_sort and its two neighbours.
-func (v PythonVersion) IndexAcceptsWideInt() bool { return v.AtLeast(Python312) }
 
 // UnifiedRecursionMessage reports whether every recursion error carries the
 // same sentence.
@@ -182,6 +209,33 @@ func (v PythonVersion) WordwrapDropsTheSpaceBeforeABreak() bool { return v.AtLea
 // symmetrical. Corpus: minijinja/loop_bad_unpacking_wrong_len_txt.
 func (v PythonVersion) UnpackErrorNamesTheCount() bool { return v.AtLeast(Python314) }
 
+// FillCharMessageNamesTheLength reports whether a bytes padding method says how
+// long the fill it was given actually was.
+//
+// Through 3.13: "center() argument 2 must be a byte string of length 1, not
+// bytes". 3.14 adds a colon after the name and the length it got: "center():
+// argument 2 must be a byte string of length 1, not a bytes object of length 2".
+//
+// Only for a bytes of the wrong length. A fill that is not a bytes at all keeps
+// the older wording on every version -- `b.rjust(10, 1)` is "rjust() argument 2
+// must be a byte string of length 1, not int" in 3.14 too -- and the str
+// methods say "The fill character must be exactly one character long"
+// throughout. Corpus: errors/bytes_center_fill_length,
+// errors/bytes_ljust_fill_length, errors/bytes_rjust_fill_not_bytes.
+func (v PythonVersion) FillCharMessageNamesTheLength() bool { return v.AtLeast(Python314) }
+
+// TranslateTableMessagesLoseASpace reports whether the two complaints
+// str.maketrans makes about a key are spelled a space short.
+//
+// 3.14 has "keys in translate table mustbe strings or integers" and "string
+// keys in translatetable must be of length 1" -- each missing the space a C
+// string concatenation used to supply, and each upstream's own. They are the
+// only two that changed: translate's "character mapping must be in
+// range(0x110000)" and "character mapping must return integer, None or str"
+// read the same on every interpreter.
+// Corpus: errors/maketrans_key_is_a_float, errors/maketrans_long_string_key.
+func (v PythonVersion) TranslateTableMessagesLoseASpace() bool { return v.AtLeast(Python314) }
+
 // FromhexTakesBytesLike reports whether bytes.fromhex accepts a bytes argument
 // as well as a str, and says so when it refuses one.
 //
@@ -233,15 +287,20 @@ func (v PythonVersion) UnhashableNamesTheUse() bool { return v.AtLeast(Python314
 func (v PythonVersion) ContainerMessageIsLonger() bool { return v.AtLeast(Python314) }
 
 // IndexMessageIsGeneric reports whether list.index reads "list.index(x): x not
-// in list" rather than naming the value that was missing.
+// in list" rather than naming the value that was missing -- and range.index,
+// on its arithmetic path, "range.index(x): x not in range".
 //
-// 3.14. Corpus: errors/list_index_missing, errors/seq_index_window_empty.
+// 3.14. Corpus: errors/list_index_missing, errors/seq_index_window_empty,
+// methods/range_index_miss_int and its four neighbours.
 func (v PythonVersion) IndexMessageIsGeneric() bool { return v.AtLeast(Python314) }
 
 // PercentCNamesTheType reports whether %c against the wrong type names it.
 //
 // 3.14 turned "%c requires int or char" into "%c requires an int or a unicode
-// character, not float". Corpus: errors/percent_c_type, errors/markup_percent_c.
+// character, not float", and did the same to the bytes wording -- "%c requires
+// an integer in range(256) or a single byte" gains ", not list". Only the str
+// half was version-split. Corpus: errors/percent_c_type, errors/markup_percent_c,
+// format/percent_error_bytes_c_two_bytes.
 func (v PythonVersion) PercentCNamesTheType() bool { return v.AtLeast(Python314) }
 
 // UnifiedDivisionByZero reports whether every division by zero carries the same
@@ -269,3 +328,18 @@ func (v PythonVersion) UnifiedDivisionByZero() bool { return v.AtLeast(Python314
 // have shown it was never asked. Corpus: errors/zero_division_float_mod,
 // errors/zero_division_float_mod_lhs, errors/zero_division_float_mod_both.
 func (v PythonVersion) FloatModuloNamesZero() bool { return v.AtLeast(Python313) }
+
+// RandrangeNamesItsBounds reports whether an empty range says which call it
+// was, rather than which step it computed.
+//
+// 3.11 answers "empty range for randrange() (5, 3, -2)" -- the two bounds and
+// the width between them, which is negative and says nothing a reader wanted.
+// 3.12 made it "empty range in randrange(5, 3)".
+//
+// A template reaches it through `lipsum(min=5, max=3)`, which jinja2 passes
+// straight to random.randrange. gojja2 carried the 3.11 wording for every
+// interpreter, including the pinned one, and nothing said so: the message had
+// never been produced by a corpus case, and an ungraded message reads as
+// agreement in every column of the version matrix.
+// Corpus: errors/lipsum_empty_range, errors/lipsum_equal_bounds.
+func (v PythonVersion) RandrangeNamesItsBounds() bool { return v.AtLeast(Python312) }

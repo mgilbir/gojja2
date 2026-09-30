@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a':1} %}{% set e = {} %}{{ d.keys() == (d.keys() - []) }}|{{ d.items() == (d.keys() - []) }}|{{ e.keys() == (e.keys() - []) }}|{{ (e.keys() - []) == e.keys() }}

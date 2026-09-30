@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{% macro m(x, y) %}[{{ y }}]{% endmacro %}{{ m(1) }}

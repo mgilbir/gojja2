@@ -1,0 +1,6 @@
+{
+  "case": "format/precision_too_big_str_truncates.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

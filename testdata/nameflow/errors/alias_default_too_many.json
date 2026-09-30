@@ -1,0 +1,6 @@
+{
+  "case": "errors/alias_default_too_many.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

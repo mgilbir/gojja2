@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set m = d.keys().mapping %}{{ m.keys()|list }}{{ m.values()|list }}{{ m.items()|list }}{{ m.get('a') }}{{ m.get('z', 9) }}{{ m.copy() }}

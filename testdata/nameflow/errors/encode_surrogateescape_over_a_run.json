@@ -1,0 +1,4 @@
+{
+  "case": "errors/encode_surrogateescape_over_a_run.jj2",
+  "variables": {}
+}

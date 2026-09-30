@@ -1,0 +1,7 @@
+{
+  "case": "undefined/compare_elements_in_a_list_strict.jj2",
+  "variables": {
+    "nope": "or",
+    "yes": "or"
+  }
+}

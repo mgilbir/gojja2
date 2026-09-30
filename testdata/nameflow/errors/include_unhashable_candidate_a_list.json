@@ -1,0 +1,4 @@
+{
+  "case": "errors/include_unhashable_candidate_a_list.jj2",
+  "variables": {}
+}

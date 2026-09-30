@@ -1,0 +1,11 @@
+{
+  "case": "format/z_on_an_int_with_a_float_code.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "-1.23457E+06|-1.234567e+06|0.000000%|-1234567.00|1|1.5"
+}

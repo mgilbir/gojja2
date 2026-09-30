@@ -138,15 +138,40 @@ func bytesBounds(s string, args *value.CallArgs, first int) (from, to int, ok bo
 
 // fillByte reads the optional fill character of center, ljust and rjust, which
 // must be exactly one byte.
-func fillByte(method string, args *value.CallArgs) (byte, error) {
+func fillByte(method string, args *value.CallArgs, py value.PythonVersion) (byte, error) {
 	v, ok := args.Arg(1)
 	if !ok {
 		return ' ', nil
 	}
-	if v.Kind() != value.KindBytes || len(v.AsString()) != 1 {
-		return 0, errs.New(errs.TypeError,
-			"%s() argument 2 must be a byte string of length 1, not %s",
-			method, v.TypeName())
+	// This message comes from getargs.c's 'c' unit rather than from Argument
+	// Clinic, and converterr there spells None as "None" where every clinic
+	// message spells it "NoneType":
+	//
+	//	arg == Py_None ? "None" : arg->ob_type->tp_name
+	//
+	// So `b.center(6, none)` is "not None" while `'ab'.center(6, none)`,
+	// which is a clinic message, is "not NoneType".
+	named := v.TypeName()
+	if v.IsNone() {
+		named = "None"
+	}
+	wrongType := errs.New(errs.TypeError,
+		"%s() argument 2 must be a byte string of length 1, not %s",
+		method, named)
+	if v.Kind() != value.KindBytes {
+		// 3.14 left this half exactly as it was, colon and all:
+		// `b.rjust(10, 1)` is "rjust() argument 2 must be ... not int"
+		// on every version. Only a bytes of the wrong length moved.
+		return 0, wrongType
+	}
+	if len(v.AsString()) != 1 {
+		if py.FillCharMessageNamesTheLength() {
+			return 0, errs.New(errs.TypeError,
+				"%s(): argument 2 must be a byte string of length 1, "+
+					"not a bytes object of length %d",
+				method, len(v.AsString()))
+		}
+		return 0, wrongType
 	}
 	return v.AsString()[0], nil
 }
@@ -438,24 +463,30 @@ func bytesAffix(name string, match func(string, string) bool) func(*State, value
 			window = s[from:to]
 		}
 
-		var candidates []string
-		switch {
-		case v.Kind() == value.KindBytes:
-			candidates = []string{v.AsString()}
-		case v.Kind() == value.KindTuple:
+		// Each tuple element is converted as it is *reached*, so one
+		// that matches hides a bad one after it:
+		// `b'abc'.startswith((b'a', 1))` is True and
+		// `b''.startswith((b'a', 1))` raises. Collecting them all up
+		// front refused the first of those.
+		if v.Kind() == value.KindTuple {
 			seq, _ := v.Seq()
 			for _, item := range seq.Items() {
 				if item.Kind() != value.KindBytes {
 					return value.Undefined, errs.New(errs.TypeError,
 						"a bytes-like object is required, not '%s'", item.TypeName())
 				}
-				candidates = append(candidates, item.AsString())
+				if inRange && match(window, item.AsString()) {
+					return value.True, nil
+				}
 			}
-		default:
+			return value.False, nil
+		}
+		if v.Kind() != value.KindBytes {
 			return value.Undefined, errs.New(errs.TypeError,
 				"%s first arg must be bytes or a tuple of bytes, not %s",
 				name, v.TypeName())
 		}
+		candidates := []string{v.AsString()}
 		if !inRange {
 			// A start past the end matches nothing, not even the
 			// empty prefix.
@@ -659,13 +690,15 @@ func rsplitN(st *State, s, sep string, n int) ([]string, error) {
 // vertical tab, the form feed and several Unicode separators; bytes does not,
 // because it has no encoding to recognise them in.
 func bytesSplitlines(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	keep := false
-	if v, ok := args.Arg(0); ok {
-		n, err := indexOf(v, cInt)
-		if err != nil {
-			return value.Undefined, err
-		}
-		keep = n != 0
+	// keepends is `bool(accept={int})` in Argument Clinic, exactly as
+	// str.splitlines' is, so from 3.12 it is a truth test and before that an
+	// integer conversion. This read it as an integer on every version, so
+	// `b.splitlines(none)` and `b.splitlines('x')` were refused where CPython
+	// splits -- and the str half of the same rule was already right, which is
+	// how the two came to differ.
+	keep, err := clinicBoolArg(args, 0, "keepends", st.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
 	}
 	s := r.AsString()
 	var out []string
@@ -774,7 +807,7 @@ func bytesPad(align padAlign) func(*State, value.Value, *value.CallArgs) (value.
 		if err != nil {
 			return value.Undefined, err
 		}
-		fill, err := fillByte(names[align], args)
+		fill, err := fillByte(names[align], args, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -782,10 +815,15 @@ func bytesPad(align padAlign) func(*State, value.Value, *value.CallArgs) (value.
 		// Counted in bytes, not code points: padding a two-byte
 		// character to a width of ten leaves eight bytes of fill, not
 		// nine. strings.Builder over pad() would have counted runes.
-		gap := width - len(s)
-		if gap <= 0 {
+		//
+		// Compared before it is subtracted, as in pad(): a width of
+		// math.MinInt64 wraps the difference to a large positive gap,
+		// and the make() below then panicked with "makeslice: cap out
+		// of range" where CPython answers the receiver unchanged.
+		if width <= len(s) {
 			return value.Bytes([]byte(s)), nil
 		}
+		gap := width - len(s)
 		if err := st.ChargeBytes(int64(width)); err != nil {
 			return value.Undefined, err
 		}
@@ -898,6 +936,20 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 	if err := st.ChargeBytes(2 * int64(len(s))); err != nil {
 		return value.Undefined, err
 	}
+	// bytes_per_sep is converted before sep is looked at at all: it is an int
+	// in Argument Clinic and its conversion runs first, so `b.hex(none, none)`
+	// and `b.hex('--', none)` both complain about the *second* argument.
+	// Reading sep first reported the separator in every one of those.
+	perSep := 1
+	if v, ok := arg(args, 1, "bytes_per_sep"); ok {
+		// `int`, not Py_ssize_t, so it gives up at 2**31 and the
+		// OverflowError names a C int.
+		n, err := indexOf(v, cInt)
+		if err != nil {
+			return value.Undefined, err
+		}
+		perSep = n
+	}
 	sep := ""
 	if v, ok := arg(args, 0, "sep"); ok {
 		// CPython asks four questions about the separator, in this
@@ -934,14 +986,6 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 					"sep must be ASCII.")
 			}
 		}
-	}
-	perSep := 1
-	if v, ok := arg(args, 1, "bytes_per_sep"); ok {
-		n, err := indexOf(v, cSSizeT)
-		if err != nil {
-			return value.Undefined, err
-		}
-		perSep = n
 	}
 	if sep == "" {
 		return value.String(hex.EncodeToString([]byte(s))), nil
@@ -1096,7 +1140,12 @@ func bytesTranslate(st *State, r value.Value, args *value.CallArgs) (value.Value
 		table = t
 	}
 	del := ""
-	if v, ok := arg(args, 1, "delete"); ok && !v.IsNone() {
+	// `delete` is `y*` in Argument Clinic, which takes no None: only an
+	// *omitted* argument is no deletion, and an explicit one is refused.
+	// `table` is `O` and does take it, which is why the two are not alike --
+	// treating a None delete as absent made `b.translate(none, none)` answer
+	// the receiver where CPython asks for a bytes-like object.
+	if v, ok := arg(args, 1, "delete"); ok {
 		d, err := bytesLike(v)
 		if err != nil {
 			return value.Undefined, err

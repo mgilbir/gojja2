@@ -1,0 +1,14 @@
+{
+  "case": "format/percent_length_modifier_twice_hh.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "unsupported format character 'h' (0x68) at index 2"
+  }
+}

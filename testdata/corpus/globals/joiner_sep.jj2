@@ -1,0 +1,3 @@
+{}
+---
+{% set j = joiner('-') %}{{ j.sep }}|{{ j.sep.__class__ }}|{% set k = joiner() %}{{ k.sep }}|{% set m = joiner(1) %}{{ m.sep }}|{{ m.sep.__class__ }}

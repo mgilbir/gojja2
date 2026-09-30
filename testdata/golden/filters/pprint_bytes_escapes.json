@@ -1,0 +1,11 @@
+{
+  "case": "filters/pprint_bytes_escapes.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "(b'a\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\t'\n b'b\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nca\\tb\\nc')"
+}

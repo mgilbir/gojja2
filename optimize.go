@@ -32,17 +32,24 @@ import (
 // behaviour-neutral but would share one container between renders, so it is
 // left alone.
 func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
-	if c.env.finalize != nil {
-		// finalize runs over every printed value; folding would have to
-		// run it at compile time, and it may not be pure.
-		return
-	}
 	walkOutputs(c, body, func(out *ast.Output, escaping bool) {
 		for i, node := range out.Nodes {
 			if _, isData := node.(*ast.TemplateData); isData {
 				continue
 			}
+			// jinja2's _output_child_to_const says it in its own
+			// docstring: "Any other exception will also be
+			// evaluated at runtime for easier debugging." Only
+			// Impossible means "not constant" there; anything else
+			// defers the child. So a refusal recorded here is
+			// discarded, and the general fold below -- which walks
+			// bottom-up, as the optimizer does -- is what decides
+			// whether the template compiles. Without this the print
+			// pass named the outer test where CPython names the
+			// operand inside the branch.
+			refusalBefore := c.refusal
 			v, ok := c.tryConstEval(node)
+			c.refusal = refusalBefore
 			if !ok {
 				continue
 			}
@@ -51,7 +58,6 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
 				continue
 			}
-			text := value.Str(v)
 			if escaping && !v.IsSafe() {
 				// A value whose own __html__ cannot be called
 				// stays a run-time failure, for the same reason
@@ -64,11 +70,54 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 					continue
 				}
 				if html, ok := value.HTML(v); ok {
-					text = html
+					v = value.Safe(html)
 				} else {
-					text = escapeHTML(text)
+					v = value.Safe(escapeHTML(value.StrFor(v, c.pyVersion())))
 				}
 			}
+			// finalize runs *here*, on the already-escaped value,
+			// because that is what _output_child_to_const does:
+			//
+			//	const = node.as_const(...)
+			//	if autoescape: const = escape(const)
+			//	return str(environment.finalize(const))
+			//
+			// At run time the generated source is the other way
+			// round -- `escape(environment.finalize(x))` -- so the
+			// same finalize sees raw text there and escaped text
+			// here. It is jinja2's own asymmetry, and a finalize
+			// that changes text tells the two apart: under
+			// autoescape an upper() makes `{{ '<i>' }}` "&LT;I&GT;"
+			// and `{% set v = '<i>' %}{{ v }}` "&lt;I&gt;".
+			//
+			// This pass used to decline to fold at all when a
+			// finalize was set, on the grounds that it might not be
+			// pure. jinja2 calls it at compile time regardless, so
+			// declining reproduced neither the order nor the number
+			// of calls.
+			//
+			// jinja2 does decline for *one* kind, and gojja2 has no
+			// way to spell it: _make_finalize builds a compile-time
+			// function only when the finalize takes the value alone
+			// or takes the environment, and leaves it None for
+			// @pass_context and @pass_eval_context -- so calling it
+			// from the const path raises, the child is deferred, and
+			// those two see raw text even for a constant. Measured:
+			// under autoescape an upper() gives "&LT;I&GT;" plain
+			// and with @pass_environment, "&lt;I&gt;" with either of
+			// the other two. WithFinalize takes func(Value) Value,
+			// which is the first of those, so folding always applies
+			// here.
+			if c.env.finalize != nil {
+				v = c.env.finalize(v)
+			}
+			// StrFor, not Str: a container's text is its repr, and
+			// repr escapes by isprintable, which the interpreter
+			// decides. Folding with the pin's tables baked
+			// `{{ ['\u1c89'] }}` as an escape under 3.14, where the
+			// character is assigned and prints as itself -- the
+			// unfolded path was already right.
+			text := value.StrFor(v, c.pyVersion())
 			// The text becomes part of the compiled template and is
 			// kept for as long as it is cached, so it obeys the same
 			// cap as any other folded constant. Leaving it for runtime
@@ -99,9 +148,40 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 // sharing one list between every render of a template is a bug rather than a
 // behaviour -- and it is not one any template can observe through folding
 // alone.
-func foldConstantExpressions(c *constEvaluator, body []ast.Stmt) {
-	f := &constFolder{c: c, envAutoescape: c.st.autoescape}
+func foldConstantExpressions(c *constEvaluator, body []ast.Stmt, blocks []*ast.Block) {
+	f := &constFolder{
+		dep:           &depChecker{env: c.env, name: c.name, source: c.source},
+		c:             c,
+		envAutoescape: c.st.autoescape,
+		// jinja2's have_extends: the flag is armed by an {% extends %}
+		// anywhere in the tree, and only fires once one has been seen
+		// at the root. See stmt's Output and Extends arms.
+		outputChecked: containsExtends(body),
+		rootlevel:     true,
+		toplevel:      true,
+	}
 	f.stmts(body)
+	// A {% block %} body is generated after the whole root body, from the
+	// flat list the pre-pass collected -- so a fold that refuses inside one
+	// loses to any refusal in the root body, however late it stands, and to
+	// one in an earlier block. Walking the bodies where they are written
+	// named the block's subscript where jinja2 names the {% set %} below it.
+	for _, blk := range blocks {
+		f.block(blk)
+	}
+}
+
+// containsExtends reports whether the tree holds an {% extends %}, wherever it
+// stands -- jinja2's `node.find(nodes.Extends) is not None`.
+func containsExtends(body []ast.Stmt) bool {
+	found := false
+	ast.InspectStmts(body, func(n ast.Node) bool {
+		if _, ok := n.(*ast.Extends); ok {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 // constFolder walks a template folding constant expressions, carrying the
@@ -118,6 +198,189 @@ type constFolder struct {
 	// envAutoescape is the template's own setting, which a {% block %}
 	// body returns to; see stmt.
 	envAutoescape bool
+	// outputChecked and knownExtends are jinja2's require_output_check
+	// and has_known_extends, which decide whether a print tag reaches the
+	// code generator at all -- and so whether its expression is folded.
+	// rootlevel is the frame flag that arms the second one.
+	outputChecked bool
+	knownExtends  bool
+	rootlevel     bool
+	// toplevel is jinja2's frame flag of that name: whether these
+	// statements are compiled into the template's own function, which is
+	// the one thing {% extends %} requires.
+	toplevel bool
+	// soft is jinja2's soft_frame: inside an {% if %} an unknown filter
+	// name is left for the render rather than refused here. It belongs to
+	// the dependency check, which this walk drives -- see check.
+	soft bool
+	// dep looks up the filter and test names in each expression this walk
+	// has just folded. jinja2 does both from its code generator, node by
+	// node, so a template with two faults names the one the generator
+	// reaches first: `{{ 1|nosuch }}{{ (0 ** 0)[7] and 0 }}` names the
+	// filter and the two swapped name the subscript. Two passes could not
+	// do that, however carefully their walks were kept in step.
+	dep *depChecker
+}
+
+// check looks up the filter and test names in one expression, at the point the
+// generator would have written it out. A refusal joins the fold's own in the
+// single slot the compile reads, so the first in this walk is the one reported.
+func (f *constFolder) check(e ast.Expr) {
+	if e == nil || f.c.refusal != nil {
+		return
+	}
+	f.dep.expr(e, f.soft)
+	if f.dep.err != nil {
+		f.c.refusal = f.dep.err
+	}
+	if f.c.parseRefusal == nil {
+		f.c.parseRefusal = misplacedSlice(e, f.c.name, f.c.source)
+	}
+	if f.c.lateRefusal == nil {
+		f.c.lateRefusal = repeatedKeyword(e, f.c.name, f.c.source)
+	}
+}
+
+// misplacedSlice reports the first subscript in an expression that has a slice
+// among several: `x[1:2, 3]`.
+//
+// jinja2 writes a slice out as `start:stop:step` and only the subscript that
+// holds it alone puts that inside brackets; in a tuple it comes out as
+// `(1:2, 3)`, which Python cannot parse. It is a SyntaxError out of the
+// generated module, and a parse error at that, so it beats a compile error such
+// as a repeated keyword whatever order they were written in. Constants never
+// get here: a subscript of constants folded to an undefined first.
+func misplacedSlice(e ast.Expr, name, source string) error {
+	var refusal error
+	ast.Inspect(e, func(n ast.Node) bool {
+		if refusal != nil {
+			return false
+		}
+		g, ok := n.(*ast.Getitem)
+		if !ok {
+			return true
+		}
+		if t, ok := g.Arg.(*ast.Tuple); ok && hasSlice(t) {
+			err := errs.New(errs.SyntaxError, "invalid syntax")
+			err.Line, err.Name, err.Source = n.Line(), name, source
+			refusal = err
+			return false
+		}
+		return true
+	})
+	return refusal
+}
+
+// repeatedKeyword reports the first call, filter or test in an expression that
+// names a keyword twice.
+//
+// jinja2 writes a call's keywords out as `name=value` pairs, so CPython's own
+// compiler refuses the generated module -- `{{ m(a=1, a=2) }}` does not compile
+// there and rendered here, the direction of divergence that costs a template
+// author something. A node that folded first is gone by now, which is what
+// makes `{{ [1]|join(d='-', d='+') }}` render on both sides.
+func repeatedKeyword(e ast.Expr, name, source string) error {
+	var refusal error
+	ast.Inspect(e, func(n ast.Node) bool {
+		if refusal != nil {
+			return false
+		}
+		var args *ast.Args
+		switch v := n.(type) {
+		case *ast.Call:
+			args = &v.Args
+		case *ast.Filter:
+			args = &v.Args
+		case *ast.Test:
+			args = &v.Args
+		default:
+			return true
+		}
+		seen := make(map[string]bool, len(args.Kwargs))
+		for _, kw := range args.Kwargs {
+			if seen[kw.Key] {
+				// CPython's wording, with the line of the
+				// template rather than of the module it was
+				// compiled into. See docs/divergences.md.
+				err := errs.New(errs.SyntaxError,
+					"keyword argument repeated: %s", kw.Key)
+				err.Line, err.Name, err.Source = n.Line(), name, source
+				refusal = err
+				return false
+			}
+			seen[kw.Key] = true
+		}
+		return true
+	})
+	return refusal
+}
+
+// foldCheck is what the generator does to an expression it writes: fold it,
+// which may refuse, and then look up the names left in it, which may refuse.
+func (f *constFolder) foldCheck(e ast.Expr) ast.Expr {
+	e = f.fold(e)
+	f.check(e)
+	return e
+}
+
+// foldCheckAll is foldCheck over a list, in order.
+func (f *constFolder) foldCheckAll(list []ast.Expr) {
+	for i, e := range list {
+		list[i] = f.foldCheck(e)
+	}
+}
+
+// fail records a refusal the walk itself raises, rather than a fold or a name.
+func (f *constFolder) fail(err error) {
+	if err != nil && f.c.refusal == nil {
+		f.c.refusal = err
+	}
+}
+
+// soft folds a branch's body: jinja2's Frame.soft(), which clears rootlevel
+// and keeps toplevel. That is what makes `{% if x %}{% extends %}{% endif %}`
+// legal while leaving the print tags below it compiled.
+func (f *constFolder) softBody(body []ast.Stmt) {
+	savedRoot, savedSoft := f.rootlevel, f.soft
+	f.rootlevel, f.soft = false, true
+	f.stmts(body)
+	f.rootlevel, f.soft = savedRoot, savedSoft
+}
+
+// nested folds the body of a construct that opens a scope: jinja2's
+// Frame.inner(), which clears toplevel too, so an {% extends %} inside one is
+// refused rather than obeyed.
+func (f *constFolder) nested(body []ast.Stmt) {
+	savedTop, savedRoot, savedSoft := f.toplevel, f.rootlevel, f.soft
+	f.toplevel, f.rootlevel, f.soft = false, false, false
+	f.stmts(body)
+	f.toplevel, f.rootlevel, f.soft = savedTop, savedRoot, savedSoft
+}
+
+// block folds one {% block %} body.
+//
+// It is compiled on its own, against a fresh eval context built from the
+// environment -- so a constant folded inside one does not see an enclosing
+// {% autoescape %}, even though the same expression left unfolded sees it at
+// run time. That split is jinja2's, and the two halves are observable against
+// each other, so both are reproduced. A nested block is not folded from here
+// either: it has its own entry in the list.
+func (f *constFolder) block(n *ast.Block) {
+	savedEsc, savedVol := f.c.st.autoescape, f.c.volatile
+	f.c.st.autoescape, f.c.volatile = f.envAutoescape, false
+	f.detached(n.Body)
+	f.c.st.autoescape, f.c.volatile = savedEsc, savedVol
+}
+
+// detached folds a body that is compiled on its own: a {% block %}, a macro,
+// and the body of a {% set %} with one. jinja2 clears require_output_check for
+// each of the three, because none of them writes to the template's own stream
+// -- so what they print is compiled, and folded, even below a known extends.
+func (f *constFolder) detached(body []ast.Stmt) {
+	saved := f.outputChecked
+	f.outputChecked = false
+	f.nested(body)
+	f.outputChecked = saved
 }
 
 // foldable reports whether a constant result can stand in for the expression
@@ -202,12 +465,19 @@ func (f *constFolder) fold(e ast.Expr) ast.Expr {
 		// exactly as jinja2 skips its optimizer there.
 		return e
 	}
+	// Children first, which is what jinja2's optimizer does -- its
+	// generic_visit calls NodeTransformer.generic_visit before it tries
+	// as_const on the node itself. The folded *result* is the same either
+	// way, because folding is deterministic; what differs is which refusal
+	// is reached. Top-down, an untaken branch is never evaluated, so
+	// `{% set v = 1 if [1] else (3 if (0b101)[::2] else 4) %}` folded to 1
+	// here and did not compile there.
+	f.descend(e)
 	if _, isConst := e.(*ast.Const); !isConst {
 		if v, ok := f.c.tryConstEval(e); ok && foldable(v) && constSizeOK(v) {
 			return &ast.Const{Pos: ast.At(e.Line()), Value: v}
 		}
 	}
-	f.descend(e)
 	return liftNegativePowerBase(e)
 }
 
@@ -245,8 +515,12 @@ func liftNegativePowerBase(e ast.Expr) ast.Expr {
 	if !ok || !c.Value.IsNumber() {
 		return e
 	}
-	negative, err := value.Ordered("<", c.Value, value.Int(0), value.DefaultPythonVersion)
-	if err != nil || !negative {
+	// "Begins with a minus", which is the mechanism, rather than "is less than
+	// zero", which is not: repr(-0.0) is "-0.0" and -0.0 is not negative, so
+	// `{% set m = 2 %}{{ (-0.0) ** m }}` is -(0.0 ** 2) = -0.0 on CPython
+	// where a comparison against zero left it as (-0.0) ** 2 = 0.0 here. With
+	// an exponent of 0 the two differ by more than a sign: -1.0 against 1.0.
+	if !strings.HasPrefix(value.ReprFor(c.Value, value.DefaultPythonVersion), "-") {
 		return e
 	}
 	positive, err := value.Neg(c.Value)
@@ -321,69 +595,145 @@ func (f *constFolder) stmts(body []ast.Stmt) {
 }
 
 func (f *constFolder) stmt(stmt ast.Stmt) {
+	if f.c.refusal != nil {
+		// The compile is going to fail with what is already recorded;
+		// walking on could only spend time.
+		return
+	}
 	switch n := stmt.(type) {
 	case *ast.Output:
+		if f.outputChecked && f.knownExtends {
+			// Below an {% extends %} at the root, the child's own
+			// body prints nothing, and jinja2's generator leaves
+			// the whole tag out rather than guarding it -- so its
+			// expressions are neither folded nor looked up, and an
+			// error either would have raised never happens. Run
+			// time already agrees: see execOutput.
+			return
+		}
 		for i, node := range n.Nodes {
 			if _, isData := node.(*ast.TemplateData); isData {
 				continue
 			}
-			n.Nodes[i] = f.fold(node)
+			n.Nodes[i] = f.foldCheck(node)
 		}
 	case *ast.For:
-		n.Iter, n.Test = f.fold(n.Iter), f.fold(n.Test)
-		f.stmts(n.Body)
-		f.stmts(n.Else)
+		// `loop` is bound by the loop itself, so assigning it anywhere
+		// inside would leave the two fighting over one name.
+		if line, found := findLoopStore(n); found {
+			f.dep.failAt(line, "Can't assign to special loop variable in for-loop target")
+			f.fail(f.dep.err)
+			return
+		}
+		// The test first: it becomes a function of its own, written
+		// before the loop that calls it, so
+		// `{% for i in [1]|nosuchA if 1|nosuchB %}` names nosuchB. It
+		// is part of that function, so it is refused even inside a
+		// branch that cannot be taken; the iterable is evaluated where
+		// the loop is written, and softens with everything there.
+		savedSoft := f.soft
+		f.soft = false
+		n.Test = f.foldCheck(n.Test)
+		f.soft = savedSoft
+		n.Iter = f.foldCheck(n.Iter)
+		f.nested(n.Body)
+		f.nested(n.Else)
 	case *ast.If:
-		n.Test = f.fold(n.Test)
-		f.stmts(n.Body)
+		// An if softens its whole subtree, condition and body alike.
+		savedSoft := f.soft
+		f.soft = true
+		n.Test = f.foldCheck(n.Test)
+		f.soft = savedSoft
+		f.softBody(n.Body)
 		for _, elif := range n.Elif {
+			// An elif is an If of its own and softens its own body;
+			// wrapping it here would clear a flag twice.
 			f.stmt(elif)
 		}
-		f.stmts(n.Else)
+		f.softBody(n.Else)
 	case *ast.Assign:
-		n.Node = f.fold(n.Node)
+		n.Node = f.foldCheck(n.Node)
 	case *ast.AssignBlock:
-		n.Filter = f.fold(n.Filter)
-		f.stmts(n.Body)
+		// The body is buffered first and the filter applied to what it
+		// left, in that order -- so `{% set q | nosuchA %}{{ 1|nosuchC
+		// }}{% endset %}` names nosuchC. The filter is resolved with
+		// the buffer's frame rather than the one the block sits in.
+		f.detached(n.Body)
+		f.unsoftened(func() { n.Filter = f.foldCheck(n.Filter) })
 	case *ast.With:
-		f.exprs(n.Values)
-		f.stmts(n.Body)
+		f.foldCheckAll(n.Values)
+		f.nested(n.Body)
 	case *ast.Macro:
-		f.exprs(n.Defaults)
-		f.stmts(n.Body)
+		f.dep.checkCallerDefault(n.Body, n.Args, n.Defaults, n.Line())
+		f.fail(f.dep.err)
+		// Defaults are part of the macro's signature, generated with
+		// the body rather than at the point of definition.
+		f.unsoftened(func() { f.foldCheckAll(n.Defaults) })
+		f.detached(n.Body)
 	case *ast.CallBlock:
-		f.exprs(n.Defaults)
-		f.stmts(n.Body)
+		f.dep.checkCallerDefault(n.Body, n.Args, n.Defaults, n.Line())
+		f.fail(f.dep.err)
+		// The block becomes a macro -- signature, then body -- and only
+		// then is the call itself written, so `{% call m(1|nosuchA) %}
+		// {{ 1|nosuchC }}{% endcall %}` names nosuchC. The call is made
+		// where the block is written, so it softens; the block's own
+		// parameters belong to its signature.
+		f.unsoftened(func() { f.foldCheckAll(n.Defaults) })
+		f.detached(n.Body)
+		// The call cannot fold to a constant -- its callee is a name --
+		// but its arguments can, and a refusal inside one belongs here.
+		if call, ok := f.foldCheck(n.Call).(*ast.Call); ok {
+			n.Call = call
+		}
 	case *ast.FilterBlock:
-		n.Filter = f.fold(n.Filter)
-		f.stmts(n.Body)
+		// The body is buffered first and the filter applied to what it
+		// left. The filter naming the block is resolved where the block
+		// is generated, which happens whether or not the branch runs.
+		f.nested(n.Body)
+		f.unsoftened(func() { n.Filter = f.foldCheck(n.Filter) })
 	case *ast.Block:
-		// A {% block %} body is compiled on its own, against a fresh
-		// eval context built from the environment -- so a constant
-		// folded inside one does not see an enclosing {% autoescape %},
-		// even though the same expression left unfolded sees it at run
-		// time. That split is jinja2's, and the two halves are
-		// observable against each other, so both are reproduced.
-		savedEsc, savedVol := f.c.st.autoescape, f.c.volatile
-		f.c.st.autoescape, f.c.volatile = f.envAutoescape, false
-		f.stmts(n.Body)
-		f.c.st.autoescape, f.c.volatile = savedEsc, savedVol
+		// Nothing: where a block is *written* the generator only calls
+		// it. Its body is folded by block, after the root body.
 	case *ast.ExprStmt:
-		n.Node = f.fold(n.Node)
+		n.Node = f.foldCheck(n.Node)
 	case *ast.Include:
-		n.Template = f.fold(n.Template)
+		n.Template = f.foldCheck(n.Template)
 	case *ast.Import:
-		n.Template = f.fold(n.Template)
+		n.Template = f.foldCheck(n.Template)
 	case *ast.FromImport:
-		n.Template = f.fold(n.Template)
+		n.Template = f.foldCheck(n.Template)
 	case *ast.Extends:
-		n.Template = f.fold(n.Template)
-	case *ast.Scope:
-		f.stmts(n.Body)
+		// Which template a render extends has to be settled once, for
+		// the whole render. Reached from a frame, it would depend on
+		// control flow: gojja2 let `{% for i in [] %}{% extends %}`
+		// through, so an empty sequence silently skipped the
+		// inheritance and a non-empty one applied it.
+		if !f.toplevel {
+			f.dep.failAt(n.Line(), "cannot use extend from a non top-level scope")
+			f.fail(f.dep.err)
+			return
+		}
+		n.Template = f.foldCheck(n.Template)
+		// Only an extends the root body reaches unconditionally is
+		// known: one inside an {% if %} leaves the print tags below it
+		// compiled, and guarded at run time instead.
+		if f.rootlevel {
+			f.knownExtends = true
+		}
 	case *ast.AutoescapeBlock:
-		n.Value = f.fold(n.Value)
+		n.Value = f.foldCheck(n.Value)
 		f.autoescapeBody(n)
 	}
+}
+
+// unsoftened runs one slot outside any branch's softening: what a {% filter %}
+// names, and what a macro's signature holds, is generated whether or not the
+// branch around it can be taken.
+func (f *constFolder) unsoftened(fn func()) {
+	saved := f.soft
+	f.soft = false
+	fn()
+	f.soft = saved
 }
 
 // autoescapeBody folds the body of an {% autoescape %} block under the
@@ -399,7 +749,7 @@ func (f *constFolder) autoescapeBody(n *ast.AutoescapeBlock) {
 	if !ok {
 		saved := f.c.volatile
 		f.c.volatile = true
-		f.stmts(n.Body)
+		f.nested(n.Body)
 		f.c.volatile = saved
 		return
 	}
@@ -407,13 +757,13 @@ func (f *constFolder) autoescapeBody(n *ast.AutoescapeBlock) {
 	if err != nil {
 		saved := f.c.volatile
 		f.c.volatile = true
-		f.stmts(n.Body)
+		f.nested(n.Body)
 		f.c.volatile = saved
 		return
 	}
 	saved := f.c.st.autoescape
 	f.c.st.autoescape = truth
-	f.stmts(n.Body)
+	f.nested(n.Body)
 	f.c.st.autoescape = saved
 }
 
@@ -509,15 +859,43 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		if !ok {
 			return value.Undefined, false
 		}
-		if base.IsUndefined() {
-			return c.chainOrDefer(base)
-		}
+		// The *argument* decides whether there is a fold at all, before
+		// the base's undefinedness decides what the fold answers.
+		// jinja2 folds a node only when every part of it is constant --
+		// `Name.as_const` is Impossible -- so `((3)[-2:])[n]` is left
+		// for the render, where a slice bypasses Environment.getitem
+		// and raises. Chaining on the base first folded it to an
+		// undefined under ChainableUndefined, and the comparison above
+		// it to False: a TypeError swallowed at compile time.
 		if slice, isSlice := n.Arg.(*ast.Slice); isSlice {
+			if !c.constSliceBounds(slice) {
+				return value.Undefined, false
+			}
+			if base.IsUndefined() {
+				return c.chainOrDefer(base)
+			}
 			return c.constGetSlice(base, slice)
+		}
+		// A slice among several subscripts is a slice object inside the
+		// tuple getitem is handed -- `x[1:2, 3]` -- and no constant can be
+		// indexed by that: Environment.getitem swallows the TypeError or
+		// the KeyError into an undefined naming the whole tuple.
+		if tup, isTuple := n.Arg.(*ast.Tuple); isTuple && hasSlice(tup) {
+			keyRepr, ok := c.constSliceTuple(tup)
+			if !ok {
+				return value.Undefined, false
+			}
+			if base.IsUndefined() {
+				return c.chainOrDefer(base)
+			}
+			return value.UndefinedSubscript(base, keyRepr), true
 		}
 		key, ok := c.constEval(n.Arg)
 		if !ok {
 			return value.Undefined, false
+		}
+		if base.IsUndefined() {
+			return c.chainOrDefer(base)
 		}
 		return constGetItem(base, key), true
 
@@ -528,7 +906,7 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		return c.constUnaryOp(n)
 
 	case *ast.Concat:
-		items, ok := c.constEvalAll(n.Nodes)
+		items, ok := c.constConcatItems(n.Nodes)
 		if !ok {
 			return value.Undefined, false
 		}
@@ -544,7 +922,7 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		// context to be stopped by.
 		var b strings.Builder
 		for _, item := range items {
-			text := value.Str(item)
+			text := value.StrFor(item, c.pyVersion())
 			if c.st.ChargeBytes(int64(len(text))) != nil {
 				return value.Undefined, false
 			}
@@ -570,7 +948,7 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		}
 		truth, err := value.IsTrue(test)
 		if err != nil {
-			return value.Undefined, false
+			return c.refuse(err)
 		}
 		if truth {
 			return c.constEval(n.True)
@@ -581,6 +959,33 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		return c.constEval(n.False)
 	}
 	return value.Undefined, false
+}
+
+// constConcatItems folds `~`'s operands, refusing at the first one that cannot
+// give its text.
+//
+// jinja2 writes this as `"".join(str(x.as_const(...)) for x in self.nodes)`,
+// and the generator is what makes it observable: each operand is converted
+// *before* the next one is folded, so a StrictUndefined in the first position
+// raises even when a later operand is not constant at all. Folding them all
+// first and converting afterwards loses that --
+// `{{ (2147483648)[-2:] ~ 'x'.__class__(1, 2, 3, 4) }}` abandoned the whole
+// fold over the unfoldable right side and let the render report a TypeError,
+// where CPython refuses the template over the left one.
+func (c *constEvaluator) constConcatItems(nodes []ast.Expr) ([]value.Value, bool) {
+	out := make([]value.Value, 0, len(nodes))
+	for _, n := range nodes {
+		v, ok := c.constEval(n)
+		if !ok {
+			return nil, false
+		}
+		if err := value.StrictRefusal(v); err != nil {
+			c.refuse(err)
+			return nil, false
+		}
+		out = append(out, v)
+	}
+	return out, true
 }
 
 // constBinOp folds an operator over constants. An operation that raises is not
@@ -595,7 +1000,7 @@ func (c *constEvaluator) constBinOp(n *ast.BinOp) (value.Value, bool) {
 		}
 		truth, err := value.IsTrue(left)
 		if err != nil {
-			return value.Undefined, false
+			return c.refuse(err)
 		}
 		if truth == (n.Op == ast.OpAnd) {
 			return c.constEval(n.Right)
@@ -739,11 +1144,64 @@ func (c *constEvaluator) pyVersion() value.PythonVersion { return c.env.pyVersio
 type constEvaluator struct {
 	env *Environment
 	st  *State
+	// name and source place a refusal in the template, the way the
+	// dependency check places its own.
+	name   string
+	source string
 	// volatile means the escaping where this fold sits is not known until
 	// the render, which is what `{% autoescape x %}` produces. jinja2
 	// refuses to fold a filter or a test in such a context -- see
 	// constFilter -- and skips its optimizer there entirely.
 	volatile bool
+	// refusal is a StrictUndefined that the fold asked a question only it
+	// can answer with an error: its truthiness, or its text. jinja2 lets
+	// that error out of `from_string`, so the template does not compile at
+	// all, and this is how it gets from the fold to the caller.
+	//
+	// The first one wins and folding stops, because the template is not
+	// going to be returned either way and a second refusal would only
+	// change which of two broken expressions is named.
+	refusal error
+	// lateRefusal is a repeated keyword argument, which is a SyntaxError
+	// out of the *generated module* -- so CPython raises it only once the
+	// whole module has been written, and every refusal the generator itself
+	// makes wins. It is kept aside for that reason and reported last.
+	lateRefusal error
+	// parseRefusal is a SyntaxError of the other kind, one Python's parser
+	// raises before its compiler gets to see anything, and so before the
+	// compiler's own. See misplacedSlice.
+	parseRefusal error
+}
+
+// refuse records a refusal that must end the compile, and reports the
+// expression as unfoldable so every caller unwinds the way it already does.
+//
+// Only three folds may call it, and the set is jinja2's rather than a choice:
+// its `BinExpr.as_const`, `Compare.as_const`, `Filter.as_const` and the rest
+// wrap themselves in `except Exception: raise Impossible()`, so an error there
+// means "not constant" and the expression is left for the render. `Concat`,
+// `And`, `Or` and `CondExpr` have no such guard, so an error raised inside them
+// travels straight out of the optimizer. That is why `{{ (0.0).a ~ 1 }}` does
+// not compile under StrictUndefined while `{{ (0.0).a + 1 }}` compiles and
+// fails at render.
+func (c *constEvaluator) refuse(err error) (value.Value, bool) {
+	if c.volatile {
+		// Where the escaping is not yet known, a refusal does not
+		// escape: `{% autoescape nil %}{{ (0.0).a ~ 1 }}` fails at
+		// render on the undefined name in the tag, not at compile time
+		// on the concatenation. All four refusing folds behave that way
+		// -- jinja2's Concat.as_const checks the flag itself, because
+		// whether its result is Markup depends on the answer, and the
+		// other three are not reached there at all. Ordinary folding
+		// continues: `{% autoescape x %}{{ {'a': 1} }}` is still baked
+		// with the environment's setting, which escape/volatile_folds_
+		// constant grades.
+		return value.Undefined, false
+	}
+	if c.refusal == nil {
+		c.refusal = err
+	}
+	return value.Undefined, false
 }
 
 // Folding runs at compile time, where there is no render and therefore nothing
@@ -762,7 +1220,7 @@ const (
 )
 
 // newConstEvaluator builds an evaluator for a template being compiled.
-func newConstEvaluator(env *Environment, name string, fromString bool) *constEvaluator {
+func newConstEvaluator(env *Environment, name, source string, fromString bool) *constEvaluator {
 	placeholder := &Template{env: env, name: name, fromString: fromString}
 	globals := &scope{vars: env.globals}
 	st := &State{
@@ -784,7 +1242,7 @@ func newConstEvaluator(env *Environment, name string, fromString bool) *constEva
 			maxIntBits: env.maxIntBits,
 		},
 	}
-	return &constEvaluator{env: env, st: st}
+	return &constEvaluator{env: env, st: st, name: name, source: source}
 }
 
 // tryConstEval is the only way a fold may begin.
@@ -794,6 +1252,11 @@ func newConstEvaluator(env *Environment, name string, fromString bool) *constEva
 // FromString down with it, before any render existed to bound -- now the
 // expression is simply left for runtime, where the render's budget applies.
 func (c *constEvaluator) tryConstEval(e ast.Expr) (v value.Value, ok bool) {
+	if c.refusal != nil {
+		// The compile is already going to fail. Folding on would only
+		// spend time and could record a second refusal over the first.
+		return value.Undefined, false
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			v, ok = value.Undefined, false
@@ -914,7 +1377,14 @@ func (c *constEvaluator) constArgs(a ast.Args) (*value.CallArgs, bool) {
 		if !ok {
 			return nil, false
 		}
-		out.Kwargs = append(out.Kwargs, value.Kwarg{Name: kw.Key, Value: v})
+		// Last wins. jinja2 folds a call's keywords through a dict
+		// comprehension, `{k.key: k.value.as_const() ...}`, where a
+		// repeated name keeps the last quietly -- and a repeated name
+		// in a node that does *not* fold is a SyntaxError out of the
+		// generated module, so this is the only place one survives:
+		// `{{ [1]|join(d='-', d='+') }}` renders where
+		// `{{ lst|join(d='-', d='+') }}` does not compile.
+		setKwarg(out, kw.Key, v)
 	}
 	if a.DynArgs != nil {
 		v, ok := c.constEval(a.DynArgs)
@@ -957,19 +1427,23 @@ func (c *constEvaluator) extendPos(out *value.CallArgs, v value.Value) bool {
 // so `join(d="-", **{"d": "+"})` folds to "+" where the unfolded call raises
 // "got multiple values". A key that is not a string is left to the call, which
 // is where CPython refuses it.
+// setKwarg binds a keyword in a folded call, replacing one of the same name.
+func setKwarg(out *value.CallArgs, name string, v value.Value) {
+	for i := range out.Kwargs {
+		if out.Kwargs[i].Name == name {
+			out.Kwargs[i].Value = v
+			return
+		}
+	}
+	out.Kwargs = append(out.Kwargs, value.Kwarg{Name: name, Value: v})
+}
+
 func (c *constEvaluator) updateKwargs(out *value.CallArgs, v value.Value) bool {
 	set := func(k, item value.Value) bool {
 		if k.Kind() != value.KindString {
 			return false
 		}
-		name := k.AsString()
-		for i := range out.Kwargs {
-			if out.Kwargs[i].Name == name {
-				out.Kwargs[i].Value = item
-				return true
-			}
-		}
-		out.Kwargs = append(out.Kwargs, value.Kwarg{Name: name, Value: item})
+		setKwarg(out, k.AsString(), item)
 		return true
 	}
 	if d, ok := v.Dict(); ok {
@@ -1026,6 +1500,17 @@ func constGetItem(base, key value.Value) value.Value {
 }
 
 func constIndex(base, key value.Value) (value.Value, bool) {
+	// A range, or a groupby group: an object that presents a sequence is
+	// indexed like one. jinja2 reaches these through Environment.getitem
+	// like everything else, so `[range(3)]|map(attribute=1)` is 1 -- where
+	// this knew only the built-in kinds and answered undefined, which a
+	// `default=` then covered up. Found by the coverage-guided fuzzer, on
+	// `[range(3)]|groupby(1, 2, 3)`. Asked before the key is narrowed to an
+	// int64, which a range's positions outgrow:
+	// `[range(2**70)]|map(attribute=2**69)` is 590295810358705651712.
+	if seq, ok := base.Interface().(value.Sequence); ok && base.Kind() == value.KindObject {
+		return value.SequenceItem(seq, key)
+	}
 	i, ok := key.Int64()
 	if !ok {
 		return value.Undefined, false
@@ -1051,8 +1536,81 @@ func constIndex(base, key value.Value) (value.Value, bool) {
 			return value.Safe(s), true
 		}
 		return value.String(s), true
+	case value.KindBytes:
+		// A bytes indexes to the byte *value*, not to a one-byte bytes:
+		// `b'b,c'[1]` is 44. The run-time subscript has always said so;
+		// this path had no arm for it at all, so every integer
+		// attribute over a bytes was undefined -- which is what
+		// `|groupby(1)` over bytes grouped on.
+		raw := base.AsString()
+		idx := int(i)
+		if idx < 0 {
+			idx += len(raw)
+		}
+		if idx < 0 || idx >= len(raw) {
+			return value.Undefined, false
+		}
+		return value.Int(int64(raw[idx])), true
 	}
 	return value.Undefined, false
+}
+
+// hasSlice reports whether a subscript's tuple carries a slice, which jinja2's
+// parser wraps around anything that is not exactly one subscript.
+func hasSlice(t *ast.Tuple) bool {
+	for _, item := range t.Items {
+		if _, ok := item.(*ast.Slice); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// constSliceTuple spells the constant tuple a multi-subscript hands to getitem
+// as Python's repr does, and reports false when any part of it is not
+// constant. Slice.as_const and Tuple.as_const both ask that of every part.
+func (c *constEvaluator) constSliceTuple(t *ast.Tuple) (string, bool) {
+	parts := make([]string, len(t.Items))
+	for i, item := range t.Items {
+		slice, isSlice := item.(*ast.Slice)
+		if !isSlice {
+			v, ok := c.constEval(item)
+			if !ok {
+				return "", false
+			}
+			parts[i] = value.Repr(v)
+			continue
+		}
+		var bounds [3]string
+		for j, e := range []ast.Expr{slice.Start, slice.Stop, slice.Step} {
+			bounds[j] = "None"
+			if e == nil {
+				continue
+			}
+			v, ok := c.constEval(e)
+			if !ok {
+				return "", false
+			}
+			bounds[j] = value.Repr(v)
+		}
+		parts[i] = "slice(" + strings.Join(bounds[:], ", ") + ")"
+	}
+	return "(" + strings.Join(parts, ", ") + ")", true
+}
+
+// constSliceBounds reports whether every bound a slice carries is constant,
+// which is what decides whether the subscript can be folded at all. jinja2's
+// Slice.as_const asks the same of each one.
+func (c *constEvaluator) constSliceBounds(slice *ast.Slice) bool {
+	for _, e := range []ast.Expr{slice.Start, slice.Stop, slice.Step} {
+		if e == nil {
+			continue
+		}
+		if _, ok := c.constEval(e); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *constEvaluator) constGetSlice(base value.Value, slice *ast.Slice) (value.Value, bool) {
@@ -1110,7 +1668,7 @@ func sliceable(v value.Value) bool {
 		return true
 	case value.KindObject:
 		switch v.Interface().(type) {
-		case value.Slicer, value.TupleView, value.Sequence:
+		case value.BigSlicer, value.Slicer, value.TupleView, value.Sequence:
 			return true
 		}
 	}
@@ -1135,7 +1693,17 @@ func walkOutputs(c *constEvaluator, body []ast.Stmt, fn func(*ast.Output, bool))
 		for _, stmt := range body {
 			switch n := stmt.(type) {
 			case *ast.Output:
+				// The escaping in force is not only what the
+				// folded text is escaped *with* -- it is what
+				// the fold itself runs under, because five
+				// filters read it. The general fold sets it from
+				// its own walk; this one has to as well, and did
+				// not need to while it ran second over a tree
+				// that pass had already folded.
+				saved := c.st.autoescape
+				c.st.autoescape = escaping
 				fn(n, escaping)
+				c.st.autoescape = saved
 			case *ast.For:
 				walk(n.Body, escaping)
 				walk(n.Else, escaping)
@@ -1157,8 +1725,6 @@ func walkOutputs(c *constEvaluator, body []ast.Stmt, fn func(*ast.Output, bool))
 				walk(n.Body, escaping)
 			case *ast.Block:
 				walk(n.Body, env)
-			case *ast.Scope:
-				walk(n.Body, escaping)
 			case *ast.AutoescapeBlock:
 				inner, volatile := blockEscaping(c, n, escaping)
 				saved := c.volatile

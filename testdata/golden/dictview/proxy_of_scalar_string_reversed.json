@@ -1,0 +1,15 @@
+{
+  "case": "dictview/proxy_of_scalar_string_reversed.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "AttributeError",
+    "message": "'str' object has no attribute '__reversed__'",
+    "name": "__reversed__"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% set q = {'a': nope} %}{{ q.items() == {'a': 1}.items() }}

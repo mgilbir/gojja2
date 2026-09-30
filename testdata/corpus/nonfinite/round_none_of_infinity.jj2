@@ -1,0 +1,5 @@
+{
+  "s_inf": "inf"
+}
+---
+{{ (s_inf|float)|round(none) }}

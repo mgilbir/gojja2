@@ -1,0 +1,3 @@
+{}
+---
+{% set a = true %}{% set b = false %}{% autoescape [] %}{{ '<b>' }}|{{ '<' ~ 'b' }}|{{ ['<']|join }}|{{ '<b>'|upper }}|{{ ('<b>'|safe)|upper }}|{{ [1, '<']|join('&') }}|{{ {'a': '<'} }}|{{ 'a<'|replace('a', '&') }}{% endautoescape %}|{{ '<' }}

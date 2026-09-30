@@ -1,0 +1,6 @@
+{
+  "big": 1e+308,
+  "small": 1e+305
+}
+---
+{{ '{:%}'.format(big) }}|{{ '{:+%}'.format(big) }}|{{ '{:%}'.format(-big) }}|{{ '{:020%}'.format(big) }}|{{ '{:,%}'.format(big) }}|{{ '{:#.0%}'.format(big) }}|{{ '{:=10%}'.format(big) }}|{{ '{:%}'.format(small) }}

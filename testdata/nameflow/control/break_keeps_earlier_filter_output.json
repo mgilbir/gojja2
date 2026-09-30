@@ -1,0 +1,6 @@
+{
+  "case": "control/break_keeps_earlier_filter_output.jj2",
+  "variables": {
+    "seq": "fr"
+  }
+}

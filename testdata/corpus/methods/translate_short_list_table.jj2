@@ -1,0 +1,3 @@
+{}
+---
+{% set t = ['x', 5, none] %}{{ 'abca'.translate(t) }}

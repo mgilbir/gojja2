@@ -1,0 +1,11 @@
+{
+  "case": "methods/repr_of_the_engines_objects.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "<method 'get' of 'dict' objects>|<Macro 'm'>|<LoopContext 1/1>"
+}

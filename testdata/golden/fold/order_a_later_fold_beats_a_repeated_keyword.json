@@ -1,0 +1,14 @@
+{
+  "case": "fold/order_a_later_fold_beats_a_repeated_keyword.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "UndefinedError",
+    "message": "int object has no element 7"
+  }
+}

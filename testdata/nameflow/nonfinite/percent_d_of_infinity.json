@@ -1,0 +1,6 @@
+{
+  "case": "nonfinite/percent_d_of_infinity.jj2",
+  "variables": {
+    "s_inf": "or"
+  }
+}

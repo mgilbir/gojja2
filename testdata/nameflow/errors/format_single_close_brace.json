@@ -1,0 +1,4 @@
+{
+  "case": "errors/format_single_close_brace.jj2",
+  "variables": {}
+}

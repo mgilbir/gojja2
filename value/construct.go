@@ -33,7 +33,7 @@ func ConstructInt(v Value, base int, explicitBase bool, py PythonVersion) (Value
 			}
 		}
 		return Undefined, errs.New(errs.ValueError,
-			"invalid literal for int() with base %d: %s", base, Repr(v))
+			"invalid literal for int() with base %d: %s", base, TruncatedRepr(v, py))
 	}
 	b, err := markupInt(v, 'd', py)
 	if err != nil {

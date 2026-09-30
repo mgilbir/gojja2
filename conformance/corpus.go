@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/mgilbir/gojja2"
+	"github.com/mgilbir/gojja2/dataflow"
 	"github.com/mgilbir/gojja2/value"
 )
 
@@ -59,10 +60,84 @@ type Settings struct {
 	LstripBlocks        bool   `json:"lstrip_blocks"`
 	NewlineSequence     string `json:"newline_sequence"`
 	KeepTrailingNewline bool   `json:"keep_trailing_newline"`
-	Autoescape          bool   `json:"autoescape"`
-	Undefined           string `json:"undefined"`
+	// Autoescape is true, false, or the name of a *rule*: "select" is
+	// jinja2's select_autoescape over the "html" extension, which decides
+	// by the template's name rather than for the whole environment. A JSON
+	// setting cannot carry the callable jinja2 wants, so both sides build
+	// it from the name.
+	Autoescape Autoescape `json:"autoescape"`
+	Undefined  string     `json:"undefined"`
 	// Extensions names the optional tags the case needs, e.g. "do".
 	Extensions []string `json:"extensions"`
+	// Policies are jinja2's environment policies, which change what a filter
+	// produces for every template in the environment rather than for one
+	// call: `urlize.rel`, `urlize.target` and `truncate.leeway`. A pointer
+	// per field, so that an omitted one keeps jinja2's default and an
+	// explicit empty string or zero is still a setting.
+	Policies *CasePolicies `json:"policies"`
+}
+
+// CasePolicies is the subset of jinja2's env.policies that changes rendering.
+//
+// jinja2 has more -- the i18n ones, and json.dumps_function, which is a
+// callable a JSON header cannot carry. These three are the ones a template can
+// observe without one.
+type CasePolicies struct {
+	URLizeRel      *string `json:"urlize.rel"`
+	URLizeTarget   *string `json:"urlize.target"`
+	TruncateLeeway *int    `json:"truncate.leeway"`
+}
+
+// apply returns the gojja2 policies this case asks for, starting from the
+// defaults so that an omitted field is jinja2's own.
+func (p *CasePolicies) apply(base gojja2.Policies) gojja2.Policies {
+	if p == nil {
+		return base
+	}
+	if p.URLizeRel != nil {
+		base.URLizeRel = *p.URLizeRel
+	}
+	if p.URLizeTarget != nil {
+		base.URLizeTarget = *p.URLizeTarget
+	}
+	if p.TruncateLeeway != nil {
+		base.TruncateLeeway = *p.TruncateLeeway
+	}
+	return base
+}
+
+// Autoescape is a case's escaping setting: a bool, or the name of a rule.
+type Autoescape struct {
+	On   bool
+	Rule string
+}
+
+// UnmarshalJSON accepts `true`, `false` and `"select"`.
+func (a *Autoescape) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var name string
+		if err := json.Unmarshal(b, &name); err != nil {
+			return err
+		}
+		if name != "select" {
+			return fmt.Errorf("unknown autoescape rule %q", name)
+		}
+		a.Rule = name
+		return nil
+	}
+	return json.Unmarshal(b, &a.On)
+}
+
+func (a Autoescape) option() gojja2.Option {
+	if a.Rule == "select" {
+		// Spelled out rather than defaulted: gojja2's default set adds
+		// xhtml, which is a documented divergence and not what
+		// select_autoescape(enabled_extensions=("html",)) asks for.
+		return gojja2.WithAutoescapeSelection(gojja2.SelectAutoescapeConfig{
+			Enabled: []string{"html"},
+		})
+	}
+	return gojja2.WithAutoescape(a.On)
 }
 
 // Golden is the oracle's recorded answer for a case.
@@ -300,6 +375,19 @@ func (c *Case) Environment() (*gojja2.Environment, error) {
 	return c.EnvironmentFor(gojja2.DefaultPythonVersion)
 }
 
+// DataflowOptions are the analysis options this case's environment implies.
+//
+// StrictUndefined is one: it widens what can stop a render, so the analysis has
+// to be told. A case that renders under it and is analysed without it gets an
+// answer for a different environment -- which is the same trap as a setting that
+// reaches one engine and not the other.
+func (c *Case) DataflowOptions() []dataflow.Option {
+	if c.Settings.Undefined == "strict" {
+		return []dataflow.Option{dataflow.WithStrictUndefined()}
+	}
+	return nil
+}
+
 // EnvironmentFor is Environment for one interpreter version, which is what
 // grading the whole matrix needs: a case whose answer moved between CPython
 // releases has a golden per version, and the engine has to be told which one
@@ -335,11 +423,14 @@ func (c *Case) EnvironmentFor(py gojja2.PythonVersion) (*gojja2.Environment, err
 		gojja2.WithTrimBlocks(s.TrimBlocks),
 		gojja2.WithLstripBlocks(s.LstripBlocks),
 		gojja2.WithKeepTrailingNewline(s.KeepTrailingNewline),
-		gojja2.WithAutoescape(s.Autoescape),
+		s.Autoescape.option(),
 		gojja2.WithUndefined(undefinedBehavior(s.Undefined)),
 	)
 	if len(s.Extensions) > 0 {
 		opts = append(opts, gojja2.WithExtensions(s.Extensions...))
+	}
+	if s.Policies != nil {
+		opts = append(opts, gojja2.WithPolicies(s.Policies.apply(gojja2.DefaultPolicies())))
 	}
 	opts = append(opts, gojja2.WithPythonVersion(py))
 	env, err := gojja2.New(opts...)

@@ -1,0 +1,16 @@
+{
+  "__settings__": {
+    "extensions": [
+      "loopcontrols"
+    ]
+  },
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{% set ns = namespace(v=0) %}{% for x in seq %}{% set ns.v = x %}{% continue %}{% endfor %}[{{ ns.v }}]

@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is iterable }}|{{ 0 is iterable }}|{{ -1 is iterable }}|{{ 1.5 is iterable }}|{{ true is iterable }}|{{ false is iterable }}|{{ none is iterable }}|{{ 'a' is iterable }}|{{ '' is iterable }}|{{ 'A' is iterable }}|{{ [1] is iterable }}|{{ [] is iterable }}|{{ ((1,)) is iterable }}|{{ {} is iterable }}|{{ {'a':1} is iterable }}|{{ range(3) is iterable }}|{{ nope is iterable }}|{{ ('x'|safe) is iterable }}|{{ dict is iterable }}|{{ d.keys() is iterable }}

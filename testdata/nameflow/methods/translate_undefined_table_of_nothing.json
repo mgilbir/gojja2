@@ -1,0 +1,6 @@
+{
+  "case": "methods/translate_undefined_table_of_nothing.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

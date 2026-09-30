@@ -1,0 +1,4 @@
+{
+  "case": "errors/bytes_join_a_non_iterable.jj2",
+  "variables": {}
+}

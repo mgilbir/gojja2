@@ -1,0 +1,6 @@
+{
+  "case": "tests/operator_lt_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

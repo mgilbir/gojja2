@@ -58,7 +58,8 @@ SITES = [
 # match becomes one mutation, and the mutation removes the *charge*, not just
 # its refusal: leaving the debit in place lets a later charge refuse instead,
 # and the question here is whether this allocation is bounded at all. Sixteen of
-# the thirty-eight read as caught under the weaker mutation and were not.
+# the thirty-eight then measured read as caught under the weaker mutation and
+# were not.
 CHARGES = re.compile(
     r"^(\s*)if err := ([\w.]+)\.(ChargeBytes|ChargeItems|Step)\((.*)\); err != nil \{$")
 
@@ -67,8 +68,8 @@ CHARGES = re.compile(
 PREDICATES = [
     (ROOT / "dataflow/walk.go", "func canRaise(k syntax.Kind) bool {",
      "func canRaise(k syntax.Kind) bool {\n\treturn false\n\t//"),
-    (ROOT / "dataflow/walk.go", "func canFailIn(n *syntax.Node) bool {",
-     "func canFailIn(n *syntax.Node) bool {\n\treturn false\n\t//"),
+    (ROOT / "dataflow/walk.go", "func (a *analyzer) canFailIn(n *syntax.Node) bool {",
+     "func (a *analyzer) canFailIn(n *syntax.Node) bool {\n\treturn false\n\t//"),
     (ROOT / "dataflow/analyze.go", "func (a *analyzer) seedAliases() {",
      "func (a *analyzer) seedAliases() {\n\tif true {\n\t\treturn\n\t}"),
 ]
@@ -236,6 +237,16 @@ def mutations():
 def main(only: str = "") -> int:
     # Before anything else, in case the last run was killed mid-mutation.
     _restore()
+    # TestGeneratedCorporaAgree is one of the analysis checks, and it skips --
+    # passes, as far as caught() can tell -- when the imported corpora are not
+    # there. They are gitignored, so a fresh clone or a `git worktree` has none,
+    # and a run there reported two analysis sites as survivors that the full
+    # check catches. A check that cannot fail is not a check; refuse instead.
+    if only != "budget" and not (ROOT / "testdata/generated/references.jsonl").is_file():
+        raise SystemExit(
+            "mutate: testdata/generated/ is missing, so TestGeneratedCorporaAgree "
+            "would skip and every analysis mutation it catches would read as a "
+            "survivor; run `make import` first (or ARGS=--budget)")
     backups = {}
     with tempfile.TemporaryDirectory() as td:
         for path, _pattern in SITES:
@@ -258,6 +269,17 @@ def main(only: str = "") -> int:
                 shutil.copyfile(path, backups[path])
             original = backups[path].read_text(encoding="utf-8")
             if line_no is None:
+                # A needle that no longer matches would leave the file
+                # untouched, the suite passing, and the site reported as a
+                # survivor -- "nothing noticed the change" and "there was no
+                # change" are not the same answer. canFailIn became a method
+                # and its needle went stale; it read as unmeasured for as long
+                # as that lasted, while `go test ./dataflow/` had been catching
+                # it all along.
+                if what not in original:
+                    raise SystemExit(
+                        f"mutate: {path.relative_to(ROOT)} no longer contains "
+                        f"{what!r}; the rule needs updating, not reporting")
                 mutated = original.replace(what, replacement, 1)
             elif replacement is not None:
                 lines = original.split("\n")

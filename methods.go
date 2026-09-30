@@ -6,8 +6,8 @@ package gojja2
 import (
 	"errors"
 	"math"
+	"math/big"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -31,12 +31,50 @@ import (
 // the lookup comes from constant folding, which State.Step and State.Charge
 // both handle.
 
+// markupMethods are the methods markupsafe.Markup has that str has not.
+// Both answer a plain str, not a Markup: `striptags` is
+// `Markup(stripped).unescape()`.
+var markupMethods = map[string]func(*State, value.Value) (value.Value, error){
+	"striptags": func(s *State, r value.Value) (value.Value, error) {
+		return filterStriptags(s, r, nil)
+	},
+	"unescape": func(s *State, r value.Value) (value.Value, error) {
+		text, err := unescapeHTML(s, r.AsString())
+		if err != nil {
+			return value.Undefined, err
+		}
+		return value.String(text), nil
+	},
+}
+
 // builtinMethod resolves a method on a built-in type, returning it bound.
 func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) {
 	var table map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error)
 	switch recv.Kind() {
 	case value.KindString:
 		table = stringMethods
+		// markupsafe.Markup adds two methods to str, and they are
+		// written in Python, so a call is checked against a Python
+		// signature and the bound method is a `method`.
+		if recv.IsSafe() {
+			if fn, ok := markupMethods[name]; ok {
+				return Method(name, "Markup", "markupsafe.Markup", recv,
+					func(callState *State, args *value.CallArgs) (value.Value, error) {
+						if callState == nil {
+							callState = s
+						}
+						if n := len(args.Pos); n > 0 {
+							return value.Undefined, errs.New(errs.TypeError,
+								"Markup.%s() takes 1 positional argument but %d were given", name, n+1)
+						}
+						if len(args.Kwargs) > 0 {
+							return value.Undefined, errs.New(errs.TypeError,
+								"Markup.%s() got an unexpected keyword argument '%s'", name, args.Kwargs[0].Name)
+						}
+						return fn(callState, recv)
+					}), true
+			}
+		}
 	case value.KindBytes:
 		table = bytesMethods
 	case value.KindDict:
@@ -56,6 +94,18 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 			table, recv = tupleMethods, tv.AsTuple()
 			break
 		}
+		// A set's methods are bound here rather than from its own
+		// GetAttr, so they get the arity table -- the wordings of which
+		// are CPython's own, probed per method.
+		if _, ok := recv.Interface().(*value.Set); ok {
+			table = setMethods
+			break
+		}
+		// range's two, for the same reason.
+		if _, ok := recv.Interface().(*rangeObject); ok {
+			table = rangeMethods
+			break
+		}
 		return value.Undefined, false
 	default:
 		return value.Undefined, false
@@ -65,7 +115,7 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 		return value.Undefined, false
 	}
 	typeName := recv.TypeName()
-	return Func(name, func(callState *State, args *value.CallArgs) (value.Value, error) {
+	return Method(name, typeName, "", recv, func(callState *State, args *value.CallArgs) (value.Value, error) {
 		// Prefer the state of the call over the state of the lookup:
 		// they are the same render, but a bound method can outlive the
 		// expression that produced it.
@@ -216,10 +266,11 @@ var (
 	// cSSizeT is Py_ssize_t, which every length, width, index and count
 	// converts to. It is the common case.
 	cSSizeT = cIntType{"ssize_t", math.MinInt64, math.MaxInt64}
-	// cInt is a plain C int. Only three arguments use it: expandtabs'
-	// tabsize, and the two declared `bool(accept={int})` in Argument
-	// Clinic -- splitlines' keepends and sorted's reverse -- which are
-	// integers rather than truth tests and so carry a range.
+	// cInt is a plain C int. Only four arguments use it: expandtabs'
+	// tabsize, bytes.hex's bytes_per_sep, and the two declared
+	// `bool(accept={int})` in Argument Clinic -- splitlines' keepends and
+	// sorted's reverse -- which are integers rather than truth tests and so
+	// carry a range.
 	cInt = cIntType{"int", math.MinInt32, math.MaxInt32}
 )
 
@@ -429,7 +480,7 @@ func methodMaketrans(s *State, _ value.Value, args *value.CallArgs) (value.Value
 				"if you give only one argument to maketrans it must be a dict")
 		}
 		for _, e := range src.Entries() {
-			key, err := transKey(e.Key)
+			key, err := transKey(e.Key, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -464,39 +515,38 @@ func methodMaketrans(s *State, _ value.Value, args *value.CallArgs) (value.Value
 			}
 		}
 		if len(args.Pos) == 3 {
-			if !args.Pos[2].IsString() {
-				return value.Undefined, errs.New(errs.TypeError,
-					"third argument to maketrans must be a string")
-			}
 			for _, c := range value.Str(args.Pos[2]) {
 				if err := d.Set(value.Int(int64(c)), value.None, s.PythonVersion()); err != nil {
 					return value.Undefined, err
 				}
 			}
 		}
-	default:
-		return value.Undefined, errs.New(errs.TypeError,
-			"maketrans() takes 1, 2 or 3 arguments (%d given)", len(args.Pos))
 	}
 	return out, nil
 }
 
 // transKey turns a maketrans key into the ordinal the table is keyed by: a
 // one-character string becomes its code point, an integer is already one.
-func transKey(k value.Value) (value.Value, error) {
+func transKey(k value.Value, py value.PythonVersion) (value.Value, error) {
 	if k.IsString() {
 		rs := []rune(value.Str(k))
 		if len(rs) != 1 {
-			return value.Undefined, errs.New(errs.ValueError,
-				"string keys in translate table must be of length 1")
+			msg := "string keys in translate table must be of length 1"
+			if py.TranslateTableMessagesLoseASpace() {
+				msg = "string keys in translatetable must be of length 1"
+			}
+			return value.Undefined, errs.New(errs.ValueError, "%s", msg)
 		}
 		return value.Int(int64(rs[0])), nil
 	}
 	if k.IsInteger() {
 		return k, nil
 	}
-	return value.Undefined, errs.New(errs.TypeError,
-		"keys in translate table must be strings or integers")
+	msg := "keys in translate table must be strings or integers"
+	if py.TranslateTableMessagesLoseASpace() {
+		msg = "keys in translate table mustbe strings or integers"
+	}
+	return value.Undefined, errs.New(errs.TypeError, "%s", msg)
 }
 
 // translateLookup is `table[ord(c)]` with LookupError meaning "leave this
@@ -519,11 +569,28 @@ func translateLookup(table value.Value, c rune, py value.PythonVersion) (value.V
 		}
 		return value.Undefined, false, nil
 	}
-	if v, ok := lookupItem(table, key, py); ok {
-		return v, true, nil
+	// An undefined defines __getitem__ and raises its own error from it --
+	// except a ChainableUndefined, whose __getitem__ answers itself. That is
+	// then a found replacement of the wrong type, which the caller refuses:
+	// "character mapping must return integer, None or str".
+	if table.IsUndefined() {
+		if table.UndefinedBehavior() == value.UndefinedChainable {
+			return table, true, nil
+		}
+		return value.Undefined, false, table.UndefinedError()
 	}
-	if table.Kind() == value.KindObject {
-		return value.Undefined, false, nil
+	// An object is a table only if it defines __getitem__: a mapping is
+	// asked for the key and a sequence (a range, a group) for the position,
+	// and a miss in either is the LookupError that leaves the character
+	// alone. Any other object -- a namespace, a cycler, a dict view -- is
+	// not subscriptable, and str.translate says so.
+	if o, ok := table.Interface().(value.Mapping); ok {
+		v, found := o.GetItem(key)
+		return v, found, nil
+	}
+	if o, ok := table.Interface().(value.Sequence); ok && table.Kind() == value.KindObject {
+		v, found := value.SequenceItem(o, key)
+		return v, found, nil
 	}
 	return value.Undefined, false, notSubscriptable(table)
 }
@@ -533,11 +600,7 @@ func translateLookup(table value.Value, c rune, py value.PythonVersion) (value.V
 // is None. A character the table does not mention is left exactly as it was,
 // which is why a missing key is not an error.
 func methodTranslate(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	table, ok := arg(args, 0, "table")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"translate() takes exactly one argument (0 given)")
-	}
+	table, _ := arg(args, 0, "table")
 	// str.translate is `table[ord(c)]` per character, catching LookupError
 	// -- so the table is not converted and not even looked at for an empty
 	// string. Anything subscriptable by an integer will do: a str, a list
@@ -651,32 +714,10 @@ func methodIsTitle(s *State, r value.Value, _ *value.CallArgs) (value.Value, err
 // parser does: XID_Start followed by XID_Continue, with underscore allowed in
 // either position. It says nothing about keywords -- "class".isidentifier() is
 // True.
-func methodIsIdentifier(_ *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
-	s := r.AsString()
-	if s == "" {
-		return value.False, nil
-	}
-	for i, c := range s {
-		if i == 0 {
-			if !isXIDStart(c) {
-				return value.False, nil
-			}
-			continue
-		}
-		if !isXIDContinue(c) {
-			return value.False, nil
-		}
-	}
-	return value.True, nil
-}
-
-func isXIDStart(c rune) bool {
-	return c == '_' || unicode.IsLetter(c) || unicode.Is(unicode.Nl, c)
-}
-
-func isXIDContinue(c rune) bool {
-	return isXIDStart(c) || unicode.IsDigit(c) ||
-		unicode.In(c, unicode.Mn, unicode.Mc, unicode.Pc)
+func methodIsIdentifier(st *State, r value.Value, _ *value.CallArgs) (value.Value, error) {
+	// The same helper the lexer asks, so the method and the tokenizer cannot
+	// disagree about what an identifier is.
+	return value.Bool(value.IsIdentifier(r.AsString(), st.PythonVersion())), nil
 }
 
 // methodExpandtabs is str.expandtabs: each tab advances to the next multiple
@@ -971,10 +1012,7 @@ func methodSplitlines(st *State, r value.Value, args *value.CallArgs) (value.Val
 }
 
 func methodJoin(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "iterable")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "join() takes exactly one argument")
-	}
+	v, _ := arg(args, 0, "iterable")
 	seq, err := value.Iterate(v)
 	if err != nil {
 		// str.join says this and nothing about the type, because it
@@ -1047,20 +1085,26 @@ func chargeReplace(st *State, src, old, new string, count int) error {
 // candidates as well as a single string.
 func affixMethod(name string, match func(string, string) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
 	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-		v, ok := arg(args, 0, "prefix")
-		if !ok {
-			return value.Undefined, errs.New(errs.TypeError, "missing required argument")
-		}
+		v, _ := arg(args, 0, "prefix")
 		within, _, inRange, err := strSliceBounds(r.AsString(), args, 1)
 		if err != nil {
 			return value.Undefined, err
 		}
-		if !inRange {
-			return value.False, nil
-		}
+		// The candidate is converted before it is matched, so its type
+		// is checked whatever the slice bounds say: `''.startswith(1,
+		// 2)` raises where an empty range used to answer False. In a
+		// tuple each element is converted as it is *reached*, so one
+		// that matches first hides a bad one after it --
+		// `'abc'.startswith(('a', 1))` is True and
+		// `''.startswith(('a', 1))` raises.
 		if s, ok := v.Seq(); ok && v.Kind() == value.KindTuple {
 			for _, cand := range s.Items() {
-				if cand.Kind() == value.KindString && match(within, cand.AsString()) {
+				if cand.Kind() != value.KindString {
+					return value.Undefined, errs.New(errs.TypeError,
+						"tuple for %s must only contain str, not %s",
+						name, cand.TypeName())
+				}
+				if inRange && match(within, cand.AsString()) {
 					return value.True, nil
 				}
 			}
@@ -1070,6 +1114,9 @@ func affixMethod(name string, match func(string, string) bool) func(*State, valu
 			return value.Undefined, errs.New(errs.TypeError,
 				"%s first arg must be str or a tuple of str, not %s",
 				name, v.TypeName())
+		}
+		if !inRange {
+			return value.False, nil
 		}
 		return value.Bool(match(within, v.AsString())), nil
 	}
@@ -1241,7 +1288,7 @@ func indexMethod(search func(string, string) int, name string) func(*State, valu
 // safe does not mark its arguments safe.
 func methodFormat(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	return formatWith(st, r, func(name string, auto *int) (value.Value, error) {
-		return resolveFieldBase(name, args, auto)
+		return resolveFieldBase(name, args, auto, st.PythonVersion())
 	})
 }
 
@@ -1273,11 +1320,21 @@ func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 			if err != nil {
 				return value.Undefined, err
 			}
+			// The conversion specifier is checked before the spec is
+			// expanded: `'{0!q:{}}'.format(42, 3)` is "Unknown
+			// conversion specifier q" and not the numbering error
+			// that expanding `{}` would raise. It comes *after* the
+			// field is resolved, though -- `{nope!q}` is the
+			// KeyError -- which is why this is a check here rather
+			// than a reordering of convertAndFormat.
+			if err := checkConversion(conv); err != nil {
+				return value.Undefined, err
+			}
 			// A spec may itself hold replacement fields -- `{:{w}.{p}f}`
 			// -- which are resolved against the same arguments before
 			// the spec is read.
 			if strings.IndexByte(spec, '{') >= 0 {
-				spec, err = expandSpec(spec, base, &auto, st.PythonVersion())
+				spec, err = expandSpec(st, spec, base, &auto)
 				if err != nil {
 					return value.Undefined, err
 				}
@@ -1312,73 +1369,106 @@ func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 // its own, so `{:{w}}` ends at the second one. Nesting is one level deep in
 // Python, which is what the depth counter here allows.
 func splitReplacement(s string, start int) (field, conv, spec string, next int, err error) {
-	depth, i, nested := 0, start, false
-	for ; i < len(s); i++ {
-		if s[i] == '{' {
-			depth++
-			if depth > 1 {
-				nested = true
+	fail := func(msg string) (string, string, string, int, error) {
+		return "", "", "", 0, errs.New(errs.ValueError, "%s", msg)
+	}
+
+	// The field *name* first, which ends at the first '}', ':' or '!' --
+	// except inside the [] of an index, which runs to the next ']' and may
+	// hold anything at all: `{0[a}b]}` is the key "a}b", `{a[1:2]}` indexes
+	// rather than formats, and `{0[x}` never closes the field.
+	i, bracket := start+1, 0
+	var term byte
+	for ; i < len(s) && term == 0; i++ {
+		c := s[i]
+		if bracket > 0 {
+			if c == ']' {
+				bracket--
 			}
 			continue
 		}
-		if s[i] == '}' {
-			depth--
-			if depth == 0 {
-				break
-			}
-		}
-	}
-	if depth != 0 {
-		// Three different complaints, depending on how far it got: a
-		// lone brace, a field that named something and never closed,
-		// and a spec whose own nested field never closed.
-		switch {
-		case nested:
-			return "", "", "", 0, errs.New(errs.ValueError,
-				"unmatched '{' in format spec")
-		case i > start+1:
-			return "", "", "", 0, errs.New(errs.ValueError,
-				"expected '}' before end of string")
-		default:
-			return "", "", "", 0, errs.New(errs.ValueError,
-				"Single '{' encountered in format string")
-		}
-	}
-	body := s[start+1 : i]
-	next = i + 1
-
-	// The spec starts at the first ':' that is not inside the [] of a field
-	// name -- `{a[1:2]}` indexes, it does not format.
-	bracket := 0
-	for j := 0; j < len(body); j++ {
-		switch body[j] {
+		switch c {
 		case '[':
 			bracket++
-		case ']':
-			bracket--
+		case '{':
+			// CPython refuses a second opening inside a name rather
+			// than reading it: `{0{1}}` is an error there and was a
+			// lookup of the key "0{1}" here.
+			return fail("unexpected '{' in field name")
+		case '}', ':', '!':
+			term = c
+		}
+	}
+	if term == 0 {
+		// A lone brace at the end of the string is the outer scanner's
+		// complaint; a name that was started and never closed is this
+		// one's.
+		if i > start+1 {
+			return fail("expected '}' before end of string")
+		}
+		return fail("Single '{' encountered in format string")
+	}
+	// i already points past the terminator: the loop's own post statement
+	// ran before the condition saw term set.
+	field = s[start+1 : i-1]
+
+	// Then the conversion, which is *one* character and whatever character
+	// it is -- `{!}` takes '}' as the conversion and then finds no closing
+	// brace, which is why it reports an unmatched one. What follows it must
+	// be the closing brace or the ':' that starts a spec.
+	if term == '!' {
+		if i >= len(s) {
+			return fail("end of string while looking for conversion specifier")
+		}
+		conv, i = s[i:i+1], i+1
+		if i >= len(s) {
+			return fail("unmatched '{' in format spec")
+		}
+		c := s[i]
+		i++
+		switch c {
+		case '}':
+			return field, conv, "", i, nil
 		case ':':
-			if bracket == 0 {
-				field, spec = body[:j], body[j+1:]
-				goto split
+			term = ':'
+		default:
+			return fail("expected ':' after conversion specifier")
+		}
+	}
+	if term == '}' {
+		return field, conv, "", i, nil
+	}
+
+	// And the spec, which runs to the brace that matches the field's own.
+	// It may hold replacement fields of its own -- `{:{w}}` ends at the
+	// second one -- so the braces are counted rather than searched for.
+	specStart, depth := i, 1
+	for ; i < len(s); i++ {
+		switch s[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return field, conv, s[specStart:i], i + 1, nil
 			}
 		}
 	}
-	field = body
-split:
-	// The conversion sits between the name and the spec, and only there.
-	if k := strings.IndexByte(field, '!'); k >= 0 {
-		field, conv = field[:k], field[k+1:]
-		if conv == "" {
-			return "", "", "", 0, errs.New(errs.ValueError,
-				"unmatched '{' in format spec")
-		}
-	}
-	return field, conv, spec, next, nil
+	return fail("unmatched '{' in format spec")
 }
 
 // expandSpec resolves the replacement fields inside a format spec, so the width
 // and precision in `{:{w}.{p}f}` can come from the arguments.
-func expandSpec(spec string, base fieldBase, auto *int, py value.PythonVersion) (string, error) {
+//
+// A nested field is a field: it is read by the same parser, and its own
+// conversion and spec apply. Reading it as a name up to the next '}' ignored
+// both, so `'{0:{1:x}}'.format('y', 15)` used 15 as the width where CPython
+// formats it as hex first and makes the *spec* "f".
+//
+// One level, and no more: CPython's build_string carries a recursion budget of
+// two, so a spec inside a nested field's spec is "Max string recursion
+// exceeded" rather than another round.
+func expandSpec(st *State, spec string, base fieldBase, auto *int) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(spec); {
 		if spec[i] != '{' {
@@ -1386,18 +1476,43 @@ func expandSpec(spec string, base fieldBase, auto *int, py value.PythonVersion) 
 			i++
 			continue
 		}
-		end := strings.IndexByte(spec[i:], '}')
-		if end < 0 {
-			return "", errs.New(errs.ValueError, "unmatched '{' in format spec")
-		}
-		v, err := resolveFormatField(spec[i+1:i+end], base, auto, py)
+		field, conv, inner, next, err := splitReplacement(spec, i)
 		if err != nil {
 			return "", err
 		}
-		b.WriteString(value.Str(v))
-		i += end + 1
+		v, err := resolveFormatField(field, base, auto, st.PythonVersion())
+		if err != nil {
+			return "", err
+		}
+		// Same order as the outer loop: the field is resolved first --
+		// `{0:{nope!q}}` is the KeyError -- then the conversion, which
+		// beats even the recursion refusal below: `{0:{1!q:{}}}` is
+		// "Unknown conversion specifier q".
+		if err := checkConversion(conv); err != nil {
+			return "", err
+		}
+		if strings.IndexByte(inner, '{') >= 0 {
+			return "", errs.New(errs.ValueError, "Max string recursion exceeded")
+		}
+		text, err := convertAndFormat(st, v, conv, inner)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(text)
+		i = next
 	}
 	return b.String(), nil
+}
+
+// checkConversion reports an unknown conversion specifier, which CPython
+// refuses before it expands the format spec. convertAndFormat repeats the same
+// switch because it is also reached from paths that have already checked.
+func checkConversion(conv string) error {
+	switch conv {
+	case "", "s", "r", "a":
+		return nil
+	}
+	return errs.New(errs.ValueError, "Unknown conversion specifier %s", conv)
 }
 
 // convertAndFormat applies `!r`, `!s` or `!a` and then the format spec, in that
@@ -1407,7 +1522,13 @@ func convertAndFormat(st *State, v value.Value, conv, spec string) (string, erro
 	switch conv {
 	case "":
 	case "s":
-		v = value.String(value.Str(v))
+		// StrFor beside ReprFor below: a container's str() *is* its
+		// repr, so `{!s}` of a list escapes by the interpreter's
+		// isprintable exactly as `{!r}` does.
+		if err := value.StrictRefusal(v); err != nil {
+			return "", err
+		}
+		v = value.String(value.StrFor(v, st.PythonVersion()))
 	case "r":
 		v = value.String(value.ReprFor(v, st.PythonVersion()))
 	case "a":
@@ -1416,17 +1537,13 @@ func convertAndFormat(st *State, v value.Value, conv, spec string) (string, erro
 		return "", errs.New(errs.ValueError,
 			"Unknown conversion specifier %s", conv)
 	}
-	return value.FormatValue(v, spec, st)
+	return value.FormatValue(v, spec, st.PythonVersion(), st)
 }
 
 // methodFormatMap is str.format_map: the same substitution, with the fields
 // looked up in a single mapping argument rather than in keyword arguments.
 func methodFormatMap(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	mapping, ok := arg(args, 0, "mapping")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"format_map() takes exactly one argument (0 given)")
-	}
+	mapping, _ := arg(args, 0, "mapping")
 	// format_map does not convert its argument. It subscripts it once per
 	// *named* field, so a string with no fields never touches it at all --
 	// `{{ "ab".format_map(none) }}` is "ab" -- and one that is not a
@@ -1469,11 +1586,43 @@ func resolveFormatField(field string, base fieldBase, auto *int, py value.Python
 type fieldAccessor struct {
 	name    string
 	isIndex bool
+	// stray marks the text after a `]` that is neither `.` nor `[`. CPython
+	// refuses it when the iterator reaches that step, so the accessors before
+	// it run first and a failure among them is the one reported.
+	stray bool
 }
 
 func (a fieldAccessor) apply(v value.Value, py value.PythonVersion) (value.Value, error) {
+	if a.stray {
+		return value.Undefined, errs.New(errs.ValueError,
+			"Only '.' or '[' may follow ']' in format field specifier")
+	}
 	if a.isIndex {
 		return fieldSubscript(v, a.name, py)
+	}
+
+	// An empty attribute is a parse error rather than a lookup: CPython's
+	// FieldNameIterator refuses it with "Empty attribute in format string"
+	// when the chain *reaches* that step, which is what keeps the order
+	// intact -- `{0.a.}` still reports the failed 'a' first, and `{0.}`
+	// with no argument 0 still reports the missing argument. gojja2 asked
+	// for an attribute called "" and reported that instead.
+	if a.name == "" {
+		return value.Undefined, errs.New(errs.ValueError,
+			"Empty attribute in format string")
+	}
+
+	// An undefined answers every attribute itself: a name that looks like a
+	// dunder is a bare AttributeError under every class, ChainableUndefined
+	// hands back itself for the rest, and the others raise their own error.
+	if v.IsUndefined() {
+		if strings.HasPrefix(a.name, "__") && strings.HasSuffix(a.name, "__") {
+			return value.Undefined, errs.New(errs.AttributeError, "%s", a.name)
+		}
+		if v.UndefinedBehavior() == value.UndefinedChainable {
+			return v, nil
+		}
+		return value.Undefined, v.UndefinedError()
 	}
 
 	// Attribute access, with no item fall-back.
@@ -1497,12 +1646,11 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 	}
 	var key value.Value
 	if isAllDigits(name) {
-		n, err := strconv.ParseInt(name, 10, 64)
+		n, err := value.ParseFormatInteger(name)
 		if err != nil {
-			return value.Undefined, errs.New(errs.ValueError,
-				"invalid index %q", name)
+			return value.Undefined, err
 		}
-		key = value.Int(n)
+		key = value.Int(int64(n))
 	} else {
 		key = value.String(name)
 	}
@@ -1515,7 +1663,7 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 		}
 		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, py))
 
-	case value.KindString, value.KindBytes:
+	case value.KindString:
 		idx, ok := key.Int64()
 		if !ok {
 			return value.Undefined, errs.New(errs.TypeError,
@@ -1525,6 +1673,24 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 			return value.String(ch), nil
 		}
 		return value.Undefined, errs.New(errs.IndexError, "string index out of range")
+
+	case value.KindBytes:
+		// A bytes indexes to the *number* its byte is, not to a
+		// one-character bytes, and its two complaints are its own:
+		// "byte indices must be integers or slices, not str" -- the
+		// singular the `%` mapping path also reports -- and an
+		// out-of-range message that names no type at all. This shared
+		// the string arm and so answered a character and said "string".
+		idx, ok := key.Int64()
+		if !ok {
+			return value.Undefined, errs.New(errs.TypeError,
+				"byte indices must be integers or slices, not %s", key.TypeName())
+		}
+		b := v.AsString()
+		if idx >= 0 && idx < int64(len(b)) {
+			return value.Int(int64(b[idx])), nil
+		}
+		return value.Undefined, errs.New(errs.IndexError, "index out of range")
 
 	case value.KindList, value.KindTuple:
 		idx, ok := key.Int64()
@@ -1541,14 +1707,58 @@ func fieldSubscript(v value.Value, name string, py value.PythonVersion) (value.V
 			"%s index out of range", v.TypeName())
 	}
 
+	// An undefined defines __getitem__ and raises its own error from it, so
+	// it never reaches the subscriptability question.
+	if v.Kind() == value.KindUndefined {
+		if v.UndefinedBehavior() == value.UndefinedChainable {
+			return v, nil
+		}
+		return value.Undefined, v.UndefinedError()
+	}
+
+	// An object that can say why a subscript failed does: a proxy over a
+	// string is refused by *type*, not by a missing key.
+	if sub, ok := v.Interface().(interface {
+		Subscript(value.Value) (value.Value, error)
+	}); ok {
+		return sub.Subscript(key)
+	}
 	// An object may still define __getitem__; anything else is not
 	// subscriptable at all, which is a different complaint from a miss.
 	if item, ok := lookupItem(v, key, py); ok {
 		return item, nil
 	}
-	if v.Kind() == value.KindObject {
+	// A mapping that lacks the key says so as a dict does: KeyError, with the
+	// key's repr. A mappingproxy is one.
+	if _, ok := v.Interface().(value.Mapping); ok {
 		return value.Undefined, errs.New(errs.KeyError, "%s", value.ReprFor(key, py))
 	}
+	// A groupby group is a namedtuple, and both of the complaints CPython
+	// makes about indexing one come from tuple itself rather than from the
+	// subclass's name -- "tuple indices ...", "tuple index out of range".
+	// Reading it as the tuple it is gets those and the element as well.
+	if t, ok := v.Interface().(interface{ AsTuple() value.Value }); ok {
+		return fieldSubscript(t.AsTuple(), name, py)
+	}
+	// Any other Sequence object -- a range -- indexes by integer and names
+	// itself in both complaints. Note the "object" a range puts in its
+	// out-of-range message and a list does not.
+	if seq, ok := v.Interface().(value.Sequence); ok {
+		if !key.IsInteger() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s indices must be integers or slices, not %s",
+				v.TypeName(), key.TypeName())
+		}
+		if item, in := value.SequenceItem(seq, key); in {
+			return item, nil
+		}
+		return value.Undefined, errs.New(errs.IndexError,
+			"%s object index out of range", v.TypeName())
+	}
+	// Everything left is not subscriptable at all: a namespace, a cycler, a
+	// joiner, a dict view, a class object. gojja2 answered a KeyError for
+	// every one of them, which is the complaint a *mapping* makes about a
+	// key it does not hold.
 	return value.Undefined, notSubscriptable(v)
 }
 
@@ -1606,6 +1816,7 @@ func splitFieldName(field string) (string, []fieldAccessor) {
 				fieldAccessor{name: field[1:close], isIndex: true})
 			field = field[close+1:]
 		default:
+			accessors = append(accessors, fieldAccessor{stray: true})
 			field = ""
 		}
 	}
@@ -1614,7 +1825,7 @@ func splitFieldName(field string) (string, []fieldAccessor) {
 
 // resolveFieldBase finds the argument a field names: automatic numbering when
 // empty, positional when all digits, keyword otherwise.
-func resolveFieldBase(name string, args *value.CallArgs, auto *int) (value.Value, error) {
+func resolveFieldBase(name string, args *value.CallArgs, auto *int, py value.PythonVersion) (value.Value, error) {
 	switch {
 	case name == "":
 		// One format string counts its own fields or names them, never
@@ -1637,9 +1848,9 @@ func resolveFieldBase(name string, args *value.CallArgs, auto *int) (value.Value
 				"cannot switch from automatic field numbering to manual field specification")
 		}
 		*auto = -1
-		i := 0
-		for _, c := range name {
-			i = i*10 + int(c-'0')
+		i, err := value.ParseFormatInteger(name)
+		if err != nil {
+			return value.Undefined, err
 		}
 		v, ok := args.Arg(i)
 		if !ok {
@@ -1651,7 +1862,7 @@ func resolveFieldBase(name string, args *value.CallArgs, auto *int) (value.Value
 		v, ok := args.Kwarg(name)
 		if !ok {
 			return value.Undefined, errs.New(errs.KeyError,
-				"%s", value.Repr(value.String(name)))
+				"%s", value.ReprFor(value.String(name), py))
 		}
 		return v, nil
 	}
@@ -1754,10 +1965,15 @@ func centerSplit(missing, width int) (left, right int) {
 }
 
 func pad(st *State, s string, width int, fill string, align padAlign) (value.Value, error) {
-	missing := width - value.StrLen(s)
-	if missing <= 0 {
+	// Compared before it is subtracted: a width of math.MinInt64 wraps the
+	// subtraction to a large *positive* margin, so `"abc".center(-2**63)`
+	// asked to build nine quintillion characters where CPython answers "abc"
+	// -- every width at or below the length means no padding at all.
+	n := value.StrLen(s)
+	if width <= n {
 		return value.String(s), nil
 	}
+	missing := width - n
 	// Charge the whole padding before building any of it. center splits it
 	// into two halves, and charging those separately let each pass the
 	// ceiling while their sum went straight past it -- the same way two
@@ -1817,6 +2033,125 @@ func stringPredicate(f func(string, *value.UnicodeOverrides) bool) func(*State, 
 	}
 }
 
+// --- dict view and mappingproxy methods --------------------------------------
+
+// dictViewMethods is the one method a *set-like* view has. A values view is not
+// a set -- its elements need be neither unique nor hashable -- and has none.
+//
+// Here rather than in dictview.go so tools/oracle/gen_methods.py can read the
+// names out of the same file as the rest and ask CPython for their arity.
+var dictViewMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+	"isdisjoint": func(s *State, r value.Value, a *value.CallArgs) (value.Value, error) {
+		v, ok := r.Interface().(*dictView)
+		if !ok {
+			return value.Undefined, nil
+		}
+		return v.isdisjoint(s, a.Pos[0])
+	},
+}
+
+// rangeMethods are range's two methods, which a range answered with "'range
+// object' has no attribute" -- and so did its type object, since that finds a
+// class's methods on an instance of it.
+//
+// Both decide membership by arithmetic, as ContainsErr does and for its reason:
+// CPython takes the arithmetic path only for an exact int or bool and scans for
+// anything else, but nothing that is not an integral number equals an element,
+// so the scan can only find what the arithmetic finds -- and a scan of
+// `range(10**12)` is one no budget would let finish. What the two paths do
+// leave behind is the wording of the refusal, which is read off the operand's
+// type below.
+var rangeMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+	"count": methodRangeCount,
+	"index": methodRangeIndex,
+}
+
+func methodRangeCount(st *State, recv value.Value, args *value.CallArgs) (value.Value, error) {
+	r, _ := recv.Interface().(*rangeObject)
+	found, _, err := r.ContainsErr(args.Pos[0], st.PythonVersion())
+	if err != nil || !found {
+		return value.Int(0), err
+	}
+	return value.Int(1), nil
+}
+
+// methodRangeIndex is range.index: the position is (x - start) // step, which
+// is exact for a range too long to walk -- `range(2**70).index(2**69)` is
+// 590295810358705651712.
+//
+// A miss is worded by the path CPython took: range_index's own "5 is not in
+// range" for an int or a bool (3.14: "range.index(x): x not in range"), and the
+// generic sequence search's "x not in sequence" for everything else, a float
+// with an integral value included.
+func methodRangeIndex(st *State, recv value.Value, args *value.CallArgs) (value.Value, error) {
+	r, _ := recv.Interface().(*rangeObject)
+	x := args.Pos[0]
+	found, _, err := r.ContainsErr(x, st.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
+	}
+	if !found {
+		if x.IsInteger() {
+			if st.PythonVersion().IndexMessageIsGeneric() {
+				return value.Undefined, errs.New(errs.ValueError,
+					"range.index(x): x not in range")
+			}
+			return value.Undefined, errs.New(errs.ValueError, "%s is not in range",
+				value.ReprFor(x, st.PythonVersion()))
+		}
+		return value.Undefined, errs.New(errs.ValueError,
+			"sequence.index(x): x not in sequence")
+	}
+	n, _ := integerOf(x)
+	start, _, step := r.bounds()
+	pos := new(big.Int).Sub(n, start)
+	return value.BigInt(pos.Quo(pos, step)), nil
+}
+
+// mappingProxyMethods are the five read-only methods types.MappingProxyType
+// has. Each is the dict's own, over the dict the proxy wraps -- `m.copy()` is a
+// plain dict and `m.keys()` a view of the original.
+var mappingProxyMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
+	"copy":   proxyMethod("copy"),
+	"get":    proxyMethod("get"),
+	"items":  proxyMethod("items"),
+	"keys":   proxyMethod("keys"),
+	"values": proxyMethod("values"),
+}
+
+// proxyMethod is one of mappingproxy's five read-only methods.
+//
+// CPython implements all five by *calling the wrapped object's own method*:
+// mappingproxy_keys is `PyObject_CallMethodNoArgs(pp->mapping, &_Py_ID(keys))`
+// and the rest follow. So they are not dict methods applied to whatever is
+// inside -- they are an attribute lookup on it, and a proxy over something that
+// is not a dict answers whatever that lookup does. `mappingproxy('ab').keys()`
+// is "'str' object has no attribute 'keys'", `mappingproxy(nope).keys()` is the
+// undefined's own error, and a proxy of a proxy delegates twice.
+//
+// Reaching for dict's method regardless answered an empty view for keys, items
+// and values, and *panicked* for get and copy: both start by unwrapping a dict
+// that is not there.
+func proxyMethod(name string) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
+	return func(s *State, r value.Value, a *value.CallArgs) (value.Value, error) {
+		m, ok := r.Interface().(*mappingProxy)
+		if !ok {
+			return value.Undefined, nil
+		}
+		// An undefined raises from __getattr__ before the name is even
+		// looked for, which is a different error from not having it.
+		if m.d.IsUndefined() {
+			return value.Undefined, m.d.UndefinedError()
+		}
+		fn, ok := lookupAttr(s, m.d, name)
+		if !ok {
+			return value.Undefined, errs.New(errs.AttributeError,
+				"'%s' object has no attribute '%s'", m.d.TypeName(), name)
+		}
+		return s.invoke(fn, a)
+	}
+}
+
 // --- dict methods ------------------------------------------------------------
 
 var dictMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.Value, error){
@@ -1846,17 +2181,7 @@ func methodDictItems(s *State, r value.Value, _ *value.CallArgs) (value.Value, e
 
 func methodDictGet(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
-	// dict.get is a C function: it counts its arguments rather than binding
-	// them by name, so both the shortage and the excess are reported with
-	// the count that was actually passed.
-	if n := len(args.Pos) + len(args.Kwargs); n > 2 {
-		return value.Undefined, errs.New(errs.TypeError,
-			"get expected at most 2 arguments, got %d", n)
-	}
-	key, ok := arg(args, 0, "key")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "get expected at least 1 argument, got 0")
-	}
+	key, _ := arg(args, 0, "key")
 	v, found, err := d.Get(key, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
@@ -1872,14 +2197,7 @@ func methodDictGet(s *State, r value.Value, args *value.CallArgs) (value.Value, 
 
 func methodDictPop(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
-	key, ok := arg(args, 0, "key")
-	if !ok {
-		// CPython names the count it actually got, and dict.pop() is a
-		// C function so the message comes from the argument clinic
-		// rather than from Python.
-		return value.Undefined, errs.New(errs.TypeError,
-			"pop expected at least 1 argument, got %d", len(args.Pos))
-	}
+	key, _ := arg(args, 0, "key")
 	v, found, err := d.Get(key, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
@@ -1898,10 +2216,7 @@ func methodDictPop(s *State, r value.Value, args *value.CallArgs) (value.Value, 
 
 func methodDictSetdefault(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	d, _ := r.Dict()
-	key, ok := arg(args, 0, "key")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "setdefault expected at least 1 argument")
-	}
+	key, _ := arg(args, 0, "key")
 	if v, found, err := d.Get(key, s.PythonVersion()); err != nil {
 		return value.Undefined, err
 	} else if found {
@@ -1921,7 +2236,7 @@ func methodDictUpdate(s *State, r value.Value, args *value.CallArgs) (value.Valu
 		// refuses it refuses the same way. This used to test only for a
 		// mapping and discard everything else in silence, so
 		// `d.update([("a", 1)])` left the dict empty and reported success.
-		if err := updateDictFrom(d, other, s.PythonVersion()); err != nil {
+		if err := updateDictFrom(s, d, other); err != nil {
 			return value.Undefined, err
 		}
 	}
@@ -1935,7 +2250,8 @@ func methodDictUpdate(s *State, r value.Value, args *value.CallArgs) (value.Valu
 // dict.update and dict() both take: a dict, any mapping, or an iterable of
 // key/value pairs. It is the single implementation behind both, so the two
 // cannot drift apart again.
-func updateDictFrom(d *value.Dict, src value.Value, py value.PythonVersion) error {
+func updateDictFrom(s *State, d *value.Dict, src value.Value) error {
+	py := s.PythonVersion()
 	if src.IsUndefined() {
 		// dict() probes for a keys() method first, and that probe is what
 		// fails on an Undefined.
@@ -1944,6 +2260,18 @@ func updateDictFrom(d *value.Dict, src value.Value, py value.PythonVersion) erro
 	if sd, ok := src.Dict(); ok {
 		for _, e := range sd.Entries() {
 			if err := d.Set(e.Key, e.Value, py); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if m, ok := src.Interface().(pairSource); ok {
+		pairs, err := m.pairs(s, "keys")
+		if err != nil {
+			return err
+		}
+		for _, kv := range pairs {
+			if err := d.Set(kv[0], kv[1], py); err != nil {
 				return err
 			}
 		}
@@ -2056,21 +2384,14 @@ var tupleMethods = map[string]func(*State, value.Value, *value.CallArgs) (value.
 }
 
 func methodListAppend(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"append() takes exactly one argument (0 given)")
-	}
+	v, _ := arg(args, 0, "")
 	s, _ := r.Seq()
 	s.Append(v)
 	return value.None, nil
 }
 
 func methodListExtend(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "extend() takes exactly one argument")
-	}
+	v, _ := arg(args, 0, "")
 	seq, err := value.Iterate(v)
 	if err != nil {
 		return value.Undefined, err
@@ -2092,10 +2413,7 @@ func methodListInsert(_ *State, r value.Value, args *value.CallArgs) (value.Valu
 	if err != nil {
 		return value.Undefined, err
 	}
-	v, ok := arg(args, 1, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "insert() takes exactly 2 arguments")
-	}
+	v, _ := arg(args, 1, "")
 	s, _ := r.Seq()
 	items := s.Items()
 	if at < 0 {
@@ -2130,14 +2448,19 @@ func methodListPop(_ *State, r value.Value, args *value.CallArgs) (value.Value, 
 	return out, nil
 }
 
-func methodListRemove(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "remove() takes exactly one argument")
-	}
+// methodListRemove walks the list comparing, so a StrictUndefined on either
+// side raises from the comparison rather than reaching "not in list": the three
+// searching methods -- remove, index and count -- all did the latter, because
+// they compared with a form that has nowhere to put an error.
+func methodListRemove(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, _ := arg(args, 0, "")
 	s, _ := r.Seq()
 	for i, item := range s.Items() {
-		if value.Equal(item, v) {
+		eq, err := value.EqualBoolErr(item, v, st.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		if eq {
 			items := s.Items()
 			*s = *mustSeq(value.NewList(append(append([]value.Value{}, items[:i]...), items[i+1:]...)...))
 			return value.None, nil
@@ -2164,10 +2487,7 @@ func methodListReverse(_ *State, r value.Value, _ *value.CallArgs) (value.Value,
 // list.index declares them as indices outright, so the message has no "or
 // None" in it.
 func methodSeqIndex(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "index() takes at least one argument")
-	}
+	v, _ := arg(args, 0, "")
 	s, _ := r.Seq()
 	items := s.Items()
 	start, end, err := seqSearchBounds(args, len(items))
@@ -2175,7 +2495,11 @@ func methodSeqIndex(st *State, r value.Value, args *value.CallArgs) (value.Value
 		return value.Undefined, err
 	}
 	for i := start; i < end; i++ {
-		if value.Equal(items[i], v) {
+		eq, err := value.EqualBoolErr(items[i], v, st.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		if eq {
 			return value.Int(int64(i)), nil
 		}
 	}
@@ -2245,6 +2569,26 @@ func methodTupleIndex(s *State, r value.Value, args *value.CallArgs) (value.Valu
 // methodListSort is list.sort: in place, returning None. Its arguments are
 // keyword-only, so a positional one is refused rather than taken for `key`.
 func methodListSort(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	// list.sort is the one method whose call shape is checked here rather
+	// than by the generated table, and the reason is mechanical:
+	// gen_methods.py reads the method maps as *text*, and sort is registered
+	// in init() because naming it in the literal is an initialisation cycle
+	// -- it calls back into the evaluator. So the generator has never seen
+	// it, and nothing checked the shape of a call to it at all.
+	//
+	// The wording could not be generated either. CPython counts every
+	// argument first, and says "arguments" when any of them was positional
+	// and "keyword arguments" when none was; only then does it refuse a
+	// positional at all, and only then an unknown name. None of those
+	// messages carries a count in the place the generator reads one.
+	if n := len(args.Pos) + len(args.Kwargs); n > 2 {
+		if len(args.Pos) > 0 {
+			return value.Undefined, errs.New(errs.TypeError,
+				"sort() takes at most 2 arguments (%d given)", n)
+		}
+		return value.Undefined, errs.New(errs.TypeError,
+			"sort() takes at most 2 keyword arguments (%d given)", n)
+	}
 	if len(args.Pos) > 0 {
 		return value.Undefined, errs.New(errs.TypeError,
 			"sort() takes no positional arguments")
@@ -2325,10 +2669,7 @@ func methodListSort(st *State, r value.Value, args *value.CallArgs) (value.Value
 // methodDictPopitem is dict.popitem, which takes the *last* pair inserted:
 // dicts have been ordered since 3.7, so it is a stack rather than arbitrary.
 func methodDictPopitem(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	if len(args.Pos) > 0 || len(args.Kwargs) > 0 {
-		return value.Undefined, errs.New(errs.TypeError,
-			"dict.popitem() takes no arguments (%d given)", len(args.Pos)+len(args.Kwargs))
-	}
+
 	d, _ := r.Dict()
 	entries := d.Entries()
 	if len(entries) == 0 {
@@ -2346,11 +2687,7 @@ func methodDictPopitem(s *State, r value.Value, args *value.CallArgs) (value.Val
 // through contributes nothing, so `{{ d.fromkeys("ab") }}` is a fresh two-entry
 // dict whatever d held.
 func methodDictFromkeys(st *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
-	keys, ok := arg(args, 0, "iterable")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError,
-			"fromkeys expected at least 1 argument, got 0")
-	}
+	keys, _ := arg(args, 0, "iterable")
 	fill := value.None
 	if v, ok := arg(args, 1, "value"); ok {
 		fill = v
@@ -2372,15 +2709,16 @@ func methodDictFromkeys(st *State, _ value.Value, args *value.CallArgs) (value.V
 	return out, nil
 }
 
-func methodSeqCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	v, ok := arg(args, 0, "")
-	if !ok {
-		return value.Undefined, errs.New(errs.TypeError, "count() takes exactly one argument")
-	}
+func methodSeqCount(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	v, _ := arg(args, 0, "")
 	s, _ := r.Seq()
 	n := 0
 	for _, item := range s.Items() {
-		if value.Equal(item, v) {
+		eq, err := value.EqualBoolErr(item, v, st.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		if eq {
 			n++
 		}
 	}

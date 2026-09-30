@@ -347,3 +347,98 @@ func TestFlowOf(t *testing.T) {
 		t.Errorf("a symbol from nowhere has effects %v, want none", got)
 	}
 }
+
+// TestSteeringAndFailureAreRecorded pins the analysis claims an audit with
+// `make mutate` found nothing was checking.
+//
+// A survivor is a line no test constrains, and it is not automatically a bug.
+// Of the four here, one was a *false* survivor -- the tool's needle for
+// canFailIn had gone stale when it became a method, so the file was never
+// edited and "nothing noticed" was really "nothing happened"; mutate.py now
+// refuses a needle it cannot find. One was redundant, steerEmit's document-level
+// apply, and is gone. The loop test's steering was the real one, and removing
+// that redundancy is what made it measurable: planting it now fails five tests
+// rather than none, because steerEmit was quietly applying Steers a second time.
+//
+// The cases below are the shapes that tell each claim apart from its neighbours,
+// which is the part a corpus case cannot be relied on to hit by accident.
+func TestSteeringAndFailureAreRecorded(t *testing.T) {
+	analyse := func(t *testing.T, src string) (*syntax.Tree, *dataflow.Flow) {
+		t.Helper()
+		env, err := gojja2.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl, err := env.FromString(src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", src, err)
+		}
+		tree := tmpl.Syntax()
+		return tree, dataflow.Analyze(tree)
+	}
+	effect := func(t *testing.T, tree *syntax.Tree, flow *dataflow.Flow, name string) dataflow.Effect {
+		t.Helper()
+		sym := tree.Info.Context[name]
+		if sym == nil {
+			t.Fatalf("%q is not one of the caller's variables", name)
+		}
+		return flow.Of(sym)
+	}
+
+	// walk.go, the loop's `if`: how many times the body runs decides how
+	// much of the output there is, so the test steers exactly as a branch
+	// condition does. `xs` is the iterable and only derives.
+	t.Run("a loop test steers", func(t *testing.T) {
+		tree, flow := analyse(t, `{% for i in xs if keep %}{{ i }}{% endfor %}`)
+		if got := effect(t, tree, flow, "keep"); got&dataflow.Steers == 0 {
+			t.Errorf("keep = %v, want it to steer", got)
+		}
+	})
+	// And inside a capture nothing consumes, where steerEmit routes the test
+	// into the capture rather than recording an effect: the apply beside it
+	// is then the only thing saying the test steers at all.
+	t.Run("a loop test steers inside an unused capture", func(t *testing.T) {
+		tree, flow := analyse(t,
+			`{% set v %}{% for i in xs if keep %}{{ i }}{% endfor %}{% endset %}`)
+		if got := effect(t, tree, flow, "keep"); got&dataflow.Steers == 0 {
+			t.Errorf("keep = %v, want it to steer even though nothing prints v", got)
+		}
+	})
+
+	// With no capture in force the steering reaches the document, which is
+	// what makes a condition around a print show up at all. It is the
+	// branch's own apply that records it, not steerEmit; these two pin the
+	// answer on both sides of that seam.
+	t.Run("steering reaches the document", func(t *testing.T) {
+		tree, flow := analyse(t, `{% if admin %}text{% endif %}`)
+		if got := effect(t, tree, flow, "admin"); got&dataflow.Steers == 0 {
+			t.Errorf("admin = %v, want it to steer", got)
+		}
+	})
+	// The nested arm: a branch inside a capture steers what the capture
+	// becomes, so the condition still reaches the document through it.
+	t.Run("steering inside a capture reaches what prints it", func(t *testing.T) {
+		tree, flow := analyse(t,
+			`{% set v %}{% if admin %}text{% endif %}{% endset %}{{ v }}`)
+		if got := effect(t, tree, flow, "admin"); got&dataflow.Steers == 0 {
+			t.Errorf("admin = %v, want it to steer: it decides what v holds", got)
+		}
+	})
+
+	// walk.go, canFailIn: an `{% if %}` whose arms cannot fail leaves the
+	// condition steering and nothing more, while one whose arm *can* fail
+	// makes the condition Required -- the render's success depends on it.
+	t.Run("a branch that cannot fail leaves its test steering only", func(t *testing.T) {
+		tree, flow := analyse(t, `{% if admin %}text{% endif %}`)
+		if got := effect(t, tree, flow, "admin"); got&dataflow.Required != 0 {
+			t.Errorf("admin = %v, want it not to be required: "+
+				"neither arm can fail", got)
+		}
+	})
+	t.Run("a branch that can fail makes its test required", func(t *testing.T) {
+		tree, flow := analyse(t, `{% if admin %}{{ 1 / zero }}{% endif %}`)
+		if got := effect(t, tree, flow, "admin"); got&dataflow.Required == 0 {
+			t.Errorf("admin = %v, want it to be required: the arm can fail", got)
+		}
+	})
+}

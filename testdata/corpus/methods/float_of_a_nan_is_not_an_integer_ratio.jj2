@@ -1,0 +1,5 @@
+{
+  "x": "inf"
+}
+---
+{% set i = x|float %}{{ (i - i).as_integer_ratio() }}

@@ -1,0 +1,3 @@
+{}
+---
+{% set c = cycler('a','b') %}{{ c|xmlattr }}

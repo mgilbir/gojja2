@@ -1,0 +1,11 @@
+{
+  "case": "undefined/urlencode_a_group_key_default.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "=%5B%281%2C+2%29%5D"
+}

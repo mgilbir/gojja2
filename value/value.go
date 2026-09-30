@@ -172,8 +172,71 @@ func FloatToInt64(f float64) (int64, bool) {
 	return int64(f), true
 }
 
+// nanIdentity is what a NaN has instead of a value to be equal to.
+//
+// Every float in CPython is an object, and for every float but a NaN that makes
+// no difference: `is` implies `==`, so nothing that asks "the same object or an
+// equal one" -- which is most of the language -- can tell the two apart. A NaN
+// equals nothing, itself included, so for a NaN the two questions come apart and
+// the answer is the object's identity. `x in [x]`, `[x] == [x]`, `{x: 1}[x]`,
+// `|unique` and `loop.changed` all say True of a NaN read twice from the same
+// place, and False of two NaNs computed separately, and there is no way to
+// reproduce that from the bits alone.
+//
+// So a NaN, and only a NaN, carries one of these. It is allocated where the
+// value is made and travels with every copy, which is exactly the lifetime a
+// Python object has: `{% set x = b - b %}` computes one NaN and every read of x
+// is that one, while a second `b - b` is a second object. Nothing else changes
+// -- Interface hides it, so no caller reaching for a payload sees a float where
+// it used to see nil.
+type nanIdentity struct{ _ byte }
+
 // Float returns a Python float.
-func Float(f float64) Value { return Value{kind: KindFloat, num: math.Float64bits(f)} }
+//
+// The NaN test is `f != f` and its arm is a call, so the common path stays a
+// struct literal and Float stays inlinable. Alternating two builds, best of
+// thirty each, a render that is *nothing but* float arithmetic -- 6,000 floats
+// built and printed -- costs 1.27ms with the test and 1.21ms without it. That
+// is the ceiling on what this can cost; anything that also loops, looks up a
+// name or writes a string pays a smaller share of it.
+func Float(f float64) Value {
+	if f != f {
+		return newNaN(f)
+	}
+	return Value{kind: KindFloat, num: math.Float64bits(f)}
+}
+
+// newNaN is Float's other arm, which allocates the identity. Out of line
+// because it is the rare one and inlining it into every float in the engine is
+// what the measurement above is about.
+//
+//go:noinline
+func newNaN(f float64) Value {
+	return Value{kind: KindFloat, num: math.Float64bits(f), obj: new(nanIdentity)}
+}
+
+// HasIdentity reports whether this value is an object with an identity of its
+// own -- a container, an object, a function, or a NaN. Everything else is a
+// scalar that gojja2 stores by value, so two of them can be equal without
+// anything being able to say whether they were one object or two.
+func HasIdentity(v Value) bool { return SameObject(v, v) }
+
+// SameObject is Python's `is` for the values whose identity a template can
+// observe: containers and functions, which are their own object, and NaNs,
+// which are the only scalars whose identity is not their value.
+//
+// It is the first half of CPython's PyObject_RichCompareBool, the comparison
+// every container element goes through -- see [EqualBoolErr].
+func SameObject(a, b Value) bool {
+	if a.kind != b.kind || a.obj == nil || a.obj != b.obj {
+		return false
+	}
+	switch a.kind {
+	case KindList, KindTuple, KindDict, KindObject, KindFunc, KindFloat:
+		return true
+	}
+	return false
+}
 
 // String returns a Python str.
 func String(s string) Value { return Value{kind: KindString, str: s} }
@@ -235,7 +298,9 @@ func (v Value) IsNumber() bool {
 // IsInteger reports whether v is an int or bool (an int subclass).
 func (v Value) IsInteger() bool { return v.kind == KindInt || v.kind == KindBool }
 
-// IsSequence reports whether v is an ordered sequence: list, tuple or str.
+// IsSequence reports whether v is an ordered sequence: list, tuple, str or
+// bytes. A bytes is one because Python's is a sequence of integers, which is
+// also why `97 in b"ab"` is True.
 func (v Value) IsSequence() bool {
 	switch v.kind {
 	case KindList, KindTuple, KindString, KindBytes:
@@ -340,4 +405,14 @@ func (v Value) Object() (Object, bool) {
 
 // Interface returns the payload behind the Value for callers that need to type
 // assert on it, such as the runtime reaching for a Func or an Undefined.
-func (v Value) Interface() any { return v.obj }
+//
+// A NaN's identity is not a payload and is not returned here: a float had no
+// interface before it carried one, several callers key a map or a cycle-guard
+// on whatever this returns, and "every scalar answers nil" is the shape they
+// were written against. [SameObject] is how the identity is asked about.
+func (v Value) Interface() any {
+	if _, ok := v.obj.(*nanIdentity); ok {
+		return nil
+	}
+	return v.obj
+}

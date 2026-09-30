@@ -1,0 +1,17 @@
+{
+  "__settings__": {
+    "extensions": [
+      "loopcontrols",
+      "do"
+    ]
+  },
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{% set l = [] %}{% for x in seq %}{% filter upper %}{% do l.append(x) %}a{% endfilter %}{% endfor %}{{ l }}

@@ -74,16 +74,15 @@ func encodeString(s, codec, handler string) ([]byte, error) {
 		limit = 0x100
 	}
 	var out []byte
-	for pos, r := range []rune(s) {
+	runes := []rune(s)
+	for pos, r := range runes {
 		if int(r) < limit {
 			out = append(out, byte(r))
 			continue
 		}
 		switch handler {
 		case "strict":
-			return nil, errs.New(errs.UnicodeEncodeError,
-				"'%s' codec can't encode character '%s' in position %d: ordinal not in range(%d)",
-				codec, charEscape(r), pos, limit)
+			return nil, encodeRunError(runes, pos, codec, limit)
 		case "ignore":
 		case "replace":
 			out = append(out, '?')
@@ -96,15 +95,39 @@ func encodeString(s, codec, handler string) ([]byte, error) {
 			// fall back on strict for anything else. A Go string
 			// holds no surrogates, so "anything else" is every
 			// character that can reach here.
-			return nil, errs.New(errs.UnicodeEncodeError,
-				"'%s' codec can't encode character '%s' in position %d: ordinal not in range(%d)",
-				codec, charEscape(r), pos, limit)
+			return nil, encodeRunError(runes, pos, codec, limit)
 		default:
 			return nil, errs.New(errs.LookupError,
 				"unknown error handler name '%s'", handler)
 		}
 	}
 	return out, nil
+}
+
+// encodeRunError words what a strict handler says about the characters starting
+// at pos that the codec cannot represent.
+//
+// CPython hands the handler the *maximal run* of them, not the first one, and
+// the message is different for a run of one: "can't encode character '\u019b'
+// in position 0" against "can't encode characters in position 0-1", where the
+// plural form carries no character at all and the end is inclusive. Reporting
+// only the first character made every run read as a single character.
+//
+// A run stops at the first encodable character, so `'\u019ba\u0264'` is
+// position 0 alone and not 0-2.
+func encodeRunError(runes []rune, pos int, codec string, limit int) error {
+	end := pos
+	for end+1 < len(runes) && int(runes[end+1]) >= limit {
+		end++
+	}
+	if end == pos {
+		return errs.New(errs.UnicodeEncodeError,
+			"'%s' codec can't encode character '%s' in position %d: ordinal not in range(%d)",
+			codec, charEscape(runes[pos]), pos, limit)
+	}
+	return errs.New(errs.UnicodeEncodeError,
+		"'%s' codec can't encode characters in position %d-%d: ordinal not in range(%d)",
+		codec, pos, end, limit)
 }
 
 // decodeBytes is bytes.decode.

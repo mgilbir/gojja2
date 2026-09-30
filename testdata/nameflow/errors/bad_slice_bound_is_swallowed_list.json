@@ -1,0 +1,6 @@
+{
+  "case": "errors/bad_slice_bound_is_swallowed_list.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

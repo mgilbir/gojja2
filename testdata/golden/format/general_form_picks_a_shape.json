@@ -1,0 +1,11 @@
+{
+  "case": "format/general_form_picks_a_shape.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "0.0001|1e-20|1E+20|1.5|0.00000|-0"
+}

@@ -107,9 +107,14 @@ type Policies struct {
 	TruncateLeeway int
 }
 
-func defaultPolicies() Policies {
+// DefaultPolicies returns jinja2's own policy defaults, which is where a caller
+// adjusting one of them should start: WithPolicies replaces the whole struct, so
+// building one from scratch would silently reset the others.
+func DefaultPolicies() Policies {
 	return Policies{URLizeRel: "noopener", TruncateLeeway: 5}
 }
+
+func defaultPolicies() Policies { return DefaultPolicies() }
 
 // Option configures an Environment. It reports what it could not accept, so
 // that a misconfiguration is refused at New rather than surfacing later as a
@@ -735,6 +740,16 @@ func (e *Environment) FromNamedString(name, source string) (*Template, error) {
 	return e.compile(source, name, false)
 }
 
+// requireLoader is the check jinja2's _load_template makes before it looks at
+// the name at all, which is why an environment with no loader reports *itself*
+// rather than an unhashable name or an undefined one.
+func (e *Environment) requireLoader() error {
+	if e.loader == nil {
+		return errs.New(errs.TypeError, "no loader for this environment specified")
+	}
+	return nil
+}
+
 // GetTemplate loads and compiles a template by name, caching the result.
 func (e *Environment) GetTemplate(name string) (*Template, error) {
 	if tmpl, ok := e.cache.get(name); ok {
@@ -747,9 +762,8 @@ func (e *Environment) GetTemplate(name string) (*Template, error) {
 	// does not swallow -- an environment with no loader rendered
 	// `{% include "x" ignore missing %}` as nothing at all here, quietly,
 	// where CPython reports the environment.
-	if e.loader == nil {
-		return nil, errs.New(errs.TypeError,
-			"no loader for this environment specified")
+	if err := e.requireLoader(); err != nil {
+		return nil, err
 	}
 	source, err := e.loader.Load(name)
 	if err != nil {
@@ -856,7 +870,25 @@ func (e *Environment) selectTemplateValues(names []value.Value) (*Template, erro
 			parts[i] = name.UndefinedError().Error()
 			continue
 		}
-		parts[i] = value.Str(name)
+		// A loaded template is cached under `(weakref(loader), name)`, so
+		// the candidate is hashed as part of a tuple before it is looked
+		// up -- and an unhashable one raises there rather than missing:
+		// `{% include [['x']] %}` is "unhashable type: 'list'" and not
+		// "none of the templates given were found". It is per candidate,
+		// so `{% include ['nope', ['x']] %}` reports the miss on 'nope'
+		// only by going on to the list and raising.
+		//
+		// `{% import %}`, `{% extends %}` and `{% from %}` take a name
+		// rather than a list, so they hash the whole value and already
+		// said so; only the candidate list read its way past it.
+		if err := value.CheckHashable(value.NewTuple(name), e.pyVersion,
+			value.AsDictKey); err != nil {
+			return nil, err
+		}
+		// StrFor: a candidate that is not a string at all is named by
+		// its repr in the message, and a repr escapes by the
+		// interpreter's isprintable.
+		parts[i] = value.StrFor(name, e.pyVersion)
 		tmpl, err := e.GetTemplate(parts[i])
 		if err == nil {
 			return tmpl, nil
@@ -878,18 +910,44 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	if terr != nil {
 		return nil, terr
 	}
-	// Order matters: the general fold runs first, as jinja2's optimizer
-	// does, and the print-specific one then catches the undefined results
-	// the optimizer refuses to turn into constants.
-	folder := newConstEvaluator(e, name, fromString)
-	foldConstantExpressions(folder, tree.Body)
-	foldConstantPrints(folder, tree.Body)
-	if derr := e.checkDependencies(tree.Body, name, source); derr != nil {
-		return nil, derr
-	}
-	blocks, berr := collectBlocks(tree.Body, name, source)
+	// The block pre-pass comes first, because jinja2's generator collects
+	// every block -- and refuses a name defined twice -- before it
+	// generates a line: `{% block a %}{% endblock %}{% block a %}{% endblock
+	// %}{{ (0 ** 0)[7] and 0 }}` says "block 'a' defined twice" there, where
+	// the fold's own refusal would have named the subscript. The order it
+	// returns is the order the bodies are generated in, which decides which
+	// of two folds inside two blocks refuses first.
+	blocks, order, berr := collectBlocks(tree.Body, name, source)
 	if berr != nil {
 		return nil, berr
+	}
+	// Order matters, and it is jinja2's: a printed expression is tried as a
+	// constant *first*, with any failure deferring it to the render, and the
+	// general fold only ever sees what that left behind. jinja2 spells it as
+	// two different things -- `_output_child_to_const` catches every
+	// exception, while the optimizer is re-run from each decorated visit_
+	// method and catches only Impossible -- so a print that folds cleanly is
+	// never handed to the optimizer at all. That is why
+	// `{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}` prints 1 while the same
+	// expression in a {% set %} does not compile.
+	folder := newConstEvaluator(e, name, source, fromString)
+	foldConstantPrints(folder, tree.Body)
+	foldConstantExpressions(folder, tree.Body, order)
+	// A fold that asked a StrictUndefined for its truthiness or its text
+	// got an error, and jinja2 lets that error out of from_string rather
+	// than leaving the expression for the render. So does this: the
+	// template does not compile.
+	if folder.refusal != nil {
+		return nil, folder.refusal
+	}
+	// After all of those: a repeated keyword is CPython refusing the module
+	// jinja2 generated, which happens once the generator has finished, so
+	// anything the generator itself refuses comes first.
+	if folder.parseRefusal != nil {
+		return nil, folder.parseRefusal
+	}
+	if folder.lateRefusal != nil {
+		return nil, folder.lateRefusal
 	}
 	// After the fold, so a handler spelled as constant pieces is a literal
 	// by now, and last, so a template that is broken outright says so
@@ -910,13 +968,16 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	}, nil
 }
 
-// collectBlocks indexes a template's blocks by name.
+// collectBlocks indexes a template's blocks by name, and lists them in the
+// order jinja2's `node.find_all(nodes.Block)` yields them -- which is the
+// order their bodies are generated in, and so folded in.
 //
 // The walk descends into every construct, because `{% block %}` is legal
 // inside a loop or a condition: the block is still registered at template
 // level, and only its rendering is affected by where it sits.
-func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block, error) {
+func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block, []*ast.Block, error) {
 	blocks := make(map[string]*ast.Block)
+	var order []*ast.Block
 	var dup error
 	var walk func([]ast.Stmt)
 	walk = func(stmts []ast.Stmt) {
@@ -932,6 +993,7 @@ func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block,
 					dup = e
 				}
 				blocks[n.Name] = n
+				order = append(order, n)
 				walk(n.Body)
 			case *ast.For:
 				walk(n.Body)
@@ -952,8 +1014,6 @@ func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block,
 				walk(n.Body)
 			case *ast.CallBlock:
 				walk(n.Body)
-			case *ast.Scope:
-				walk(n.Body)
 			case *ast.AutoescapeBlock:
 				walk(n.Body)
 			}
@@ -961,7 +1021,7 @@ func collectBlocks(body []ast.Stmt, name, source string) (map[string]*ast.Block,
 	}
 	walk(body)
 	if dup != nil {
-		return nil, dup
+		return nil, nil, dup
 	}
-	return blocks, nil
+	return blocks, order, nil
 }

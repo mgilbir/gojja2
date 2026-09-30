@@ -1,0 +1,5 @@
+{
+  "__settings__": {}
+}
+---
+{{ {'a': nope}|urlencode }}

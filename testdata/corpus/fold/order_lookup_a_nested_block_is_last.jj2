@@ -1,0 +1,3 @@
+{}
+---
+{% block a %}{% block b %}{{ 1|nosuchB }}{% endblock %}{{ 1|nosuchA }}{% endblock %}{% block c %}{{ 1|nosuchC }}{% endblock %}

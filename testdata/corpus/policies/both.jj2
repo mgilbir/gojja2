@@ -1,0 +1,11 @@
+{
+  "__settings__": {
+    "policies": {
+      "urlize.rel": "me",
+      "urlize.target": "_top"
+    }
+  },
+  "u": "see http://x.com now"
+}
+---
+{{ u|urlize }}

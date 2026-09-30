@@ -1,0 +1,7 @@
+{
+  "case": "errors/filteridx_block_super_reaches_a_filter.jj2",
+  "variables": {
+    "super": "or",
+    "v": "o"
+  }
+}

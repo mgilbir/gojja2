@@ -1,0 +1,4 @@
+{
+  "case": "errors/float_fromhex_too_large.jj2",
+  "variables": {}
+}

@@ -51,6 +51,11 @@ func IsTrue(v Value) (bool, error) {
 		switch o := v.obj.(type) {
 		case Booler:
 			return o.IsTrue(), nil
+		case SizedErr:
+			// No __bool__, so __len__ decides, and its refusal is
+			// bool()'s: `{% if mappingproxy(self) %}` raises.
+			n, err := o.LenErr()
+			return n != 0, err
 		case Mapping:
 			return o.Len() != 0, nil
 		case Sequence:
@@ -88,6 +93,8 @@ func Len(v Value) (int, error) {
 		return d.Len(), nil
 	case KindObject:
 		switch o := v.obj.(type) {
+		case SizedErr:
+			return o.LenErr()
 		case Mapping:
 			return o.Len(), nil
 		case Sequence:
@@ -185,6 +192,18 @@ func mulInt64(a, b int64) (int64, bool) {
 // Add implements `+`: numeric addition, string concatenation, and sequence
 // concatenation between two lists or two tuples.
 func Add(a, b Value, budget Budget) (Value, error) {
+	// markupsafe's Markup.__add__ takes anything that is a str or answers
+	// __html__, escapes it and concatenates; anything else is
+	// NotImplemented and falls through to the right operand, which for an
+	// Undefined is its own refusal. ChainableUndefined is the one class
+	// that defines __html__ -- as its own str, which is "" -- so
+	// `{{ 'x'|safe + nope }}` is "x" there and an error under every other
+	// class. Only a Markup on the *left* reaches that method: the reverse
+	// asks the undefined first and raises.
+	if a.kind == KindString && a.safe && b.kind == KindUndefined &&
+		b.undef().behavior == UndefinedChainable {
+		return Safe(a.str), nil
+	}
 	if err := undefinedOperand(a, b); err != nil {
 		return Undefined, err
 	}
@@ -197,8 +216,14 @@ func Add(a, b Value, budget Budget) (Value, error) {
 	switch {
 	case bothNumbers(a, b):
 		if eitherFloat(a, b) {
-			x, _ := a.Float64()
-			y, _ := b.Float64()
+			x, err := floatOperand(a)
+			if err != nil {
+				return Undefined, err
+			}
+			y, err := floatOperand(b)
+			if err != nil {
+				return Undefined, err
+			}
 			return Float(x + y), nil
 		}
 		x, xok := a.Int64()
@@ -279,16 +304,49 @@ func markupText(v Value) string {
 
 // Sub implements `-`, which is numeric only.
 func Sub(a, b Value, budget Budget, py PythonVersion) (Value, error) {
-	if err := undefinedOperand(a, b); err != nil {
+	// An undefined on the *left* refuses before anything else: Python asks
+	// `type(a).__sub__` first, and every Undefined class raises from it.
+	if err := undefinedOperand(a); err != nil {
 		return Undefined, err
 	}
 	// A dict's keys or items view subtracts as a set, taking any iterable
 	// on the right. Its values view does not, and neither does a Set: in
 	// CPython `set - list` is a TypeError, so the only set arithmetic a
 	// template can write is one view difference. See Set.
+	//
+	// This runs before the right operand's refusal is consulted, because
+	// dictviews_sub answers without asking it: it builds a set from the view
+	// and hands the other operand to difference_update, which *iterates* it.
+	// The default Undefined iterates empty, so `d.keys() - nope` is the keys
+	// unchanged -- where `d.values() - nope`, whose view is not a set
+	// operand, falls through to __rsub__ and raises.
 	if view, ok := a.Interface().(SetOperand); ok {
 		if _, isOperand := view.SetElements(); isOperand {
 			return setDifference(view, b, py, budget)
+		}
+	}
+	// Two sets subtract as sets. This is not the view's rule and does not
+	// take an iterable: `set - list` is a TypeError in CPython, and the
+	// only way a template gets a set on the left at all is by writing one
+	// view difference and then subtracting from the result. The type
+	// comment in set.go said that could not happen; `(d.keys() - x) -
+	// (d.keys() - y)` is the shape that does it.
+	if left, ok := a.Interface().(*Set); ok {
+		if right, ok := b.Interface().(*Set); ok {
+			var out []Value
+			for _, v := range left.items {
+				if _, drop := right.index.GetKnown(v); !drop {
+					if err := chargeItems(budget, 1); err != nil {
+						return Undefined, err
+					}
+					out = append(out, v)
+				}
+			}
+			result, err := NewSet(out, py, budget)
+			if err != nil {
+				return Undefined, err
+			}
+			return FromObject(result), nil
 		}
 	}
 	// ...and with the view written second, which CPython reaches through
@@ -299,12 +357,21 @@ func Sub(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 			return setReverseDifference(a, view, py, budget)
 		}
 	}
+	if err := undefinedOperand(b); err != nil {
+		return Undefined, err
+	}
 	if !bothNumbers(a, b) {
 		return Undefined, binTypeError("-", a, b)
 	}
 	if eitherFloat(a, b) {
-		x, _ := a.Float64()
-		y, _ := b.Float64()
+		x, err := floatOperand(a)
+		if err != nil {
+			return Undefined, err
+		}
+		y, err := floatOperand(b)
+		if err != nil {
+			return Undefined, err
+		}
 		return Float(x - y), nil
 	}
 	x, xok := a.Int64()
@@ -345,8 +412,14 @@ func Mul(a, b Value, budget Budget) (Value, error) {
 	}
 	if bothNumbers(a, b) {
 		if eitherFloat(a, b) {
-			x, _ := a.Float64()
-			y, _ := b.Float64()
+			x, err := floatOperand(a)
+			if err != nil {
+				return Undefined, err
+			}
+			y, err := floatOperand(b)
+			if err != nil {
+				return Undefined, err
+			}
 			return Float(x * y), nil
 		}
 		x, xok := a.Int64()
@@ -584,9 +657,27 @@ func repeat(v Value, n int64) (Value, error) {
 // operation. A wide integer that is outside float64's range cannot be
 // converted, which is an error in Python rather than an infinity.
 func floatOperand(v Value) (float64, error) {
+	if !v.IsNumber() {
+		return 0, errs.New(errs.TypeError, "must be real number, not %s", v.TypeName())
+	}
+	return FloatOrOverflow(v)
+}
+
+// FloatOrOverflow converts a number to float64, reporting the OverflowError
+// Python raises when a wide integer does not fit rather than answering an
+// infinity.
+//
+// It is exported because the sites that convert are not all operators: `|float`
+// answered inf for `{{ (10 ** 400)|float }}`, and so did `+`, `-`, `*`,
+// `|filesizeformat`, `|sum` over a mixed list and a `%f` format. `//`, `%` and
+// `**` went through floatOperand and were right, which is what made the rest
+// look deliberate. A value that is not a number answers (0, nil), since what to
+// say about that is the caller's: a filter has a default where an operator has
+// a message.
+func FloatOrOverflow(v Value) (float64, error) {
 	f, ok := v.Float64()
 	if !ok {
-		return 0, errs.New(errs.TypeError, "must be real number, not %s", v.TypeName())
+		return 0, nil
 	}
 	if math.IsInf(f, 0) && v.IsInteger() {
 		return 0, errs.New(errs.OverflowError, "int too large to convert to float")
@@ -667,6 +758,12 @@ func Div(a, b Value, py PythonVersion) (Value, error) {
 			return Float(math.Copysign(0, float64(by.Sign()))), nil
 		}
 		q, _ := new(big.Rat).SetFrac(bx, by).Float64()
+		if math.IsInf(q, 0) {
+			// Python words this one after the division rather than
+			// after the operand: the quotient is what does not fit.
+			return Undefined, errs.New(errs.OverflowError,
+				"integer division result too large for a float")
+		}
 		return Float(q), nil
 	}
 	x, err := floatOperand(a)
@@ -768,6 +865,33 @@ func Mod(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 	return BigInt(r), nil
 }
 
+// trivialPowBase answers a power whose base makes the exponent's size
+// irrelevant: 0, 1 and -1. CPython's long_pow takes these before it considers
+// the exponent, which is why `1 ** (2 ** 70)` answers instantly.
+//
+// The exponent is non-negative here, so a base of 0 is 0 (and 0**0 is 1, which
+// the exponent's own sign already decided above).
+func trivialPowBase(base, exp *big.Int) (Value, bool) {
+	if !base.IsInt64() {
+		return Undefined, false
+	}
+	switch base.Int64() {
+	case 0:
+		if exp.Sign() == 0 {
+			return Int(1), true
+		}
+		return Int(0), true
+	case 1:
+		return Int(1), true
+	case -1:
+		if exp.Bit(0) == 0 {
+			return Int(1), true
+		}
+		return Int(-1), true
+	}
+	return Undefined, false
+}
+
 // Pow implements `**`.
 //
 // An integer base with a non-negative integer exponent stays exact; a negative
@@ -787,10 +911,20 @@ func Pow(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 	if a.IsInteger() && b.IsInteger() {
 		by, _ := b.BigInt()
 		if by.Sign() >= 0 {
+			bx, _ := a.BigInt()
+			// A base of 0, 1 or -1 is answered without looking at
+			// the exponent's size, exactly as CPython's long_pow
+			// does: `1 ** (2 ** 70)` is 1 there, and refusing it as
+			// "exponent too large" was gojja2's own bound talking
+			// about an exponent nothing has to be raised to. The
+			// sign of -1 still depends on the exponent's parity, so
+			// that one is read from the low bit rather than skipped.
+			if trivial, ok := trivialPowBase(bx, by); ok {
+				return trivial, nil
+			}
 			if !by.IsInt64() {
 				return Undefined, errs.New(errs.OverflowError, "exponent too large")
 			}
-			bx, _ := a.BigInt()
 			if err := chargeIntBits(budget, "**",
 				estimatePowBits(bx, by.Int64())); err != nil {
 				return Undefined, err
@@ -821,7 +955,18 @@ func Pow(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 		return Undefined, errs.New(errs.ValueError,
 			"a negative number cannot be raised to a fractional power (gojja2 has no complex type)")
 	}
-	return Float(powFloat(x, y)), nil
+	r := powFloat(x, y)
+	// CPython's float_pow reads errno from the platform pow(), and an
+	// overflow there is an OverflowError rather than an infinity: `2.0 **
+	// 1024` raises where `1e308 * 10` renders inf. Only *this* operator
+	// does it -- multiply, add and the rest saturate -- and only from
+	// finite operands, because an infinite one is answered before pow() is
+	// reached. Underflow is not an overflow: `0.5 ** 10000` is 0.0.
+	if math.IsInf(r, 0) && !math.IsInf(x, 0) && !math.IsInf(y, 0) {
+		return Undefined, errs.New(errs.OverflowError,
+			"(34, 'Numerical result out of range')")
+	}
+	return Float(r), nil
 }
 
 // estimatePowBits bounds the width of base**exp without computing it.

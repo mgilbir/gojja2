@@ -1,0 +1,3 @@
+{}
+---
+{% macro m(caller) %}{% set caller = 1 %}{{ caller }}{% endmacro %}[{{ m(3) }}]

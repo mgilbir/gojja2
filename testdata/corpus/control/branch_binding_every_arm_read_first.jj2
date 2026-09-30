@@ -1,0 +1,5 @@
+{
+  "x": "ctx"
+}
+---
+{% for i in [1,2] %}<{{ x }}>{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}{% set x = 'b' %}{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endfor %}

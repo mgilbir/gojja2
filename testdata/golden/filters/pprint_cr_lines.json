@@ -1,0 +1,11 @@
+{
+  "case": "filters/pprint_cr_lines.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "('a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r'\n 'a\\r\\n'\n 'bcd\\r')"
+}

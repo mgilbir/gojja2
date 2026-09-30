@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% call(x=1|nosuchA) m() %}{{ 1|nosuchC }}{% endcall %}

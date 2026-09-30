@@ -1,0 +1,11 @@
+{
+  "case": "repr/ascii_of_a_group_bmp.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "[('\\u4e2d', [{'k': '\\u4e2d'}])]|('\\u4e2d', [{'k': '\\u4e2d'}])|[('中', [{'k': '中'}])]"
+}

@@ -120,6 +120,38 @@ case("operators/negative_power_folded", "{{ (-8) ** 2 }}|{{ -8 ** 2 }}|{{ (-2) *
 case("operators/negative_power_runtime", "{% set m = 2 %}{{ (-8) ** m }}|{{ (-8.5) ** m }}|{{ (0-8) ** m }}|{{ (-8) ** -m }}", )
 case("operators/negative_power_variable_base", "{% set m = 2 %}{% set x = -8 %}{{ x ** m }}|{% set y = 8 %}{{ (-y) ** m }}")
 case("operators/negative_power_test_exponent", "{{ '[%o]' % -8 ** 0 is eq(n) }}")
+# The lift is decided by the constant's *repr* beginning with a minus, which is
+# the mechanism, and not by whether it is less than zero, which is not the same
+# question: repr(-0.0) is "-0.0" and -0.0 is not negative. Comparing against
+# zero left `{% set m = 2 %}{{ (-0.0) ** m }}` as (-0.0) ** 2 = 0.0 where
+# CPython writes -(0.0 ** 2) = -0.0 -- and with an exponent of 0 the two differ
+# by more than a sign, -1.0 against 1.0. An exponent of 1 is where they agree,
+# which is why all three are here.
+case("operators/negative_zero_power_runtime",
+     "{% set m = 2 %}{{ (-0.0) ** m }}|{% set z = 0 %}{{ (-0.0) ** z }}|"
+     "{% set o = 1 %}{{ (-0.0) ** o }}|{{ (-0.0) ** 2 }}|{{ -(0.0 ** 2) }}|"
+     "{% set m2 = 2 %}{{ (-1e-320) ** m2 }}|{% set m3 = 2 %}{{ (-0) ** m3 }}")
+
+# A base of 0, 1 or -1 makes the exponent's size irrelevant, and CPython's
+# long_pow takes those before it looks at the exponent at all. gojja2's own
+# "exponent too large" bound spoke first, so `{{ 1 ** (2 ** 70) }}` was refused
+# where CPython answers 1. The sign of -1 still follows the exponent's parity.
+for _n, _src in [
+    ("zero", "{{ 0 ** (2 ** 70) }}"),
+    ("one", "{{ 1 ** (2 ** 70) }}"),
+    ("minus_one_even", "{{ (0 - 1) ** (2 ** 70) }}"),
+    ("minus_one_odd", "{{ (0 - 1) ** (2 ** 70 + 1) }}"),
+    ("true", "{{ true ** (2 ** 70) }}"),
+    ("false", "{{ false ** (2 ** 70) }}"),
+    ("zero_to_zero", "{{ 0 ** 0 }}"),
+    ("through_a_name", "{% set y = 2 ** 70 %}{{ 1 ** y }}"),
+    ("base_through_a_name", "{% set b = 1 %}{{ b ** (2 ** 70) }}"),
+    # No case for a base of 2: CPython *tries* it, and what comes back is this
+    # machine's MemoryError rather than an answer, which the oracle refuses to
+    # record. gojja2 still says "exponent too large" there, and the probe that
+    # found this family is what checks it.
+]:
+    case(f"operators/trivial_power_base_{_n}", _src)
 case("operators/negative_floordiv", "{{ -7//2 }}|{{ -7%2 }}|{{ 7//-2 }}|{{ 7%-2 }}|{{ -7.0//2 }}|{{ -7.0%2 }}")
 case("operators/precedence", "{{ 2 ** 3 ** 2 }}|{{ -2 ** 2 }}|{{ 1 + 2 * 3 }}|{{ 'a' ~ 1 + 2 }}")
 case("operators/concat", "{{ 'a' ~ 1 ~ none ~ true ~ [1] }}")
@@ -143,6 +175,45 @@ case("subscript/attr_fallback", "{{ d.items is callable }}|{{ d['items'] }}|{{ d
 # --- control flow -------------------------------------------------------------
 case("control/if", "{% if a %}A{% elif b %}B{% else %}C{% endif %}", a=False, b=True)
 case("control/if_no_scope", "{% set x = 1 %}{% if true %}{% set x = 2 %}{% endif %}{{ x }}")
+# What a branch binds, and where that name then lives. jinja2 3.1's
+# `Symbols.branch_update` gives *every* name any arm writes a load -- an alias
+# to the enclosing binding when there is one, a resolve from the context when
+# there is not -- and it does not care how many arms wrote it. (jinja2 2.x
+# counted, and skipped the load for a name every arm bound; gojja2 carried that
+# counting rule until it was measured and found unreachable.) The symbol tables
+# are what these grade: the renders agree either way, because a name every arm
+# assigns is assigned before it is read.
+case("control/branch_binding_every_arm_in_a_loop",
+     "{% for i in [1,2,3] %}{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}{% set x = 'b' %}"
+     "{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endfor %}")
+case("control/branch_binding_every_arm_over_an_outer",
+     "{% set x = 'o' %}{% for i in [1,2] %}{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}"
+     "{% set x = 'b' %}{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endfor %}[{{ x }}]")
+case("control/branch_binding_every_arm_read_first",
+     "{% for i in [1,2] %}<{{ x }}>{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}"
+     "{% set x = 'b' %}{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endfor %}", x="ctx")
+case("control/branch_binding_every_arm_at_the_root",
+     "{% if 1 %}{% set x = 'a' %}{% elif 1 %}{% set x = 'b' %}{% else %}{% set x = 'c' %}"
+     "{% endif %}[{{ x }}]")
+case("control/branch_binding_every_arm_in_a_macro",
+     "{% macro m(i) %}{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}{% set x = 'b' %}"
+     "{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endmacro %}{{ m(1) }}{{ m(9) }}")
+case("control/branch_binding_every_arm_in_a_block",
+     "{% block b %}{% if 1 %}{% set x = 'a' %}{% elif 1 %}{% set x = 'b' %}{% else %}"
+     "{% set x = 'c' %}{% endif %}[{{ x }}]{% endblock %}")
+case("control/branch_binding_every_arm_in_a_filter_block",
+     "{% filter upper %}{% if 1 %}{% set x = 'a' %}{% elif 1 %}{% set x = 'b' %}{% else %}"
+     "{% set x = 'c' %}{% endif %}[{{ x }}]{% endfilter %}")
+# Two names an arm-counting rule would order differently: `b` is bound by every
+# arm and sorts after `a`, which only one arm binds, so counting lists b first
+# and not counting lists them in the order they are written.
+case("control/branch_binding_write_order",
+     "{% for i in [1] %}{% if i %}{% set a = 1 %}{% set b = 2 %}{% elif i %}{% set b = 3 %}"
+     "{% else %}{% set b = 4 %}{% endif %}{{ a }}{{ b }}{% endfor %}")
+# Only two arms bind it, which the counting rule never claimed either way.
+case("control/branch_binding_two_arms_only",
+     "{% for i in [1,2] %}{% if i == 1 %}{% set x = 'a' %}{% else %}{% set x = 'b' %}"
+     "{% endif %}[{{ x }}]{% endfor %}")
 case("control/for", "{% for x in seq %}{{ x }}{% endfor %}", **SEQ)
 case("control/for_scope", "{% set x = 1 %}{% for i in [1,2] %}[{{ x }}]{% set x = x + 1 %}{% endfor %}[{{ x }}]")
 case("control/for_else", "{% for x in [] %}a{% else %}empty{% endfor %}")
@@ -166,6 +237,179 @@ case("control/loop_controls", "{% for x in seq %}{% if x == 2 %}{% continue %}{%
      __settings__={"extensions": ["loopcontrols"]}, **SEQ)
 case("control/do", "{% set l = [] %}{% do l.append(1) %}{% do l.append(2) %}{{ l }}",
      __settings__={"extensions": ["do"]})
+
+# The two extension-gated tags, and the message when they are not enabled: the
+# tag is only a tag because the extension added it, so the refusal is part of
+# what "extensions" means. Graded here because the soak enables them.
+case("control/do_tuple", "{% set l = [] %}{% do l.append(1), l.append(2) %}{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("control/do_discards", "{% do 1 %}{% do 'x'|upper %}{% do [1,2]|length %}[end]",
+     __settings__={"extensions": ["do"]})
+case("errors/do_without_extension", "{% do 1 %}")
+case("errors/do_no_expression", "{% do %}", __settings__={"extensions": ["do"]})
+case("errors/do_missing_comma", "{% do 1 2 %}", __settings__={"extensions": ["do"]})
+case("errors/enddo", "{% do 1 %}{% enddo %}", __settings__={"extensions": ["do"]})
+case("errors/do_raises", "{% do nope.attr %}", __settings__={"extensions": ["do"]})
+case("errors/break_without_extension",
+     "{% for x in seq %}{% break %}{% endfor %}", **SEQ)
+case("errors/continue_without_extension",
+     "{% for x in seq %}{% continue %}{% endfor %}", **SEQ)
+case("errors/break_argument", "{% for x in seq %}{% break 1 %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+
+# jinja2 writes Python's own `break` and `continue`, and Python clears the
+# for-else indicator at the *end* of the loop body -- so a pass that left early
+# never clears it and the else branch runs. Every one of these printed the other
+# answer here until the indicator was moved to where jinja2 keeps it.
+case("control/loop_else_after_break",
+     "{% for x in seq %}{{ x }}{% break %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_after_continue",
+     "{% for x in seq %}{% continue %}{{ x }}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_pass_completed",
+     "{% for x in seq %}{{ x }}{% if x == 2 %}{% break %}{% endif %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_filtered_continue",
+     "{% for x in seq if x > 1 %}{% continue %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_recursive_break",
+     "{% for x in seq recursive %}{{ x }}{% break %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+# An inner loop's else body is emitted after the inner loop and inside the
+# outer one, so a continue there binds to the *outer* loop -- which is why the
+# `o` never prints.
+case("control/loop_else_continues_outer",
+     "{% for x in seq %}{% for y in [] %}i{% else %}{% continue %}{% endfor %}o{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_else_inner_and_outer",
+     "{% for x in seq %}{% for y in [1] %}{% continue %}{% else %}I{% endfor %}{% else %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+
+# Which blocks a break reaches out of. A filter block, a `{% set %}` block,
+# `{% with %}` and `{% autoescape %}` are emitted inline, so the loop is still
+# there; a macro, a block and a `{% call %}` body are functions of their own and
+# jinja2's Python will not compile a break inside one (docs/divergences.md).
+case("control/break_through_filter_block",
+     "{% for x in seq %}{% filter upper %}a{% break %}{% endfilter %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_through_set_block",
+     "{% for x in seq %}{% set v %}a{% break %}{% endset %}{{ v }}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_through_with_block",
+     "{% for x in seq %}{% with y = x %}{{ y }}{% break %}{% endwith %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_through_autoescape",
+     "{% for x in seq %}{% autoescape true %}{{ x }}{% break %}{% endautoescape %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_macro_own_loop",
+     "{% macro m() %}{% for x in seq %}{{ x }}{% break %}{% endfor %}{% endmacro %}{{ m() }}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_block_own_loop",
+     "{% block b %}{% for x in seq %}{{ x }}{% break %}{% endfor %}{% endblock %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_inner_loop_only",
+     "{% for x in seq %}{% for y in seq %}{{ y }}{% break %}{% endfor %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/continue_keeps_counting",
+     "{% for x in seq %}{% if x % 2 %}{% continue %}{% endif %}{{ loop.index }}:{{ x }},{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+
+# What a jump out of the middle of something leaves half done. jinja2 buffers a
+# filter block's body and applies the filter *after* it, so a break inside one
+# discards the buffer rather than filtering what was written; a `{% set %}` block
+# is the same shape and the assignment never happens, so the name keeps whatever
+# it had. None of this is jinja2's choice -- it is what Python's `break` does to
+# the statements it jumps over -- and none of it was graded.
+case("control/break_discards_filter_buffer",
+     "{% for x in seq %}{% filter upper %}a{% break %}b{% endfilter %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_keeps_earlier_filter_output",
+     "{% for x in seq %}{% filter upper %}a{% if x == 2 %}{% break %}{% endif %}b{% endfilter %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_abandons_set_block",
+     "{% set v = 'pre' %}{% for x in seq %}{% set v %}a{% break %}{% endset %}{% endfor %}[{{ v }}]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_abandons_set_block_unset",
+     "{% for x in seq %}{% set v %}a{% break %}{% endset %}{% endfor %}[{{ v|default('-') }}]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+# A namespace outlives the pass, so a continue keeps what the pass wrote to it --
+# where a plain `{% set %}` in the body does not survive the iteration at all.
+case("control/continue_keeps_namespace_write",
+     "{% set ns = namespace(v=0) %}{% for x in seq %}{% set ns.v = x %}{% continue %}{% endfor %}[{{ ns.v }}]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_recursive_before_descent",
+     "{% for x in seq recursive %}a{% break %}{{ loop([x]) }}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_recursive_after_descent",
+     "{% for x in seq recursive %}{{ loop([]) }}a{% break %}{% endfor %}[end]",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_controls_read_the_loop_var",
+     "{% for x in seq %}{{ loop.index }}{% if loop.first %}{% continue %}{% endif %}{% endfor %}|"
+     "{% for x in seq %}{% if loop.last %}{% break %}{% endif %}{{ loop.revindex }}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/break_in_inner_loop_with_else",
+     "{% for x in seq %}{% for y in seq %}{% if y == 2 %}{% break %}{% endif %}{{ y }}{% else %}I{% endfor %}|{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("control/loop_in_loop_else_may_break",
+     "{% for x in e %}a{% else %}{% for y in seq %}{% break %}{% endfor %}E{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, e=[], **SEQ)
+case("control/do_and_break_together",
+     "{% set l = [] %}{% for x in seq %}{% do l.append(x) %}{% if x == 2 %}{% break %}{% endif %}{% endfor %}{{ l }}",
+     __settings__={"extensions": ["loopcontrols", "do"]}, **SEQ)
+case("control/do_inside_filter_block",
+     "{% set l = [] %}{% for x in seq %}{% filter upper %}{% do l.append(x) %}a{% endfilter %}{% endfor %}{{ l }}",
+     __settings__={"extensions": ["loopcontrols", "do"]}, **SEQ)
+
+# Where a break binds to nothing at all. jinja2's parser accepts every one of
+# these and CPython refuses the Python it generates, naming a line of that
+# generated module -- so gojja2 refuses them too, with CPython's wording and
+# without the line. Admitted in testdata/known_failures.txt, asserted by
+# TestUnboundLoopControlIsRefused, and recorded in docs/divergences.md. They are
+# here because the *shape* of what each side does is what the goldens pin: a
+# refusal at compile time, from both.
+case("errors/break_outside_loop", "{% break %}", __settings__={"extensions": ["loopcontrols"]})
+case("errors/continue_outside_loop", "{% continue %}", __settings__={"extensions": ["loopcontrols"]})
+case("errors/break_in_loop_else",
+     "{% for x in seq %}x{% else %}{% break %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/continue_in_loop_else",
+     "{% for x in seq %}x{% else %}{% continue %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/break_in_recursive_loop_else",
+     "{% for x in seq recursive %}x{% else %}{% break %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/break_in_macro",
+     "{% for x in seq %}{% macro m() %}{% break %}{% endmacro %}{{ m() }}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/break_in_block",
+     "{% for x in seq %}{% block b %}{% break %}{% endblock %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+case("errors/break_in_call_block",
+     "{% macro m() %}{{ caller() }}{% endmacro %}"
+     "{% for x in seq %}{% call m() %}{% break %}{% endcall %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]}, **SEQ)
+
+# `{% print %}` needs no extension and had no case at all: it is an Output node
+# like `{{ }}`, but it takes a comma-separated *list* of expressions and the
+# comma rules are its own.
+case("control/print", "{% print 1 + 1 %}|{% print %}|{% print 'a', 'b' %}|{% print 1, 2, 3 %}")
+case("control/print_expressions", "{% print 'x'|upper, 1 if 0 else 2, ((1, 2)), 1 == 1 %}")
+case("control/print_undefined", "[{% print nope %}]")
+case("control/print_in_blocks",
+     "{% for x in seq %}{% print x, loop.index %}{% endfor %}|"
+     "{% macro m() %}{% print 'm' %}{% endmacro %}{{ m() }}|"
+     "{% block b %}{% print 'b' %}{% endblock %}|"
+     "{% filter upper %}{% print 'f' %}{% endfilter %}|"
+     "{% set v %}{% print 's' %}{% endset %}{{ v }}", **SEQ)
+case("control/print_escapes", "{% print '<i>', ('<b>'|safe), v %}",
+     __settings__={"autoescape": True}, v="<u>")
+case("errors/print_trailing_comma", "{% print 1, %}")
+case("errors/print_missing_comma", "{% print 1 2 %}")
+case("errors/print_leading_comma", "{% print , 1 %}")
+case("errors/print_star", "{% print *seq %}", **SEQ)
+case("errors/endprint", "{% print 1 %}{% endprint %}")
+case("errors/print_raises", "{% print nope.attr %}")
 
 # --- frame scoping ------------------------------------------------------------
 # Whether a name resolves from the render arguments or from the template's own
@@ -316,6 +560,238 @@ case("inherit/super_outside_block_is_undefined",
 # is everything around them.
 case("inherit/self_call", "{% block b %}hi{% endblock %}|{{ self.b() }}")
 case("inherit/self_super_undefined", "{% block b %}hi{% endblock %}[{{ self.b.super }}]")
+
+# super() inside a `scoped` block renders the *parent's* body, and has to render
+# it with what the block itself was given: jinja2 builds the BlockReference from
+# the current context, so the loop variable the parent bound is there. gojja2
+# built it from the template context, so `{% block a scoped %}{{ super() }}`
+# inside the parent's `{% for %}` rendered nothing at all -- and, because an
+# empty string is falsy, `{% if super() %}` took the other branch. Found by the
+# soak once the auxiliary templates became a drawn axis: a block inside a loop
+# in base.txt is not something the old fixed set could hold.
+_SCOPED = {
+    "loopbase.txt": "[{% for i in [1, 2] %}{% block a scoped %}{{ i }}{% endblock %}"
+                    "{% endfor %}|{% block b %}B{% endblock %}]",
+    "plainbase.txt": "[{% for i in [1, 2] %}{% block a %}x{% endblock %}{% endfor %}]",
+    "grand.txt": "G[{% for i in [1, 2] %}{% block a scoped %}{{ i }}{% endblock %}{% endfor %}]",
+    "mid.txt": "{% extends 'grand.txt' %}{% block a %}M{{ super() }}{% endblock %}",
+}
+for _n, _src in [
+    ("super_in_a_scoped_block", "{% extends 'loopbase.txt' %}{% block a %}[{{ super() }}]{% endblock %}"),
+    ("super_in_a_scoped_block_is_truthy",
+     "{% extends 'loopbase.txt' %}{% block a %}{% if super() %}T{% else %}F{% endif %}{% endblock %}"),
+    ("super_in_a_scoped_block_has_length",
+     "{% extends 'loopbase.txt' %}{% block a %}{{ super()|length }}{% endblock %}"),
+    ("a_scoped_block_sees_the_loop_variable",
+     "{% extends 'loopbase.txt' %}{% block a %}{{ i }}{% endblock %}"),
+    ("super_in_an_unscoped_block",
+     "{% extends 'plainbase.txt' %}{% block a %}[{{ super() }}]{% endblock %}"),
+    ("super_twice_through_a_scoped_block",
+     "{% extends 'mid.txt' %}{% block a %}C{{ super() }}{% endblock %}"),
+    ("super_from_a_macro_in_a_scoped_block",
+     "{% extends 'loopbase.txt' %}{% block a %}{% macro s() %}[{{ super() }}]{% endmacro %}"
+     "{{ s() }}{% endblock %}"),
+    ("super_in_a_sibling_block",
+     "{% extends 'loopbase.txt' %}{% block b %}[{{ super() }}]{% endblock %}"),
+]:
+    case("inherit/" + _n, _src, __templates__=dict(_SCOPED))
+
+# Whether a macro's result is Markup is decided by the *runtime* eval context --
+# the one {% autoescape %} moves for its dynamic extent -- and not by the
+# setting the call site was compiled under. The two differ inside a block:
+# jinja2 compiles a block against a fresh eval context, so `{{ m() }}` written
+# in one prints with escape(), while the macro it calls wraps by whatever the
+# *parent* had in force where the block is rendered. A block written inside
+# `{% autoescape false %}` in the base and filled by a child therefore escapes
+# what the macro returns. gojja2 wrapped by the call site's lexical setting, so
+# the result came back Markup and printed raw. Found by the soak, on the
+# template set whose base wraps its blocks in autoescape.
+_ESCT = {
+    "esc.txt": "{% autoescape true %}[{% block a %}<A>{% endblock %}]{% endautoescape %}"
+               "{% autoescape false %}|{% block b %}<B>{% endblock %}|{% endautoescape %}",
+    "mac.txt": "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}",
+    "macesc.txt": "{% autoescape false %}{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}"
+                  "{% endautoescape %}",
+}
+for _n, _src in [
+    ("macro_in_a_block_the_parent_unescaped",
+     "{% extends 'esc.txt' %}{% block b %}{% import 'mac.txt' as mm without context %}"
+     "{{ mm.m(1) }}{% endblock %}"),
+    ("macro_in_a_block_the_parent_escaped",
+     "{% extends 'esc.txt' %}{% block a %}{% import 'mac.txt' as mm %}{{ mm.m(1) }}{% endblock %}"),
+    ("macro_written_in_the_block",
+     "{% extends 'esc.txt' %}{% block b %}{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}"
+     "{{ m(1) }}{% endblock %}"),
+    ("text_in_a_block_the_parent_unescaped",
+     "{% extends 'esc.txt' %}{% block b %}{{ '<x>' }}{% endblock %}"),
+    ("filter_block_in_a_block_the_parent_unescaped",
+     "{% extends 'esc.txt' %}{% block b %}{% filter upper %}{{ '<x>' }}{% endfilter %}{% endblock %}"),
+    ("include_in_a_block_the_parent_unescaped",
+     "{% extends 'esc.txt' %}{% block b %}{% include 'mac.txt' %}{{ '<i>' }}{% endblock %}"),
+    ("macro_called_in_and_out_of_an_autoescape",
+     "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{{ m(1) }}|"
+     "{% autoescape false %}{{ m(2) }}{% endautoescape %}"),
+    ("call_block_in_an_unescaped_region",
+     "{% macro m() %}[{{ caller() }}]{% endmacro %}"
+     "{% autoescape false %}{% call m() %}<c>{% endcall %}{% endautoescape %}"),
+]:
+    case("escape/runtime_" + _n, _src, __settings__={"autoescape": True},
+         __templates__=dict(_ESCT))
+
+# A {% call %} block's result is written *as it stands*: jinja2's
+# visit_CallBlock uses start_write/end_write, which yield the value with none
+# of the escaping, finalizing or str() that `{{ ... }}` gets. It shows wherever
+# the macro answers a plain string under escaping -- a call block inside a
+# block the parent wrapped in `{% autoescape false %}` printed `&gt;` here and
+# `>` there. Found by the soak, beside the wrap above.
+for _n, _src in [
+    ("call_block_result_is_written_raw",
+     "{% extends 'esc.txt' %}{% block b %}{% macro takes() %}{{ caller(1) }}>{% endmacro %}"
+     "{% call(p) takes() %}{% endcall %}{% endblock %}"),
+    ("call_block_result_in_an_escaped_block",
+     "{% extends 'esc.txt' %}{% block a %}{% macro takes() %}{{ caller(1) }}>{% endmacro %}"
+     "{% call(p) takes() %}<c>{% endcall %}{% endblock %}"),
+    ("call_block_result_at_template_level",
+     "{% macro m() %}[{{ caller() }}]<x>{% endmacro %}{% call m() %}<c>{% endcall %}"),
+    ("call_block_result_unescaped_region",
+     "{% autoescape false %}{% macro m() %}[{{ caller() }}]<x>{% endmacro %}"
+     "{% call m() %}<c>{% endcall %}{% endautoescape %}"),
+    ("call_block_body_is_escaped",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}{{ '<c>' }}{% endcall %}"),
+]:
+    case("escape/" + _n, _src, __settings__={"autoescape": True},
+         __templates__=dict(_ESCT))
+
+# A `{% set %}` with a body has *two* wraps and jinja2 uses a different context
+# for each: the filter's input is `Markup(concat(buf))` when the frame the tag
+# was compiled in escapes -- a compile-time question -- while the result is
+# `(Markup if context.eval_ctx.autoescape else identity)`, which is the runtime
+# one. With no filter there is only the second. Inside a block the two differ,
+# and gojja2 used the compile-time setting for both: `{% set v | list %}` in a
+# block the base wrapped in `{% autoescape false %}` came back Markup and
+# printed its quotes raw where jinja2 escapes them. Found by the fuzzer, on the
+# escaping axis.
+for _n, _src in [
+    ("set_block_filtered_in_an_unescaped_block",
+     "{% extends 'esc.txt' %}{% block b %}{% set fv | list %}x{% endset %}"
+     "[{{ fv }}]{% endblock %}"),
+    ("set_block_filtered_in_an_escaped_block",
+     "{% extends 'esc.txt' %}{% block a %}{% set fv | list %}x{% endset %}"
+     "[{{ fv }}]{% endblock %}"),
+    ("set_block_plain_in_an_unescaped_block",
+     "{% extends 'esc.txt' %}{% block b %}{% set fv %}<x>{% endset %}[{{ fv }}]{% endblock %}"),
+    ("set_block_filter_input_keeps_markup",
+     "{% extends 'esc.txt' %}{% block b %}{% set fv | upper %}<x>{% endset %}"
+     "[{{ fv }}]{% endblock %}"),
+    ("set_block_length_in_an_unescaped_block",
+     "{% extends 'esc.txt' %}{% block b %}{% set fv | length %}abc{% endset %}"
+     "[{{ fv + 1 }}]{% endblock %}"),
+    ("set_block_at_template_level",
+     "{% set fv | list %}x{% endset %}[{{ fv }}]"),
+    ("set_block_in_an_unescaped_region",
+     "{% autoescape false %}{% set fv | upper %}<x>{% endset %}[{{ fv }}]{% endautoescape %}"),
+]:
+    case("escape/" + _n, _src, __settings__={"autoescape": True},
+         __templates__=dict(_ESCT))
+
+# bytes `%c` writes one *byte*, where the str form writes the code point:
+# `b'%c' % 205` is b'\xcd' and `'%c' % 205` is 'Í'. gojja2 wrote the rune's
+# encoding, so everything over 127 came out two bytes wide. Found by the soak,
+# on `('[%c]'.encode()) % 'ab'.encode()|sum(start=10)`.
+for _n, _src in [
+    ("bytes_percent_c_high", "{{ '[%c]'.encode() % 205 }}"),
+    ("bytes_percent_c_max", "{{ '[%c]'.encode() % 255 }}"),
+    ("bytes_percent_c_ascii", "{{ '[%c]'.encode() % 65 }}"),
+    ("bytes_percent_c_bool", "{{ '[%c]'.encode() % true }}"),
+    ("bytes_percent_c_pair", "{{ '[%c%c]'.encode() % (200, 66) }}"),
+    ("bytes_percent_c_over", "{{ '[%c]'.encode() % 256 }}"),
+    ("bytes_percent_c_negative", "{{ '[%c]'.encode() % -1 }}"),
+    ("bytes_percent_c_single_byte", "{{ '[%c]'.encode() % 'a'.encode() }}"),
+    ("str_percent_c_high", "{{ '[%c]' % 205 }}"),
+]:
+    case("format/" + _n, _src)
+
+# startswith and endswith convert the candidate *before* they match it, so its
+# type is checked whatever the slice bounds say -- `''.startswith(1, 2)` raises
+# where an empty window used to answer False -- and in a tuple each element is
+# converted as it is *reached*, so one that matches hides a bad one after it.
+# gojja2 had the str form checking too late and the bytes form too early, so
+# each was wrong in the opposite direction. Found by the fuzzer once the context
+# axis could make `s` the empty string.
+for _n, _src in [
+    ("startswith_bad_prefix_out_of_range", "{{ ''.startswith(1, 2) }}"),
+    ("startswith_bad_prefix_in_range", "{{ 'abc'.startswith(1) }}"),
+    ("endswith_bad_prefix_out_of_range", "{{ ''.endswith(1, 2) }}"),
+    ("endswith_bad_prefix_past_the_end", "{{ 'abc'.endswith(1, 5) }}"),
+    ("startswith_tuple_bad_element_reached", "{{ ''.startswith(('a', 1)) }}"),
+    ("startswith_tuple_bad_element_unreached", "{{ 'abc'.startswith(('a', 1)) }}"),
+    ("startswith_tuple_bad_element_out_of_range", "{{ ''.startswith(('a', 1), 9) }}"),
+    ("startswith_empty_tuple", "{{ ''.startswith(()) }}"),
+    ("startswith_tuple_later_match", "{{ 'abc'.startswith(('x', 'b'), 1) }}"),
+    ("bytes_startswith_tuple_bad_element_reached",
+     "{{ ''.encode().startswith(('a'.encode(), 1)) }}"),
+    ("bytes_startswith_tuple_bad_element_unreached",
+     "{{ 'abc'.encode().startswith(('a'.encode(), 1)) }}"),
+    ("bytes_startswith_bad_prefix_out_of_range", "{{ ''.encode().startswith(1, 2) }}"),
+    ("bytes_endswith_bad_prefix_out_of_range", "{{ ''.encode().endswith(1, 2) }}"),
+]:
+    case("methods/" + _n, _src)
+
+# |round(precision, 'ceil'|'floor') is `func(value * 10**precision) /
+# 10**precision`, and every step but the last is exact when the value is an
+# integer: math.ceil of an int *is* that int, and int/int is one correctly
+# rounded division. gojja2 went through a float64 first, so a value that does
+# not fit came back wrong -- `9007199254740993|round(2, 'ceil')` was
+# 9007199254740994.0 where CPython says ...992.0. Found by the soak once the
+# context axis could hold an integer wider than a float.
+for _n, _src in [
+    ("round_wide_int_ceil", "{{ 9007199254740993|round(2, 'ceil') }}"),
+    ("round_wide_int_floor", "{{ 9007199254740993|round(2, 'floor') }}"),
+    ("round_wide_int_zero_precision", "{{ 9007199254740993|round(0, 'floor') }}"),
+    ("round_negative_zero_floor", "{{ -0.0|round(1, 'floor') }}"),
+    ("round_negative_precision_pair", "{{ 5|round(-2, 'ceil') }}|{{ 123456789|round(-3, 'floor') }}"),
+    ("round_huge_int", "{{ (2 ** 100)|round(2, 'ceil') }}"),
+    ("round_float_precision", "{{ 5|round(2.5, 'ceil') }}"),
+    ("round_underflowing_scale", "{{ 5|round(-400, 'ceil') }}"),
+    ("round_not_a_number", "{{ 'x'|round(2, 'ceil') }}|"),
+    ("round_a_list", "{{ [1,2]|round(1, 'ceil') }}"),
+]:
+    case("filters/" + _n, _src)
+
+# jinja2's select_autoescape decides by the template's *name*, so one template
+# escapes and the next does not -- and each was compiled under its own setting.
+# The corpus had no case for it at all: `__settings__={"autoescape": "select"}`
+# is the rule over the "html" extension, which the oracle builds as the callable
+# a JSON setting cannot carry. A case's own name ends in .jj2, so the auxiliary
+# .html templates are the escaping half.
+_SELT = {
+    "base.html": "H[{% block a %}<A>{% endblock %}|{{ '<p>' }}]",
+    "base.txt": "B[{% block a %}<A>{% endblock %}|{{ '<p>' }}]",
+    "mac.html": "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{% set ex = '<E>' %}",
+    "mac.txt": "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{% set ex = '<E>' %}",
+    "inc.html": "<inc {{ '<x>' }}>",
+    "inc.txt": "<inc {{ '<x>' }}>",
+}
+for _n, _src in [
+    ("select_include_of_an_escaping_template", "{% include 'inc.html' %}|{{ '<t>' }}"),
+    ("select_include_of_a_plain_template", "{% include 'inc.txt' %}|{{ '<t>' }}"),
+    ("select_extends_an_escaping_base",
+     "{% extends 'base.html' %}{% block a %}{{ '<c>' }}{% endblock %}"),
+    ("select_extends_a_plain_base",
+     "{% extends 'base.txt' %}{% block a %}{{ '<c>' }}{% endblock %}"),
+    ("select_macro_from_an_escaping_template",
+     "{% import 'mac.html' as mm %}{{ mm.m(1) }}|{{ mm.ex }}"),
+    ("select_macro_from_a_plain_template",
+     "{% import 'mac.txt' as mm %}{{ mm.m(1) }}|{{ mm.ex }}"),
+    ("select_macro_in_a_block_of_an_escaping_base",
+     "{% extends 'base.html' %}{% block a %}{% import 'mac.txt' as mm %}"
+     "{{ mm.m(1) }}{% endblock %}"),
+    ("select_filter_block_in_a_block",
+     "{% extends 'base.html' %}{% block a %}{% filter upper %}{{ '<f>' }}"
+     "{% endfilter %}{% endblock %}"),
+]:
+    case("escape/" + _n, _src, __settings__={"autoescape": "select"},
+         __templates__=dict(_SELT))
 case("errors/self_super_past_end", "{% block b %}hi{% endblock %}{{ self.b.super() }}")
 case("inherit/self_print_does_not_render",
      "{% block b %}hi{% endblock %}{{ self.b|string|length > 20 }}")
@@ -326,6 +802,13 @@ INC = {"inc.html": "[{{ v|default('none') }}]", "mac.html": "{% macro f(x) %}<{{
 case("include/basic", "{% set v = 'V' %}{% include 'inc.html' %}", __templates__=INC)
 case("include/without_context", "{% set v = 'V' %}{% include 'inc.html' without context %}", __templates__=INC)
 case("include/in_loop", "{% for v in [1,2] %}{% include 'inc.html' %}{% endfor %}", __templates__=INC)
+# An empty selection never reaches the loader: emptiness is truthiness and is
+# checked first, so every falsy operand is "an empty list of templates" -- and
+# `ignore missing` swallows even that. errors/include_empty_list has the list.
+case("include/empty_list_ignore_missing", "A{% include [] ignore missing %}B", __templates__=INC)
+case("include/empty_tuple", "{% include () %}", __templates__=INC)
+case("include/empty_string", "{% include '' %}", __templates__=INC)
+case("include/zero", "{% include 0 %}", __templates__=INC)
 case("include/missing", "A{% include 'nope.html' %}B", __templates__=INC)
 case("include/ignore_missing", "A{% include 'nope.html' ignore missing %}B", __templates__=INC)
 
@@ -390,6 +873,201 @@ case("errors/include_dict_not_found", "{% include {'a':1} %}", __templates__=INC
 case("errors/include_none_ignore_missing", "[{% include none ignore missing %}]", __templates__=INC)
 case("include/select_dict_key", "{% include {'inc.html': 1} %}", __templates__=INC)
 case("include/select_tuple", "{% include ('inc.html',) %}", __templates__=INC)
+# jinja2's lexer matches a name out of a class that is *wider* than an
+# identifier -- `jinja2._identifier.pattern` is `[\w<extra>]+`, Python's `\w`
+# plus 2,231 code points frozen into that module at jinja2's release -- and then
+# checks isidentifier() on what it matched. Two phases, three answers, and gojja2
+# had one rule built from Unicode categories:
+#
+#   * U+00B7 MIDDLE DOT is one of the frozen extras and `'a\u00b7'.isidentifier()`
+#     is True, so jinja2 renders. gojja2 refused. Same for U+1885, which Python
+#     reads as an identifier start although it is a combining mark.
+#   * U+0898 is a mark assigned *after* the extras were frozen, so it is outside
+#     the class: the name ends before it and nothing matches it. gojja2 read Mn
+#     as a continuation and *accepted* a name jinja2 rejects -- a template that
+#     worked here and not there.
+#   * U+00B2 SUPERSCRIPT TWO is `\w`, so it is part of the match, and then
+#     isidentifier says no: "Invalid character in identifier" rather than
+#     "unexpected char", and at the name rather than at the character.
+#
+# The class is generated per interpreter by tools/oracle/gen_name_class.py,
+# because `\w` is CPython's and moves; the extras came out identical on all four.
+for _n, _src in [
+    ("middle_dot", "{% set a\u00b7 = 1 %}{{ a\u00b7 }}"),
+    ("mongolian_mark_alone", "{% set \u1885 = 1 %}{{ \u1885 }}"),
+    ("arabic_indic_digit", "{% set a\u0660 = 1 %}{{ a\u0660 }}"),
+]:
+    case(f"syntax/name_accepts_{_n}", _src)
+for _n, _src in [
+    ("a_mark_outside_the_class", "{% set a\u0898 = 1 %}{{ a\u0898 }}"),
+    ("a_mark_outside_the_class_in_a_print", "{{ a\u0899 is defined }}"),
+]:
+    case(f"errors/name_unexpected_char_{_n}", _src)
+for _n, _src in [
+    ("superscript", "{% set a\u00b2 = 1 %}{{ a\u00b2 }}"),
+    ("vulgar_fraction", "{{ x\u00bc }}"),
+    ("superscript_alone", "{{ \u00b2 }}"),
+    ("digit_start", "{% set \u0660 = 1 %}{{ \u0660 }}"),
+]:
+    case(f"errors/name_invalid_character_{_n}", _src)
+
+# The *unqualified* name of the same objects, which is what a TypeError uses
+# where an UndefinedError uses the qualified one: a macro is 'Macro' in
+# "unsupported operand type(s) for +" and "jinja2.runtime.Macro object" in "has
+# no attribute". Both were reachable and neither was graded, so both TypeName
+# methods sat unexecuted by the whole suite.
+#
+# `{{ {self.b: 1} }}` is deliberately absent: a BlockReference has no repr of its
+# own, so a dict holding one prints an address.
+for _n, _src in [
+    ("macro_addition", "{% macro m() %}{% endmacro %}{{ m + 1 }}"),
+    ("macro_length", "{% macro m() %}{% endmacro %}{{ m|length }}"),
+    ("macro_membership", "{% macro m() %}{% endmacro %}{{ 1 in m }}"),
+    ("macro_iteration", "{% macro m() %}{% endmacro %}{{ m|sum }}"),
+    ("block_addition", "{% block b %}{{ self.b + 1 }}{% endblock %}"),
+    ("block_length", "{% block b %}{{ self.b|length }}{% endblock %}"),
+    ("block_membership", "{% block b %}{{ 1 in self.b }}{% endblock %}"),
+]:
+    case(f"errors/unqualified_type_name_{_n}", _src)
+# A macro has a repr of its own, so it can be a dict key and be printed.
+case("methods/macro_as_a_dict_key",
+     "{% macro m() %}{% endmacro %}{{ {m: 1} }}")
+# ...and a subscript of either answers undefined rather than raising, because
+# jinja2's getitem catches the TypeError.
+case("subscript/of_the_engines_objects",
+     "{% macro m() %}{% endmacro %}[{{ m[0] }}]|"
+     "{% block b %}[{{ self.b[0] }}]{% endblock %}")
+
+# What each of the engine's own objects calls itself, which a template sees when
+# it asks one for an attribute it has not got: under StrictUndefined the name is
+# the *qualified* one, as object_type_repr writes it, so a Macro is
+# "jinja2.runtime.Macro object" while a method descriptor is plain
+# "method_descriptor object" and a set is "set object" -- builtins are not
+# qualified. Every one of these already agreed; they were the type names no case
+# had ever asked for, which is what makes them load-bearing now.
+#
+# `{{ self.b|pprint }}` is deliberately absent: a BlockReference has no repr of
+# its own, so jinja2 prints its address.
+for _n, _src in [
+    ("a_method_descriptor", "{% set d = {'a': 1} %}{{ d.__class__.get.nope }}"),
+    ("a_macro", "{% macro m() %}{% endmacro %}{{ m.nope }}"),
+    ("a_loop", "{% for i in [1] %}{{ loop.nope }}{% endfor %}"),
+    ("a_set", "{% set d = {'a': 1} %}{{ (d.keys() - 'a').nope }}"),
+    ("a_template_reference", "{{ self.nope }}"),
+    ("a_block_reference", "{% block b %}{{ self.b.nope }}{% endblock %}"),
+]:
+    case(f"undefined/strict_attribute_of_{_n}", _src,
+         __settings__={"undefined": "strict"})
+# ...and the same attribute under the default class, which answers rather than
+# refusing -- so the type name is only in the message and not in the answer.
+case("undefined/attribute_of_the_engines_objects",
+     "{% macro m() %}{% endmacro %}[{{ m.nope }}]|"
+     "{% for i in [1] %}[{{ loop.nope }}]{% endfor %}|[{{ self.nope }}]|"
+     "{{ m.nope|default('d') }}")
+# The reprs that are not an address: a method descriptor names the type it came
+# from, a macro its name, a loop its position.
+case("methods/repr_of_the_engines_objects",
+     "{% set d = {'a': 1} %}{{ d.__class__.get|pprint }}|"
+     "{% macro m() %}{% endmacro %}{{ m|pprint }}|"
+     "{% for i in [1] %}{{ loop|pprint }}{% endfor %}")
+
+# `is callable` asks whether the value is callable, not what calling it does --
+# which is the whole of what a builtinFunc's Call method is for: its body is
+# unreachable (the evaluator hands a global the render through callWith, and the
+# folder does not fold a call to a global), but the interface it satisfies is this
+# answer. See runtime.go.
+case("tests/callable_globals",
+     "{{ lipsum is callable }}|{{ range is callable }}|{{ dict is callable }}|"
+     "{{ namespace is callable }}|{{ cycler('a','b').next is callable }}|"
+     "{{ 'x'.upper is callable }}|{{ 1 is callable }}")
+
+# What Python calls a callable reached as an attribute. There are three kinds
+# and gojja2 had one: `d.get` is a builtin_function_or_method, `cycler(..).next`
+# is a method of a class written in Python, and lipsum is a function -- and
+# every one of them answered "function", which is also what the *type* in every
+# message about one said.
+#
+# The reprs carry an address and cannot be corpus cases; runtime_test.go holds
+# their shape. Everything else about them is here.
+_FN = "{% set d = {'a': 1} %}"
+for _n, _src in [
+    ("builtin_method_class", "{{ d.get.__class__ }}"),
+    ("builtin_method_class_name", "{{ d.get.__class__.__name__ }}|{{ d.get.__class__.__module__ }}"),
+    ("builtin_method_name", "{{ d.get.__name__ }}|{{ d.get.__qualname__ }}|{{ d.get.__module__ }}"),
+    ("str_method_name", "{{ 'ab'.upper.__name__ }}|{{ 'ab'.upper.__qualname__ }}"),
+    ("list_method_class", "{{ [1].append.__class__ }}"),
+    ("int_method_class", "{{ (1).to_bytes.__class__ }}|{{ (1).to_bytes.__qualname__ }}"),
+    ("view_method_class", "{{ d.keys().isdisjoint.__class__ }}|{{ d.keys().isdisjoint.__qualname__ }}"),
+    ("set_method_class", "{{ (d.keys() - 'a').union.__class__ }}|{{ (d.keys() - 'a').union.__qualname__ }}"),
+    ("proxy_method_class", "{{ d.keys().mapping.copy.__class__ }}"),
+    # A method of a Python class is a `method`, and its qualified name carries
+    # the class's *bare* name where its module carries the rest.
+    ("python_method_class", "{{ cycler('a').next.__class__ }}"),
+    ("python_method_name", "{{ cycler('a').next.__name__ }}|{{ cycler('a').next.__qualname__ }}|"
+     "{{ cycler('a').next.__module__ }}"),
+    ("loop_method_class", "{% for i in [1] %}{{ loop.cycle.__class__ }}|"
+     "{{ loop.cycle.__qualname__ }}{% endfor %}"),
+    # lipsum is the one global that is a function, and it is reached under a
+    # name that is not its own.
+    ("function_class", "{{ lipsum.__class__ }}"),
+    ("function_name", "{{ lipsum.__name__ }}|{{ lipsum.__qualname__ }}|{{ lipsum.__module__ }}"),
+    # The type name shows up wherever a message names it.
+    ("builtin_method_is_not_subscriptable", "{{ d.get[0] }}"),
+    ("builtin_method_has_no_length", "{{ d.get|length }}"),
+    ("builtin_method_does_not_add", "{{ d.get + 1 }}"),
+    ("builtin_method_class_is_not_constructible", "{{ d.get.__class__() }}"),
+    ("python_method_is_not_subscriptable", "{{ cycler('a').next[0] }}"),
+    ("function_has_no_length", "{{ lipsum|length }}"),
+    # Two bound methods of the same receiver are equal, although each `.get`
+    # builds one: CPython compares the receiver and the slot rather than the
+    # object. A free function has no such rule.
+    ("builtin_methods_are_equal", "{{ d.get == d.get }}|{{ d.get == d.pop }}|"
+     "{{ d.get == {'a': 1}.get }}"),
+    ("functions_are_equal", "{{ lipsum == lipsum }}"),
+    ("builtin_method_is_not_sameas", "{{ d.get is sameas d.get }}"),
+]:
+    case(f"tests/callable_{_n}", _FN + _src)
+
+# |xmlattr asks its subject for `items`, and what a subject without one says is
+# the subject's own AttributeError: a Namespace raises `AttributeError(name)`, so
+# the message is the bare word "items" with no explanation around it, where every
+# other type says "'X' object has no attribute 'items'". A cycler is the third
+# shape: it *has* an items attribute -- the tuple it cycles -- so the call fails
+# instead.
+case("errors/xmlattr_of_a_namespace", "{{ namespace(v=1)|xmlattr }}")
+case("errors/xmlattr_of_a_cycler", "{{ cycler('a','b')|xmlattr }}")
+for _n, _src in [
+    ("a_joiner", "{{ joiner('-')|xmlattr }}"),
+    ("a_range", "{{ range(3)|xmlattr }}"),
+    ("an_int", "{{ 1|xmlattr }}"),
+    ("a_string", "{{ 'x'|xmlattr }}"),
+    ("a_list", "{{ [1]|xmlattr }}"),
+]:
+    case(f"errors/xmlattr_of_{_n}", _src)
+
+# A loaded template is cached under `(weakref(loader), name)`, so each candidate
+# is hashed as part of a tuple before it is looked up -- and an unhashable one
+# raises there rather than missing. gojja2 stringified it and reported
+# TemplatesNotFound with its repr. It is per candidate, so the second case reports
+# the list and not the miss on 'nope' that precedes it.
+#
+# `{% import %}`, `{% extends %}` and `{% from %}` take a name rather than a list,
+# so they hash the whole value and already said so -- errors/import_list above.
+# Only the candidate list read its way past the hash.
+for _n, _src in [
+    ("a_list", "{% include [['x']] %}"),
+    ("after_a_miss", "{% include ['nope', ['x']] %}"),
+    ("in_a_tuple", "{% include ((['x'],)) %}"),
+    ("a_dict_candidate", "{% include [{'a': 1}] %}"),
+]:
+    case(f"errors/include_unhashable_candidate_{_n}", _src, __templates__=INC)
+# ...and the candidates that *are* hashable and simply miss, which is what keeps
+# the hash from swallowing the message.
+case("errors/include_candidates_miss",
+     "{% include [1] %}", __templates__=INC)
+case("include/select_hashable_candidates",
+     "{% include ['nope', 'inc.html'] %}|{% include [((1, 2)), 'inc.html'] %}",
+     __templates__=INC)
 case("errors/import_number", "{% import 1 as m %}{{ m }}", __templates__=INC)
 case("errors/import_none", "{% import none as m %}{{ m }}", __templates__=INC)
 case("errors/import_list", "{% import ['a'] as m %}{{ m }}", __templates__=INC)
@@ -428,6 +1106,38 @@ case("include/filter_with_context", "{% filter escape %}{% include 'inc.txt' %}{
      __templates__=BYPASS)
 case("include/filter_bypass_order", "{% filter upper %}a{% include 'inc.txt' without context %}b{% endfilter %}",
      __templates__=BYPASS)
+# An {% import %} target is *removed* from the template's exports, which is one
+# line of jinja2's generator -- `context.exported_vars.discard(target)` -- and
+# the opposite of what gojja2 did. So a module that imports another does not
+# re-export it, and the discard undoes an earlier `{% set %}` of that name while
+# a later one puts it back. Nothing observes it except a template that imports
+# the importer, which is why it went unnoticed.
+_EXPMOD = {
+    "inner.txt": "{% set q = 9 %}{% macro im() %}IM{% endmacro %}",
+    "imp.txt": "{% import 'inner.txt' as sub %}{% set a = 1 %}",
+    "fromimp.txt": "{% from 'inner.txt' import q %}{% set a = 1 %}",
+    "reset.txt": "{% set sub = 'first' %}{% import 'inner.txt' as sub %}",
+    "reimp.txt": "{% import 'inner.txt' as sub %}{% set sub = 'after' %}",
+    "under.txt": "{% import 'inner.txt' as _sub %}{% set a = 1 %}",
+}
+for _n, _src in [
+    ("import_target_is_not_exported",
+     "{% import 'imp.txt' as m %}[{{ m.sub is defined }}][{{ m.a }}]"),
+    ("import_target_is_undefined",
+     "{% import 'imp.txt' as m %}[{{ m.sub.q }}]"),
+    ("from_import_target_is_not_exported",
+     "{% import 'fromimp.txt' as m %}[{{ m.q is defined }}][{{ m.a }}]"),
+    ("import_discards_an_earlier_set",
+     "{% import 'reset.txt' as m %}[{{ m.sub is defined }}]"),
+    ("a_later_set_exports_again",
+     "{% import 'reimp.txt' as m %}[{{ m.sub is defined }}][{{ m.sub }}]"),
+    ("an_underscore_import_target",
+     "{% import 'under.txt' as m %}[{{ m._sub is defined }}][{{ m.a }}]"),
+    ("what_a_module_does_export",
+     "{% import 'inner.txt' as m %}[{{ m.q is defined }}][{{ m.im is defined }}]"),
+]:
+    case("modules/" + _n, _src, __templates__=dict(_EXPMOD))
+
 case("include/setblock_bypass", "{% set v %}{% include 'inc.txt' without context %}{% endset %}[{{ v }}]",
      __templates__=BYPASS)
 
@@ -569,6 +1279,22 @@ case("escape/volatile_concat_nested", "{% autoescape yes %}{% autoescape true %}
      yes=True, mk="<i>", s="a&b")
 case("escape/volatile_concat_macro", "{% autoescape yes %}{% macro q() %}{{ (mk|safe) ~ s }}{% endmacro %}{{ q() }}{% endautoescape %}",
      yes=True, mk="<i>", s="a&b")
+# And the same `~` asymmetric between the *folded* and the run-time path, with no
+# volatility involved: Concat.as_const joins `str()` of each operand, so a Markup
+# that the folder can see loses its safety and the output escapes it -- while the
+# run-time concat answers Markup and the output leaves it alone. Two spellings of
+# one expression, two answers, and jinja2 does the same.
+#
+# This is the exception TestFoldedMatchesUnfolded carries: it requires the two
+# paths to agree everywhere else, and requires *these* to differ, so the
+# exception cannot quietly become true.
+case("escape/concat_markup_folded_and_not",
+     "{% autoescape true %}{{ ('<b>'|safe) ~ 'x' }}|{{ 'x' ~ ('<b>'|safe) }}|"
+     "{% set m = '<b>'|safe %}{{ m ~ 'x' }}|{{ 'x' ~ m }}|"
+     "{{ ('<b>'|safe) ~ ('<i>'|safe) }}{% endautoescape %}")
+case("escape/concat_markup_is_escaped_either_way",
+     "{% autoescape true %}{{ (('<b>'|safe) ~ 'x') is escaped }}|"
+     "{% set m = '<b>'|safe %}{{ ((m ~ 'x')) is escaped }}{% endautoescape %}")
 
 # Markup on the left of * settles the operation before an undefined on the
 # right can raise: Markup.__mul__ asks for __index__ and lets that TypeError
@@ -722,7 +1448,1084 @@ for kind in ["default", "chainable", "debug", "strict"]:
     case(f"undefined/{kind}_print", "[{{ nope }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_attr", "[{{ nope.attr }}]", __settings__={"undefined": kind})
     case(f"undefined/{kind}_bool", "{% if nope %}y{% else %}n{% endif %}", __settings__={"undefined": kind})
-    case(f"undefined/{kind}_iter", "{% for x in nope %}{{ x }}{% endfor %}", __settings__={"undefined": kind})
+# PyBytes_Format words a float verb's refusal after the *verb* rather than after
+# the type -- "float argument required, not str" where PyUnicode_Format says
+# "must be real number, not str" -- and says the same for an integer too wide for
+# a float64, where the str side reports the overflow. One conversion either works
+# or does not there; it does not distinguish why. The integer verbs agree on both
+# sides, which is what made the float split look like it did not exist.
+#
+# Found by teaching the render differential to write a *bytes* format at all:
+# PyBytes_Format is a different function with its own verbs and its own wording,
+# and the generator had only ever written str ones.
+for _n, _src in [
+    ("bytes_float_of_str", "{% set s = 'x' %}{{ ('[%f]'.encode()) % s }}"),
+    ("str_float_of_str", "{% set s = 'x' %}{{ '[%f]' % s }}"),
+    ("bytes_float_of_list", "{% set l = [] %}{{ ('[%f]'.encode()) % l }}"),
+    ("bytes_exp_of_list", "{% set l = [] %}{{ ('[%e]'.encode()) % l }}"),
+    ("bytes_float_of_none", "{% set n = none %}{{ ('[%f]'.encode()) % n }}"),
+    ("bytes_float_of_wide_int", "{% set n = 10 ** 400 %}{{ ('[%f]'.encode()) % n }}"),
+    ("str_float_of_wide_int", "{% set n = 10 ** 400 %}{{ '[%f]' % n }}"),
+    ("bytes_int_of_str", "{% set s = 'x' %}{{ ('[%d]'.encode()) % s }}"),
+    ("bytes_hex_of_str", "{% set s = 'x' %}{{ ('[%x]'.encode()) % s }}"),
+]:
+    case(f"format/percent_verb_{_n}", _src)
+# The bytes conversions that must keep working, including the width a float64
+# still holds and the integer verb a wide int still formats.
+case("format/percent_bytes_verbs",
+     "{% set n = 42 %}{% set w = 2 ** 70 %}{% set b = 10 ** 400 %}"
+     "{{ ('[%f]'.encode()) % n }}|{{ ('[%f]'.encode()) % w }}|"
+     "{{ ('[%d]'.encode()) % b }}|{{ ('[%b]'.encode()) % 'ab'.encode() }}|"
+     "{{ ('[%c]'.encode()) % 65 }}|{{ ('[%(k)b]'.encode()) % {'k': 'v'.encode()} }}")
+
+# jinja2's _load_template checks for a loader before it looks at the name at all,
+# so an environment with no loader reports *itself* rather than an unhashable list
+# or an undefined name. A selection is the exception: select_template refuses an
+# empty list before it looks up any name, so `{% include [] %}` says so even with
+# no loader. gojja2 reported the name ahead of the loader in three of those.
+#
+# These cases have no __settings__, so they compile in the corpus environment,
+# which has a loader -- the no-loader half is in loader_test.go, since a corpus
+# case cannot ask for an environment without one.
+for _n, _src in [
+    ("extends_a_list", "{% set e = [1] %}{% extends e %}"),
+    ("extends_an_empty_list", "{% set e = [] %}{% extends e %}"),
+    ("extends_a_dict", "{% set d = {'a': 1} %}{% extends d %}"),
+    ("include_an_empty_list", "{% set e = [] %}{% include e %}"),
+    ("extends_an_undefined", "{% extends nope %}"),
+    ("include_an_undefined", "{% include nope %}"),
+    ("extends_a_number", "{% set n = 1 %}{% extends n %}"),
+]:
+    case(f"errors/template_name_{_n}", _src)
+
+# The last reachable cluster from the audit, all of it already in agreement. The
+# four filter-arity ones go through the *generated* filter table rather than the
+# hand-written refusal beneath it, which is the same shadowing the method table
+# does -- so those sites stay on the list and the cases grade jinja2's wording.
+for _n, _src in [
+    ("replace_missing_old", "{% set s = 'a' %}{{ s|replace(new='b') }}"),
+    ("replace_missing_new", "{% set s = 'a' %}{{ s|replace(old='a') }}"),
+    ("attr_missing_name_splatted", "{% set d = {'a': 1} %}{{ d|attr(**{}) }}"),
+    ("groupby_missing_attribute", "{% set l = [1] %}{{ l|groupby() }}"),
+    # A Cycler keeps its rotation in an attribute named `items`, so a filter
+    # that calls one finds a tuple and fails trying to call it.
+    ("cycler_through_dictsort", "{% set c = cycler('a','b') %}{{ c|dictsort }}"),
+    ("cycler_through_xmlattr", "{% set c = cycler('a','b') %}{{ c|xmlattr }}"),
+    # |random over a mapping indexes it by number.
+    ("random_over_a_mapping", "{% set d = {'a': 1} %}{{ d|random }}"),
+    # json.dumps takes str, int, float, bool and None as keys and nothing else.
+    ("tojson_tuple_key", "{% set t = (1, 2) %}{% set d = {t: 1} %}{{ d|tojson }}"),
+]:
+    case(f"errors/{_n}", _src)
+# |round's two methods convert through an integer, so an infinity refuses there
+# while the default method answers one. A NaN never reaches |filesizeformat's
+# int(bytes) branch -- `bytes < base` is false for it -- so it formats as "nan".
+case("filters/round_of_nonfinite",
+     "{% set a = 1e308 %}{% set b = a * 10 %}{{ b|round }}|{{ (b - b)|round }}")
+for _n, _m in [("ceil", "ceil"), ("floor", "floor")]:
+    case(f"errors/round_{_n}_of_infinity",
+         "{% set a = 1e308 %}{% set b = a * 10 %}{{ b|round(0, '" + _m + "') }}")
+
+# `%` decides between "a mapping" and "one positional argument" by asking whether
+# the right operand supports subscripting, and the exceptions are the format's
+# *own* type: PyUnicode_Format names tuple and str, PyBytes_Format names tuple,
+# bytes and bytearray. So a bytes counts as a mapping when a str is formatted --
+# `"0" % b""` renders "0" -- and does not when a bytes is, where `b"0" % b""` is
+# "not all arguments converted". Only the str half was implemented, so a leftover
+# bytes argument was silently dropped.
+for _n, _src in [
+    ("bytes_format_bytes_arg", "{% set b = 'a'.encode() %}{{ b % b }}"),
+    ("bytes_format_leftover", "{% set b = '0'.encode() %}{% set e = ''.encode() %}{{ b % e }}"),
+    ("bytes_format_str_arg", "{% set b = 'a'.encode() %}{% set s = 'a' %}{{ b % s }}"),
+    ("str_format_bytes_arg", "{% set s = 'a' %}{% set b = 'a'.encode() %}{{ s % b }}"),
+    ("str_format_bytes_arg_used", "{% set s = '0' %}{% set e = ''.encode() %}{{ s % e }}"),
+    ("bytes_format_list_arg", "{% set b = '0'.encode() %}{% set l = [] %}{{ b % l }}"),
+    ("bytes_format_consumed", "{% set b = '%s'.encode() %}{% set e = ''.encode() %}{{ b % e }}"),
+    ("bytes_format_named_key",
+     "{% set b = '%(k)s'.encode() %}{% set d = {'k': 'v'.encode()} %}{{ b % d }}"),
+    ("str_format_leftover", "{% set s = 'a' %}{% set t = 'b' %}{{ s % t }}"),
+]:
+    case(f"format/percent_{_n}", _src)
+# The printf refusals the audit listed, which already agreed.
+for _n, _src in [
+    ("mapping_required", "{% set s = '%(a)s' %}{% set n = 1 %}{{ s % n }}"),
+    ("missing_key", "{% set s = '%(a)s' %}{% set d = {'b': 1} %}{{ s % d }}"),
+    ("incomplete", "{% set s = '%' %}{% set n = 1 %}{{ s % n }}"),
+    ("incomplete_key", "{% set s = '%(a' %}{% set d = {'a': 1} %}{{ s % d }}"),
+    ("incomplete_after_key", "{% set s = '%(a)' %}{% set d = {'a': 1} %}{{ s % d }}"),
+    ("not_enough_arguments", "{% set s = '%s%s' %}{% set l = [1] %}{{ s % l }}"),
+    ("star_wants_int", "{% set s = '%*s' %}{% set l = ['a', 'b'] %}{{ s % l }}"),
+    ("star_precision_wants_int", "{% set s = '%.*f' %}{% set l = ['a', 1.5] %}{{ s % l }}"),
+    ("c_requires_int_or_char", "{% set s = '%c' %}{% set l = ['ab'] %}{{ s % l }}"),
+    ("d_requires_a_number", "{% set s = '%d' %}{% set l = [] %}{{ s % l }}"),
+    # A *str* format, so the key is a str and so is the complaint. The bytes
+    # half of this is errors/percent_key_in_a_list_under_a_bytes_format; the
+    # name used to say "bytes" and grade neither.
+    ("key_in_a_list", "{% set s = '%(0)s' %}{% set l = [1] %}{{ s % l }}"),
+    ("bytes_missing_key",
+     "{% set b = '%(a)s'.encode() %}{% set d = {'b': 1} %}{{ b % d }}"),
+    ("bytes_c_out_of_range", "{% set b = '%c'.encode() %}{% set l = [300] %}{{ b % l }}"),
+    ("bytes_c_two_bytes",
+     "{% set b = '%c'.encode() %}{% set l = ['ab'.encode()] %}{{ b % l }}"),
+]:
+    case(f"format/percent_error_{_n}", _src)
+
+# A `[` in a replacement field's *name* opens an index that runs to the next `]`
+# and may hold anything: `{0[a}b]}` is the key "a}b". Scanning for `}` alone made
+# that a parse error and made `{0[x}` a *lookup* of "x" instead of the
+# unterminated field it is. Only while reading the name -- once that ends at a
+# `:` or a `!`, a `[` is an ordinary character and `{0:[^5}` fills with one.
+for _n, _src, _ctx in [
+    ("brace_in_a_key", "{0[a}b]}", "{% set d = {'a}b': 1} %}"),
+    ("open_brace_in_a_key", "{0[a{b]}", "{% set d = {'a{b': 1} %}"),
+    ("colon_in_a_key", "{0[a:b]}", "{% set d = {'a:b': 1} %}"),
+    ("unterminated_index", "{0[x}", "{% set d = {'x': 1} %}"),
+    ("unterminated_empty_index", "{0[}", "{% set d = {'x': 1} %}"),
+    ("unterminated_numeric_index", "{0[0}", "{% set d = {'x': 1} %}"),
+    ("unterminated_index_with_spec", "{0[x}:5}", "{% set d = {'x': 1} %}"),
+    ("index_without_closing_brace", "{0[0]", "{% set d = {'x': 1} %}"),
+]:
+    case(f"format/field_name_{_n}", _ctx + "{% set s = '" + _src + "' %}{{ s.format(d) }}")
+# ...and the shapes a bracket must *not* capture, so the rule cannot spread into
+# the format spec.
+case("format/spec_fill_is_a_bracket",
+     "{% set n = 1 %}{{ '{0:[^5}'.format(n) }}|{{ '{0:]^5}'.format(n) }}|"
+     "{{ '{0!r:[^7}'.format(n) }}|{{ '{0:{1}}'.format(n, 5) }}")
+case("format/nested_index_and_spec",
+     "{% set l = [[1],[2]] %}{% set d = {'b': 'x'} %}{{ '{0[1][0]}'.format(l) }}|"
+     "{{ '{a[b]!r:>{w}}'.format(a=d, w=6) }}")
+
+# list.sort's call shape was not checked at all, and the reason is mechanical:
+# gen_methods.py reads the method maps as *text*, and sort is registered in
+# init() because naming it in the literal is an initialisation cycle. So the
+# generated table has never had an entry for it. CPython counts every argument
+# first, saying "arguments" when any was positional and "keyword arguments" when
+# none was, then refuses a positional at all, then an unknown name -- and none of
+# those messages carries a count where the generator looks for one, so it is
+# checked by hand. TestEveryMethodHasASignature is what found this and what will
+# find the next one.
+for _n, _src in [
+    ("one_positional", "{% set l = [2,1] %}{{ l.sort(1) }}"),
+    ("two_positional", "{% set l = [2,1] %}{{ l.sort(1, 2) }}"),
+    ("three_positional", "{% set l = [2,1] %}{{ l.sort(1, 2, 3) }}"),
+    ("three_keyword", "{% set l = [2,1] %}{{ l.sort(nope=1, nope2=2, nope3=3) }}"),
+    ("mixed_over_the_count", "{% set l = [2,1] %}{{ l.sort(1, key=none, reverse=true) }}"),
+    ("positional_with_keyword", "{% set l = [2,1] %}{{ l.sort(1, nope=2) }}"),
+    ("unknown_keyword", "{% set l = [2,1] %}{{ l.sort(nope=1) }}"),
+    ("known_keywords_still_sort",
+     "{% set l = [2,1] %}{{ l.sort(key=none, reverse=true) }}{{ l }}"),
+]:
+    case(f"errors/list_sort_{_n}", _src)
+# The IndexError beside it, which the same audit listed and which is real rather
+# than shadowed.
+case("errors/list_pop_out_of_range", "{% set l = [1] %}{{ l.pop(9) }}")
+
+# A fourth batch from the same audit, and every one of them already agreed: what
+# was missing was a case saying so. Written through names, for the reason the
+# batch above gives.
+for _n, _src in [
+    ("bytes_from_an_out_of_range_int",
+     "{% set b = 'a'.encode() %}{% set l = [300] %}{{ b.__class__(l) }}"),
+    ("bytes_from_a_string_element",
+     "{% set b = 'a'.encode() %}{% set l = ['a'] %}{{ b.__class__(l) }}"),
+    ("bytes_center_fill_length",
+     "{% set b = 'ab'.encode() %}{{ b.center(10, b) }}"),
+    ("bytes_ljust_fill_length",
+     "{% set b = 'ab'.encode() %}{{ b.ljust(10, b) }}"),
+    ("bytes_rjust_fill_not_bytes",
+     "{% set b = 'ab'.encode() %}{% set n = 1 %}{{ b.rjust(10, n) }}"),
+    ("str_center_fill_length", "{% set s = 'ab' %}{{ s.center(10, s) }}"),
+    ("bytes_index_missing", "{% set b = 'ab'.encode() %}{{ b.index('z'.encode()) }}"),
+    ("bytes_count_wrong_type", "{% set b = 'ab'.encode() %}{% set f = 1.5 %}{{ b.count(f) }}"),
+    ("bytes_split_empty_separator",
+     "{% set b = 'ab'.encode() %}{% set e = ''.encode() %}{{ b.split(e) }}"),
+    ("bytes_rsplit_empty_separator",
+     "{% set b = 'ab'.encode() %}{% set e = ''.encode() %}{{ b.rsplit(e) }}"),
+    ("bytes_join_a_non_iterable",
+     "{% set b = 'ab'.encode() %}{% set n = 1 %}{{ b.join(n) }}"),
+    ("bytes_translate_short_table", "{% set b = 'ab'.encode() %}{{ b.translate(b) }}"),
+    ("int_base_not_an_integer", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, s) }}"),
+    ("replace_missing_both", "{{ 'a'|replace() }}"),
+    ("replace_missing_one", "{{ 'a'|replace('a') }}"),
+    ("wordwrap_zero_width", "{% set n = 0 %}{{ 'a b'|wordwrap(n) }}"),
+    ("sum_of_bytes",
+     "{% set l = ['a'.encode()] %}{% set e = ''.encode() %}{{ l|sum(start=e) }}"),
+    ("sum_of_strings", "{% set l = ['a'] %}{% set e = '' %}{{ l|sum(start=e) }}"),
+    ("filesizeformat_of_a_list", "{% set l = [] %}{{ l|filesizeformat }}"),
+    ("attr_missing_name", "{% set d = {'a': 1} %}{{ d|attr() }}"),
+    ("cycler_with_no_items_splatted", "{% set e = [] %}{{ cycler(*e) }}"),
+]:
+    case(f"errors/{_n}", _src)
+
+# A third batch. The bug this one found: a conversion constructor counted only
+# its *positional* arguments against the maximum, so `int(s, 2, base=8)` bound
+# the keyword and answered 8 where CPython counts three arguments and refuses.
+# With a keyword present the count comes before any name -- `int(1, base=2,
+# nope=3)` reports the count, not `nope` -- while a positional-only overflow
+# keeps the per-class wording the two halves of the signature moved apart on in
+# 3.13. Three cases, three orders.
+for _n, _src in [
+    ("int_total_with_keyword", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, 2, base=8) }}"),
+    ("int_total_two_keywords", "{% set n = 1 %}{{ n.__class__(1, base=2, nope=3) }}"),
+    ("int_positional_only", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, 2, 3) }}"),
+    ("int_unexpected_keyword", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, nope=8) }}"),
+    ("int_keyword_for_the_subject", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(x=s) }}"),
+    ("str_total_with_keywords",
+     "{% set s = 'a' %}{{ s.__class__(s, 'utf-8', errors='x', encoding='y') }}"),
+    ("str_positional_only", "{% set s = 'a' %}{{ s.__class__(s, 'utf-8', 'strict', 1) }}"),
+    ("str_duplicate_binding", "{% set s = 'a' %}{{ s.__class__(s, object='b') }}"),
+    ("str_unexpected_keyword", "{% set s = 'a' %}{{ s.__class__(s, 'utf-8', nope=1) }}"),
+    ("bytes_positional_only",
+     "{% set b = 'a'.encode() %}{{ b.__class__(b, 'utf-8', 'strict', 1) }}"),
+    ("bytes_total_with_keywords",
+     "{% set b = 'a'.encode() %}{{ b.__class__(b, encoding='x', errors='y', nope=1) }}"),
+    ("int_base_still_binds", "{% set n = 1 %}{% set s = '10' %}{{ n.__class__(s, base=8) }}"),
+]:
+    case(f"classes/construct_arity_{_n}", _src)
+# The constructor refusals the same audit listed, which already agreed.
+for _n, _src in [
+    ("bytes_from_a_float", "{% set b = 'a'.encode() %}{% set f = 1.5 %}{{ b.__class__(f) }}"),
+    ("bytes_count_over_index",
+     "{% set b = 'a'.encode() %}{% set n = 10 ** 400 %}{{ b.__class__(n) }}"),
+    ("bytes_encoding_without_a_string",
+     "{% set b = 'a'.encode() %}{% set n = 10 ** 400 %}{{ b.__class__(n, 'utf-8') }}"),
+    ("list_from_a_float", "{% set l = [1] %}{% set f = 1.5 %}{{ l.__class__(f) }}"),
+]:
+    case(f"classes/construct_{_n}", _src)
+# ...and the %c and {:c} refusals, which are a code point's range and the C long
+# the conversion goes through before anything asks about the range.
+for _n, _src in [
+    ("printf_c_out_of_range", "{% set n = 1114112 %}{{ '%c' % n }}"),
+    ("format_c_out_of_range", "{% set n = 1114112 %}{{ '{:c}'.format(n) }}"),
+    ("format_c_negative", "{% set n = -1 %}{{ '{:c}'.format(n) }}"),
+    ("format_c_over_a_c_long", "{% set n = 10 ** 400 %}{{ '{:c}'.format(n) }}"),
+    ("format_c_rejects_a_sign", "{% set n = 65 %}{{ '{:+c}'.format(n) }}"),
+    ("format_c_rejects_alternate", "{% set n = 65 %}{{ '{:#c}'.format(n) }}"),
+]:
+    case(f"format/{_n}", _src)
+
+# The second batch from the same audit, and the same story: all of them already
+# agreed. Each goes through a name rather than a literal, because an all-constant
+# expression is folded by both engines and the message then comes from the fold
+# rather than from the site being graded.
+for _n, _src in [
+    ("range_step_zero", "{% set z = 0 %}{{ range(1, 5, z) }}"),
+    ("dict_two_positionals", "{% set a = 1 %}{{ dict(a, a) }}"),
+    ("cycler_with_no_items", "{{ cycler() }}"),
+    ("divisibleby_without_argument", "{% set n = 1 %}{{ n is divisibleby }}"),
+    ("sameas_without_argument", "{% set n = 1 %}{{ n is sameas }}"),
+    ("in_without_argument", "{% set n = 1 %}{{ n is in }}"),
+    ("eq_without_argument", "{% set n = 1 %}{{ n is eq }}"),
+]:
+    case(f"errors/{_n}", _src)
+for _n, _spec in [
+    ("space", "{: }"), ("sign", "{:+}"), ("alternate", "{:#}"),
+    ("equals_align", "{:=5}"), ("grouping", "{:,}"),
+]:
+    case(f"format/string_spec_rejects_{_n}",
+         "{% set s = 'x' %}{{ '" + _spec + "'.format(s) }}")
+case("format/object_format_rejects_a_spec",
+     "{% set d = {'a': 1} %}{{ '{:5}'.format(d) }}")
+
+# Messages `make ungraded` reported that no case produced. These all already
+# agreed with CPython; what was missing was a case saying so, which is the whole
+# point of that audit -- a message nothing produces reads as agreement in every
+# column of the version matrix.
+for _n, _src in [
+    ("float_fromhex_bad_type", "{{ (1.5).fromhex([1]) }}"),
+    ("float_fromhex_empty", "{{ (1.5).fromhex('') }}"),
+    ("float_fromhex_prefix_only", "{{ (1.5).fromhex('0x') }}"),
+    ("float_fromhex_too_large", "{{ (1.5).fromhex('0x1p+99999') }}"),
+    ("to_bytes_byteorder_type", "{{ (3).to_bytes(2, 1) }}"),
+    ("to_bytes_byteorder_value", "{{ (3).to_bytes(2, 'nope') }}"),
+    ("to_bytes_negative_length", "{{ (3).to_bytes(-1, 'big') }}"),
+    ("to_bytes_length_over_ssize", "{{ (3).to_bytes(9999999999999999999, 'big') }}"),
+    ("float_mod_string", "{{ 1.5 % 'x' }}"),
+    ("unary_plus_string", "{{ +'x' }}"),
+    ("unary_plus_list", "{{ +[1] }}"),
+    ("unary_minus_string", "{{ -'x' }}"),
+    # A second round of the same audit, 2026-09-28. The two sites it named here
+    # -- value/pyformat.go's trailing "format requires a mapping" and
+    # environment.go's second "empty list of templates" -- turned out to be the
+    # unreachable kind: the first is the fallback under a switch that already
+    # handles every kind isMappingArg accepts, the second is reached only
+    # through the Go SelectTemplate API. The *message* is graded either way.
+    # What was missing was the dispatch: which operand types reach it.
+    ("percent_mapping_on_a_str", "{{ '%(a)s' % 'x' }}"),
+    ("percent_mapping_on_none", "{{ '%(a)s' % none }}"),
+    ("percent_mapping_on_a_tuple", "{{ '%(a)s' % (1, 2) }}"),
+    ("percent_mapping_on_a_set", "{{ '%(a)s' % {1, 2} }}"),
+    ("percent_mapping_on_bytes", "{{ '%(a)s' % 'ab'.encode() }}"),
+]:
+    case(f"errors/{_n}", _src)
+
+# A non-finite float built at *run time* is reachable, and that took two tries to
+# see. `{{ (1e400).as_integer_ratio() }}` cannot run on CPython -- 1e400 folds to
+# an infinity and the code generator writes it out as `inf`, which is not a
+# Python name -- so I recorded those sites as ungradable. But `1e308` writes out
+# as `1e+308`, so multiplying it through a *name* overflows during the render and
+# nothing is ever written as `inf`. That is how the conversions below are
+# reached, and the lesson is that "no template can reach this" is a claim about
+# the templates tried so far.
+for _n, _src in [
+    ("int_of_infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{% set n = 1 %}{{ n.__class__(b) }}"),
+    ("int_of_nan",
+     "{% set a = 1e308 %}{% set b = a * 10 %}{% set n = 1 %}{{ n.__class__(b - b) }}"),
+    ("round_of_nan", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|round(0, 'ceil')|int }}"),
+    ("ratio_of_infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{{ b.as_integer_ratio() }}"),
+    ("ratio_of_nan", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b).as_integer_ratio() }}"),
+    # |int catches ValueError and answers its default, so a NaN through it is 0
+    # on both sides -- which is why the constructor is what reaches the message.
+    ("int_filter_of_nan", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|int }}"),
+]:
+    case(f"numbers/nonfinite_{_n}", _src)
+
+# What a NaN *is*, as opposed to what it equals.
+#
+# Every float in CPython is an object, and for every float but a NaN that makes
+# no difference, because `is` implies `==`. A NaN equals nothing, itself
+# included, so the two questions come apart -- and almost everything that
+# searches or compares a container asks the *identity* question first, because
+# that is what PyObject_RichCompareBool does. `x == x` is False and `[x] == [x]`
+# is True, for the same x, and there is no contradiction in it.
+#
+# Two NaNs computed separately are two objects, which is what tells the rule
+# from "a NaN is equal to itself after all": every case below has a twin that
+# answers the other way. The prefix is the one from the conversions above --
+# 1e400 folds and writes out as a bare `inf`, while 1e308 multiplied through a
+# name overflows during the render.
+_NAN = "{% set a = 1e308 %}{% set b = a * 10 %}{% set x = b - b %}"
+_TWO = _NAN + "{% set y = b - b %}"
+for _n, _src in [
+    # The operator itself has no identity shortcut: this is float.__eq__.
+    ("compared_directly", _NAN + "{{ x == x }}|{{ x != x }}"),
+    ("is_sameas_itself", _NAN + "{{ x is sameas x }}"),
+    ("two_are_not_sameas", _TWO + "{{ x is sameas y }}"),
+    # Containers compare their elements with the identity question.
+    ("in_a_list", _NAN + "{{ [x] == [x] }}|{{ [x] != [x] }}"),
+    ("two_in_lists", _TWO + "{{ [x] == [y] }}"),
+    ("a_fresh_nan_is_a_fresh_object", _NAN + "{{ [x] == [x + 0] }}"),
+    ("in_a_tuple", _NAN + "{{ (x, 1) == (x, 1) }}"),
+    ("nested_in_lists", _NAN + "{{ [[x]] == [[x]] }}"),
+    ("as_a_dict_value", _NAN + "{{ {'a': x} == {'a': x} }}"),
+    ("two_as_dict_values", _TWO + "{{ {'a': x} == {'a': y} }}"),
+    # Containment is the same question, asked of each candidate.
+    ("found_in_a_list", _NAN + "{{ x in [x] }}"),
+    ("another_not_found_in_a_list", _TWO + "{{ y in [x] }}"),
+    ("found_in_a_tuple", _NAN + "{{ x in (x,) }}"),
+    ("found_in_a_dict", _NAN + "{{ x in {x: 1} }}"),
+    # ...and so are the three searching list methods.
+    ("index_of_the_same_nan", _NAN + "{{ [x].index(x) }}"),
+    ("index_of_another_nan", _TWO + "{{ [x].index(y) }}"),
+    ("count_of_the_same_nan", _TWO + "{{ [x, y].count(x) }}"),
+    # A NaN key hashes by identity, which CPython has done since 3.10: the same
+    # one is one key and finds itself, two are two keys and neither finds the
+    # other.
+    ("as_a_dict_key", _NAN + "{{ {x: 1}[x] }}"),
+    ("another_key_misses", _TWO + "{{ {x: 1}.get(y, 'miss') }}"),
+    ("one_key_written_twice", _NAN + "{{ {x: 1, x: 2}|length }}"),
+    ("two_keys_are_two_entries", _TWO + "{{ {x: 1, y: 2}|length }}"),
+    # |unique keeps a set, so it dedupes by the same rule.
+    ("unique_keeps_one", _NAN + "{{ [x, x]|unique|list|length }}"),
+    ("unique_keeps_both", _TWO + "{{ [x, y]|unique|list|length }}"),
+    # The views compare as sets, so their elements go through it too.
+    ("in_a_keys_view", _NAN + "{{ {x: 1}.keys() == {x: 1}.keys() }}"),
+    ("in_an_items_view", _NAN + "{{ {'a': x}.items() == {'a': x}.items() }}"),
+    # loop.changed compares two tuples, and a tuple compares its elements.
+    ("loop_changed", _NAN + "{% for i in [1, 2] %}{{ loop.changed(x) }}{% endfor %}"),
+    ("loop_changed_by_another", _TWO +
+     "{% for i in [1, 2] %}{{ loop.changed(x if loop.first else y) }}{% endfor %}"),
+]:
+    case(f"numbers/nan_identity_{_n}", _src)
+# |filesizeformat formats a scaled float directly, and Python writes a non-finite
+# in words where Go writes "NaN" and "+Inf". A *negative* infinity lands in the
+# int(bytes) branch -- it is less than the base -- where an int64 conversion
+# wrapped it to -9223372036854775808 instead of refusing.
+for _n, _src in [
+    ("nan", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|filesizeformat }}"),
+    ("nan_binary", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (b - b)|filesizeformat(true) }}"),
+    ("infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{{ b|filesizeformat }}"),
+    ("negative_infinity", "{% set a = 1e308 %}{% set b = a * 10 %}{{ (-b)|filesizeformat }}"),
+    # A *finite* negative lands in the same branch, and int() of a float is
+    # exact however wide: int(-1e308) is 309 digits. The int64 conversion gave
+    # every magnitude past 2**63 the same answer, -9223372036854775808 -- which
+    # is also the right answer for the one just past the boundary, so the wide
+    # case is what tells the two apart.
+    ("wide_negative", "{{ -1e308|filesizeformat }}"),
+    ("wide_negative_binary", "{{ -1e308|filesizeformat(true) }}"),
+    ("wide_negative_from_text", "{{ '-1e308'|filesizeformat }}"),
+    ("just_past_int64", "{{ -9223372036854775809|filesizeformat }}"),
+    ("truncates_toward_zero",
+     "{{ -1.5|filesizeformat }}|{{ -0.5|filesizeformat }}|{{ 1.5|filesizeformat }}|"
+     "{{ -1e-320|filesizeformat }}"),
+]:
+    case(f"filters/filesizeformat_{_n}", _src)
+
+# jinja2 writes a folded constant into the generated Python as its repr, and a
+# float infinity's repr is `inf` -- which is not a Python name. So a template
+# that folds one into a position the code generator writes out cannot run there:
+# it raises NameError at render. Not every position does; a plain print puts the
+# value in the module's constant table instead. gojja2 answers the number.
+# Listed in known_failures.txt -- it accepts what CPython cannot run.
+for _n, _src in [
+    ("in_a_set", "{% set v = 'inf'|float %}{{ v }}"),
+    ("in_a_filter_default", "{{ x|default('inf'|float) }}"),
+    ("nan_in_a_set", "{% set v = 'nan'|float %}{{ v }}"),
+]:
+    case(f"divergence/folded_infinity_{_n}", _src)
+# The positions that do work on both, so the entry above stays about where the
+# constant lands and not about infinities.
+case("numbers/folded_infinity_prints",
+     "{{ 'inf'|float }}|{{ 'nan'|float }}|{{ '-inf'|float }}|"
+     "{{ ('inf'|float) + 1 }}|{{ ('inf'|float)|string }}|{{ 1e400 }}|"
+     "{{ 'inf'|float|abs }}")
+
+# An integer too wide for a float64 is an OverflowError in Python, not an
+# infinity -- and every site that converts one has to say so. `//`, `%` and `**`
+# went through the checked coercion and were right, which is what made `+`, `-`,
+# `*`, `/`, |float, |filesizeformat, |sum and the two format paths look
+# deliberate: they answered "inf". True division of two ints words it after the
+# division rather than after the operand, because the quotient is what does not
+# fit.
+_BIG = "(10 ** 400)"
+for _n, _src in [
+    ("float_filter", "{{ %s|float }}"),
+    ("float_filter_with_default", "{{ %s|float(1.0) }}"),
+    ("plus_float", "{{ %s + 1.5 }}"),
+    ("float_plus", "{{ 1.5 + %s }}"),
+    ("minus_float", "{{ %s - 1.5 }}"),
+    ("float_minus", "{{ 1.5 - %s }}"),
+    ("times_float", "{{ %s * 1.5 }}"),
+    ("divided", "{{ %s / 2 }}"),
+    ("divided_by_float", "{{ %s / 1.5 }}"),
+    ("floordiv_float", "{{ %s // 1.5 }}"),
+    ("mod_float", "{{ %s %% 1.5 }}"),
+    ("power_float", "{{ %s ** 0.5 }}"),
+    ("filesizeformat", "{{ %s|filesizeformat }}"),
+    ("negated_through_float", "{{ -%s|float }}"),
+    ("through_abs", "{{ %s|abs|float }}"),
+    ("summed_with_a_float", "{{ [%s, 1.5]|sum }}"),
+    ("printf_f", "{{ '%%f' %% %s }}"),
+    ("format_f", "{{ '{:f}'.format(%s) }}"),
+    ("format_e", "{{ '{:e}'.format(%s) }}"),
+]:
+    case(f"numbers/wide_int_to_float_{_n}", _src % _BIG)
+# The boundary, and the shapes that must keep working: 2**1023 fits and 2**1024
+# does not, a comparison never converts, and float() of a *string* overflows to
+# inf as Python's does.
+case("numbers/wide_int_to_float_boundary",
+     "{{ (2 ** 1023)|float }}|{{ (2 ** 1024)|float is defined }}")
+case("numbers/wide_int_no_conversion",
+     "{{ (10 ** 400) < 1.5 }}|{{ (10 ** 400) == 1.5 }}|{{ (10 ** 400)|round }}|"
+     "{{ (10 ** 400)|int }}|{{ (10 ** 400)|string|length }}|{{ '1e400'|float }}")
+
+# A float power that overflows is an OverflowError, not an infinity -- and `**`
+# is the only operator that does it. CPython's float_pow reads errno from the
+# platform pow(), where the rest of the arithmetic saturates: `1e308 * 10` is
+# inf and `2.0 ** 1024` raises. An *infinite operand* is answered before pow()
+# is reached, so `(1e308 * 10) ** 2` is inf again, and an underflow is not an
+# overflow. gojja2 answered inf for all of it; found by the fuzzer, on
+# `{{ 1e16 ** 3 ** 3 ** 3 ** 0 }}`.
+for _n, _src in [
+    ("float_power_overflows", "{{ 1e16 ** 27 }}"),
+    ("float_power_overflows_by_a_little", "{{ 2.0 ** 1024 }}"),
+    ("float_power_at_the_boundary", "{{ 2.0 ** 1023 }}"),
+    ("float_power_overflows_negative", "{{ (-2.0) ** 1024 }}"),
+    ("float_power_overflows_by_a_float_exponent", "{{ 1.7976931348623157e308 ** 1.0000001 }}"),
+    ("float_power_overflows_an_int_base", "{{ 10 ** 400.0 }}"),
+    ("float_power_overflow_in_a_test", "{% if 1e16 ** 27 %}x{% endif %}"),
+    ("float_power_overflow_in_a_comparison", "{{ 1e16 ** 27 == 0 }}"),
+    ("float_power_overflow_in_a_list", "{{ [1e16 ** 27] }}"),
+    ("float_power_underflows", "{{ 0.5 ** 10000 }}|{{ 1e-300 ** 5 }}"),
+    ("float_power_of_an_infinity", "{{ (1e308 * 10) ** 2 }}|{{ (1e308 * 10) ** 0 }}|"
+     "{{ (1e308 * 10) ** -1 }}|{{ 2 ** (1e308 * 10) }}|{{ 0.5 ** (1e308 * 10) }}"),
+    ("float_power_by_a_name", "{{ 1e16 ** n3 }}|{{ 1e16 ** n3 ** 3 }}", ),
+    ("other_operators_saturate", "{{ 1e300 * 1e300 }}|{{ 1e308 + 1e308 }}|{{ -1e308 - 1e308 }}"),
+]:
+    case("numbers/" + _n, _src, n3=3)
+
+# do_items checks `isinstance(value, Undefined)` and returns before it yields
+# anything, with no class distinction -- the filter is documented as answering
+# an empty iterable for an undefined, and a StrictUndefined is one. Raising for
+# strict alone looked like the rule every other filter follows and is not this
+# filter's.
+for _u in ("strict", "chainable", "debug", ""):
+    _n = _u or "default"
+    case(f"undefined/items_of_undefined_{_n}",
+         "{{ nope|items|list }}|{{ 'x'.a|items|list }}|"
+         "{% for k, v in nope|items %}x{% endfor %}",
+         __settings__={"undefined": _u} if _u else {})
+# A set hashes what it is asked about, and a template can ask about anything --
+# so `{{ {} in (d.keys() - 'a') }}` is "unhashable type: 'dict'". Set.Contains had
+# no channel for that complaint and hashed with the form that cannot fail, whose
+# guard is a panic; the render answered "internal error in gojja2 (please report
+# this)". Found by a soak seed, on the only set arithmetic a template can write.
+# The dict is written in the template rather than passed as context, so the case
+# renders through both paths: a Go map cannot carry a dictionary's order, and
+# TestBothRenderPathsAgree skips every case whose context holds one.
+_Q = "{% set q = {'b': 2, 'a': 1, 'C': 3} %}"
+for _n, _src in [
+    ("a_dict", "{{ {} in (q.keys() - 'a') }}"),
+    ("a_list", "{{ [] in (q.keys() - 'a') }}"),
+    ("a_nonempty_dict", "{{ {'a': 1} in (q.keys() - 'a') }}"),
+    ("a_view", "{{ q.keys() in (q.keys() - 'a') }}"),
+]:
+    case(f"errors/set_membership_of_{_n}", _Q + _src)
+# ...and the hashable ones, so the check is a check and not a refusal.
+case("methods/set_membership",
+     _Q + "{{ 'a' in (q.keys() - 'x') }}|{{ 'a' in (q.keys() - 'a') }}|"
+     "{{ ((1, 2)) in (q.items() - []) }}")
+for _u in ("strict", ""):
+    _n = _u or "default"
+    case(f"undefined/set_membership_of_an_undefined_{_n}",
+         _Q + "{{ nope in (q.keys() - 'a') }}",
+         __settings__={"undefined": _u} if _u else {})
+
+# |urlencode puts each half of a pair through str(), so a StrictUndefined in
+# either position refuses rather than encoding as nothing -- jinja2 writes
+# `f"{quote(k)}={quote(v)}"`. gojja2 converted without consulting the refusal, so
+# `{{ [(nope, 'x')]|urlencode }}` rendered "=x". Found by a soak seed through
+# `|groupby`, whose group key was an undefined and whose pair `|urlencode` then
+# encoded.
+for _u in ("strict", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/urlencode_an_undefined_key_{_n}",
+         "{{ [(nope, 'x')]|urlencode }}", __settings__=_set)
+    case(f"undefined/urlencode_an_undefined_value_{_n}",
+         "{{ [('x', nope)]|urlencode }}", __settings__=_set)
+    case(f"undefined/urlencode_an_undefined_dict_value_{_n}",
+         "{{ {'a': nope}|urlencode }}", __settings__=_set)
+    case(f"undefined/urlencode_a_group_key_{_n}",
+         "{{ {(1,2): 'x'}|groupby('age')|list|urlencode }}", __settings__=_set)
+# ...and the pairs with nothing undefined in them, so the conversion is still a
+# conversion.
+case("filters/urlencode_converts_each_half",
+     "{{ [('a', 1), ('b', none)]|urlencode }}|{{ {'a': 1, 'b': [1,2]}|urlencode }}|"
+     "{{ [(1.5, true)]|urlencode }}")
+
+# Hashing a tuple walks its elements in turn, so the first one with something to
+# say decides. `(nope, [1])` is the undefined's own error under StrictUndefined
+# and `([1], nope)` is "unhashable type: 'list'" -- the same pair either way
+# round under every other class, where an undefined hashes by identity. gojja2
+# consulted only the *outer* value's refusal, so an undefined inside a tuple
+# hashed by identity and whatever came after it won. Found by a soak seed through
+# `|groupby`, whose group tuples carry the grouping key and a list.
+for _u in ("strict", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/hash_a_tuple_undefined_first_{_n}",
+         "{{ {(nope, [1]): 1} }}", __settings__=_set)
+    case(f"undefined/hash_a_tuple_list_first_{_n}",
+         "{{ {([1], nope): 1} }}", __settings__=_set)
+    # Nothing unhashable at all, so only the refusal can speak.
+    case(f"undefined/hash_a_tuple_undefined_alone_{_n}",
+         "{{ [(nope, 1)]|unique|list }}", __settings__=_set)
+    # ...and nested, where the walk has to descend before it decides.
+    case(f"undefined/hash_a_tuple_nested_{_n}",
+         "{{ {(1, (nope, [1])): 1} }}", __settings__=_set)
+    # A groupby group is a tuple whose first element is the key, which is how
+    # the soak reached it.
+    case(f"undefined/hash_a_group_tuple_{_n}",
+         "{{ {'a': 1}|groupby('city')|list|unique|list }}", __settings__=_set)
+# ...and the pair with nothing wrong with it, so the walk cannot simply refuse.
+case("methods/hash_a_tuple_of_hashables", "{{ {(1, (2, 'x')): 'y'}[(1, (2, 'x'))] }}")
+
+# An *empty* container answers before the item's refusal is consulted, because
+# the refusal comes from the comparison each candidate makes and there are no
+# candidates: `{{ nope in [] }}` is False under StrictUndefined, and so is the
+# same question of an empty tuple, an empty range and an empty values view.
+#
+# A dict is the exception, and a keys or items view with it: they *hash* the item
+# before they look for it, so `{{ nope in {} }}` raises on an empty dict where an
+# empty list does not. gojja2 refused the item up front for every container --
+# which was the right answer by the wrong route, and wrong for the empty ones.
+# A range answers the refusal from its length rather than by walking to find
+# something to compare against; see rangeObject.ContainsErr and
+# TestStrictRangeMembershipIsConstantTime for why.
+for _u in ("strict", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/membership_of_an_empty_list_{_n}",
+         "{{ nope in [] }}|{{ nope in ((())) }}", __settings__=_set)
+    # The two halves are separate cases on purpose: put them together and the
+    # non-empty one raises, so the golden is the error either way and nothing
+    # grades the empty one.
+    case(f"undefined/membership_of_an_empty_range_{_n}",
+         "{{ nope in range(0) }}", __settings__=_set)
+    case(f"undefined/membership_of_a_range_{_n}",
+         "{{ nope in range(3) }}", __settings__=_set)
+    case(f"undefined/membership_of_an_empty_values_view_{_n}",
+         "{% set q = {} %}{{ nope in q.values() }}", __settings__=_set)
+    # ...and the three that hash, so an empty one refuses too.
+    case(f"undefined/membership_of_an_empty_dict_{_n}",
+         "{% set q = {} %}{{ nope in q }}", __settings__=_set)
+    case(f"undefined/membership_of_an_empty_keys_view_{_n}",
+         "{% set q = {} %}{{ nope in q.keys() }}", __settings__=_set)
+    case(f"undefined/membership_of_an_empty_items_view_{_n}",
+         "{% set q = {} %}{{ nope in q.items() }}", __settings__=_set)
+# A range compares for real in CPython whenever the item is not an exact int, so
+# these are the answers the arithmetic has to match.
+case("subscript/range_membership_of_a_non_integer",
+     "{{ 'x' in range(3) }}|{{ 0.5 in range(3) }}|{{ 1.0 in range(3) }}|"
+     "{{ [1] in range(3) }}|{{ true in range(3) }}|{{ 'x' in range(0) }}")
+
+# A bytes `%` float verb reports the *type* of an undefined, where a str one
+# lets the undefined's own error out.
+#
+# formatfloat in bytesobject.c replaces whatever the conversion raised with
+# "float argument required, not Undefined", so the undefined's error never
+# escapes there. The integer verbs do not do that, and neither does the str
+# formatter, so the same argument gives three different answers depending on
+# which of the two format types and which half of the verbs it meets. gojja2
+# refused every undefined for `diueEfFgG` before it looked at the format's type.
+# Found by a soak seed, on an undefined that `|last` had built.
+for _u in ("strict", "chainable", "debug", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"format/percent_bytes_float_of_an_undefined_{_n}",
+         "{{ ('[%f]'.encode()) % nope }}", __settings__=_set)
+    case(f"format/percent_bytes_exp_of_an_undefined_{_n}",
+         "{{ ('[%e]'.encode()) % nope }}|{{ ('[%G]'.encode()) % nope }}", __settings__=_set)
+    # The halves that keep the undefined's error: a bytes integer verb, and a
+    # str float verb.
+    case(f"format/percent_bytes_int_of_an_undefined_{_n}",
+         "{{ ('[%d]'.encode()) % nope }}", __settings__=_set)
+    case(f"format/percent_str_float_of_an_undefined_{_n}",
+         "{{ '[%f]' % nope }}", __settings__=_set)
+# ...and the hint an undefined built by a filter carries, which is what makes
+# the difference visible rather than two spellings of the same name.
+case("format/percent_bytes_float_of_a_built_undefined",
+     "{{ ('[%f]'.encode()) % -1.5|attr('name')|last }}")
+case("format/percent_str_float_of_a_built_undefined",
+     "{{ '[%f]' % -1.5|attr('name')|last }}")
+
+# `view - undefined` iterates the undefined rather than asking it for a value.
+#
+# dictviews_sub builds a set from the view and hands the other operand to
+# set.difference_update, which *iterates* it -- so the right operand's refusal is
+# never consulted, and the default Undefined, which iterates empty, leaves the
+# view's elements untouched. gojja2 refused both operands before it looked at
+# either, so `{{ d.keys() - nope }}` raised where jinja2 answers the keys.
+#
+# The two cases that must keep raising are what makes it a rule about the *view*
+# and not about `-`: a values view is no set operand at all, so it falls through
+# to the undefined's __rsub__, and an undefined on the left is asked for __sub__
+# first and raises whatever is on the right. A one-key dict is used throughout
+# because a set of two or more prints in a hash order nothing can reproduce.
+for _u in ("strict", "chainable", "debug", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/view_minus_an_undefined_keys_{_n}",
+         "{% set q = {'a': 1} %}{{ q.keys() - nope }}", __settings__=_set)
+    case(f"undefined/view_minus_an_undefined_items_{_n}",
+         "{% set q = {'a': 1} %}{{ q.items() - nope }}", __settings__=_set)
+    case(f"undefined/view_minus_an_undefined_values_{_n}",
+         "{% set q = {'a': 1} %}{{ q.values() - nope }}", __settings__=_set)
+    case(f"undefined/an_undefined_minus_a_view_{_n}",
+         "{% set q = {'a': 1} %}{{ nope - q.keys() }}", __settings__=_set)
+# ...and an empty list on the right, which is the same answer by a route that
+# has no undefined in it at all.
+case("methods/dict_view_difference_empty_list",
+     "{% set q = {'a': 1} %}{{ q.keys() - [] }}|{{ q.items() - [] }}")
+
+# Comparing two views, which is a set comparison and not a sequence one: order
+# does not matter, a values view has no __eq__ at all so two of them are equal
+# only by identity, and a view is never equal to a view of another kind or to a
+# dict. `dictview.EqualsErr` had every one of these rules written down and not
+# one case reaching them -- `go tool cover` put nothing on the comparison at
+# all, because no corpus case had ever compared two views of the same kind.
+for _n, _src in [
+    ("keys_ignore_order", "{{ {'a': 1, 'b': 2}.keys() == {'b': 2, 'a': 1}.keys() }}"),
+    ("items_ignore_order", "{{ {'a': 1, 'b': 2}.items() == {'b': 2, 'a': 1}.items() }}"),
+    ("keys_differ_in_length", "{{ {'a': 1, 'b': 2}.keys() == {'a': 1}.keys() }}"),
+    ("items_differ_in_value", "{{ {'a': 1}.items() == {'a': 2}.items() }}"),
+    # Two values views are two objects, so this is False however equal they look.
+    ("values_are_never_equal", "{{ {'a': 1}.values() == {'a': 1}.values() }}"),
+    # ...and one values view is the same object as itself.
+    ("a_values_view_equals_itself",
+     "{% set q = {'a': 1} %}{% set v = q.values() %}{{ v == v }}"),
+    ("keys_against_items", "{{ {'a': 1}.keys() == {'a': 1}.items() }}"),
+    ("keys_against_the_dict", "{{ {'a': 1}.keys() == {'a': 1} }}"),
+    ("keys_not_equal", "{{ {'a': 1}.keys() != {'a': 1}.keys() }}"),
+    # The elements compare as Python compares them, so an int key and the bool
+    # or float that equals it are the same element.
+    ("keys_across_int_and_bool", "{{ {1: 'x'}.keys() == {true: 'x'}.keys() }}"),
+    ("items_across_int_and_float", "{{ {1: 'x'}.items() == {1.0: 'x'}.items() }}"),
+    # An items view carries values, which need not be hashable.
+    ("items_with_list_values", "{{ {'a': [1]}.items() == {'a': [1]}.items() }}"),
+    ("empty_views", "{{ {}.keys() == {}.keys() }}|{{ {}.items() == {}.items() }}"),
+]:
+    case(f"methods/dict_view_equal_{_n}", _src)
+
+# Every one of these is a real `==` per element, so a StrictUndefined among the
+# *elements* refuses just as one in the item position does. gojja2 compared with a
+# form that has nowhere to put an error, so all of them answered instead: `in`
+# over a list, a tuple and a values view; list.index, list.count and list.remove;
+# and a dict view compared as a set. Found by a soak seed on
+# `range(3) in [yes, nope]`, which is the shape where nothing short-circuits --
+# `1 in [yes, nope]` matches the first element and never reaches the second,
+# which is why it is here too.
+for _u in ("strict", ""):
+    _n = _u or "default"
+    _set = {"undefined": _u} if _u else {}
+    case(f"undefined/compare_elements_in_a_list_{_n}",
+         "{{ range(3) in [yes, nope] }}", __settings__=_set, yes=True)
+    case(f"undefined/compare_elements_short_circuit_{_n}",
+         "{{ 1 in [1, nope] }}|{{ 1 in (1, nope) }}", __settings__=_set)
+    case(f"undefined/compare_elements_in_a_tuple_{_n}",
+         "{{ range(3) in ((yes, nope)) }}", __settings__=_set, yes=True)
+    case(f"undefined/compare_elements_searching_methods_{_n}",
+         "{{ [1].index(nope) }}", __settings__=_set)
+    case(f"undefined/compare_elements_index_of_an_undefined_{_n}",
+         "{{ [nope].index(1) }}", __settings__=_set)
+    case(f"undefined/compare_elements_count_{_n}",
+         "{{ [nope].count(1) }}", __settings__=_set)
+    case(f"undefined/compare_elements_remove_{_n}",
+         "{% set l = [nope] %}{{ l.remove(1) }}", __settings__=_set)
+    case(f"undefined/compare_elements_values_view_{_n}",
+         "{% set q = {'a': nope} %}{{ 1 in q.values() }}", __settings__=_set)
+    case(f"undefined/compare_elements_items_view_{_n}",
+         "{% set q = {'a': nope} %}{{ ('a', 1) in q.items() }}", __settings__=_set)
+    # An items view carries the dict's values and so refuses; a keys view
+    # carries only the keys and answers True.
+    case(f"undefined/compare_elements_items_equality_{_n}",
+         "{% set q = {'a': nope} %}{{ q.items() == {'a': 1}.items() }}", __settings__=_set)
+    case(f"undefined/compare_elements_keys_equality_{_n}",
+         "{% set q = {'a': nope} %}{{ q.keys() == {'a': 1}.keys() }}", __settings__=_set)
+# ...and the answers that must not change: a values view has no __eq__, so two
+# are equal only by identity, and a set comparison ignores order.
+case("methods/dict_view_values_are_equal_by_identity",
+     "{% set q = {'a': 1, 'b': 2} %}{{ q.values() == q.values() }}|"
+     "{{ q.items() == {'b': 2, 'a': 1}.items() }}")
+case("methods/dict_view_values_membership",
+     "{% set q = {'a': 1} %}{{ 1 in q.values() }}|{{ 2 in q.values() }}")
+
+# An undefined built by hand, with a fourth argument that is not an exception
+# class. jinja2's Undefined stores it and *raises* it, so raising is itself a
+# TypeError -- and `environment.getitem` catches AttributeError, TypeError and
+# LookupError and answers a fresh undefined, which is the same reason `{{ 1[0] }}`
+# is empty. So the subscript renders nothing under the default class, the hint
+# under DebugUndefined, and the fresh *environment* undefined's own refusal under
+# StrictUndefined -- "object has no element 0" and not the TypeError.
+#
+# An attribute on the same undefined is the TypeError, because
+# `environment.getattr` catches AttributeError alone. gojja2 let the TypeError
+# out of the subscript too. Found by a soak seed.
+for _u in ("strict", "chainable", "debug", ""):
+    _n = _u or "default"
+    case(f"undefined/element_of_a_built_undefined_{_n}",
+         "[{{ (nope.__class__(1, 2, 3, 4))[0] }}]|"
+         "{{ (nope.__class__(1, 2, 3, 4))[0] is defined }}|"
+         "[{{ (nope.__class__(1, 2, 3, 'x'))[0] }}]",
+         __settings__={"undefined": _u} if _u else {})
+case("errors/attribute_of_a_built_undefined",
+     "{{ (nope.__class__(1, 2, 3, 4)).x }}")
+
+# ...and the shapes it must still refuse, so the rule above cannot spread.
+case("errors/items_of_a_non_mapping", "{{ [1]|items|list }}")
+
+# `x in d.keys().mapping` -- membership on the read-only proxy a view carries.
+# Coverage over the whole corpus reported mappingProxy.ContainsErr as never
+# reached: the proxy itself was graded, asking it a question was not. A proxy
+# hashes its key like the dict it wraps, so an unhashable one is refused rather
+# than answered False.
+for _n, _src in [
+    ("hit", "{{ 'a' in d.keys().mapping }}"),
+    ("miss", "{{ 'nope' in d.keys().mapping }}"),
+    ("int_key", "{{ 1 in d.keys().mapping }}"),
+    ("unhashable_key", "{{ [1] in d.keys().mapping }}"),
+    ("not_in", "{{ 'a' not in d.keys().mapping }}"),
+    ("through_items_view", "{{ 'a' in d.items().mapping }}"),
+    ("through_values_view", "{{ 'a' in d.values().mapping }}"),
+]:
+    case(f"methods/mappingproxy_contains_{_n}", _src, d={"a": 1, "b": 2})
+
+# bytes.replace, which the corpus reached only through a type error. The empty
+# needle is the arithmetic worth grading: it inserts between every byte and at
+# both ends, and the count bounds how many of those insertions happen.
+for _n, _src in [
+    ("plain", "{{ b.replace('b'.encode(), 'X'.encode()) }}"),
+    ("empty_needle", "{{ b.replace(''.encode(), '-'.encode()) }}"),
+    ("empty_needle_counted", "{{ b.replace(''.encode(), '-'.encode(), 2) }}"),
+    ("empty_needle_zero", "{{ b.replace(''.encode(), '-'.encode(), 0) }}"),
+    ("empty_needle_negative", "{{ b.replace(''.encode(), '-'.encode(), -1) }}"),
+    ("empty_needle_empty_receiver", "{{ ''.encode().replace(''.encode(), '-'.encode()) }}"),
+    ("to_nothing", "{{ 'aaa'.encode().replace('a'.encode(), ''.encode()) }}"),
+    ("grows_and_counted", "{{ 'aaa'.encode().replace('a'.encode(), 'bb'.encode(), 2) }}"),
+]:
+    case(f"methods/bytes_replace_{_n}", "{% set b = 'abc'.encode() %}" + _src)
+case("errors/items_of_a_string", "{{ 'ab'|items|list }}")
+
+# `x in y` asks y for a __contains__ before it looks at x at all, so a y that
+# cannot be searched is a TypeError naming *its* type whatever x is -- including
+# a StrictUndefined, whose refusal would otherwise come first.
+for _n, _src in [
+    ("float", "{% set f = 1.5 %}{{ 1 in f }}"),
+    ("none", "{% set n = none %}{{ 1 in n }}"),
+    ("bool", "{% set b = true %}{{ 1 in b }}"),
+]:
+    case(f"membership/not_a_container_{_n}", _src)
+for _n, _src in [
+    ("float", "{{ nope in 1.5 }}"),
+    ("none", "{{ nope in none }}"),
+]:
+    case(f"undefined/strict_membership_not_a_container_{_n}", _src,
+         __settings__={"undefined": "strict"})
+
+# A keys view answers by looking its item up, so it hashes it and an unhashable
+# item is a TypeError rather than a miss -- `{{ [1] in d.keys() }}` answered
+# False. An items or values view compares element by element and does answer
+# False, which is why this is the keys view alone.
+# What a view examines decides which of the item's own refusals apply, so a view
+# answers membership before they are consulted. A keys view hashes the item. An
+# items view *unpacks* first, so anything that is not a two-element pair simply
+# is not in it -- even a StrictUndefined, which every other container refuses --
+# while the key of a pair is hashed. A values view scans and so behaves like a
+# list. Found by teaching the differential to put a view on the right of `in`.
+# "a two-element pair" means a *tuple*: dict_items.__contains__ checks
+# PyTuple_Check before the size, so a two-element list is not a pair -- it is
+# simply not in the view, and its first element is never hashed. Reading it as
+# any two-element sequence answered False for the same pair spelled as a list
+# and raised on `[['x'], 1]`. Found by a soak seed, which drew a list of pairs
+# from the fuzz context and put it on the right of `not in`.
+case("methods/dictview_membership",
+     "{% set d = {'a': 1} %}{{ ('a', 1) in d.items() }}|{{ ('a', 2) in d.items() }}|"
+     "{{ ('b', 1) in d.items() }}|{{ [1] in d.items() }}|{{ ('a', 1, 2) in d.items() }}|"
+     "{{ 'a' in d.keys() }}|{{ 1 in d.values() }}|{{ [1] in d.values() }}")
+case("methods/dictview_membership_list_pair",
+     "{% set d = {'a': 1} %}{{ ['a', 1] in d.items() }}|{{ [['x'], 1] in d.items() }}|"
+     "{{ 'ab' in d.items() }}|{{ ('a', 1) in d.items() }}")
+case("errors/dictview_unhashable_pair_key",
+     "{% set d = {'a': 1} %}{{ ([1], 1) in d.items() }}")
+for _n, _src in [
+    ("items", "{% set d = {'a': 1} %}{{ nope in d.items() }}"),
+    ("items_pair_key", "{% set d = {'a': 1} %}{{ (nope, 1) in d.items() }}"),
+    ("keys", "{% set d = {'a': 1} %}{{ nope in d.keys() }}"),
+    ("values", "{% set d = {'a': 1} %}{{ nope in d.values() }}"),
+    ("dict", "{% set d = {'a': 1} %}{{ nope in d }}"),
+]:
+    case(f"undefined/strict_dictview_membership_{_n}", _src,
+         __settings__={"undefined": "strict"})
+for _n, _src in [
+    ("dict_in_keys", "{% set d = {'a': 1} %}{{ {1: 'a'} in d.keys() }}"),
+    ("list_in_keys", "{% set d = {'a': 1} %}{{ [1] in d.keys() }}"),
+]:
+    case(f"errors/dictview_{_n}", _src)
+
+# str.__contains__ and bytes.__contains__ type-check their left operand before
+# they look at it, so an undefined there is a TypeError naming its class rather
+# than the undefined's own refusal. Every other container reaches the item
+# through a comparison, which is where the refusal comes from -- so this is two
+# cases and not a rule about undefineds.
+for _n, _src in [
+    ("in_string", "{{ nope in 'abc' }}"),
+    ("not_in_string", "{{ nope not in 'abc' }}"),
+    ("in_bytes", "{{ nope in 'ab'.encode() }}"),
+    # in_list and in_range are not here: the sweep over all four Undefined
+    # classes already holds them (undefined/*_op_in_list and
+    # undefined/membership_of_a_range_*), and a second copy under a second name
+    # grades nothing twice.
+    ("in_tuple", "{{ nope in (1,) }}"),
+    ("in_dict", "{{ nope in {'a':1} }}"),
+    ("container_is_undefined", "{{ 'a' in nope }}"),
+]:
+    case(f"undefined/strict_membership_{_n}", _src, __settings__={"undefined": "strict"})
+# The same shapes with a defined left operand, so the type check above cannot
+# start answering for values that were never undefined.
+# Written through a name on purpose: all-constant operands are folded by both
+# engines and the message never comes from the membership check at all.
+case("membership/wrong_left_operand",
+     "{% set s = 'abc' %}{{ 1 in s }}|{{ none in s }}|{{ 1.5 in s.encode() }}")
+
+# Two foldable refusals in one expression, and the engines name different ones:
+# jinja2's optimizer folds bottom-up, so the `or` inside the branch raises before
+# the conditional's test is ever asked, where this folds top-down and asks the
+# test first. Listed in known_failures.txt. Matching it would take jinja2's
+# traversal *and* its refusal to fold a slice, and a slice is folded here on
+# purpose -- gojja2's run-time slice raises where jinja2's getitem swallows, so
+# the fold is what makes `((2.5)[1:2])[0]` chain under a ChainableUndefined.
+# Both refuse the template; only which expression is named differs.
+# Which of two refusals in one expression is named, and whether a refusal in a
+# branch the chain never takes is reached at all. Both were divergences until the
+# fold walked the way jinja2's optimizer does -- children before the node, with a
+# printed expression tried top-down first and any refusal there discarded. A
+# print and a {% set %} of the *same* expression differ on purpose, which is the
+# pair below.
+for _n, _src in [
+    ("which_refusal_is_named", "{{ (3)[1] or True if (True)|attr('name') else 1.5 }}"),
+    ("untaken_branch_in_set",
+     "{% set v = 1 if [1] else (3 if (0b101)[::2] else 4) %}{{ v }}"),
+    ("untaken_branch_in_with",
+     "{% with w = 1 if [1] else (3 if (0b101)[::2] else 4) %}{% endwith %}"),
+    ("untaken_branch_in_print", "{{ 1 if [1] else 3 if (0b101)[::2] else 4 }}"),
+]:
+    case(f"undefined/strict_fold_{_n}", _src, __settings__={"undefined": "strict"})
+
+# Unpacking asks the value to iterate, and a StrictUndefined's refusal names the
+# undefined. Both unpack sites answered "cannot unpack non-iterable
+# StrictUndefined object" instead, which describes a type the value does not
+# have and hides which name was missing -- the rule materializeOr already
+# followed and these two did not.
+for _n, _src in [
+    ("set_target", "{% set a, b = nope %}"),
+    ("loop_target", "{% for a, b in [nope] %}{% endfor %}"),
+    ("loop_source", "{% for a, b in nope %}{% endfor %}"),
+    ("through_urlencode", "{{ [nope]|urlencode }}"),
+]:
+    case(f"undefined/strict_unpack_{_n}", _src, __settings__={"undefined": "strict"})
+# ...and the shapes that are still a plain unpacking failure, so the rule above
+# cannot quietly swallow them.
+case("errors/unpack_non_iterable_int", "{% set a, b = 1 %}")
+case("errors/unpack_non_iterable_in_loop", "{% for a, b in [1] %}{% endfor %}")
+
+# markupsafe's Markup.__add__ takes a str or anything answering __html__, and
+# ChainableUndefined is the one Undefined class that defines __html__ -- as its
+# own str, which is "". So a Markup absorbs one and every other class refuses.
+# Only a Markup on the left reaches that method.
+for _n, _src, _u in [
+    ("markup_plus_chainable", "{{ 'x'|safe + nope }}", "chainable"),
+    ("markup_plus_default", "{{ 'x'|safe + nope }}", ""),
+    ("markup_plus_debug", "{{ 'x'|safe + nope }}", "debug"),
+    ("markup_plus_strict", "{{ 'x'|safe + nope }}", "strict"),
+    ("chainable_plus_markup", "{{ nope + 'x'|safe }}", "chainable"),
+    ("str_plus_chainable", "{{ 'x' + nope }}", "chainable"),
+    ("markup_plus_chainable_subscript", "{{ 'x'|safe + (false)[0] }}", "chainable"),
+]:
+    case(f"markup/{_n}", _src,
+         __settings__={"undefined": _u} if _u else {})
+
+# |join asks each item for its text, and a StrictUndefined refuses. It asked
+# through strictStr on the plain path and through value.Str -- which answers ""
+# for every undefined -- on the autoescaping one, so the same template raised
+# without autoescaping and joined the undefined away with it. Only the escaping
+# differs between those branches; what a value does when asked for its text does
+# not.
+for _n, _src, _esc in [
+    ("attribute_missing", "{{ 'a'|join(attribute='name') }}", False),
+    ("attribute_missing_escaped", "{{ 'a'|join(attribute='name') }}", True),
+    ("attribute_missing_sep", "{{ ['a','b']|join('-', attribute='name') }}", False),
+    ("attribute_missing_sep_escaped", "{{ ['a','b']|join('-', attribute='name') }}", True),
+    ("markup_item_escaped", "{{ ['a'|safe, 'b']|join('-', attribute='name') }}", True),
+    ("markup_sep_escaped", "{{ ['a','b']|join('-'|safe, attribute='name') }}", True),
+]:
+    _settings = {"undefined": "strict"}
+    if _esc:
+        _settings["autoescape"] = True
+    case(f"undefined/strict_join_{_n}", _src, __settings__=_settings)
+
+# An integer attribute over a bytes indexes to the byte *value* -- `b'b,c'[1]`
+# is 44 -- and the attribute-path lookup the attribute= filters share had no arm
+# for bytes at all, so every one of them was undefined. The run-time subscript
+# always said 44, which is why only a filter showed it. constIndex is shared with
+# the fold, so both paths are graded.
+_BS = "{% set l = ['a'.encode(), 'b,c'.encode()] %}"
+for _n, _src in [
+    ("subscript_folded", "{{ ('b,c'.encode())[1] }}"),
+    ("subscript_at_run_time", "{% set b = 'b,c'.encode() %}{{ b[1] }}"),
+    ("groupby", _BS + "{{ l|groupby(1, 2)|list }}"),
+    ("map", _BS + "{{ l|map(attribute=1)|list }}"),
+    ("map_with_default", _BS + "{{ l|map(attribute=1, default=7)|list }}"),
+    ("sort", _BS + "{{ l|sort(attribute=1)|list }}"),
+    ("min", "{% set l = ['b,c'.encode(), 'd,e'.encode()] %}{{ l|min(attribute=1) }}"),
+    ("selectattr", _BS + "{{ l|selectattr(1)|list }}"),
+    ("negative_index", _BS + "{{ l|map(attribute=-1)|list }}"),
+    ("out_of_range", "{% set l = ['a'.encode()] %}{{ l|map(attribute=5)|list }}"),
+]:
+    case(f"filters/bytes_integer_attribute_{_n}", _src)
+
+# `~` evaluates every operand before it converts any of them, which is what
+# jinja2's `str_join((a, b))` does: building that tuple is a name lookup, and an
+# Undefined only refuses when str() reaches it. So an operand that fails outright
+# is reported before an *earlier* StrictUndefined's refusal. The fold interleaves
+# instead -- Concat.as_const joins a generator -- and that asymmetry is upstream's.
+for _n, _src in [
+    ("undefined_then_failing", "{{ nope ~ (1|reject('none')|list) }}"),
+    ("failing_then_undefined", "{{ (1|reject('none')|list) ~ nope }}"),
+    ("undefined_then_failing_named",
+     "{% set n = 1 %}{{ nope ~ (n|reject('none')|list) }}"),
+    ("undefined_then_constant", "{{ nope ~ 'a' }}"),
+    ("three_operands", "{{ nope ~ 'a' ~ (1|reject('none')|list) }}"),
+]:
+    case(f"undefined/strict_concat_{_n}", _src, __settings__={"undefined": "strict"})
+
+# ...and none of those refusals escapes where the escaping is not yet known.
+# `{% autoescape nil %}` makes the context volatile, and there the template fails
+# at render on the undefined name in the tag rather than at compile time on the
+# expression inside it. jinja2's Concat.as_const checks the flag itself, because
+# whether its result is Markup depends on the answer; the other three are not
+# reached there at all. Ordinary folding continues -- escape/volatile_folds_
+# constant grades that -- so this is about the refusal and not about folding.
+for _n, _src in [
+    ("concat", "{% autoescape nil %}{{ (0.0).a ~ 1 }}{% endautoescape %}"),
+    ("or", "{% autoescape nil %}{{ (0.0).a or 0 }}{% endautoescape %}"),
+    ("and", "{% autoescape nil %}{{ (0.0).a and 1 }}{% endautoescape %}"),
+    ("condexpr", "{% autoescape nil %}{{ 1 if (0.0).a else 2 }}{% endautoescape %}"),
+    ("slice_through_concat",
+     "{% autoescape nil %}{{ ({'a': 1})[1:2] ~ 'x' }}{% endautoescape %}"),
+]:
+    case(f"undefined/strict_fold_volatile_{_n}", _src,
+         __settings__={"undefined": "strict"})
+# A *constant* autoescape argument is not volatile, so the refusal escapes there
+# exactly as it does outside a block.
+case("undefined/strict_fold_constant_autoescape",
+     "{% autoescape true %}{{ (0.0).a ~ 1 }}{% endautoescape %}",
+     __settings__={"undefined": "strict"})
+
+# Under StrictUndefined a folded lookup becomes a strict undefined, and asking
+# one for its truthiness or its text raises *while folding* -- at compile time,
+# before any of the template has run. jinja2 lets that error out of from_string
+# because Concat, And, Or and CondExpr have no `except Exception: Impossible`
+# around them, where BinExpr, Compare, Filter and Test do. So `~`, `and`, `or`
+# and a conditional's test refuse the template, and everything else compiles and
+# fails at render.
+#
+# These were impossible to grade until gojja2 agreed about the phase: the suite
+# requires both sides to agree on whether a template compiles at all, and every
+# shape here was one CPython refused and gojja2 accepted.
+for _n, _src in [
+    # Refused at compile time.
+    ("concat", "{{ (0.0).a ~ 1 }}"),
+    ("concat_right", "{{ 'x' ~ (0.0).a }}"),
+    ("concat_empty", "{{ (0.0).a ~ '' }}"),
+    ("concat_both", "{{ (0.0).a ~ (0.0).b }}"),
+    ("concat_in_set", "{% set v = (0.0).a ~ 1 %}"),
+    ("concat_missing_element", "{{ [1][5] ~ 'x' }}"),
+    ("concat_missing_key", "{{ {'a':1}['b'] ~ 'x' }}"),
+    ("or", "{{ (0.0).a or 0 }}"),
+    ("and", "{{ (0.0).a and 1 }}"),
+    ("or_through_attr_filter", "{{ (1e3)|attr('nope') and 1 }}"),
+    ("or_in_if", "{% if (0.0).a or 1 %}x{% endif %}"),
+    ("condexpr_test", "{{ 1 if (0.0).a else 2 }}"),
+    ("condexpr_test_no_else", "{{ 1 if (0.0).a }}"),
+    ("nested_or_in_concat", "{{ ((0.0).a or 1) ~ 2 }}"),
+    # Compiled, and refused at render: the fold is wrapped in these.
+    ("print_alone", "{{ (0.0).a }}"),
+    ("add", "{{ (0.0).a + 1 }}"),
+    ("compare", "{{ (0.0).a == 1 }}"),
+    ("membership", "{{ (0.0).a in [1] }}"),
+    ("through_string_filter", "{{ (0.0).a|string }}"),
+    ("condexpr_branch", "{{ (0.0).a if 1 else 2 }}"),
+    ("statement_test", "{% if (0.0).a %}x{% endif %}"),
+    ("unary", "{{ -((0.0).a) }}"),
+    ("subscripted", "{{ (0.0).a[0] }}"),
+    ("attribute_of", "{{ (0.0).a.b }}"),
+    ("not", "{{ not (0.0).a }}"),
+    ("loop_over", "{% for i in (0.0).a %}{% endfor %}"),
+    ("as_a_key", "{{ [1,2][(0.0).a] }}"),
+    # The right operand of a short-circuit is carried as a value, never asked
+    # for its truthiness, so these reach the render like any other undefined.
+    ("and_right", "{{ true and (0.0).a }}"),
+    ("or_right", "{{ false or (0.0).a }}"),
+    # Neither compiles nor renders as an error: nothing asks.
+    ("bound_only", "{% set v = (0.0).a %}"),
+    ("in_a_list", "{{ [(0.0).a] }}"),
+    ("in_a_tuple", "{{ ((0.0).a,) }}"),
+    ("is_defined", "{{ (0.0).a is defined }}"),
+    ("through_default", "{{ (0.0).a|default('d') }}"),
+]:
+    case(f"undefined/strict_fold_{_n}", _src, __settings__={"undefined": "strict"})
+
 case("undefined/messages", "{{ d.missing + 1 }}", d={"a": 1})
 case("undefined/index_message", "{{ seq[42] + 1 }}", **SEQ)
 case("undefined/arith", "{{ nope + 1 }}")
@@ -743,17 +2546,11 @@ _FOLDED = [
     ("attr_on_bool", "{{ true.missing }}"),
     ("missing_dict_key", "{{ {'a': 1}['b'] }}"),
     ("chained_on_none", "{{ none.a.b }}"),
-    ("folded_length", "{{ none.missing|length }}"),
     ("folded_arith", "{{ none.missing + 1 }}"),
     ("folded_truth", "{% if none.missing %}t{% else %}f{% endif %}"),
 ]
 for _kind in ("strict", "chainable", "debug", "default"):
     for _n, _src in _FOLDED:
-        # |length on an undefined is a separate defect: StrictUndefined must
-        # raise from __len__ and gojja2 answers 0. It is graded where that is
-        # fixed; folding is not what is wrong with it.
-        if (_kind, _n) == ("strict", "folded_length"):
-            continue
         case(f"undefined/{_kind}_{_n}", _src, __settings__={"undefined": _kind})
 
 # DebugUndefined renders the expression that failed instead of "", and jinja2's
@@ -779,7 +2576,6 @@ _DEBUG = [
     ("slice_all_bad", "{{ 'ab'['a':'b':'c'] }}", {}),
     ("hint_from_filter", "{{ nope|first }}", {}),
     ("hint_from_empty", "{{ []|first }}", {}),
-    ("in_string_filter", "{{ nope|string }}", {}),
     ("chained", "{{ nope.a }}", {}),
     ("printed_twice", "{{ nope }}{{ d.missing }}", {"d": {"a": 1}}),
 ]
@@ -924,23 +2720,25 @@ for _n, _src, _ctx in _BADKEY:
 # "undefined value printed: ..." rather than naming the subscript. The run-time
 # form raises TypeError on both engines and is unaffected; this is only about
 # the constant that folding leaves behind.
+# The run-time form carries the value in the *context*, written out per case
+# rather than substituted into the template. It was substituted, and bound x=1
+# for every one of them: five cases named after five types graded an int five
+# times, and nothing said so because they all agreed.
 _SLICEFOLD = [
-    ("none", "{{ none[1:2] }}"),
-    ("none_bad_stop", "{{ none[1:'x'] }}"),
-    ("none_zero_step", "{{ none[::0] }}"),
-    ("bool", "{{ true[1:2] }}"),
-    ("int", "{{ 1[1:2] }}"),
-    ("float", "{{ 1.5[1:2] }}"),
-    ("dict", "{{ {'a': 1}[1:2] }}"),
-    ("dict_full", "{{ {'a': 1}[::-1] }}"),
+    ("none", "{{ none[1:2] }}", "{{ x[1:2] }}", None),
+    ("none_bad_stop", "{{ none[1:'x'] }}", "{{ x[1:'x'] }}", None),
+    ("none_zero_step", "{{ none[::0] }}", "{{ x[::0] }}", None),
+    ("bool", "{{ true[1:2] }}", "{{ x[1:2] }}", True),
+    ("int", "{{ 1[1:2] }}", "{{ x[1:2] }}", 1),
+    ("float", "{{ 1.5[1:2] }}", "{{ x[1:2] }}", 1.5),
+    ("dict", "{{ {'a': 1}[1:2] }}", "{{ x[1:2] }}", {"a": 1}),
+    ("dict_full", "{{ {'a': 1}[::-1] }}", "{{ x[::-1] }}", {"a": 1}),
 ]
-for _n, _src in _SLICEFOLD:
+for _n, _src, _runtime, _x in _SLICEFOLD:
     case(f"subscript/slicefold_{_n}", _src)
     case(f"subscript/slicefold_{_n}_debug", _src, __settings__={"undefined": "debug"})
     # The run-time form, which raises instead of folding.
-    case(f"subscript/sliceruntime_{_n}", _src.replace("none[", "x[").replace(
-        "true[", "x[").replace("1.5[", "x[").replace("1[", "x[").replace(
-        "{'a': 1}[", "x["), x=1)
+    case(f"subscript/sliceruntime_{_n}", _runtime, x=_x)
 
 
 # jinja2 writes a filter block's result into its output buffer as it stands and
@@ -1071,7 +2869,155 @@ for _n, _src, _ctx in [
 # The two globals whose type object is built rather than converted; a call is
 # not constant, so these are not folded away.
 case("classes/subscript_namespace", "{{ namespace().__class__[1:] }}")
+
+# A name a class carries as a *descriptor* rather than a method: `int.real` is
+# a getset_descriptor and `range.start` a member one. Neither is callable, and
+# the repr says "attribute" or "member" -- gojja2 made an unbound method of
+# every name, so `{{ n.__class__.real }}` printed "<method 'real' ...>" and
+# calling it answered the method's complaint about a missing receiver. bool
+# inherits int's four, and the repr names the owner.
+for _n, _src in [
+    ("int_properties", "{{ n3.__class__.real }}|{{ n3.__class__.imag }}|"
+     "{{ n3.__class__.numerator }}|{{ n3.__class__.denominator }}"),
+    ("float_properties", "{{ (1.5).__class__.real }}|{{ (1.5).__class__.imag }}"),
+    ("bool_properties", "{{ true.__class__.real }}|{{ true.__class__.numerator }}"),
+    ("range_members", "{{ range(3).__class__.start }}|{{ range(3).__class__.stop }}|"
+     "{{ range(3).__class__.step }}"),
+    ("property_is_not_callable", "{{ n3.__class__.real() }}"),
+    ("property_is_not_callable_with_a_receiver", "{{ n3.__class__.real(5) }}"),
+    ("member_is_not_callable", "{{ range(3).__class__.start(range(3)) }}"),
+    ("property_class", "{{ n3.__class__.real.__class__ }}|{{ range(3).__class__.start.__class__ }}"),
+    ("property_is_not_a_method", "{{ n3.__class__.conjugate }}|{{ n3.__class__.conjugate(5) }}"),
+    ("property_on_an_instance", "{{ n3.real }}|{{ n3.imag }}|{{ (1.5).real }}|{{ true.numerator }}"),
+    ("property_has_no_attributes", "[{{ n3.__class__.real.nope }}]|{{ n3.__class__.real is callable }}"),
+]:
+    case("classes/" + _n, _src, n3=3)
 case("classes/subscript_range_global", "{{ range(3).__class__[1:] }}")
+
+# range has two methods, count and index, and both answered "'range object' has
+# no attribute". They are arithmetic for an int or a bool and a generic search
+# for anything else, and the two paths word a miss differently: "5 is not in
+# range" against "sequence.index(x): x not in sequence". An integral float takes
+# the search and still finds its element. The wide range is the reason for the
+# arithmetic: its index does not fit a machine integer.
+for _n, _src, _ctx in [
+    ("index_hit", "{{ range(3).index(2) }}|{{ range(10, 0, -3).index(4) }}", {}),
+    ("index_bool", "{{ range(3).index(true) }}|{{ range(3).index(false) }}", {}),
+    ("index_miss_int", "{{ range(3).index(5) }}", {}),
+    ("index_miss_negative", "{{ range(3).index(-1) }}", {}),
+    ("index_miss_off_step", "{{ range(10, 0, -3).index(5) }}", {}),
+    ("index_miss_bool", "{{ range(5, 9).index(true) }}", {}),
+    ("index_float_hit", "{{ range(3).index(1.0) }}|{{ range(10, 0, -3).index(4.0) }}", {}),
+    ("index_float_miss", "{{ range(3).index(1.5) }}", {}),
+    ("index_str_miss", "{{ range(3).index('a') }}", {}),
+    ("index_none_miss", "{{ range(3).index(none) }}", {}),
+    ("index_list_miss", "{{ range(3).index([1]) }}", {}),
+    ("index_undefined_miss", "{{ range(3).index(nope) }}", {}),
+    ("index_empty_range", "{{ range(0).index(0) }}", {}),
+    ("index_context_int", "{{ range(n).index(n - 1) }}", {"n": 4}),
+    ("index_wide", "{{ range(2**70).index(2**69) }}|{{ range(0, 2**70, 3).index(9) }}", {}),
+    ("count", "{{ range(3).count(1) }}|{{ range(3).count(5) }}|{{ range(3).count(true) }}|"
+     "{{ range(3).count(1.0) }}|{{ range(3).count(1.5) }}|{{ range(3).count('a') }}|"
+     "{{ range(3).count(nope) }}", {}),
+    ("count_wide", "{{ range(2**70).count(2**69) }}|{{ range(2**70).count(-1) }}", {}),
+    ("index_no_args", "{{ range(3).index() }}", {}),
+    ("index_two_args", "{{ range(3).index(1, 2) }}", {}),
+    ("index_keyword", "{{ range(3).index(x=1) }}", {}),
+    ("count_no_args", "{{ range(3).count() }}", {}),
+    ("count_two_args", "{{ range(3).count(1, 2) }}", {}),
+    ("method_repr", "{{ range(3).count.__name__ }}|{{ range(3).count.__qualname__ }}|"
+     "{{ range(3).index is callable }}", {}),
+    ("method_held", "{% set f = range(3).index %}{{ f(2) }}", {}),
+]:
+    case(f"methods/range_{_n}", _src, **_ctx)
+# A StrictUndefined is compared against the first element and refuses there, so
+# it raises from a range with elements and is simply absent from an empty one.
+case("methods/range_index_strict", "{{ range(3).index(nope) }}", __settings__={"undefined": "strict"})
+case("methods/range_count_strict", "{{ range(3).count(nope) }}", __settings__={"undefined": "strict"})
+case("methods/range_count_strict_empty", "{{ range(0).count(nope) }}", __settings__={"undefined": "strict"})
+
+# The type objects of range, set, the three dict views and mappingproxy carry
+# their methods unbound, as the built-in scalars' and containers' do, and the
+# views carry `mapping` as a getset descriptor. All of it answered "'type
+# object' has no attribute". A set is reached as a view minus an iterable.
+_V = "{% set d = {'a': 1, 'b': 2} %}{% set s = d.keys() - ['b'] %}"
+for _n, _src in [
+    ("range_methods", "{{ range(3).__class__.index }}|{{ range(3).__class__.count }}"),
+    ("range_index_unbound", "{{ range(3).__class__.index(range(3), 2) }}|"
+     "{{ range(3).__class__.count(range(5), 4) }}"),
+    ("range_unbound_no_receiver", "{{ range(3).__class__.index() }}"),
+    ("range_unbound_wrong_receiver", "{{ range(3).__class__.index([1, 2], 2) }}"),
+    ("range_unbound_arity", "{{ range(3).__class__.index(range(3)) }}"),
+    ("range_unknown_name", "[{{ range(3).__class__.nope }}]"),
+    ("set_methods", _V + "{{ s.__class__.add }}|{{ s.__class__.union }}|{{ s.__class__.isdisjoint }}"),
+    ("set_unbound_call", _V + "{{ s.__class__.union(s, ['z'])|sort }}|{% set _ = s.__class__.add(s, 'q') %}{{ s|sort }}"),
+    ("set_unbound_wrong_receiver", _V + "{{ s.__class__.add(d, 1) }}"),
+    ("view_methods", _V + "{{ d.keys().__class__.isdisjoint }}|{{ d.items().__class__.isdisjoint }}"),
+    ("view_unbound_call", _V + "{{ d.keys().__class__.isdisjoint(d.keys(), 'z') }}|"
+     "{{ d.items().__class__.isdisjoint(d.items(), [('a', 1)]) }}"),
+    ("view_unbound_wrong_view", _V + "{{ d.keys().__class__.isdisjoint(d.items(), 'z') }}"),
+    ("values_view_has_no_methods", _V + "[{{ d.values().__class__.isdisjoint }}]"),
+    ("view_mapping_descriptor", _V + "{{ d.keys().__class__.mapping }}|{{ d.values().__class__.mapping }}|"
+     "{{ d.items().__class__.mapping }}"),
+    ("view_mapping_descriptor_not_callable", _V + "{{ d.keys().__class__.mapping(d.keys()) }}"),
+    ("mappingproxy_methods", _V + "{% set m = d.keys().mapping %}{{ m.__class__.get }}|{{ m.__class__.keys }}"),
+    ("mappingproxy_unbound_call", _V + "{% set m = d.keys().mapping %}{{ m.__class__.get(m, 'a') }}|"
+     "{{ m.__class__.items(m) }}"),
+    ("mappingproxy_unbound_wrong_receiver", _V + "{% set m = d.keys().mapping %}{{ m.__class__.get(d, 'a') }}"),
+]:
+    case("classes/" + _n, _src)
+
+# set() is a set's own class, and its constructor ran in no case at all: it
+# takes what list and tuple take, hashes each element as it goes, and refuses
+# a keyword and a second argument in set's own words.
+for _n, _src in [
+    ("empty_and_iterables", "{{ s.__class__()|list }}|{{ s.__class__([1, 2, 2])|sort }}|"
+     "{{ s.__class__('abca')|sort }}|{{ s.__class__(range(3))|sort }}|"
+     "{{ s.__class__(d)|sort }}|{{ s.__class__(d.items())|sort }}"),
+    ("unhashable", "{{ s.__class__([[1]]) }}"),
+    ("not_iterable", "{{ s.__class__(1) }}"),
+    ("two_arguments", "{{ s.__class__(1, 2) }}"),
+    ("keyword", "{{ s.__class__(x=1) }}"),
+    ("undefined", "{{ s.__class__(nope)|list }}"),
+    ("copy_is_equal_not_same", "{{ s.__class__(s) == s }}|{{ s.__class__(s) is sameas s }}"),
+]:
+    case("classes/construct_set_" + _n, _V + _src)
+
+# A set's pop, clear, equality and ordering, which the method sweep reached but
+# never on the paths coverage marked: a pop from a one-element set (its answer
+# does not depend on the order) and from an empty one, clear on both, equality
+# against a copy, a view and a list, and an ordering refused against a
+# non-set in both directions.
+for _n, _src in [
+    ("pop", "{{ (d.keys() - ['b']).pop() }}"),
+    ("pop_empty", "{{ (d.keys() - ['a', 'b']).pop() }}"),
+    ("clear", "{% set e = d.keys() - ['a', 'b'] %}{{ e.clear() }}|{{ e|list }}|"
+     "{% set t = d.keys() - ['a'] %}{{ t.clear() }}{{ t|list }}"),
+    ("equality", "{{ s == s.copy() }}|{{ (d.keys() - []) == d.keys() }}|{{ d.keys() == (d.keys() - []) }}|"
+     "{{ s == ['a'] }}|{{ (d.keys() - []) != d.keys() }}|{{ s == d.items() }}"),
+    ("ordering", "{{ d.keys() < (d.keys() - []) }}|{{ (d.keys() - []) <= d.keys() }}|"
+     "{{ s < d.keys() }}|{{ d.keys() > s }}|{{ s >= s }}"),
+    ("ordering_refused_right", "{{ s < [1] }}"),
+    ("ordering_refused_left", "{{ [1] > s }}"),
+    ("ordering_refused_int", "{{ 1 < s }}"),
+]:
+    case("methods/set_" + _n, _V + _src)
+
+# Two bound methods are equal when their receivers are the same object and
+# their functions the same. For a receiver that is a variable, or one small
+# enough to be cached, that is equality of value, which is what gojja2
+# answers; the literals it is not are in divergence/.
+for _n, _src in [
+    ("str", "{{ 'a'.upper == 'a'.upper }}|{{ 'a'.upper == 'b'.upper }}|{{ 'a'.upper == 'a'.lower }}"),
+    ("variable", "{% set x = 'hello' %}{{ x.upper == x.upper }}|{{ x.upper != x.upper }}"),
+    ("small_int", "{{ (1).bit_length == (1).bit_length }}|{% set k = 3 %}{% set j = 3 %}"
+     "{{ k.bit_length == j.bit_length }}"),
+    ("float_variable", "{% set g = 1.5 %}{{ g.hex == g.hex }}"),
+    ("bool", "{{ true.bit_length == true.bit_length }}|{{ true.bit_length == (1).bit_length }}"),
+    ("concatenated", "{% set a = 'x' ~ 'y' %}{% set b = 'x' ~ 'y' %}{{ a.upper == b.upper }}"),
+    ("in_a_list", "{{ 'a'.upper in ['a'.upper] }}|{{ ['a'.upper]|unique|list|length }}"),
+]:
+    case("tests/bound_method_equal_" + _n, _src)
 
 # The AttributeError for a type object is worded specially too -- `type object
 # 'int' has no attribute 'items'` -- and eight filters reach it by asking a
@@ -1231,9 +3177,19 @@ for _n, _src in [
     ("bytes_unexpected_keyword", "{{ b.__class__(zz=5) }}"),
     ("bytes_of_none", "{{ b.__class__(nil) }}"),
     ("str_of_bytes", "{{ s.__class__(b, 'utf-8') }}"),
+    # tuple(), which coverage over the whole corpus reported as never reached at
+    # all: every other constructor here was graded and this one was not. It
+    # agreed already; what was missing was a case saying so.
+    ("tuple_empty", "{{ (1,2).__class__() }}"),
+    ("tuple_of_a_list", "{{ (1,2).__class__([3,4]) }}"),
+    ("tuple_of_a_str", "{{ (1,2).__class__('ab') }}"),
+    ("tuple_of_a_range", "{{ (1,2).__class__(range(3)) }}"),
+    ("tuple_of_a_mapping", "{{ (1,2).__class__(d) }}"),
+    ("tuple_of_an_int", "{{ (1,2).__class__(1) }}"),
+    ("tuple_arity", "{{ (1,2).__class__([1], 2) }}"),
 ]:
     case(f"classes/construct_{_n}",
-         "{% set b = 'ab'.encode() %}" + _src, nil=None)
+         "{% set b = 'ab'.encode() %}" + _src, nil=None, d={"a": 1}, s="x")
 
 # The generic-alias divergence, reached through `__class__` rather than through
 # the `dict` global: CPython answers a types.GenericAlias, gojja2 has none.
@@ -1257,6 +3213,18 @@ for _n, _src in [
     ("range_subscript", "{{ range['k'] }}"),
     ("self_is_iterable", "{% block b %}B{% endblock %}{{ self is iterable }}"),
     ("self_list", "{% block b %}B{% endblock %}{{ self|list }}"),
+    # |reverse is lazy in jinja2 as map and select are: reversed() is an
+    # iterator, which has no length, is always true, and is never built.
+    ("lazy_reverse_length", "{{ [1, 2]|reverse|length }}"),
+    ("lazy_reverse_truth", "{% if []|reverse %}t{% else %}f{% endif %}"),
+    ("lazy_reverse_of_a_wide_range", "{{ range(2**70)|reverse|first }}"),
+    # The same refusal reached through a proxy, whose iter() is the wrapped
+    # object's.
+    ("self_list_through_a_proxy",
+     "{% block b %}B{% endblock %}{% set C = {'a': 1}.keys().mapping.__class__ %}{{ C(self)|list }}"),
+    ("self_loop_through_a_proxy",
+     "{% block b %}B{% endblock %}{% set C = {'a': 1}.keys().mapping.__class__ %}"
+     "{% for k in C(self) %}{{ k }}{% endfor %}"),
 ]:
     case(f"divergence/{_n}", _src)
 
@@ -1381,9 +3349,141 @@ _FILTERIDX = [
 for _n, _src in _FILTERIDX:
     case(f"errors/filteridx_{_n}", _src, v="V")
 
+# The count belongs to the buffer the filter block writes into, and so to the
+# template whose code is running: a block body is a buffer of its own, and a
+# macro imported from a template with a filter block counts although the
+# template that calls it has none. Both used to say 0.
+_FI_BODY = "x{{ v }}y{% filter length %}abc{% endfilter %}"
+_FI_LIB = {"lib.txt": "{% macro m() %}" + _FI_BODY + "{% endmacro %}"}
+_FI_BASE = {"base.txt": "[{% block b %}p{% endblock %}]"}
+for _n, _src, _tpl in [
+    ("block_after_text", "{% block b %}" + _FI_BODY + "{% endblock %}", None),
+    ("block_alone", "{% block b %}{% filter length %}abc{% endfilter %}{% endblock %}", None),
+    ("block_in_a_child",
+     "{% extends 'base.txt' %}{% block b %}" + _FI_BODY + "{% endblock %}", _FI_BASE),
+    ("block_after_super",
+     "{% extends 'base.txt' %}{% block b %}{{ super() }}y{% filter length %}abc{% endfilter %}{% endblock %}",
+     _FI_BASE),
+    ("block_in_the_parent",
+     "{% extends 'base.txt' %}{% block b %}c{% endblock %}",
+     {"base.txt": "{% block b %}p{% endblock %}z{{ v }}{% filter length %}abc{% endfilter %}"}),
+    ("block_in_a_scoped_block",
+     "{% for i in [1] %}{% block b scoped %}q{{ i }}{% filter length %}abc{% endfilter %}{% endblock %}{% endfor %}",
+     None),
+    ("imported_macro", "{% import 'lib.txt' as l %}{{ l.m() }}", _FI_LIB),
+    ("from_imported_macro", "{% from 'lib.txt' import m %}{{ m() }}", _FI_LIB),
+    ("imported_macro_result_kept", "{% import 'lib.txt' as l %}{% set r = l.m() %}{{ r }}", _FI_LIB),
+    ("imported_macro_from_a_block",
+     "{% import 'lib.txt' as l %}{% block b %}{{ l.m() }}{% endblock %}", _FI_LIB),
+    ("imported_macro_with_context", "{% import 'lib.txt' as l with context %}{{ l.m() }}", _FI_LIB),
+    ("imported_call_block",
+     "{% import 'lib.txt' as l %}{% call l.m() %}c{% endcall %}", _FI_LIB),
+    ("included", "{% include 'lib.txt' %}", {"lib.txt": _FI_BODY}),
+    ("included_after_text", "q{% include 'lib.txt' %}", {"lib.txt": _FI_BODY}),
+    ("call_block_body",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}" + _FI_BODY + "{% endcall %}", None),
+    ("macro_defined_here_called_in_a_block",
+     "{% macro m() %}" + _FI_BODY + "{% endmacro %}{% block b %}{{ m() }}{% endblock %}", None),
+    ("macro_as_a_sort_key",
+     "{% macro k(x) %}" + _FI_BODY + "{% endmacro %}{% set l = [2, 1] %}{% do l.sort(key=k) %}", None),
+    # What follows a block or an include is numbered from where it left off.
+    ("block_then_filter",
+     "{% block b %}x{{ v }}y{% endblock %}{% filter length %}abc{% endfilter %}", None),
+    ("include_then_filter",
+     "q{% include 'lib.txt' %}{% filter length %}abc{% endfilter %}", {"lib.txt": "x{{ v }}y"}),
+    # A block reached as a value has a buffer of its own.
+    ("block_via_self", "{{ self.b() }}{% block b %}" + _FI_BODY + "{% endblock %}", None),
+    ("block_super_reaches_a_filter",
+     "{% extends 'base.txt' %}{% block b %}{{ super() }}{% endblock %}",
+     {"base.txt": "{% block b %}" + _FI_BODY + "{% endblock %}"}),
+]:
+    _hdr = {"__settings__": {"extensions": ["do"]}} if "sort" in _n else {}
+    if _tpl:
+        _hdr["__templates__"] = _tpl
+    case(f"errors/filteridx_{_n}", _src, v="V", **_hdr)
+
 
 # --- errors -------------------------------------------------------------------
+# PySlice_Unpack converts the *step* first and refuses a zero one there, before
+# it looks at start or stop at all. The order is observable because the two
+# refusals differ in kind: a bound that is not an integer is a TypeError, which
+# jinja2's getitem catches and turns into an undefined, while a zero step is a
+# ValueError it does not catch. Converting start and stop first therefore made
+# `{{ "abcde"[:1.5:0] }}` print nothing -- and, on the bytes path, report the
+# bound instead of the step.
+for _n, _src in [
+    ("float_start", "{{ 'abcde'[1.5::0] }}"),
+    ("float_stop", "{{ 'abcde'[:1.5:0] }}"),
+    ("str_stop", "{{ 'abcde'[:'x':0] }}"),
+    ("none_bounds", "{{ 'abcde'[::0] }}"),
+    ("bytes_float_stop", "{{ 'abcde'.encode()[:1.5:0] }}"),
+    ("list_float_stop", "{{ lst[:1.5:0] }}"),
+    ("tuple_float_stop", "{{ (1,2,3)[:1.5:0] }}"),
+    ("range_float_stop", "{{ range(5)[:1.5:0] }}"),
+    ("dict_float_stop", "{{ d[:1.5:0] }}"),
+]:
+    case(f"errors/zero_step_beats_the_bounds_{_n}", _src, lst=[1, 2, 3], d={"a": 1})
+# A slice is hashable from 3.12, but only as far as its parts are: its hash is
+# built from start, stop and step, so an unhashable bound is refused *before* the
+# miss is reported. gojja2 reported the KeyError naming the slice.
+#
+# The bound goes through a name because a constant slice folds, and folding one
+# goes through the swallowing getitem and prints nothing.
+for _n, _src in [
+    ("list_start", "{% set q = [1,2] %}{{ d[q:] }}"),
+    ("list_stop", "{% set q = [1,2] %}{{ d[:q] }}"),
+    ("list_step", "{% set q = [1,2] %}{{ d[::q] }}"),
+    ("dict_start", "{% set q = {'a':1} %}{{ d[q:] }}"),
+    ("set_start", "{% set q = d.keys() - [] %}{{ d[q:] }}"),
+    ("hashable_start", "{% set q = 1 %}{{ d[q:] }}"),
+    ("hashable_tuple_start", "{% set q = (1,2) %}{{ d[q:] }}"),
+    ("unhashable_in_a_tuple", "{% set q = ([1],) %}{{ d[q:] }}"),
+    ("two_unhashable_the_first_wins", "{% set q = [1] %}{% set r = {'a':1} %}{{ d[q:r] }}"),
+]:
+    case(f"errors/dict_slice_{_n}", _src, d={"a": 1})
+
+# And the bound's own refusal, which jinja2 does swallow, so that the ordering
+# fix above cannot quietly start raising where a template used to print nothing.
+for _n, _src in [
+    ("str", "[{{ 'abcde'[:1.5:2] }}]"),
+    ("bytes", "[{{ 'abcde'.encode()[1.5::] }}]"),
+    ("list", "[{{ lst['x'::] }}]"),
+    ("range", "[{{ range(5)[:1.5:] }}]"),
+]:
+    case(f"errors/bad_slice_bound_is_swallowed_{_n}", _src, lst=[1, 2, 3])
+
 case("errors/syntax_unclosed", "{% if x %}")
+# "Unexpected end of template" is reported at the line the *last token* began
+# on, not at the line the source ends on: jinja2's TokenStream.close() builds
+# the EOF token from `self.current.lineno`, and a run of template data that
+# spans five lines is one token that began on the first of them. gojja2 gave
+# the EOF the line its scanner had reached, so every template whose tail was
+# multi-line was reported one or more lines late -- and `{% if x %}`, the only
+# case here before, is a single line and could not tell the two apart.
+#
+# Found by the fuzzer on `{% set d.v %}not nested // nested`, where a line
+# comment splits the tail into two data runs and the second one starts at the
+# newline that ends the first line.
+for _n, _src in [
+    ("tail_is_one_data_run", "{% if 1 %}a\nb\nc"),
+    ("tail_after_a_print", "{% set x %}\n{{ 1 }}\nmore\ntext"),
+    ("tail_is_blank_lines", "{% for i in [1] %}\n\n\n"),
+    ("tail_after_a_comment", "{% macro m() %}x\n{# c #}\ny\nz"),
+    ("tail_is_a_tag", "{% if 1 %}\n\n{% if 2 %}"),
+    ("tail_spans_a_multiline_tag", "{% block b %}{{\n1\n}}"),
+    ("nothing_after_the_tag", "{% filter upper %}"),
+    ("raw_tail_is_multiline", "{% raw %}a\nb\nc"),
+]:
+    case(f"errors/unclosed_{_n}", _src)
+# The same rule with a line comment, which is what the fuzzer drew: the comment
+# ends the first data run, and the run after it starts on the newline that
+# closes that same line -- so the report stays on line 1.
+for _n, _src in [
+    ("line_comment_splits_the_tail", "{% set x %}body // c\nmore\n"),
+    ("line_comment_on_its_own_line", "{% if 1 %}x\n// c\ny\n"),
+]:
+    case(f"errors/unclosed_{_n}", _src,
+         __settings__={"line_comment_prefix": "//", "keep_trailing_newline": True})
 case("errors/syntax_unexpected", "{{ 1 + }}")
 case("errors/unknown_tag", "{% nope %}")
 case("errors/unknown_filter", "{{ 1|nosuch }}")
@@ -1579,18 +3679,29 @@ case("scope/nsref_write_settles_the_name_block",
      "{% for i in xs %}{% set ns.v %}q{% endset %}{% set ns = namespace() %}{{ ns }}{% endfor %}",
      xs=[], ns=None)
 
-# Reaching *through* an attribute can stop the render, and the analysis did not
-# know it. `x.a` cannot fail whatever x holds -- a missing attribute is
-# undefined and prints empty -- but `(x.a).b` can, because `x.a` is undefined
-# for most x and reaching through an undefined raises. So x decides whether the
-# render finishes, which is what Required says.
+# An attribute access decides whether the render finishes, and the analysis did
+# not know it. Twice.
 #
-# Found by the soak's render check rather than by the differential: the Python
-# reference had the same gap, so the two agreed with each other and both were
-# wrong. `{{ (f.real).name }}` renders for a float and raises for a string.
+# The first pass taught it that reaching *through* an attribute can raise --
+# `{{ (f.real).name }}` renders for a float and raises for a string -- and left a
+# one-step access exempt, on the grounds that a missing attribute is undefined
+# and prints empty. That is true of three of the four Undefined classes and false
+# of the one whose whole purpose is to refuse: under StrictUndefined
+# `{{ src.nosuch }}` raises at the access. The exemption was a false negative,
+# which is the one kind of error a caller reading "cannot fail because of this"
+# cannot recover from, and it cost 17 of 167 claims over the corpus to drop.
+#
+# Both were found by the soak's render check rather than by the differential,
+# because the Python reference had the same gap each time -- the two agreed with
+# each other and both were wrong. Writing "an undefined prints empty" is what
+# produced both; it is a statement about a *setting*, not about jinja2.
 case("dataflow/required_through_an_attribute", "{{ (src.real).name }}", src=2.5)
 case("dataflow/required_through_an_item", "{{ (src.real)[0] }}", src=2.5)
-case("dataflow/not_required_one_step", "[{{ src.nosuch }}]", src=2.5)
+case("dataflow/required_by_a_one_step_attribute", "[{{ src.nosuch }}]", src=2.5)
+# A namespace field is the exception, and the only one: the field is named in the
+# template, so whether it is there is not in doubt.
+case("dataflow/not_required_through_a_namespace_field",
+     "{% set ns = namespace(v=src) %}[{{ ns.v }}]", src=2.5)
 
 # A guard whose branch writes a namespace field decides whether the render
 # finishes, because writing one needs something to write it to: the `=` form
@@ -1751,13 +3862,12 @@ case("methods/dict_popitem",
 case("methods/dict_fromkeys",
      "{{ {'x': 1}.fromkeys('ab') }}|{{ {'x': 1}.fromkeys([3,1,2], 9) }}|"
      "{{ {'x': 1}.fromkeys([]) }}|{{ {'b':2,'a':1}.fromkeys({'b':2,'a':1}) }}")
-# A C function counts its arguments, and a tuple names itself.
-case("errors/dict_get_too_many", "{{ {'a':1}.get('a', 1, 2) }}")
+# A C function counts its arguments, and a tuple names itself: see
+# errors/method_get_too_many.
 case("errors/tuple_index_missing", "{{ (1,2).index(99) }}")
 case("errors/list_index_missing", "{{ [1,2].index(99) }}")
 case("errors/sort_positional_argument", "{% set L = [1] %}{{ L.sort(1) }}")
 case("errors/popitem_on_an_empty_dict", "{{ {}.popitem() }}")
-case("errors/cycler_without_items", "{{ cycler() }}")
 
 # jinja2 compiles {% autoescape %} and {% scope %} as Scopes, so each body is a
 # frame: a name the body assigns is that frame's own, and a read from a *nested*
@@ -1883,6 +3993,19 @@ case("methods/float_attributes",
      "{{ (2.5).as_integer_ratio() }}{{ (-1.5).as_integer_ratio() }}|{{ (2.5).conjugate() }}")
 case("methods/float_hex",
      "{{ (2.5).hex() }}|{{ (1.0).hex() }}|{{ (0.0).hex() }}|{{ (-1.5).hex() }}|{{ (-0.5).hex() }}")
+# A subnormal is where float.hex() stops looking like Go's %x. CPython takes
+# frexp and shifts only as far as DBL_MIN_EXP, so the exponent is pinned at
+# -1022 and the digit before the point is 0; Go normalises instead and writes a
+# leading 1 with an exponent below -1022. Same value, different spelling, and
+# the fuzzer found it because the awkward context carries 1e-320. The last two
+# straddle the boundary: 2.2250738585072014e-308 is the smallest normal.
+case("methods/float_hex_subnormal",
+     "{{ (1e-320).hex() }}|{{ (5e-324).hex() }}|{{ (-5e-324).hex() }}|"
+     "{{ (1.1125369292536007e-308).hex() }}|"
+     "{{ (2.225073858507201e-308).hex() }}|{{ (2.2250738585072014e-308).hex() }}")
+case("methods/float_hex_subnormal_roundtrip",
+     "{{ (0.0).fromhex((1e-320).hex()) }}|{{ (0.0).fromhex((5e-324).hex()) == 5e-324 }}|"
+     "{{ (1e-320).hex()|float }}")
 case("errors/to_bytes_negative", "{{ (-1).to_bytes(2,'big') }}")
 case("errors/to_bytes_too_big", "{{ (300).to_bytes(1,'big') }}")
 
@@ -2041,14 +4164,46 @@ case("scope/a_block_body_never_aliases",
 # from owning it.
 case("scope/autoescape_read_before_set",
      "{% autoescape false %}[{{ m }}]{% set m = 1 %}[{{ m }}]{% endautoescape %}", m=10)
-case("scope/autoescape_owns_what_it_assigns",
-     "{% autoescape false %}{% for i in [1] %}[{{ m }}]{% endfor %}{% set m = 1 %}{% endautoescape %}", m=10)
+# (The case that shows the autoescape block owning what it assigns is
+# scope/inner_frame_with_no_outer_reference, which is the same template.)
 case("scope/autoescape_does_not_leak_out",
      "[{{ m }}]{% autoescape false %}{% set m = 1 %}{% endautoescape %}[{{ m }}]", m=10)
 case("scope/autoescape_import_is_an_assignment",
      "{% autoescape false %}{% for i in [1] %}[{{ mod }}]{% endfor %}"
      "{% import 'mod.html' as mod %}{% endautoescape %}",
      m=10, __templates__={"mod.html": "{% set a = 1 %}"})
+
+# A binding the frame already has is not a copy of anything outside. jinja2's
+# `Symbols.store` asks its *own* table first, so writing to a macro parameter,
+# a loop target or a {% with %} name leaves that binding alone -- where gojja2
+# saw a store of a name an enclosing frame also binds and made the parameter an
+# alias of it. Nothing rendered differently, because a parameter is overwritten
+# by its argument before the body runs; what was wrong was the scope facts the
+# tree exposes, and so what the dataflow analysis derives from. Found by the
+# syntax differential once the generator could write a macro parameter named
+# after one of the specials -- an enclosing macro frame always provides those.
+case("scope/param_written_in_the_body",
+     "{% set x = 0 %}{% macro b(x) %}[{{ x }}]{% set x = 1 %}[{{ x }}]{% endmacro %}"
+     "{{ b(2) }}[{{ x }}]")
+case("scope/defaulted_param_written_in_the_body",
+     "{% set x = 0 %}{% macro b(x=9) %}[{{ x }}]{% set x = 1 %}[{{ x }}]{% endmacro %}"
+     "{{ b() }}[{{ x }}]")
+case("scope/param_written_in_a_nested_macro",
+     "{% macro a(x) %}{% macro b(x) %}[{{ x }}]{% set x = 1 %}[{{ x }}]{% endmacro %}"
+     "{{ b(2) }}{% endmacro %}{{ a(3) }}")
+case("scope/loop_target_written_in_the_body",
+     "{% set x = 0 %}{% for x in [7] %}[{{ x }}]{% set x = 2 %}[{{ x }}]{% endfor %}[{{ x }}]")
+case("scope/with_target_written_in_the_body",
+     "{% set x = 0 %}{% with x = 5 %}[{{ x }}]{% set x = 1 %}[{{ x }}]{% endwith %}[{{ x }}]")
+case("scope/param_named_caller_written_in_the_body",
+     "{% macro sp(caller=2) %}[{{ caller }}]{% set caller = 1 %}[{{ caller }}]{% endmacro %}"
+     "[{{ sp(3) }}]")
+case("scope/call_block_param_written_in_the_body",
+     "{% macro takes() %}<{{ caller(1) }}>{% endmacro %}"
+     "{% call(p) takes() %}[{{ p }}]{% set p = 1 %}[{{ p }}]{% endcall %}")
+case("scope/loop_target_written_inside_a_macro",
+     "{% macro b(x) %}{% for x in [7] %}[{{ x }}]{% set x = 2 %}[{{ x }}]{% endfor %}"
+     "[{{ x }}]{% endmacro %}{{ b(4) }}")
 
 # `is filter` and `is test` are `value in env.filters` and `value in env.tests`,
 # so the value is hashed before anything asks whether it could be a name.
@@ -2072,6 +4227,196 @@ case("methods/decode_round_trip",
      "{{ 'abc'.encode().decode('ascii') }}|{{ '\u00e9'.encode().decode('latin-1') }}")
 # The position counts characters, not bytes.
 case("errors/encode_ascii_position", "{{ 'a\u00e9b'.encode('ascii') }}")
+# str() of a *container* is its repr, and a repr escapes by the interpreter's
+# isprintable -- so every filter, test and method that renders its subject as
+# text has to read the version.
+#
+# `strictStr` passed DefaultPythonVersion and nineteen of its twenty callers used
+# it, so |upper, |lower, |title, |trim, |replace, |center, |indent, |truncate,
+# |wordwrap, |wordcount, |striptags, |format, |safe, |escape, |forceescape,
+# |join, `is lower`/`is upper` and str() all answered the pin's escaping whatever
+# WithPythonVersion said. It is gone: there is only strictStrFor now, and the
+# version is not optional. Seven more sites went the same way -- |urlize,
+# |xmlattr, |urlencode, |join's separator, escapeIfNeeded, str.format's `!s` and
+# its empty conversion.
+#
+# Found by a soak on the version axis, on `'\ua7da'.splitlines(true)|upper` --
+# the list repr |upper asks for, uppercased afterwards, which is why the escape
+# came out as "\UA7DA".
+for _n, _src in [
+    ("upper", "{{ '\ua7da'.splitlines(true)|upper }}"),
+    ("trim", "{{ ['\ua7da']|trim }}"),
+    ("center", "{{ ['\ua7da']|center(30) }}"),
+    ("truncate", "{{ ['\ua7da']|truncate(30) }}"),
+    ("striptags", "{{ ['\ua7da']|striptags }}"),
+    ("escape", "{{ ['\ua7da']|escape }}"),
+    ("safe", "{{ ['\ua7da']|safe }}"),
+    ("title", "{{ ['\ua7da']|title }}"),
+    ("wordcount", "{{ ['\ua7da']|wordcount }}"),
+    ("replace", "{{ ['\ua7da']|replace('x', 'y') }}"),
+    ("urlize", "{{ ['\ua7da']|urlize }}"),
+    ("xmlattr", "{{ {'a': ['\ua7da']}|xmlattr }}"),
+    ("join", "{{ [['\ua7da'], 'x']|join('-') }}"),
+    ("join_separator", "{{ [['\ua7da'], 'x']|join(['\ua7da']) }}"),
+    ("is_lower", "{{ ['\ua7da'] is lower }}"),
+    ("format_conversion", "{{ '{!s}'.format(['\ua7da']) }}"),
+    ("format_empty_spec", "{{ '{}'.format(['\ua7da']) }}"),
+    ("format_filter", "{{ ('%s'|safe)|format(['\ua7da']) }}"),
+]:
+    case(f"escape/container_text_by_version_{_n}", _src)
+
+# Two more places the interpreter's tables have to reach, both found by a soak on
+# the version axis.
+#
+# str.title decides a word boundary by the *Cased* property, which is Lowercase,
+# Uppercase and the titlecase category together -- and the first two move between
+# interpreters, so one fixed table for it disagreed with 3.11 about 73 code points
+# and with 3.14 about 52. The one that mattered: a *new* uppercase letter did not
+# count as cased, which ended a word and left the character after it titlecased
+# instead of lowered. U+A7CB is that letter in 3.14.
+case("methods/title_cased_boundary_by_version",
+     "{{ '\ua7cb\ua7cc'.title() }}|{{ 'a\ua7cbb'.title() }}|"
+     "{{ '\ua7cb\ua7cc'.swapcase() }}|{{ 'a1b'.title() }}|{{ 'a\u01f3'.title() }}")
+# And a *folded* print converted its value with the pinned interpreter's tables:
+# a container's text is its repr, repr escapes by isprintable, and the unfolded
+# path was already right -- so `{{ ['\u1c89'] }}` disagreed with itself depending
+# on whether the expression was constant. The same call folds `~`.
+case("escape/folded_repr_escapes_by_version",
+     "{{ ['\u1c89'] }}|{{ {'a': '\u1c89'} }}|{{ ('\u1c89',) }}|{{ ['\ua7da'] }}|"
+     "{{ '\u1c89' ~ ['\u1c89'] }}|{{ ['\u0378'] }}")
+
+# Every repr a *message* or an object carries escapes by the interpreter's
+# isprintable too, and six of them were reading the pin's tables: the float
+# conversion error on both the filter and the `%` path, a replacement field's
+# KeyError, a dict view's repr, a namespace's, and a slice's inside a mapping's
+# KeyError. A namespace and a view carry the version on the object, because Reprer
+# takes no arguments. Found by a soak on the version axis, on
+# `'\u019bA\u1c89 b'|filesizeformat`.
+case("errors/float_conversion_repr_by_version",
+     "{{ '\u019bA\u1c89 b'|filesizeformat() }}")
+case("errors/percent_float_conversion_repr_by_version", "{{ '%f' % '\u1c89 x' }}")
+case("errors/format_field_repr_by_version", "{{ '{\u1c89}'.format(a=1) }}")
+case("methods/dict_view_repr_by_version",
+     "{% set q = {'\u1c89': 1} %}{{ q.keys() }}|{{ q.items() }}")
+case("globals/namespace_repr_by_version", "{{ namespace(v='\u1c89') }}")
+case("errors/slice_key_repr_by_version", "{% set q = {'a': 1} %}{{ q['\u1c89':] }}")
+
+# |wordcount and |wordwrap read Python's `\w` and `[^\d\W]`, which for a str
+# pattern are Py_UNICODE_ISALNUM and that minus isdecimal -- not Go's IsLetter
+# and IsDigit.
+#
+# gojja2 read them off Go's tables: 9,039 code points wrong against the pin for
+# `\w` and 10,097 for `[^\d\W]`, with the count moving under whichever Unicode
+# release the toolchain carried. Composing the classifiers gojja2 already has for
+# isalpha and isnumeric is exact on all 1,112,064 code points for every
+# interpreter, so no new table was needed -- only for these two to stop asking Go.
+#
+# The two directions: U+00B2 is `\w` and not `\d`, so it is a word *letter*
+# although unicode.IsLetter says no -- which is why `a\u00b2-\u00b2b` breaks after
+# the hyphen. U+A7DA and U+10D40 are unassigned before 3.14, so a word made of
+# them is no word at all there. Found by a soak seed on `'\ua7da\ua7db\ua7dc'|wordcount`.
+case("filters/wordcount_reads_the_interpreters_class",
+     "{{ '\ua7da\ua7db\ua7dc'|wordcount }}|{{ '\u019b\u0264'|wordcount }}|"
+     "{{ '\u00b2\u00b3'|wordcount }}|{{ 'a\u00b2b'|wordcount }}|"
+     "{{ '\u0f33'|wordcount }}|{{ '[]'|wordcount }}|{{ 'a\u0897b'|wordcount }}")
+# The width has to be one that makes the *hyphen rule* choose the break, not one
+# that hard-breaks the word anyway: at width 3 `a\u00b2-\u00b2b` comes out the same
+# whichever class U+00B2 is in, so that case graded nothing. At width 4 the
+# position moves.
+case("filters/wordwrap_word_letter_is_not_a_digit",
+     "{{ 'a\u00b2-\u00b2bcdef'|wordwrap(4) }}|{{ '\u00b2\u00b2-\u00b2bcdef'|wordwrap(4) }}|"
+     "{{ 'a\u00b2\u00b2-\u00b2bcdef'|wordwrap(5) }}|{{ 'a1-1bcdef'|wordwrap(4) }}|"
+     "{{ 'ab-cdefgh'|wordwrap(4) }}")
+case("filters/wordwrap_hyphens_and_dashes",
+     "{{ 'a-1-b'|wordwrap(3) }}|{{ '\u019b-\u019b\u019b'|wordwrap(2) }}|"
+     "{{ 'a--b'|wordwrap(2) }}")
+# The decimal *value* an interpreter reads a code point as, which the override
+# has to carry rather than flip: a version newer than the pin assigns digits the
+# pin has never heard of, and recording membership alone answered -1 for all 80
+# of 3.14's. `|int(-1)` shows it, because |int falls back rather than raising.
+case("filters/decimal_value_by_version",
+     "{{ '\U00010d40'|int(-1) }}|{{ '\U00010d41'|int(-1) }}|{{ '\u0f20'|int(-1) }}|"
+     "{{ '\U00010d40'.isdecimal() }}|{{ '\U00010d40'.isdigit() }}|"
+     "{{ '\U00010d40'.isnumeric() }}")
+
+# str.isidentifier is CPython's XID_Start/XID_Continue tables, not the rule the
+# grammar states.
+#
+# gojja2 read it as `unicode.IsLetter(c) || Nl || '_'` for the first character and
+# that plus digits and Mn/Mc/Pc for the rest, which is the rule and *not* the
+# table: it disagreed with the pin about 8,975 code points for the first half and
+# 9,168 for the second, and it followed whichever Unicode release the Go
+# toolchain carried. It is two absolute tables now, generated per interpreter
+# like isalpha and isprintable.
+#
+# U+037A may not begin an identifier although it is a letter, and U+00B7 may
+# continue one although it is punctuation -- the two directions Go's rule got
+# wrong. U+200C and U+200D became continuers in 3.13, and U+1C89, U+A7CB and
+# U+A7DA arrived in 3.14, so those are the version axis. Found by a soak seed
+# after the generator learned to draw code points whose casing changed.
+case("methods/isidentifier_against_the_table",
+     "{{ '\u037a'.isidentifier() }}|{{ 'a\u037a'.isidentifier() }}|"
+     "{{ '\u00b7'.isidentifier() }}|{{ 'a\u00b7'.isidentifier() }}|"
+     "{{ '\u0e33'.isidentifier() }}|{{ 'a\u0387'.isidentifier() }}")
+case("methods/isidentifier_by_version",
+     "{{ 'a\u200c'.isidentifier() }}|{{ 'a\u200d'.isidentifier() }}|"
+     "{{ '\u1c89'.isidentifier() }}|{{ 'a\u1c89'.isidentifier() }}|"
+     "{{ '\ua7cb'.isidentifier() }}|{{ '\ua7da'.isidentifier() }}|"
+     "{{ 'a\u0897'.isidentifier() }}")
+case("methods/isidentifier_above_the_basic_plane",
+     "{{ '\U00010d50'.isidentifier() }}|{{ '\U00010d70'.isidentifier() }}|"
+     "{{ 'a\U00010d50'.isidentifier() }}|{{ '\U0001d7ca'.isidentifier() }}")
+# ...and the shapes that decide nothing about tables: the empty string, a digit
+# first, an underscore, and a keyword.
+case("methods/isidentifier_shape",
+     "{{ ''.isidentifier() }}|{{ '_'.isidentifier() }}|{{ '_a1'.isidentifier() }}|"
+     "{{ '1a'.isidentifier() }}|{{ 'class'.isidentifier() }}|{{ 'a b'.isidentifier() }}")
+
+# A set is unhashable: Python's set defines __eq__ without __hash__, and only
+# frozenset hashes. gojja2's hashed by identity, so `{{ (d.keys() - 'a') is
+# filter }}` answered False where CPython raises -- and a set went into a dict as
+# a key and into |unique without complaint. It is the only set a template can
+# hold, so `is filter` asking the environment's registry is the shape that found
+# it: that is a dict membership test, which hashes before it looks at whether the
+# value is a name.
+for _n, _src in [
+    ("is_filter", "{{ (q.keys() - 'a') is filter }}"),
+    ("is_test", "{{ (q.keys() - 'a') is test }}"),
+    ("as_a_dict_key", "{{ {(q.keys() - 'a'): 1} }}"),
+    ("in_a_dict", "{{ (q.keys() - 'a') in q }}"),
+    ("through_unique", "{{ [(q.keys() - 'a')]|unique|list }}"),
+]:
+    case(f"errors/set_unhashable_{_n}", _Q + _src)
+# ...and tests/is_filter_and_is_test above already holds the questions that do
+# have answers, which is what keeps the hash from being the whole of the test.
+
+# A strict handler is handed the *maximal run* of characters the codec cannot
+# represent, not the first one, and the message for a run of two or more is a
+# different sentence: "can't encode characters in position 0-1" carries no
+# character at all, says "characters", and ends inclusively. gojja2 reported the
+# first character every time, so every run read as a single character. A run stops
+# at the first encodable character, which is what keeps `'\u019ba\u0264'` at
+# position 0 alone. Found by a soak seed, after the generator learned to draw
+# code points whose casing changed between interpreters.
+for _n, _src in [
+    ("run_of_two", "{{ '\u019b\u0264'.encode('ascii') }}"),
+    ("run_of_three", "{{ '\u019b\u0264\u1c89'.encode('ascii') }}"),
+    ("run_inside", "{{ 'ab\u019b\u0264\u1c89cd'.encode('ascii') }}"),
+    ("run_broken_by_an_encodable", "{{ '\u019ba\u0264'.encode('ascii') }}"),
+    ("run_of_one_inside", "{{ 'a\u019bb'.encode('ascii') }}"),
+    ("run_in_latin_1", "{{ '\u019b\u0264'.encode('latin-1') }}"),
+    ("run_latin_1_takes_e_acute", "{{ '\u00e9\u00e9x'.encode('ascii') }}"),
+]:
+    case(f"errors/encode_{_n}", _src)
+# ...and the handlers that do not raise, which walk the same run without needing
+# to describe it.
+case("methods/encode_handlers_over_a_run",
+     "{{ '\u019b\u0264x'.encode('ascii', 'replace') }}|"
+     "{{ '\u019b\u0264x'.encode('ascii', 'ignore') }}|"
+     "{{ '\u019b\u0264x'.encode('ascii', 'backslashreplace') }}|"
+     "{{ '\u019b\u0264x'.encode('ascii', 'xmlcharrefreplace') }}")
+case("errors/encode_surrogateescape_over_a_run",
+     "{{ '\u019b\u0264'.encode('ascii', 'surrogateescape') }}")
 case("errors/encode_latin1_range", "{{ '\u20ac'.encode('latin-1') }}")
 case("errors/decode_ascii_range", "{{ '\u00e9'.encode().decode('ascii') }}")
 
@@ -2238,7 +4583,6 @@ case("errors/format_unknown_code", "{{ '{:*}'.format(1) }}")
 case("errors/format_invalid_specifier", "{{ '{:qq}'.format(1) }}")
 # One format string counts its fields or names them, never both.
 case("errors/format_mixed_numbering", "{{ '{} {0}'.format(1) }}")
-case("errors/format_unterminated_field", "{{ '{0'.format(1) }}")
 
 # Python has three numeric predicates and they are three different sets: only
 # isdecimal is a general category (Nd). isdigit adds Numeric_Type=Digit, and
@@ -2284,7 +4628,55 @@ case("repr/bytes_short_escapes_and_quotes",
 case("filters/urlize", "{{ 'see http://example.com/a?b=1, and www.x.org. mail me@example.com'|urlize }}")
 case("filters/urlize_args", "{{ 'go to http://example.com now'|urlize(10, target='_blank') }}")
 case("filters/tojson", "{{ {'b':1,'a':[1,2],'c':'<x>'}|tojson }}|{{ [1,2]|tojson(indent=2) }}")
+# The environment *policies*, which change what a filter produces for every
+# template rather than for one call: urlize.rel, urlize.target and
+# truncate.leeway. gojja2 already honoured all three -- 98 shapes across seven
+# settings agreed -- and nothing asserted it, which is the `make ungraded`
+# reasoning applied to a setting rather than to a message. An explicit empty
+# string and an explicit zero are settings too, not omissions, which is why
+# the header carries them as pointers.
+for _n, _src, _pol in [
+    ("rel_default", "{{ u|urlize }}", {}),
+    ("rel_empty", "{{ u|urlize }}", {"urlize.rel": ""}),
+    ("rel_named", "{{ u|urlize }}", {"urlize.rel": "me"}),
+    ("rel_beside_nofollow", "{{ u|urlize(nofollow=true) }}", {"urlize.rel": "me"}),
+    ("rel_overridden_by_the_call", "{{ u|urlize(rel='own') }}", {"urlize.rel": "me"}),
+    ("rel_none_at_the_call", "{{ u|urlize(rel=none) }}", {"urlize.rel": "me"}),
+    ("target_set", "{{ u|urlize }}", {"urlize.target": "_blank"}),
+    ("target_overridden_by_the_call", "{{ u|urlize(target='_self') }}", {"urlize.target": "_blank"}),
+    ("target_none_at_the_call", "{{ u|urlize(target=none) }}", {"urlize.target": "_blank"}),
+    ("both", "{{ u|urlize }}", {"urlize.rel": "me", "urlize.target": "_top"}),
+    ("email_takes_the_policies", "{{ 'a@b.com'|urlize }}", {"urlize.rel": "me", "urlize.target": "_top"}),
+    ("leeway_default", "{{ 'abcdefghij'|truncate(5) }}", {}),
+    ("leeway_zero", "{{ 'abcdefghij'|truncate(5) }}", {"truncate.leeway": 0}),
+    ("leeway_wide", "{{ 'abcdefghij'|truncate(5) }}", {"truncate.leeway": 20}),
+    ("leeway_overridden_by_the_call", "{{ 'abcdefghij'|truncate(5, false, '...', 0) }}", {"truncate.leeway": 20}),
+    ("leeway_on_words", "{{ 'a b c d e f g h i j'|truncate(8) }}", {"truncate.leeway": 0}),
+    ("leeway_leaves_a_short_string", "{{ 'short'|truncate(10) }}", {"truncate.leeway": 0}),
+    ("all_three", "{{ u|urlize }}[{{ 'abcdefghij'|truncate(5) }}]",
+     {"urlize.rel": "me", "urlize.target": "_top", "truncate.leeway": 2}),
+]:
+    case(f"policies/{_n}", _src, __settings__={"policies": _pol},
+         u="see http://x.com now")
+
 case("filters/xmlattr", "{{ {'class':'a b','id':none,'data-x':1}|xmlattr }}")
+# do_xmlattr escapes both halves with markupsafe's escape(), which leaves a value
+# that is already safe alone. gojja2 escaped the text unconditionally, so
+# `{'y': '&amp;'|safe}|xmlattr` came out double-escaped as ` y="&amp;amp;"`. The
+# mixed pair is the one that tells the rule from "never escape".
+for _n, _src in [
+    ("safe_value", "{{ {'y': '&amp;'|safe}|xmlattr }}"),
+    ("safe_markup_value", "{{ {'y': '<i>'|safe}|xmlattr }}"),
+    ("unsafe_value", "{{ {'y': '<i>'}|xmlattr }}"),
+    ("safe_and_unsafe", "{{ {'y': '&amp;'|safe, 'z': '&amp;'}|xmlattr }}"),
+    ("safe_key", "{% set k = 'a<b'|safe %}{{ {k: 'v'}|xmlattr }}"),
+    ("unsafe_key", "{{ {'a<b': 'v'}|xmlattr }}"),
+    ("escaped_value", "{{ {'y': '<i>'|escape}|xmlattr }}"),
+    ("quote_in_value", "{{ {'y': '\"q\"'}|xmlattr }}"),
+    ("apostrophe_in_value", "{{ {'y': \"'q'\"}|xmlattr }}"),
+    ("list_value", "{{ {'y': ['<i>']}|xmlattr }}"),
+]:
+    case(f"filters/xmlattr_escape_{_n}", _src)
 case("filters/pprint", "{{ map|pprint }}|{{ 'a'|pprint }}", **MAP)
 case("filters/attr", "{{ d|attr('a') }}|{{ d|attr('missing') }}", d={"a": 1})
 case("filters/items", "{{ map|items|list }}", **MAP)
@@ -2372,6 +4764,14 @@ case("grouptuple/percent", GROUP + '{{ "%s/%s" % g }}|{{ "%r" % g[0] }}', **USER
 case("grouptuple/order", GROUP + "{{ g < ('Lisbon', []) }}|{{ ('Lisbon', []) < g }}|{{ g == ('x',) }}", **USERS)
 case("grouptuple/equality", GROUP + "{{ g == ('Lisbon', users[:1] + users[2:]) }}|{{ ('Lisbon', []) == g }}|{{ g == ['Lisbon'] }}|{{ g in [('Lisbon', users[:1] + users[2:])] }}", **USERS)
 case("grouptuple/sum_start", GROUP + "{{ [g]|sum(start=()) }}", **USERS)
+# A literal tuple on the left of a group tuple runs the group's reflected
+# comparison first, for every operator: the answer is the same, and the refusal
+# names the swapped operator. Only `<` and `==` had a case.
+case("grouptuple/reflected_orderings",
+     "{% for g in [1, 1, 2]|groupby('real') %}{{ (1,) < g }}{{ (1,) <= g }}{{ (1,) >= g }}{{ (1,) > g }}|{% endfor %}")
+for _op in ["<", "<=", ">="]:
+    case("grouptuple/reflected_refusal_" + {"<": "lt", "<=": "le", ">=": "ge"}[_op],
+         "{% for g in [1, 1, 2]|groupby('real') %}{{ ('a',) " + _op + " g }}{% endfor %}")
 
 case("errshape/grouptuple_concat_str", GROUP + '{{ g + "s" }}', **USERS)
 case("errshape/grouptuple_concat_list", GROUP + "{{ g + [1] }}", **USERS)
@@ -2391,6 +4791,19 @@ case("errshape/format_percent_width", "{{ '%5%' % 1 }}")
 case("errshape/format_percent_starved", "{{ '%5%' % () }}")
 case("errshape/format_percent_urlencoded", "{{ ({(1,2): 'x'}|urlencode) % 2 }}")
 case("markup/format_percent_literal", "{{ '100%% sure, %s' % 'really' }}|{{ '%s%%' % 5 }}")
+
+# The str methods markupsafe keeps a Markup from, which a Markup receiver
+# answers as a Markup -- so under autoescape the result is not escaped again.
+# None of these had been called on a Markup at all.
+for _n, _src in [
+    ("translate", "{{ ('<a>'|safe).translate({97: 'b'}) }}|{{ ('a'|safe).translate({97: '<'}) }}"),
+    ("expandtabs", "{{ ('<a>\tx'|safe).expandtabs(2) }}"),
+    ("partition", "{{ ('<a>-x'|safe).partition('-') }}|{{ ('<a>-x'|safe).rpartition('-')[0] }}|"
+     "{{ ('ab'|safe).partition('z') }}|{{ ('ab'|safe).rpartition('z') }}"),
+    ("removeprefix", "{{ ('<a>x'|safe).removeprefix('<') }}|{{ ('<a>x'|safe).removesuffix('x') }}|"
+     "{{ ('a'|safe).removeprefix('<') }}"),
+]:
+    case("markup/method_keeps_markup_" + _n, "{% autoescape true %}" + _src + "{% endautoescape %}")
 case("errshape/format_char", "{{ '%S' % 'a' }}")
 # The C functions jinja2 registers do not all word an argument error alike:
 # abs, len and callable say "takes exactly one argument", the operator.*
@@ -2471,6 +4884,28 @@ case("globals/joiner_non_string_sep",
 # empty cycle. The caller macro has no name, and CPython prints that as None.
 case("errors/loop_cycle_keyword", "{% for i in [1,2] %}{{ loop.cycle(a=1) }}{% endfor %}")
 case("errors/loop_changed_keyword", "{% for i in [1,2] %}{{ loop.changed(a=1) }}{% endfor %}")
+# loop.changed is `self._last_checked_value != value`, a real `!=` on two tuples,
+# so a StrictUndefined among the arguments raises instead of answering -- and it
+# raises from the *second* call, not the first: the first has only the `missing`
+# sentinel to compare against, which is not a tuple, so Python falls back to
+# identity and never looks at the elements. gojja2 compared without consulting
+# the refusal and answered "TrueTrue" for both.
+#
+# The one-iteration case is the one that keeps the fix honest: refusing on the
+# first call as well would be just as wrong.
+case("undefined/strict_loop_changed_first_call",
+     "{% for a in [1] %}{{ loop.changed(nope) }}{% endfor %}",
+     __settings__={"undefined": "strict"})
+case("undefined/strict_loop_changed_two_arguments",
+     "{% for a in [1] %}{{ loop.changed(nope, 1) }}{% endfor %}",
+     __settings__={"undefined": "strict"})
+case("undefined/strict_loop_changed_second_call",
+     "{% for a in [1, 2] %}{{ loop.changed(nope) }}{% endfor %}",
+     __settings__={"undefined": "strict"})
+# Two undefineds compare as unequal here only because the comparison never
+# happens; with a defined value it is a real comparison and the repeats show.
+case("loops/loop_changed_repeats", "{% for a in [1, 1, 2] %}{{ loop.changed(a) }}{% endfor %}")
+case("loops/loop_changed_no_arguments", "{% for a in [1, 2] %}{{ loop.changed() }}{% endfor %}")
 case("errors/loop_call_missing", "{% for i in [1,2] %}{{ loop() }}{% endfor %}")
 case("errors/loop_call_too_many", "{% for i in [1,2] %}{{ loop(i,i) }}{% endfor %}")
 case("errors/loop_call_not_recursive", "{% for i in [1,2] %}{{ loop(i) }}{% endfor %}")
@@ -2480,6 +4915,140 @@ case("errors/caller_too_many",
      "{% macro m() %}{{ caller(1) }}{% endmacro %}{% call m() %}x{% endcall %}")
 case("errors/caller_keyword",
      "{% macro m() %}{{ caller(a=1) }}{% endmacro %}{% call m() %}x{% endcall %}")
+
+# --- the three special parameters, and the word "undeclared" ------------------
+# A macro gets `caller`, `kwargs` or `varargs` only when its *body* reads one
+# without binding it first, and only when it has not declared a parameter of
+# that name itself. jinja2 spells both halves in macro_body: the refusal for a
+# `caller` parameter without a default sits under `if "caller" in undeclared`,
+# and skip_special_params keeps a declared `kwargs` or `varargs` from being
+# bound over. gojja2 had the first half for the runtime flags and neither for
+# the rest, so it refused `{% macro m(caller) %}x{% endmacro %}` -- which jinja2
+# renders -- ignored a `caller` parameter's default, and handed a macro that
+# declared `kwargs` an empty dict instead of the argument it was passed.
+for _n, _src in [
+    ("caller_param_unused", "{% macro m(caller) %}x{% endmacro %}[{{ m(1) }}]"),
+    ("caller_param_unused_after_another",
+     "{% macro m(a, caller) %}{{ a }}{% endmacro %}[{{ m(1, 2) }}]"),
+    ("caller_param_defaulted", "{% macro m(caller=1) %}{{ caller }}{% endmacro %}[{{ m() }}]"),
+    ("caller_param_defaulted_given",
+     "{% macro m(caller=1) %}{{ caller }}{% endmacro %}[{{ m(2) }}]"),
+    ("caller_param_defaulted_attribute",
+     "{% macro m(caller=1) %}{{ caller }}{% endmacro %}[{{ m.caller }}]"),
+    ("caller_param_defaulted_in_a_call_block",
+     "{% macro m(caller=1) %}[{{ caller() }}]{% endmacro %}{% call m() %}C{% endcall %}"),
+    ("caller_param_stored_first",
+     "{% macro m(caller) %}{% set caller = 1 %}{{ caller }}{% endmacro %}[{{ m(3) }}]"),
+    ("caller_param_is_a_loop_target",
+     "{% macro m(caller) %}{% for caller in [1] %}{{ caller }}{% endfor %}{% endmacro %}[{{ m(3) }}]"),
+    ("caller_param_in_a_call_blocks_signature",
+     "{% macro m() %}{{ caller(5) }}{% endmacro %}{% call(caller) m() %}x{% endcall %}"),
+    ("kwargs_param_declared", "{% macro m(kwargs) %}{{ kwargs }}{% endmacro %}[{{ m(1) }}]"),
+    ("kwargs_param_declared_attribute",
+     "{% macro m(kwargs) %}{{ kwargs }}{% endmacro %}[{{ m.catch_kwargs }}]"),
+    ("varargs_param_declared", "{% macro m(varargs) %}{{ varargs }}{% endmacro %}[{{ m(1) }}]"),
+    ("varargs_param_declared_attribute",
+     "{% macro m(varargs) %}{{ varargs }}{% endmacro %}[{{ m.catch_varargs }}]"),
+    ("kwargs_param_declared_and_extra_passed",
+     "{% macro m(kwargs) %}{{ kwargs }}{% endmacro %}[{{ m(1, x=2) }}]"),
+    ("varargs_param_declared_and_extra_passed",
+     "{% macro m(varargs) %}{{ varargs }}{% endmacro %}[{{ m(1, 2) }}]"),
+    ("kwargs_param_declared_but_unused",
+     "{% macro m(kwargs) %}x{% endmacro %}[{{ m(1) }}]"),
+]:
+    case("macros/" + _n, _src)
+
+# The search that decides all of it is jinja2's find_undeclared, and what it
+# walks is not what a reader would guess: it stops at a `{% block %}` and at
+# nothing else -- not at a nested macro -- and a *parameter* anywhere in what it
+# walks takes that name out of the search for good, while a default that reads
+# one puts it in. So a `{% call(kwargs) %}` block inside a macro settles
+# `kwargs` for the macro around it, and `{% call(p=kwargs) %}` does the
+# opposite. gojja2 walked a call block's body and not its signature, so the
+# enclosing macro swallowed keywords jinja2 refuses. Found by the fuzzer.
+_TAKES = "{% macro takes() %}<{{ caller(1) }}>{% endmacro %}"
+for _n, _src in [
+    ("call_block_param_settles_kwargs",
+     "{% macro m(x) %}{% call(kwargs) takes() %}{{ kwargs }}{% endcall %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+    ("call_block_param_settles_varargs",
+     "{% macro m(x) %}{% call(varargs) takes() %}{{ varargs }}{% endcall %}{% endmacro %}"
+     "[{{ m(1, 2) }}]"),
+    ("call_block_param_settles_caller",
+     "{% macro m(x) %}{% call(caller) takes() %}x{% endcall %}{% endmacro %}"
+     "[{{ m(1) }}]{% call m(1) %}C{% endcall %}"),
+    ("a_read_before_the_call_block_wins",
+     "{% macro m(x) %}{{ kwargs }}{% call(kwargs) takes() %}{% endcall %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+    ("a_call_blocks_default_reads_kwargs",
+     "{% macro m(x) %}{% call(p=kwargs) takes() %}x{% endcall %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+    ("a_nested_macros_param_settles_it",
+     "{% macro m(x) %}{% macro inner(kwargs) %}{{ kwargs }}{% endmacro %}{{ inner(9) }}"
+     "{% endmacro %}[{{ m(1, **{'b': 2}) }}]"),
+    ("a_block_body_is_not_searched",
+     "{% macro m(x) %}{% block bb %}{{ kwargs }}{% endblock %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+    ("a_loop_target_settles_it",
+     "{% macro m(x) %}{% for kwargs in [1] %}{{ kwargs }}{% endfor %}{% endmacro %}"
+     "[{{ m(1, **{'b': 2}) }}]"),
+]:
+    case("macros/undeclared_" + _n, _TAKES + _src)
+
+case("errors/caller_param_used_without_a_default",
+     "{% macro m(caller) %}{{ caller }}{% endmacro %}x")
+case("errors/caller_param_used_before_a_default",
+     "{% macro m(caller, a=1) %}{{ caller }}{% endmacro %}x")
+case("errors/caller_param_used_after_another",
+     "{% macro m(a, caller) %}{{ caller }}{% endmacro %}x")
+case("errors/caller_param_called_without_a_default",
+     "{% macro m(caller) %}{{ caller() }}{% endmacro %}x")
+case("errors/caller_param_used_in_a_call_blocks_signature",
+     "{% macro m() %}{{ caller(5) }}{% endmacro %}{% call(caller) m() %}{{ caller }}{% endcall %}")
+
+# --- a keyword written twice in one call --------------------------------------
+# jinja2 writes a call's keywords out as `name=value` pairs, so CPython's own
+# compiler refuses the *generated module*: `{{ m(a=1, a=2) }}` does not compile
+# there. gojja2 bound the first and swept the second into kwargs, which is the
+# direction of divergence that costs a template author something -- the template
+# worked here and failed under jinja2. It is refused now, with CPython's wording
+# and the line of the template rather than of the module, so these are listed in
+# known_failures.txt beside the repeated *parameter* name, for the same reason.
+case("errors/keyword_repeated_in_a_macro_call",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}")
+case("errors/keyword_repeated_in_a_filter", "{{ lst|join(d='-', d='+') }}", lst=[1, 2])
+case("errors/keyword_repeated_in_a_test",
+     "{{ n3 is divisibleby(num=2, num=3) }}", n3=3)
+case("errors/keyword_repeated_in_a_global", "{{ dict(a=1, a=2) }}")
+case("errors/keyword_repeated_in_a_method", "{{ s.split(sep='a', sep='b') }}", s="ab")
+case("errors/keyword_repeated_in_a_call_block",
+     "{% macro m(a=1) %}{{ a }}{{ caller() }}{% endmacro %}"
+     "{% call m(a=2, a=3) %}c{% endcall %}")
+case("errors/keyword_repeated_among_three",
+     "{% macro m(a=1, b=2) %}{{ a }}{% endmacro %}{{ m(b=1, a=2, b=3) }}")
+case("errors/keyword_repeated_in_a_dead_branch",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{% if false %}{{ m(a=2, a=3) }}{% endif %}ok")
+
+# ...unless the node folds first, and then it never reaches the generator at
+# all: jinja2's `as_const` collects the keywords through a dict comprehension,
+# where a repeated name quietly keeps the last. So the same filter over a
+# literal renders, and over a name does not compile. These are exact matches,
+# not known failures, and they are the half that says the refusal is placed in
+# the right phase rather than in the parser.
+case("fold/keyword_repeated_but_folded", "{{ [1]|join(d='-', d='+') }}")
+case("fold/keyword_repeated_in_a_folded_assignment",
+     "{% set v = [1]|join(d='-', d='+') %}[{{ v }}]")
+case("fold/keyword_repeated_below_extends",
+     "{% extends 'base.txt' %}{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}",
+     __templates__={"base.txt": "B"})
+case("fold/order_a_lookup_beats_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}{{ 1|nosuchA }}")
+case("fold/order_a_later_fold_beats_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}"
+     "{{ (0 ** 0)[7] and 0 }}", __settings__={"undefined": "strict"})
+case("fold/order_a_block_twice_beats_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{% block b %}{% endblock %}"
+     "{% block b %}{% endblock %}{{ m(a=2, a=3) }}")
 case("runtime/loop_call_keyword",
      "{% for i in [[1],[2]] recursive %}{{ loop(iterable=i) if i is sequence else i }}{% endfor %}")
 case("runtime/macro_repr",
@@ -2740,6 +5309,25 @@ for _n, _src in [
     ("grouped_from_the_right", "{{ 'abcdef'.encode().hex('_', 2) }}"),
     ("grouped_from_the_left", "{{ 'abcdef'.encode().hex('_', -2) }}"),
     ("group_of_zero", "{{ b.hex('-', 0) }}"),
+    # bytes_per_sep is declared `int` in Argument Clinic, not Py_ssize_t, so it
+    # gives up at 2**31 and the OverflowError names a C int. gojja2 read it as
+    # an ssize_t: it accepted 2**31 outright and misnamed the type for anything
+    # past a C long.
+    ("group_at_the_c_int_ceiling", "{{ b.hex('-', 2147483647) }}"),
+    ("group_past_a_c_int", "{{ b.hex('-', 2147483648) }}"),
+    ("group_at_the_c_int_floor", "{{ b.hex('-', -2147483648) }}"),
+    ("group_below_the_c_int_floor", "{{ b.hex('-', -2147483649) }}"),
+    ("group_past_an_ssize_t", "{{ b.hex('-', 2 ** 70) }}"),
+    # bytes_per_sep is converted before sep is looked at at all -- it is an int
+    # in Argument Clinic and its conversion runs first -- so all four of these
+    # complain about the *second* argument. gojja2 measured the separator first
+    # and reported that instead.
+    ("bad_group_beats_a_none_sep", "{{ b.hex(none, none) }}"),
+    ("bad_group_beats_a_none_sep_str", "{{ b.hex(none, 'x') }}"),
+    ("bad_group_beats_an_int_sep", "{{ b.hex(1, none) }}"),
+    ("bad_group_beats_a_long_sep", "{{ b.hex('--', none) }}"),
+    ("none_sep_with_a_good_group", "{{ b.hex(none, 2) }}"),
+    ("long_sep_with_a_good_group", "{{ b.hex('--', 2) }}"),
     ("group_not_an_integer", "{{ b.hex('-', 'x') }}"),
     ("empty_receiver", "{{ ''.encode().hex('-') }}"),
     ("empty_receiver_bad_sep", "{{ ''.encode().hex(1) }}"),
@@ -3095,6 +5683,32 @@ for _n, _src in [
     case(f"divergence/class_unbound_dunder_{_n}", _src,
          d={"a": 1}, s="x", lst=[1], n=1, f=1.5)
 
+# The classes jinja2 writes in Python -- Cycler, LoopContext, Joiner, Macro --
+# carry their methods as plain functions, and a plain function takes any self:
+# `Cycler.next(1)` is "'int' object has no attribute 'current'", raised from
+# inside the method body. The type objects here carry none of them, so the name
+# is undefined. Only the address-free shapes are pinned; the function's repr
+# carries one. Listed in known_failures.txt.
+for _n, _src in [
+    ("cycler_next_is_defined", "{{ cycler(1).__class__.next is defined }}"),
+    ("cycler_next_with_self", "{% set c = cycler(1, 2) %}{{ c.__class__.next(c) }}{{ c.__class__.next(c) }}"),
+    ("cycler_reset_with_self", "{% set c = cycler(1, 2) %}{{ c.next() }}{{ c.__class__.reset(c) }}{{ c.current }}"),
+    ("loop_cycle_with_self", "{% for i in [1, 2] %}{{ loop.__class__.cycle(loop, 'a', 'b') }}{% endfor %}"),
+]:
+    case(f"divergence/class_python_method_{_n}", _src)
+
+# A bound method compares its receiver by *identity*, and whether two literal
+# scalars are one object is CPython's business: jinja2 folds each literal into
+# an object of its own, 1 is cached and 300 is not. gojja2 compares a scalar
+# receiver by value. Listed in known_failures.txt; see "`is sameas` on two
+# literals" in docs/divergences.md.
+for _n, _src in [
+    ("int", "{{ (300).bit_length == (300).bit_length }}"),
+    ("float", "{{ (1.5).hex == (1.5).hex }}"),
+    ("wide_int", "{{ (2**70).bit_length == (2**70).bit_length }}"),
+]:
+    case(f"divergence/bound_method_literal_receiver_{_n}", _src)
+
 # bool's descriptors are int's, and so are their arity messages: CPython says
 # "int.conjugate()" where the same method reached through the *value* says
 # "bool.conjugate()". gojja2's descriptor delegates to the receiver's own bound
@@ -3262,6 +5876,57 @@ case("format/typeless_precision",
      "{{ '{:.3}'.format(12.0) }}|{{ '{:.2}'.format(123456.789) }}|{{ '{:.0g}'.format(1.5) }}")
 case("errors/format_group_with_code", "{{ '{:,x}'.format(1.5) }}")
 case("errors/format_group_with_n", "{{ '{:,n}'.format(5) }}")
+
+# Two complaints the mini-language makes while it is still *reading* the spec,
+# so neither names the presentation type or the value's own -- which is what
+# tells them apart from the two above.
+#
+# A comma and an underscore are read one after the other, so a spec carrying
+# both says so in one message, in either order and whatever follows. Two of the
+# *same* separator is the other complaint: the second is read as the
+# presentation type, so `{:,,}` says "Cannot specify ',' with ','." and `{:,_}`
+# does not. gojja2 reported the generic "with" form for the mixed pair and let
+# `{:,_d}` fall through to "Invalid format specifier".
+for _n, _src in [
+    ("comma_then_underscore", "{{ '{:,_}'.format(1) }}"),
+    ("underscore_then_comma", "{{ '{:_,}'.format(1) }}"),
+    ("both_before_a_code", "{{ '{:,_d}'.format(1) }}"),
+    ("both_before_a_third", "{{ '{:_,,}'.format(1.5) }}"),
+    ("both_on_a_string", "{{ '{:,_}'.format('a') }}"),
+    # The same separator twice is the *other* complaint, and it is here so
+    # that reading the pair as "both" cannot pass unnoticed.
+    ("comma_twice", "{{ '{:,,}'.format(1) }}"),
+    ("underscore_twice", "{{ '{:__}'.format(1) }}"),
+]:
+    case(f"errors/format_separators_{_n}", _src)
+# A dot with no digits after it, likewise: `{:.f}` on an int and `{:.>5.}` on a
+# str report the same thing, and the digits must be bare -- a sign or a space
+# after the dot is this and not a width.
+for _n, _src in [
+    ("bare_dot", "{{ '{:.}'.format(1) }}"),
+    ("dot_then_code", "{{ '{:.f}'.format(1.5) }}"),
+    ("dot_after_a_width", "{{ '{:5.}'.format('a') }}"),
+    ("dot_is_also_the_fill", "{{ '{:.>5.}'.format(1) }}"),
+    ("signed_precision", "{{ '{:.-5f}'.format(1.5) }}"),
+    ("spaced_precision", "{{ '{:. 5f}'.format(1.5) }}"),
+]:
+    case(f"errors/format_precision_{_n}", _src)
+# An object with no __format__ of its own never reads the spec, so neither
+# complaint reaches it: these are about the type, not the spec.
+case("errors/format_unread_spec",
+     "{{ '{:,_}'.format(none) }}")
+# The grouped and exponent forms the sweep above did not reach: a width that
+# the separators have to be counted into, a grouped mantissa, and 'g' choosing
+# between the two forms and then trimming.
+case("format/grouped_width",
+     "{{ '{:15,}'.format(1234567890) }}|{{ '{:015,}'.format(-1234567) }}|"
+     "{{ '{:_>15,d}'.format(1234567) }}|{{ '{:015_x}'.format(1234567890) }}")
+case("format/grouped_exponent",
+     "{{ '{:,e}'.format(123456.789) }}|{{ '{:012,.3e}'.format(1e20) }}|"
+     "{{ '{:,g}'.format(1e20) }}|{{ '{:015.4g}'.format(123456.789) }}")
+case("format/general_form_picks_a_shape",
+     "{{ '{:g}'.format(0.0001) }}|{{ '{:g}'.format(1e-20) }}|{{ '{:G}'.format(1e20) }}|"
+     "{{ '{:.30g}'.format(1.5) }}|{{ '{:#g}'.format(0.0) }}|{{ '{:g}'.format(-0.0) }}")
 case("errors/format_group_with_str", "{{ '{:+_s}'.format('ab') }}")
 case("errors/format_string_space", "{{ '{: s}'.format('ab') }}")
 case("errors/format_string_alternate", "{{ '{:=#s}'.format('ab') }}")
@@ -3436,6 +6101,31 @@ case("errshape/dyn_kwargs_key_not_a_string", '{{ lst|join(**{1: "-"}) }}', lst=[
 case("errshape/dyn_kwargs_duplicate_in_a_filter", '{{ lst|join(d="-", **{"d": "+"}) }}', lst=[1, 2])
 case("errshape/dyn_kwargs_duplicate_in_a_call",
      '{% macro mm(x) %}{% endmacro %}{{ mm(x=1, **{"x": 2}) }}', lst=[1, 2])
+
+# ...and what it is handed is *asked*, not type-checked. `f(**x)` makes Python
+# look for `x.keys`, which every Undefined class refuses -- the chainable one
+# answers itself and then refuses the call -- so `{{ m(**nope) }}` is "'nope' is
+# undefined" under all four, where gojja2 said "argument after ** must be a
+# mapping, not Undefined". `*x` is *iterated* instead, and there the classes
+# differ: three of them yield nothing and the call goes ahead with no extra
+# arguments, and only StrictUndefined raises. Both sites were deciding by type
+# where jinja2 lets the value answer; the ** half was wrong for every class.
+for _n, _src in [
+    ("star_undefined", "{% macro mm(a=0) %}[{{ a }}]{% endmacro %}{{ mm(*nope) }}"),
+    ("star_undefined_attribute",
+     "{% macro mm(a=0) %}[{{ a }}]{% endmacro %}{{ mm(*d.missing) }}"),
+    ("star_kwargs_undefined", "{% macro mm(a=0) %}[{{ a }}]{% endmacro %}{{ mm(**nope) }}"),
+    ("star_kwargs_undefined_attribute",
+     "{% macro mm(a=0) %}[{{ a }}]{% endmacro %}{{ mm(**d.missing) }}"),
+    ("star_kwargs_undefined_in_a_global", "{{ dict(**nope) }}"),
+    ("star_kwargs_undefined_in_a_filter", "{{ lst|join(**nope) }}"),
+    ("star_undefined_in_a_filter", "{{ lst|join(*nope) }}"),
+    ("star_kwargs_undefined_in_a_test", "{{ 1 is odd(**nope) }}"),
+]:
+    for _kind in ("default", "chainable", "debug", "strict"):
+        _set = {} if _kind == "default" else {"undefined": _kind}
+        case(f"errshape/{_n}_{_kind}", _src, __settings__=_set,
+             lst=[1, 2], d={"a": 1})
 
 # A `*` or `**` argument is folded with the rest when everything in it is
 # constant, and holds the fold back when it is not.
@@ -3838,6 +6528,39 @@ case("errors/bytes_percent_s_wants_bytes", "{{ '%s'.encode() % 'x' }}")
 case("errors/bytes_percent_s_wants_bytes_not_int", "{{ '%s'.encode() % 5 }}")
 case("errors/bytes_percent_too_many_args", "{{ 'ab'.encode() % 1 }}")
 case("errors/bytes_percent_c_out_of_range", "{{ '%c'.encode() % 256 }}")
+# 3.14 names a bytes of the wrong length by its *length* -- "not a bytes object
+# of length 2" -- where anything that is not a bytes at all keeps the plain type
+# name. It is the same split str.center's argument 2 makes; see
+# FillCharMessageNamesTheLength. gojja2 said "not bytes" for the bytes case, so
+# the 3.14 column read as agreement. Found by a soak on the version axis.
+# 3.14 names the type *qualified* in the two `%c` messages and nowhere else in
+# the family: `%c` of an Undefined is "not jinja2.runtime.Undefined" while `%f` of
+# the same value is "not Undefined" and `%x` likewise. A builtin is unqualified
+# either way, so a dict view stays "dict_keys". Found by a soak on the version
+# axis, which is the only place the two names differ.
+for _n, _src in [
+    ("an_undefined", "{{ '[%c]' % nope }}"),
+    ("an_undefined_in_bytes", "{{ ('[%c]'.encode()) % nope }}"),
+    ("a_macro", "{% macro m() %}{% endmacro %}{{ '[%c]' % m }}"),
+    ("a_loop", "{% for i in [1] %}{{ '[%c]' % loop }}{% endfor %}"),
+    ("a_dict_view", "{% set d = {'a': 1} %}{{ '[%c]' % d.keys() }}"),
+    ("a_list", "{{ '[%c]' % [1] }}"),
+]:
+    case(f"errors/percent_c_names_{_n}", _src)
+# ...and the neighbours that stay unqualified, which is what makes it the `%c`
+# pair rather than a rule about the family.
+case("errors/percent_f_of_an_undefined_is_unqualified", "{{ '[%f]' % nope }}")
+case("errors/percent_x_of_an_undefined_is_unqualified", "{{ '[%x]' % nope }}")
+for _n, _src in [
+    ("two_bytes", "{{ '%c'.encode() % 'ab'.encode() }}"),
+    ("no_bytes", "{{ '%c'.encode() % ''.encode() }}"),
+    ("three_bytes", "{{ '%c'.encode() % 'abc'.encode() }}"),
+    ("a_str", "{{ '%c'.encode() % 'x' }}"),
+    ("a_float", "{{ '%c'.encode() % 1.5 }}"),
+    ("none", "{{ '%c'.encode() % none }}"),
+    ("a_list", "{{ '%c'.encode() % [1] }}"),
+]:
+    case(f"errors/bytes_percent_c_of_{_n}", _src)
 case("errors/bytes_percent_unsupported_verb", "{{ '%q'.encode() % 1 }}")
 case("errors/str_percent_has_no_b", "{{ '%b' % 'x'.encode() }}")
 
@@ -3859,6 +6582,166 @@ case("errors/percent_bytes_not_enough_args", "{{ '%s %s' % 'xy'.encode() }}")
 # rule rather than a blanket.
 case("errors/percent_str_is_not_a_mapping", "{{ '0' % 'x' }}")
 case("errors/percent_int_is_not_a_mapping", "{{ '0' % 1 }}")
+# The mapping key carries the *format string's* type, and so does the complaint
+# an operand that cannot be indexed by name makes about it: a bytes format asks
+# a list for a bytes key, so the list says "not bytes". gojja2 hardcoded "str"
+# in that message and reported it under a bytes format too. Found by a soak seed
+# that put a filtered dict -- a list by then -- on the right of a bytes `%`.
+for _n, _src in [
+    ("list_under_a_bytes_format", "{{ '%(k)s'.encode() % [1] }}"),
+    ("list_under_a_bytes_b_verb", "{{ '%(k)b'.encode() % [] }}"),
+    ("bytes_under_a_str_format", "{{ '%(k)d' % 'ab'.encode() }}"),
+]:
+    case(f"errors/percent_key_in_a_{_n}", _src)
+# And the key that is looked up: a str key does not match a bytes one, in either
+# direction, so the KeyError repr says which was asked for.
+# A matching *str* key is still a miss under a bytes format, which the
+# missing-key case above cannot show: its dict has no candidate at all.
+case("errors/percent_key_is_bytes_in_a_dict", "{{ '%(k)s'.encode() % {'k': 1} }}")
+
+# --- messages nothing had ever produced: methods.go ---------------------------
+# `make ungraded` had 40 of its 109 remaining sites in methods.go, in four
+# clusters. Every one of the shapes below already agreed with CPython; what was
+# missing was a case saying so, which is the point of the audit -- an ungraded
+# message reads as agreement in every column of the version matrix. One shape
+# did not agree, and it is the block after this.
+#
+# str.maketrans and str.translate: the happy paths were generated, none of the
+# refusals were.
+for _n, _src in [
+    ("maketrans_one_arg_not_a_dict", "{{ 'a'.maketrans('ab') }}"),
+    ("maketrans_unequal_length", "{{ 'a'.maketrans('ab', 'x') }}"),
+    ("maketrans_third_not_a_string", "{{ 'a'.maketrans('ab', 'xy', 1) }}"),
+    ("maketrans_no_arguments", "{{ 'a'.maketrans() }}"),
+    ("maketrans_too_many_arguments", "{{ 'a'.maketrans('a', 'b', 'c', 'd') }}"),
+    ("maketrans_long_string_key", "{{ 'a'.maketrans({'ab': 1}) }}"),
+    ("maketrans_key_is_a_float", "{{ 'a'.maketrans({1.5: 'x'}) }}"),
+    ("translate_no_arguments", "{{ 'a'.translate() }}"),
+    ("translate_out_of_range", "{{ 'abc'.translate({97: 1114112}) }}"),
+    ("translate_bad_value", "{{ 'abc'.translate({97: 1.5}) }}"),
+]:
+    case(f"errors/{_n}", _src)
+# A separator that is not a string, and the one that is empty.
+for _n, _src in [
+    ("split_separator_is_an_int", "{{ 'a b'.split(1) }}"),
+    ("split_empty_separator", "{{ 'a b'.split('') }}"),
+    ("rsplit_separator_is_a_float", "{{ 'a b'.rsplit(1.5) }}"),
+    ("join_no_arguments", "{{ 'a'.join() }}"),
+    ("join_item_is_an_int", "{{ ','.join([1]) }}"),
+    ("join_second_item_is_an_int", "{{ ','.join(['a', 2]) }}"),
+]:
+    case(f"errors/{_n}", _src)
+# The replacement-field parser's own complaints. Which one a truncated field
+# gets depends on how far it read: a lone brace, a name that never closed, and a
+# spec whose nested field never closed are three different messages.
+for _n, _src in [
+    ("format_single_close_brace", "{{ '}'.format() }}"),
+    ("format_unmatched_in_spec", "{{ '{0:{1'.format(1, 2) }}"),
+    ("format_unterminated_index", "{{ '{0[a'.format({'a': 1}) }}"),
+    ("format_expected_close", "{{ '{0'.format(1) }}"),
+    ("format_single_open_brace", "{{ '{'.format(1) }}"),
+    ("format_empty_conversion", "{{ '{0!}'.format(1) }}"),
+    ("format_map_key_missing", "{{ '{a}'.format_map({}) }}"),
+    ("format_string_index_out_of_range", "{{ '{0[5]}'.format('abc') }}"),
+    ("format_manual_then_automatic", "{{ '{0}{}'.format(1, 2) }}"),
+    ("format_auto_index_out_of_range", "{{ '{}{}'.format(1) }}"),
+    ("format_keyword_missing", "{{ '{x}'.format() }}"),
+    ("format_map_auto_field", "{{ '{}'.format_map({}) }}"),
+    ("format_index_key_missing", "{{ '{0[a]}'.format({'b': 1}) }}"),
+]:
+    case(f"errors/{_n}", _src)
+# The arity checks on dict's and list's own methods, which each word themselves
+# differently -- "expected at least 1 argument, got 0", "takes exactly one
+# argument (0 given)", "takes no arguments (1 given)" -- and so cannot be
+# generated from one rule.
+for _n, _src in [
+    ("dict_get_no_arguments", "{{ {'a': 1}.get() }}"),
+    ("dict_pop_no_arguments", "{{ {'a': 1}.pop() }}"),
+    ("dict_setdefault_no_arguments", "{{ {'a': 1}.setdefault() }}"),
+    ("dict_popitem_takes_none", "{{ {'a': 1}.popitem(1) }}"),
+    ("dict_fromkeys_no_arguments", "{{ {}.fromkeys() }}"),
+    ("list_append_no_arguments", "{{ [].append() }}"),
+    ("list_extend_no_arguments", "{{ [].extend() }}"),
+    ("list_insert_one_argument", "{{ [1].insert(1) }}"),
+    ("list_remove_no_arguments", "{{ [1].remove() }}"),
+    ("list_index_no_arguments", "{{ [1].index() }}"),
+    ("list_count_no_arguments", "{{ [1].count() }}"),
+]:
+    case(f"errors/{_n}", _src)
+
+# An integer in the mini-language that does not fit.
+#
+# CPython reads a width, a precision and a replacement field's index with the
+# same routine, which accumulates digit by digit and checks before each step
+# that the result will still hold a Py_ssize_t -- so all three say "Too many
+# decimal digits in format string". gojja2 multiplied and added without the
+# check, which was not only the wrong message: `'{18446744073709551616}'`
+# wrapped to 0 and printed the *first* argument, and a field index one past
+# that printed the second.
+#
+# A leading-zero index is the case that keeps the check honest: those digits are
+# long and the number is small, so refusing on length alone would break them.
+for _n, _src in [
+    ("format_digits_in_an_index", "{{ '{0[99999999999999999999]}'.format([1]) }}"),
+    ("format_digits_in_a_field", "{{ '{99999999999999999999}'.format(1) }}"),
+    ("format_digits_that_wrap", "{{ '{18446744073709551616}'.format('a', 'b') }}"),
+    ("format_digits_that_wrap_to_one", "{{ '{18446744073709551617}'.format('a', 'b') }}"),
+    ("format_digits_in_a_width", "{{ '{:99999999999999999999}'.format(1) }}"),
+    ("format_digits_in_a_precision", "{{ '{:.99999999999999999999f}'.format(1.5) }}"),
+    ("format_digits_in_a_nested_spec", "{{ '{:{}}'.format(1, 99999999999999999999) }}"),
+]:
+    case(f"errors/{_n}", _src)
+# The `[key]` step of a replacement field is a real obj[key], and what each base
+# says about one it cannot take is the base's own complaint. gojja2 answered a
+# KeyError -- what a *mapping* says about a key it does not hold -- for every
+# object, indexed a bytes as though it were a str, and reported a subscript
+# error for an undefined instead of the undefined's own.
+#
+# A bytes indexes to the *number* its byte is; its refusals are "byte indices
+# must be integers or slices, not str" and an out-of-range message that names no
+# type at all. A range names itself in both, with an "object" in the
+# out-of-range one that a list does not have. A groupby group is a namedtuple,
+# and both of its complaints come from tuple rather than from the subclass. A
+# namespace, a cycler, a joiner, a dict view and a class object are not
+# subscriptable at all.
+case("format/field_index_into_a_bytes",
+     "{{ '{0[0]}'.format('ab'.encode()) }}|{{ '{0[1]}'.format('ab'.encode()) }}")
+case("errors/field_index_bytes_out_of_range", "{{ '{0[9]}'.format('ab'.encode()) }}")
+case("errors/field_index_bytes_string_key", "{{ '{0[a]}'.format('ab'.encode()) }}")
+case("format/field_index_into_a_range",
+     "{{ '{0[1]}'.format(range(3)) }}|{{ '{0[2]}'.format(range(1, 9, 3)) }}")
+case("errors/field_index_range_out_of_range", "{{ '{0[9]}'.format(range(3)) }}")
+case("errors/field_index_range_string_key", "{{ '{0[a]}'.format(range(3)) }}")
+# "-1" and "1.5" are not all digits, so both are string keys and neither is an
+# index -- which is why a negative one is a type error and not the last element.
+case("errors/field_index_range_negative", "{{ '{0[-1]}'.format(range(3)) }}")
+for _n, _src in [
+    ("namespace", "{{ '{0[v]}'.format(namespace(v=1)) }}"),
+    ("cycler", "{{ '{0[a]}'.format(cycler('a','b')) }}"),
+    ("joiner", "{{ '{0[a]}'.format(joiner('-')) }}"),
+    ("dict_view", "{{ '{0[a]}'.format({'a': 1}.items()) }}"),
+    ("an_int", "{{ '{0[a]}'.format(1) }}"),
+]:
+    case(f"errors/field_index_not_subscriptable_{_n}", _src)
+case("errors/field_index_on_an_undefined", "{{ '{0[a]}'.format(nope) }}")
+case("format/field_index_into_a_group",
+     "{% set g = [{'k': 1}]|groupby('k') %}{{ '{0[0]}'.format(g[0]) }}")
+for _n, _src in [
+    ("group_out_of_range",
+     "{% set g = [{'k': 1}]|groupby('k') %}{{ '{0[9]}'.format(g[0]) }}"),
+    ("group_string_key",
+     "{% set g = [{'k': 1}]|groupby('k') %}{{ '{0[a]}'.format(g[0]) }}"),
+]:
+    case(f"errors/field_index_{_n}", _src)
+# A manual index past the end, and a spec whose nested field is closed by the
+# outer field's brace: two messages the parser makes that nothing reached, the
+# second because an outer field that never closes is reported first.
+case("errors/format_manual_index_out_of_range", "{{ '{5}'.format(1) }}")
+case("errors/format_unmatched_in_a_closed_spec", "{{ '{0:{1}'.format(1, 2) }}")
+case("errors/format_unmatched_after_spec_text", "{{ '{0:a{b}'.format(1) }}")
+case("format/leading_zeros_in_an_index",
+     "{{ '{0[00000000000000000001]}'.format([1, 2]) }}|"
+     "{{ '{00000000000000000001}'.format(1, 2) }}|{{ '{:00000000000005d}'.format(1) }}")
 
 # --- a dict view subtracts as a set --------------------------------------------
 # `d.keys() - xs` is the whole of the set arithmetic a template can write:
@@ -4037,6 +6920,81 @@ case("loops/filter_raises_under_last",
 case("loops/filter_not_forced_by_index",
      "{% for i in range(3) if d.pop('a') %}{{ loop.index|length }}{% endfor %}",
      d={"a": 1, "b": 2, "c": 3})
+# `loop.last` is a one-item lookahead -- jinja2's `_peek_next() is missing` --
+# and not the total. gojja2 asked for the length, which for a filtered loop means
+# running the test over the whole of the rest of the input: five more pops rather
+# than one. It shows only when the loop does not run to the end, which is what a
+# `{% break %}` arranges, and when the test survives one more pull but not all of
+# them -- which is why the existing filter_raises_under_last, whose test raises
+# on the *second* pull either way, could not tell the two apart.
+#
+# Found by the fuzzer, on a recursive loop whose `{% break %}` fired on the first
+# pass and whose else branch then ran -- the for-else indicator being set at the
+# *end* of the body, so a break on the first iteration reads as "never ran".
+_LC = {"extensions": ["loopcontrols"]}
+case("loops/last_looks_ahead_by_one",
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.last }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
+case("loops/last_then_break",
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]"
+     "{% if loop.last == 0 %}{% break %}{% endif %}{% endfor %}",
+     __settings__=_LC)
+case("loops/last_then_break_recursive",
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() recursive %}[{{ i }}]"
+     "{% if loop.last == 0 %}{% break %}{% endif %}{% else %}empty{% endfor %}",
+     __settings__=_LC)
+case("loops/nextitem_looks_ahead_by_one",
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.nextitem }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
+# The neighbours that *do* need the total, so the lookahead cannot be widened
+# back into one: both of these run the test over the rest even under a break.
+case("loops/length_needs_the_total_under_break",
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.length }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
+case("loops/revindex_needs_the_total_under_break",
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.revindex }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
+# Consuming the loop *object* pulls through the same source, and a `{% break %}`
+# would then leave the filter's failure sitting in it unreported. jinja2 raises
+# where the consumption happened, so the loop reports it even after a break --
+# which is a different rule from the one below, where a break stops the walk
+# *before* the pull that would have failed and there is nothing to report.
+#
+# `{{ loop|string }}` is here because LoopContext.__repr__ asks for the length,
+# so even printing the loop consumes the rest of a filtered one.
+for _n, _src in [
+    ("length_filter", "{{ loop|length }}"),
+    ("count_filter", "{{ loop|count }}"),
+    ("list_filter", "{{ loop|list|length }}"),
+    ("first_filter", "{{ loop|first }}"),
+    ("string_filter", "{{ loop|string }}"),
+    ("dict_of_it", "{{ dict(loop, extra=2)|length }}"),
+    ("walked_again", "{% for a, b in loop %}{% endfor %}"),
+    ("membership", "{{ 1 in loop }}"),
+    ("set_from_it", "{% set x = loop|list %}"),
+    ("mapped", "{{ loop|map('string')|list|length }}"),
+]:
+    # The dictionary is built in the template rather than passed in: a
+    # context dict of more than one key makes the case unreadable to
+    # TestBothRenderPathsAgree, which has to hand the context over as a Go map
+    # and so cannot carry its order. A dict display is ordered in both engines,
+    # so this grades the same rule and is checked by both render paths.
+    case(f"loops/consumed_then_break_{_n}",
+         "{% set d = {'e': 5, 'd': 4, 'c': 3, 'b': 2, 'a': 1} %}{% for i in 'abcdef' if d.popitem() %}" + _src +
+         "[{{ d|length }}]{% break %}{% endfor %}", __settings__=_LC)
+# The two that do *not* consume it, so the rule cannot be widened into "a break
+# always reports": `is iterable` asks the type and `[loop]` only holds it.
+case("loops/not_consumed_by_a_test",
+     "{% set d = {'e': 5, 'd': 4, 'c': 3, 'b': 2, 'a': 1} %}{% for i in 'abcdef' if d.popitem() %}"
+     "[{{ loop is iterable }}][{{ d|length }}]{% break %}{% endfor %}", __settings__=_LC)
+case("loops/not_consumed_by_a_list_literal",
+     "{% set d = {'e': 5, 'd': 4, 'c': 3, 'b': 2, 'a': 1} %}{% for i in 'abcdef' if d.popitem() %}"
+     "[{{ [loop]|length }}][{{ d|length }}]{% break %}{% endfor %}", __settings__=_LC)
+
+case("loops/first_does_not_look_ahead",
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{% for i in 'abcdef' if d.popitem() %}[{{ i }}]{{ loop.first }}{{ d|length }}"
+     "{% break %}{% endfor %}", __settings__=_LC)
+
 # ...and a filtered loop whose test does not raise still answers the totals.
 case("loops/revindex_under_a_working_filter",
      "{% for i in range(3) if i %}{{ loop.revindex }}{{ loop.length }}{{ loop.last }}{% endfor %}")
@@ -4069,9 +7027,16 @@ case("loops/filtered_tuple_and_range",
 # every spec below was "Unknown format code 'z'".
 #
 # It sits between the sign and '#' and nowhere else, which is the difference
-# between `{:z#}` (a spec) and `{:#z}` (a '#' and a type called z). And the
-# refusals go by the *value's* type rather than the presentation type, which is
-# why `{:zx}` on an int is about the z while `{:zd}` on a float is about the d.
+# between `{:z#}` (a spec) and `{:#z}` (a '#' and a type called z).
+#
+# Who may ask for it goes by the *presentation type*, not by the value's own.
+# gojja2 read it off the value and so refused `{:zG}` on an int, where CPython
+# converts the int to a float for a float code and the z rides along. The
+# refusal therefore waits for the formatter the type dispatches to, which also
+# fixes its place in the order: after the code has been recognised (`{:zq}` is
+# about the q) and after an integer precision is refused (`{:z.2d}` is about the
+# precision), but before anything 'c' has to say and before a string's '#'.
+# Found by the format-spec arm of the soak generator, on `{:-zG}`.
 #
 # 3.11 is the oldest interpreter modelled here, so this needs no version gate.
 case("format/z_coerces_negative_zero",
@@ -4090,6 +7055,87 @@ case("format/z_with_width_and_sign",
 # in docs/divergences.md rather than anything about z.
 case("format/z_leaves_infinity_alone",
      "{{ '{:z}'.format(big * -10) }}|{{ '{:z}'.format(big * 10) }}", big=1e308)
+
+# Every presentation type on an infinity and a nan. Each formatter read Go's
+# own output, which writes "+Inf": there is no exponent for 'e' to split and no
+# digit string for 'g' and a bare type with a precision to measure, so all four
+# indexed past the end and the render died with an internal error. Only 'f' and
+# '%' happened to survive, because they never look inside. The layout still
+# applies to an infinity -- the sign, the fill, even a zero pad -- while the
+# alternate point and the grouping have nothing to act on.
+#
+# Same rule as the case above: the infinity comes from a context value, since a
+# constant one is folded into jinja2's generated Python and raises NameError.
+_INF = "{% set inf = big * 10 %}{% set nan = inf - inf %}"
+case("format/infinity_every_type",
+     _INF + "{{ '{:e}'.format(inf) }}|{{ '{:E}'.format(inf) }}|{{ '{:f}'.format(inf) }}|"
+     "{{ '{:F}'.format(inf) }}|{{ '{:g}'.format(inf) }}|{{ '{:G}'.format(inf) }}|"
+     "{{ '{:n}'.format(inf) }}|{{ '{:%}'.format(inf) }}|{{ '{:}'.format(inf) }}|"
+     "{{ '{:.2}'.format(inf) }}|{{ '{:.0}'.format(inf) }}|{{ '{:.17e}'.format(inf) }}",
+     big=1e308)
+case("format/nan_every_type",
+     _INF + "{{ '{:e}'.format(nan) }}|{{ '{:E}'.format(nan) }}|{{ '{:f}'.format(nan) }}|"
+     "{{ '{:F}'.format(nan) }}|{{ '{:g}'.format(nan) }}|{{ '{:G}'.format(nan) }}|"
+     "{{ '{:n}'.format(nan) }}|{{ '{:%}'.format(nan) }}|{{ '{:}'.format(nan) }}|"
+     "{{ '{:.2}'.format(nan) }}|{{ '{:.0g}'.format(nan) }}",
+     big=1e308)
+case("format/infinity_takes_the_layout",
+     _INF + "{{ '{:020}'.format(inf) }}|{{ '{:+}'.format(-inf) }}|{{ '{: e}'.format(inf) }}|"
+     "{{ '{:*^12g}'.format(inf) }}|{{ '{:=10E}'.format(inf) }}|{{ '{:<8n}'.format(nan) }}|"
+     "{{ '{:#,.2e}'.format(inf) }}|{{ '{:030.4%}'.format(-inf) }}",
+     big=1e308)
+case("errors/infinity_unknown_code",
+     _INF + "{{ '{:d}'.format(inf) }}", big=1e308)
+# A NaN never carries a '-', however its sign bit is set -- and `inf - inf`
+# sets it, on CPython and here alike. `{:+}` still writes a '+'. The printf
+# side already knew this; the format-spec side signed it.
+# A grouping separates a *number*, and an infinity has no digits for it to
+# separate -- so a zero fill in front of one stays plain. gojja2 grouped the
+# fill: `{:z#015,}` of an infinity was "0,000,000,000inf" where CPython writes
+# twelve zeros and "inf". The last two hold the rule the fill does follow, which
+# is why the check is "are there any digits" rather than "is this finite".
+# Found by the fuzzer, on a spec composed of five options at once.
+case("format/infinity_fill_is_not_grouped",
+     _INF + "{{ '{:z#015,}'.format(inf) }}|{{ '{:015,}'.format(inf) }}|"
+     "{{ '{:015_}'.format(nan) }}|{{ '{:=015,f}'.format(-inf) }}|"
+     "{{ '{:015,%}'.format(inf) }}|{{ '{:015,}'.format(1) }}|"
+     "{{ '{:06,}'.format(1) }}|{{ '{:#015_x}'.format(255) }}", big=1e308)
+case("format/nan_has_no_sign",
+     _INF + "{{ '{:f}'.format(nan) }}|{{ '{:+f}'.format(nan) }}|{{ '{: e}'.format(nan) }}|"
+     "{{ '{:z}'.format(nan) }}|{{ '{:020g}'.format(nan) }}|{{ '{:%}'.format(nan) }}|"
+     "{{ '%f' % nan }}|{{ nan }}|{{ nan|string }}", big=1e308)
+
+# '%' scales before it writes, so its own result can be the infinity where the
+# number is finite: 100 * 1e308 overflows. gojja2 asked whether *x* was infinite
+# and so wrote Go's "+Inf%" -- sign included, and past the fill and the grouping.
+case("format/percent_overflows",
+     "{{ '{:%}'.format(big) }}|{{ '{:+%}'.format(big) }}|{{ '{:%}'.format(-big) }}|"
+     "{{ '{:020%}'.format(big) }}|{{ '{:,%}'.format(big) }}|{{ '{:#.0%}'.format(big) }}|"
+     "{{ '{:=10%}'.format(big) }}|{{ '{:%}'.format(small) }}", big=1e308, small=1e305)
+# A width at or below the length means no padding, however far below it is:
+# CPython compares before it subtracts, and `math.MinInt64 - 3` wraps to a large
+# *positive* margin. `b'abc'.center(-2**63)` then asked make() for that many
+# bytes and panicked with "makeslice: cap out of range", while the str side
+# asked the output budget for nine quintillion characters. zfill compared
+# already, which is how the two halves of one rule came to differ.
+for _n, _src in [
+    ("str_center", "{{ 'abc'.center(-9223372036854775808) }}"),
+    ("str_ljust", "{{ 'abc'.ljust(-9223372036854775808) }}"),
+    ("str_rjust", "{{ 'abc'.rjust(-9223372036854775808) }}"),
+    ("str_zfill", "{{ 'abc'.zfill(-9223372036854775808) }}"),
+    ("bytes_center", "{{ 'abc'.encode().center(-9223372036854775808) }}"),
+    ("bytes_ljust", "{{ 'abc'.encode().ljust(-9223372036854775808) }}"),
+    ("bytes_rjust", "{{ 'abc'.encode().rjust(-9223372036854775808) }}"),
+    ("bytes_zfill", "{{ 'abc'.encode().zfill(-9223372036854775808) }}"),
+    ("str_at_and_below", "{{ 'abc'.center(-1) }}|{{ 'abc'.center(0) }}|{{ 'abc'.center(3) }}|{{ 'abc'.center(4) }}"),
+    ("bytes_at_and_below", "{{ 'abc'.encode().center(-1) }}|{{ 'abc'.encode().center(4) }}"),
+    ("filter_center", "{{ 'abc'|center(-9223372036854775808) }}"),
+    ("filter_indent", "{{ 'a\nb'|indent(-9223372036854775808) }}"),
+    ("filter_wordwrap", "{{ 'a b'|wordwrap(-9223372036854775808) }}"),
+    ("filter_truncate", "{{ 'abcdef'|truncate(-9223372036854775808) }}"),
+]:
+    case(f"methods/pad_below_the_length_{_n}", _src)
+
 case("errors/z_not_allowed_on_int", "{{ '{:z}'.format(1) }}")
 case("errors/z_not_allowed_on_int_code", "{{ '{:zx}'.format(255) }}")
 case("errors/z_not_allowed_on_bool", "{{ '{:z}'.format(true) }}")
@@ -4098,6 +7144,34 @@ case("errors/z_out_of_position_after", "{{ '{:z+.2f}'.format(1.5) }}")
 case("errors/z_out_of_position_before", "{{ '{:0z.2f}'.format(1.5) }}")
 case("errors/z_after_hash_is_a_type", "{{ '{:#z}'.format(1.5) }}")
 case("errors/z_int_code_on_a_float", "{{ '{:zd}'.format(1.5) }}")
+# An int or a bool with a float code converts first, so the z is allowed there
+# and the sign it coerces is the converted number's.
+case("format/z_on_an_int_with_a_float_code",
+     "{{ '{:zG}'.format(-1234567) }}|{{ '{:ze}'.format(-1234567) }}|{{ '{:z%}'.format(0) }}|"
+     "{{ '{:z.2f}'.format(-1234567) }}|{{ '{:zg}'.format(true) }}|{{ '{:zn}'.format(1.5) }}")
+# The same for a wide int, which converts through the same checked coercion the
+# float codes use -- so this is an OverflowError and not an infinity.
+case("errors/z_on_a_wide_int", "{{ '{:zf}'.format(10 ** 400) }}")
+# Where the refusal sits in the order of complaints. Each of these would report
+# the z if the check ran off the value's type at parse time.
+for _n, _src in [
+    ("code_first", "{{ '{:zq}'.format(1) }}"),
+    ("code_first_on_a_str", "{{ '{:zq}'.format('a') }}"),
+    ("grouping_first", "{{ '{:z,x}'.format(1) }}"),
+    ("grouping_first_on_a_str", "{{ '{:z,}'.format('a') }}"),
+    ("precision_first", "{{ '{:z.2d}'.format(1) }}"),
+    ("z_before_c", "{{ '{:zc}'.format(1) }}"),
+    ("z_before_a_str_hash", "{{ '{:z#s}'.format('a') }}"),
+    # The sign comes before z in the grammar, so a string spec can carry
+    # both -- and the sign is the one that complains. Found by a soak seed
+    # on `{: z5.30}`.
+    ("space_before_z_on_a_str", "{{ '{: z5.30}'.format('a') }}"),
+    ("sign_before_z_on_a_str", "{{ '{:+zs}'.format('a') }}"),
+    ("z_before_a_str_equals", "{{ '{:=zs}'.format('a') }}"),
+    # ...and on an int the sign says nothing, so the z still wins.
+    ("space_then_z_on_an_int", "{{ '{: zd}'.format(1) }}"),
+]:
+    case(f"errors/z_order_{_n}", _src)
 
 # --- int.is_integer, which 3.12 added -----------------------------------------
 # It answers True for every int, so that a caller can ask the question of a
@@ -4137,6 +7211,64 @@ case("methods/bytes_pad", '{{ "ab".encode().center(7, "*".encode()) }}|{{ "42".e
 case("methods/bytes_join", '{{ "-".encode().join(["a".encode(), "b".encode()]) }}')
 case("errors/bytes_join_item", '{{ "-".encode().join(["a", "b"]) }}')
 case("methods/bytes_hex", '{{ "ab".encode().hex() }}|{{ "abcde".encode().hex("-", 2) }}|{{ "abcde".encode().hex("-", -2) }}')
+# bytes.splitlines' keepends is `bool(accept={int})`, exactly as str's is: a
+# truth test from 3.12 and an integer conversion before it. This was read as an
+# integer on every version, so `b.splitlines(none)` and `b.splitlines('x')` were
+# refused where CPython splits -- and the str half was already right, which is
+# how the two halves of one rule came to differ.
+for _n, _src in [
+    ("none", "{{ b.splitlines(none) }}"),
+    ("str", "{{ b.splitlines('x') }}"),
+    ("empty_str", "{{ b.splitlines('') }}"),
+    ("list", "{{ b.splitlines([]) }}"),
+    ("nonempty_list", "{{ b.splitlines([1]) }}"),
+    ("true", "{{ b.splitlines(true) }}"),
+    ("two", "{{ b.splitlines(2) }}"),
+    ("zero", "{{ b.splitlines(0) }}"),
+    ("float", "{{ b.splitlines(1.5) }}"),
+    ("keyword", "{{ b.splitlines(keepends=none) }}"),
+]:
+    case(f"bytes/splitlines_keepends_{_n}",
+         "{% set b = 'a\nb'.encode() %}" + _src)
+# The str half of the same rule, beside it, so the version matrix grades both.
+for _n, _src in [
+    ("none", "{{ 'a\nb'.splitlines(none) }}"),
+    ("str", "{{ 'a\nb'.splitlines('x') }}"),
+    ("list", "{{ 'a\nb'.splitlines([]) }}"),
+    ("float", "{{ 'a\nb'.splitlines(1.5) }}"),
+]:
+    case(f"methods/str_splitlines_keepends_{_n}", _src)
+
+# `delete` is `y*` in Argument Clinic, which takes no None: only an *omitted*
+# argument is no deletion. `table` is `O` and does take one, which is why the two
+# are not alike -- treating a None delete as absent answered the receiver where
+# CPython asks for a bytes-like object.
+for _n, _src in [
+    ("both_none", "{{ b.translate(none, none) }}"),
+    ("delete_bytes", "{{ b.translate(none, 'a'.encode()) }}"),
+    ("delete_str", "{{ b.translate(none, 'a') }}"),
+    ("delete_int", "{{ b.translate(none, 1) }}"),
+    ("delete_list", "{{ b.translate(none, []) }}"),
+    ("table_only", "{{ b.translate(none) }}"),
+    ("delete_keyword", "{{ b.translate(none, delete=none) }}"),
+]:
+    case(f"bytes/translate_{_n}", "{% set b = 'ab'.encode() %}" + _src)
+
+# getargs.c's converterr spells None as "None" where every Argument Clinic
+# message spells it "NoneType", and the fill character of bytes center/ljust/
+# rjust goes through the old path. So `b.center(6, none)` is "not None" while
+# `'ab'.center(6, none)` is "not NoneType" -- the pair is here so neither can be
+# "fixed" into the other.
+for _n, _src in [
+    ("bytes_center", "{{ b.center(6, none) }}"),
+    ("bytes_ljust", "{{ b.ljust(6, none) }}"),
+    ("bytes_rjust", "{{ b.rjust(6, none) }}"),
+    ("bytes_center_int", "{{ b.center(6, 1) }}"),
+    ("str_center", "{{ 'ab'.center(6, none) }}"),
+    ("str_ljust", "{{ 'ab'.ljust(6, none) }}"),
+]:
+    case(f"errors/fill_none_is_named_{_n}", "{% set b = 'ab'.encode() %}" + _src)
+
 case("methods/bytes_translate",
      '{{ "abc".encode().translate(none, "b".encode()) }}'
      '|{{ "abc".encode().translate("x".encode().maketrans("abc".encode(), "xyz".encode())) }}')
@@ -4170,6 +7302,29 @@ case("membership/bytes_contains_int", '{{ 97 in "ab".encode() }}|{{ 0 in "ab".en
 case("membership/bytes_contains_int_out_of_range", '{{ 256 in "ab".encode() }}')
 case("membership/bytes_contains_negative", '{{ -1 in "ab".encode() }}')
 case("membership/bytes_contains_other", '{{ "a" in "ab".encode() }}')
+
+# Which operand of `==` a containment scan puts on the left, which decides
+# whose refusal is reported when both have one. CPython's list_contains,
+# tuplecontains and _PySequence_IterSearch all compare the *candidate* against
+# the item, so `{{ nope in [d.nope] }}` names the element's complaint and only
+# an element with no opinion of its own hands the question back -- which is
+# what makes `{{ nope in [1, d.nope] }}` name `nope` instead. gojja2 had the
+# item on the left everywhere, so the item always won. Found by the fuzzer, on
+# `{% if nope in 7|urlencode|map(attribute='name')|list %}`.
+for _n, _src in [
+    ("in_a_list", "{{ nope in [d.nope] }}"),
+    ("in_a_tuple", "{{ nope in (d.nope,) }}"),
+    ("after_a_plain_element", "{{ nope in [1, d.nope] }}"),
+    ("the_other_way_round", "{{ d.nope in [nope] }}"),
+    ("in_a_mapped_list", "{{ nope in lst|map(attribute='name')|list }}"),
+    ("in_a_values_view", "{{ nope in {'k': d.nope}.values() }}"),
+    ("in_a_range", "{{ nope in range(3) }}"),
+    ("in_an_empty_list", "{{ nope in [] }}"),
+]:
+    for _kind in ("default", "strict"):
+        _set = {} if _kind == "default" else {"undefined": _kind}
+        case(f"membership/element_first_{_n}_{_kind}", _src,
+             __settings__=_set, d={"a": 1}, lst=[3, 1, 2])
 
 # --- tojson sorts keys as keys, then converts them -----------------------------
 # json.dumps with sort_keys sorts the key *objects* and converts them
@@ -4248,6 +7403,31 @@ case("modules/import_extending_matches_include",
 #
 # gojja2 narrowed the bounds when the range was built and refused the lot.
 case("globals/range_wide_repr", "{{ range(1180591620717411303424) }}|{{ range(2,1180591620717411303424,3) }}")
+
+# A range too long for an int is indexed exactly. A negative key wrapped
+# against the length clamped to an int64, so `range(2**70)[-1]` was
+# 9223372036854775806 -- a wrong number, not a refusal -- and a key past an
+# int64 was simply not found. Both the folded subscript and the run-time one,
+# and the two other routes to it: a proxy's subscript and a format field.
+for _n, _src in [
+    ("negative", "{{ range(2**70)[-1] }}|{{ range(2**70)[-(2**70)] }}|[{{ range(2**70)[-(2**70) - 1] }}]"),
+    ("negative_runtime", "{% set r = range(2**70) %}{% set k = -1 %}{{ r[k] }}|{{ r[-2] }}"),
+    ("past_int64", "{{ range(2**70)[2**69] }}|{% set r = range(2**70) %}"
+     "{{ r[9223372036854775807] }}|{{ r[9223372036854775808] }}|[{{ r[2**70] }}]"),
+    ("stepped", "{% set r = range(0, 2**70, 3) %}{{ r[-1] }}|{{ r[2**66] }}"),
+    ("descending", "{% set r = range(2**70, 0, -1) %}{{ r[-1] }}|{{ r[-2] }}"),
+    ("straddling_int64", "{% set r = range(-(2**63), 2**63) %}{{ r[-1] }}|{{ r[2**63] }}"),
+    ("round_trip", "{% set r = range(2**70) %}{{ r.index(r[-1]) }}|{{ r[-1] in r }}"),
+    ("bool_key", "{{ range(3)[true] }}|{{ range(3)[false] }}|[{{ range(0)[true] }}]"),
+    ("through_a_proxy", "{% set C = {'a': 1}.keys().mapping.__class__ %}"
+     "{{ C(range(2**70))[-1] }}|{{ C(range(2**40))[2**35] }}|[{{ C(range(3))[5] }}]"),
+    ("format_field", "{{ '{0[2]}'.format(range(3)) }}|{{ '{0[9223372036854775807]}'.format(range(2**70)) }}"),
+    ("format_field_out_of_range", "{{ '{0[5]}'.format(range(3)) }}"),
+    # Environment.getitem, which a filter's attribute= reaches without a
+    # subscript in the template at all.
+    ("attribute", "{{ [range(2**70)]|map(attribute=-1)|list }}|{{ [range(2**70)]|map(attribute=2**69)|list }}"),
+]:
+    case("globals/range_wide_index_" + _n, _src)
 case("globals/range_wide_first", "{{ range(1180591620717411303424)|first }}|{{ range(2,1180591620717411303424,3)|first }}")
 case("globals/range_wide_contains",
      "{{ 3 in range(1180591620717411303424) }}|{{ -1 in range(1180591620717411303424) }}"
@@ -4265,6 +7445,51 @@ case("globals/range_wide_equality",
 # which is where the refusal belongs, rather than at construction.
 case("globals/range_wide_length_overflows", "{{ range(1180591620717411303424)|length }}")
 case("globals/range_wide_negative", "{{ range(-1180591620717411303424,0) }}|{{ range(1180591620717411303424,0,-1) }}")
+
+# Every filter whose jinja2 implementation builds a list narrows the length to a
+# Py_ssize_t first -- PyObject_LengthHint for list() and sorted(), len() for
+# random.choice() -- so a range longer than that refuses *there* and is never
+# walked. gojja2 walked instead, and the answer was its own iteration budget
+# after ten million steps. The zero slice count is the ordering: `seq = list(v)`
+# is do_slice's first statement, so the overflow beats the ZeroDivisionError.
+#
+# Written out rather than as `2 ** 70` because either engine folds that, and the
+# point here is the filter rather than the arithmetic.
+_WIDE = "range(1180591620717411303424)"
+for _n, _src in [
+    ("through_list", "{{ %s|list }}"),
+    ("through_sort", "{{ %s|sort }}"),
+    ("through_slice", "{{ %s|slice(2)|list }}"),
+    ("through_slice_of_zero", "{{ %s|slice(0)|list }}"),
+    ("through_slice_of_a_string", "{{ %s|slice('x')|list }}"),
+    ("through_groupby", "{{ %s|groupby(0)|list }}"),
+    ("through_random", "{{ %s|random }}"),
+]:
+    case(f"errors/wide_range_{_n}", _src % _WIDE)
+
+# |last is the other side of it: reversed() of a sequence is __len__ and
+# __getitem__, and CPython's range_reverse computes its first element
+# arithmetically without narrowing the length at all -- so this answers where
+# `|length` on the same range raises. Walking to it cost the whole budget.
+# Slicing a range is arbitrary precision throughout: range_subscript works in
+# PyLongs, so every part of the result is exact. All three saturated to an int
+# before -- `range(2**70)[::-1]` came out as range(9223372036854775806, -1, -1).
+case("globals/range_wide_slice",
+     "{{ range(1180591620717411303424)[::] }}|{{ range(1180591620717411303424)[::-1] }}|"
+     "{{ range(1180591620717411303424)[1:] }}|{{ range(1180591620717411303424)[:-1] }}|"
+     "{{ range(1180591620717411303424)[::1180591620717411303424] }}|"
+     "{{ range(1180591620717411303424)[::(-1180591620717411303424)] }}")
+case("globals/range_wide_slice_of_a_narrow_range",
+     "{{ range(5)[::1180591620717411303424] }}|{{ range(5)[::(-1180591620717411303424)] }}|"
+     "{{ range(5)[1180591620717411303424:] }}|{{ range(5)[:(-1180591620717411303424)] }}|"
+     "{{ range(5)[::1180591620717411303424]|list }}")
+case("globals/range_wide_slice_with_a_step",
+     "{{ range(0,1180591620717411303424,3)[::2] }}|"
+     "{{ range(0,1180591620717411303424,3)[::-1] }}|"
+     "{{ range(1180591620717411303424,0,-1)[::-1] }}")
+case("globals/range_wide_last",
+     "{{ range(1180591620717411303424)|last }}|"
+     "{{ range(0,1180591620717411303424,3)|last }}|{{ range(0)|last }}")
 
 # --- a search bound is a slice index, so it clamps ----------------------------
 # str.find and friends take their start and end as slice indices: out of range
@@ -4345,6 +7570,2664 @@ case("errors/index_not_an_integer", '{{ "ab"|center("x") }}')
 # number instead of answering what the case asks.
 case("limits/integer_width_multiply", "{% set x = 2 ** e %}{{ (x * x) > x }}", e=524288)
 case("limits/integer_width_power", "{{ (2 ** e) > 0 }}", e=2000000)
+
+# --- messages nothing had ever produced: the second audit ----------------------
+# `make ungraded` counts the error sites no corpus case reaches, and 69 of 402
+# were left. Every shape below was measured against CPython before it was written
+# down, and every one already agreed -- which is exactly why they are worth a
+# case: an ungraded message reads as agreement in every column of the version
+# matrix, so nothing would have said when it stopped agreeing.
+
+# A test that takes an argument, called without one. jinja2's parser lets it
+# through and the arity check refuses it with CPython's wording, on all four
+# routes a test can be called by -- which is what made the guards inside the
+# tests themselves unreachable: they answered something else and were deleted.
+for _n, _src in [
+    ("is_divisibleby_no_argument", "{{ 4 is divisibleby }}"),
+    ("is_divisibleby_empty_call", "{{ 4 is divisibleby() }}"),
+    ("is_sameas_no_argument", "{{ 4 is sameas }}"),
+    ("is_in_no_argument", "{{ 4 is in }}"),
+    ("is_eq_no_argument", "{{ 4 is eq }}"),
+    ("is_lessthan_no_argument", "{{ 4 is lessthan }}"),
+    ("select_test_needing_an_argument", "{{ [1,2]|select('divisibleby')|list }}"),
+    ("reject_test_needing_an_argument", "{{ [1,2]|reject('sameas')|list }}"),
+    ("selectattr_test_needing_an_argument", "{{ [{'a':1}]|selectattr('a','in')|list }}"),
+    ("select_operator_test_needing_an_argument", "{{ [1,2]|select('eq')|list }}"),
+    # The parameter names are jinja2's own and a template may use them, which
+    # is the other half of the same signature.
+    ("is_divisibleby_by_keyword", "{{ 4 is divisibleby(num=2) }}"),
+    ("is_sameas_by_keyword", "{{ 4 is sameas(other=4) }}"),
+    ("is_in_by_keyword", "{{ 4 is in(seq=[4]) }}"),
+    ("is_divisibleby_wrong_keyword", "{{ 4 is divisibleby(nope=2) }}"),
+    ("is_eq_takes_no_keywords", "{{ 4 is eq(num=2) }}"),
+]:
+    case("tests/" + _n, _src)
+
+# A filter whose required argument is missing, and the lazy ones where the
+# refusal only surfaces when the generator is walked: printing `{{ 'a'|map }}`
+# prints a generator's address in jinja2, so the case has to ask for the list.
+for _n, _src in [
+    ("replace_no_arguments", "{{ 'a'|replace }}"),
+    ("replace_one_argument", "{{ 'a'|replace('b') }}"),
+    ("attr_no_argument", "{{ 1|attr }}"),
+    ("groupby_no_argument", "{{ [1]|groupby }}"),
+    ("map_no_filter", "{{ 'a'|map|list }}"),
+    ("map_unknown_filter", "{{ [1]|map('nope')|list }}"),
+    ("select_unknown_test", "{{ [1]|select('nope')|list }}"),
+    ("reject_unknown_test", "{{ [1]|reject('nope')|list }}"),
+    ("selectattr_unknown_test", "{{ [1]|selectattr('x','nope')|list }}"),
+]:
+    case("errors/" + _n, _src)
+
+# urlencode over something that is not a pair. jinja2 hands the sequence to a
+# tuple unpacking, so what fails is Python's unpacking and not the filter.
+case("filters/urlencode_not_a_pair", "{{ [1]|urlencode }}")
+case("filters/urlencode_pair_too_short", "{{ [[1]]|urlencode }}")
+case("filters/urlencode_pair_too_long", "{{ [[1,2,3]]|urlencode }}")
+
+# printf-style formatting with a mapping, and with too few or too many
+# arguments. `%(a)s` against a non-mapping and against a mapping missing the key
+# are different failures, and the second reports the key alone.
+case("methods/percent_mapping_required", "{{ '%(a)s' % 1 }}")
+case("methods/percent_mapping_missing_key", "{{ '%(a)s' % {'b': 1} }}")
+case("methods/percent_not_enough_arguments", "{{ '%s %s' % (('a',)) }}")
+case("methods/percent_too_many_arguments", "{{ '%s' % ((1,2)) }}")
+case("methods/percent_star_width", "{{ '%*d' % ((1,2)) }}")
+case("methods/format_spec_unmatched_brace", "{{ '{0:{}'.format(1) }}")
+case("methods/format_spec_manual_then_auto", "{{ '{0:>{}}'.format(1) }}")
+case("methods/format_spec_nested", "{{ '{:{}}'.format(1, '>5') }}")
+
+# The bytes methods that refuse. index and rindex raise where find and rfind
+# answer -1, and every one of these had a happy-path case and no refusal.
+case("bytes/index_not_found", "{{ 'abc'.encode().index('z'.encode()) }}")
+case("bytes/rindex_not_found", "{{ 'abc'.encode().rindex('z'.encode()) }}")
+case("bytes/join_rejects_str", "{{ 'x'.encode().join(['a']) }}")
+case("bytes/join_rejects_int", "{{ 'x'.encode().join([1]) }}")
+case("bytes/split_empty_separator", "{{ 'ab'.encode().split(''.encode()) }}")
+case("bytes/rsplit_empty_separator", "{{ 'ab'.encode().rsplit(''.encode()) }}")
+case("bytes/maketrans_unequal_length",
+     "{{ 'ab'.encode().maketrans('a'.encode(), 'bc'.encode()) }}")
+
+# A non-finite float where an integer is wanted. The value comes from the
+# *context*, because `'inf'|float` is a constant expression: jinja2 folds it and
+# writes `inf` into its generated Python, where the name does not exist, and the
+# template fails with a NameError about jinja2's own output instead
+# (docs/divergences.md, "A folded infinity jinja2 writes out").
+NONFINITE = {"s_inf": "inf", "s_nan": "nan"}
+for _n, _src in [
+    ("int_of_infinity", "{{ s_inf|float|int }}"),
+    ("int_of_negative_infinity", "{{ (s_inf|float * -1)|int }}"),
+    ("int_of_infinity_with_default", "{{ s_inf|float|int(5) }}"),
+    # int() of a NaN answers the default instead: jinja2 catches the
+    # ValueError and falls back, which is not what it does for an infinity.
+    ("int_of_nan", "{{ s_nan|float|int }}"),
+    ("round_ceil_of_nan", "{{ (s_nan|float)|round(0,'ceil') }}"),
+    ("round_floor_of_nan", "{{ (s_nan|float)|round(0,'floor') }}"),
+    ("round_ceil_of_infinity", "{{ (s_inf|float)|round(0,'ceil') }}"),
+    ("round_of_infinity", "{{ (s_inf|float)|round }}"),
+    ("percent_d_of_nan", "{{ '%d' % (s_nan|float) }}"),
+    ("percent_d_of_infinity", "{{ '%d' % (s_inf|float) }}"),
+    ("percent_x_of_nan", "{{ '%x' % (s_nan|float) }}"),
+    ("percent_c_of_nan", "{{ '%c' % (s_nan|float) }}"),
+    ("format_d_of_nan", "{{ '{:d}'.format(s_nan|float) }}"),
+    ("range_of_nan", "{{ range(s_nan|float) }}"),
+    ("subscript_by_nan", "[{{ [1,2][s_nan|float] }}]"),
+    ("truncate_by_nan", "{{ 'abcdef'|truncate(s_nan|float) }}"),
+    ("center_by_nan", "{{ 'ab'|center(s_nan|float) }}"),
+    ("filesizeformat_of_nan", "{{ (s_nan|float)|filesizeformat }}"),
+    ("batch_by_nan", "{{ [1,2]|batch(s_nan|float)|list }}"),
+    ("repeat_by_nan", "{{ 'x'*(s_nan|float) }}"),
+    ("iterate_a_float", "{{ (s_nan|float)|list }}"),
+]:
+    case("nonfinite/" + _n, _src, **NONFINITE)
+
+# lipsum's bounds go straight to random.randrange, and an empty range is the one
+# thing about lipsum that is not random. The wording moved in 3.12, which is the
+# version rule RandrangeNamesItsBounds -- gojja2 carried 3.11's for every
+# interpreter, and no case had ever produced the message to say so.
+case("errors/lipsum_empty_range", "{{ lipsum(1, false, 5, 3) }}")
+case("errors/lipsum_equal_bounds", "{{ lipsum(1, false, 5, 5) }}")
+
+# `%(name)s` against something that is not a dict. CPython's test is "supports
+# subscripting", so anything that does gets asked and answers for itself -- a
+# list and a range complain about the index type, and only something that cannot
+# be subscripted at all gets "format requires a mapping".
+case("methods/percent_mapping_range", "{{ '%(a)s' % range(3) }}")
+case("methods/percent_mapping_empty_range", "{{ '%(a)s' % range(0) }}")
+case("methods/percent_mapping_list", "{{ '%(a)s' % [1,2] }}")
+case("methods/percent_mapping_str", "{{ '%(a)s' % 'abc' }}")
+case("methods/percent_mapping_bytes", "{{ '%(a)s' % 'x'.encode() }}")
+case("methods/percent_mapping_namespace", "{{ '%(a)s' % namespace(a=1) }}")
+case("methods/percent_mapping_tuple", "{{ '%(a)s' % ((1,2)) }}")
+case("methods/percent_mapping_cycler", "{{ '%(a)s' % cycler('a') }}")
+case("methods/percent_star_not_enough", "{{ '%*d' % ((1,)) }}")
+
+# The bytes searches that raise, and the branches a happy path does not reach: a
+# window that cannot hold the needle, a separator that is an int rather than
+# bytes, and a tuple of prefixes holding something that is not bytes.
+case("bytes/index_window_empty", "{{ 'abc'.encode().index('a'.encode(), 5, 2) }}")
+case("bytes/rindex_window_empty", "{{ 'abc'.encode().rindex('a'.encode(), 5, 2) }}")
+case("bytes/split_int_separator", "{{ 'ab'.encode().split(300) }}")
+case("bytes/split_negative_separator", "{{ 'ab'.encode().split(-1) }}")
+case("bytes/startswith_tuple_of_str", "{{ 'ab'.encode().startswith(('a',)) }}")
+case("bytes/endswith_tuple_of_int", "{{ 'ab'.encode().endswith((1,)) }}")
+case("bytes/partition_empty_separator", "{{ 'ab'.encode().partition(''.encode()) }}")
+case("bytes/rpartition_empty_separator", "{{ 'ab'.encode().rpartition(''.encode()) }}")
+
+# |random over a dict subscripts it by the *index*, which is a key lookup: it
+# finds something only when that integer is one of the keys. A one-entry dict
+# makes the draw deterministic, so this is gradable.
+# (|random over a one-entry dict is errors/random_mapping_index.)
+case("filters/random_dict_integer_key", "{{ {0:'z'}|random }}")
+
+# A structure that contains itself. |tojson refuses it, and printing it prints
+# Python's ellipsis. (|pprint names an address, which is the divergence
+# docs/divergences.md records.)
+case("filters/tojson_circular_list", "{% set l = [] %}{% do l.append(l) %}{{ l|tojson }}",
+     __settings__={"extensions": ["do"]})
+case("filters/tojson_circular_dict", "{% set d = {} %}{% do d.update(k=d) %}{{ d|tojson }}",
+     __settings__={"extensions": ["do"]})
+case("filters/print_circular_list", "{% set l = [] %}{% do l.append(l) %}{{ l }}|{{ l|string }}",
+     __settings__={"extensions": ["do"]})
+
+# A cycler built from a dynamic splat, which is the only way to reach it with
+# nothing to cycle -- and jinja2 refuses at construction either way.
+case("errors/cycler_dynamic_empty", "{% set c = cycler(*e) %}{{ c.next() }}", e=[])
+
+# loop.cycle with nothing to cycle. The other cycler -- the global -- already had
+# a case; the loop's own method did not.
+case("control/loop_cycle_no_items", "{% for i in seq %}{{ loop.cycle() }}{% endfor %}", **SEQ)
+
+
+# The branches a happy path does not reach, found by reading the *line* the
+# ungraded list names rather than the message: the same words are raised from
+# two or three sites, and a case that produces them may leave the listed one
+# untouched.
+#
+# searchArg takes bytes *or* an integer byte, so find/index/count reject an int
+# outside range(0, 256) where split and partition reject any int at all.
+case("bytes/find_int_out_of_range", "{{ 'ab'.encode().find(300) }}")
+case("bytes/count_int_out_of_range", "{{ 'ab'.encode().count(300) }}")
+case("bytes/index_negative_int", "{{ 'ab'.encode().find(-1) }}")
+case("bytes/find_int_in_range", "{{ 'ab'.encode().find(97) }}|{{ 'ab'.encode().count(98) }}")
+case("bytes/startswith_int", "{{ 'ab'.encode().startswith(300) }}")
+case("bytes/endswith_int", "{{ 'ab'.encode().endswith(300) }}")
+case("bytes/partition_int_separator", "{{ 'ab'.encode().partition(300) }}")
+
+# round(x, None) is round(x): it answers an *integer*, which is the only route
+# to the conversion that a non-finite float cannot make. round(x, 0) answers a
+# float and does not.
+case("nonfinite/round_none_of_infinity", "{{ (s_inf|float)|round(none) }}", s_inf="inf")
+case("nonfinite/round_none_of_nan", "{{ (s_nan|float)|round(none) }}", s_nan="nan")
+case("filters/round_none_is_an_integer", "{{ 2.5|round(none) }}|{{ 3.5|round(none) }}|{{ (-2.5)|round(none) }}")
+
+# int.to_bytes, whose two refusals are CPython's own.
+# (300 in one byte is errors/to_bytes_too_big.)
+case("methods/to_bytes_wide_int", "{{ (2**100).to_bytes(4,'big') }}")
+case("methods/to_bytes_negative", "{{ (-1).to_bytes(1,'big') }}")
+
+# int()'s complaint about a literal is formatted with CPython's `%.200R`, so a
+# long one is cut at 200 *characters* of the rendered repr -- losing its closing
+# quote, since the cut is of the repr and not of the string inside it. 198
+# characters is the last length that survives whole. float()'s message is not
+# truncated, which is why this is not a rule about reprs.
+#
+# `|int` and `|float` have defaults and swallow the error, so the shapes that
+# reach it are the type object and Markup's own `%`. Found by the fuzzer, on
+# `{{ ('%d'|safe) % '\u0664_\u0665'|center()|urlencode() }}`.
+for _n, _src in [
+    ("int_literal_truncated", "{{ (0).__class__('z' * 250, 16) }}"),
+    ("int_literal_at_the_boundary", "{{ (0).__class__('z' * 198, 16) }}"),
+    ("int_literal_one_over", "{{ (0).__class__('z' * 199, 16) }}"),
+    ("int_literal_through_markup", "{{ ('%d'|safe) % ('a' * 250) }}"),
+    ("int_literal_through_markup_short", "{{ ('%d'|safe) % ('a' * 198) }}"),
+    ("float_literal_is_not_truncated", "{{ (0.0).__class__('a' * 250) }}"),
+]:
+    case("errors/" + _n, _src)
+
+# Messages `make ungraded` said no case reached. Each was already right; what
+# was missing is a case saying so, and a message no case produces reads as
+# agreement in every version column.
+case("filters/random_of_a_dict", "{{ {'a': 1}|random }}")
+case("filters/random_of_an_integer_keyed_dict", "{{ {0: 'z'}|random }}")
+case("filters/random_of_an_empty_sequence", "[{{ []|random }}][{{ ''|random }}]")
+case("format/percent_missing_key", "{{ '%(z)s' % d }}", d={"a": 1})
+case("format/percent_needs_a_mapping", "{{ '%(a)s' % 5 }}")
+case("format/percent_needs_a_mapping_not_a_list", "{{ '%(a)s' % [1] }}")
+# The *object* arms of both lookups, which nothing could reach until a dict view
+# learned to hand out its mappingproxy: a Mapping that is not a dict.
+case("format/percent_key_of_a_mapping_object", "{{ '%(z)s' % d.keys().mapping }}", d={"a": 1})
+
+# A precision past INT_MAX is CPython's refusal, not an allocation: str.format's
+# float path says "precision too big" after it has recognised the type code and
+# converted an integer, and before it looks at an infinity; printf-style
+# formatting says it while parsing, whatever the conversion. gojja2 handed the
+# number to strconv and fmt, which tried to allocate it -- a process-killing
+# "fatal error: out of memory", found by FuzzAutoescape on GitHub's runner --
+# or, for %, printed "%!(NOVERB)". Everything up to INT_MAX is attempted on both
+# sides and charged here before it is built; those sizes are not cases, because
+# CPython's answer is a MemoryError.
+_BIG = "99999999999999"
+for _n, _src, _ctx in [
+    ("float_f", "{{ '{:.PRECf}'.format(x) }}", {"x": 1.5}),
+    ("float_e", "{{ '{:.PRECe}'.format(x) }}", {"x": 1.5}),
+    ("float_g", "{{ '{:.PRECg}'.format(x) }}", {"x": 1.5}),
+    ("float_n", "{{ '{:.PRECn}'.format(x) }}", {"x": 1.5}),
+    ("float_percent", "{{ '{:.PREC%}'.format(x) }}", {"x": 1.5}),
+    ("float_no_type", "{{ '{:.PREC}'.format(x) }}", {"x": 1.5}),
+    ("float_grouped", "{{ '{:,.PRECf}'.format(x) }}", {"x": 1.5}),
+    ("float_filled", "{{ '{:=^.PRECf}'.format(x) }}", {"x": 1.5}),
+    ("float_z", "{{ '{:z.PRECf}'.format(x) }}", {"x": 1.5}),
+    ("int_as_float", "{{ '{:.PRECf}'.format(n) }}", {"n": 3}),
+    ("bool_as_float", "{{ '{:.PRECf}'.format(true) }}", {}),
+    ("infinity", "{% set b = 1e308 %}{% set i = b * 10 %}{{ '{:.PRECf}'.format(i) }}", {}),
+    ("nan", "{% set b = 1e308 %}{% set i = b * 10 %}{{ '{:.PRECf}'.format(i - i) }}", {}),
+    ("boundary", "{{ '{:.2147483648f}'.format(x) }}", {"x": 1.5}),
+    ("unknown_type_first", "{{ '{:.PRECq}'.format(x) }}", {"x": 1.5}),
+    ("overflow_first", "{{ '{:.PRECf}'.format(10**400) }}", {}),
+    ("int_code_refuses_precision", "{{ '{:.PRECd}'.format(n) }}", {"n": 3}),
+    ("str_truncates", "{{ '{:.PRECs}'.format(s) }}|{{ '{:.2147483648s}'.format(s) }}", {"s": "ab"}),
+    ("too_many_digits", "{{ '{:.99999999999999999999f}'.format(x) }}", {"x": 1.5}),
+]:
+    case("format/precision_too_big_" + _n, _src.replace("PREC", _BIG), **_ctx)
+for _n, _src, _ctx in [
+    ("f", "{{ '%.PRECf' % x }}", {"x": 1.5}),
+    ("e", "{{ '%.PRECe' % x }}", {"x": 1.5}),
+    ("d", "{{ '%.PRECd' % n }}", {"n": 1}),
+    ("x", "{{ '%.PRECx' % n }}", {"n": 255}),
+    ("s", "{{ '%.PRECs' % s }}", {"s": "ab"}),
+    ("r", "{{ '%.PRECr' % s }}", {"s": "ab"}),
+    ("c", "{{ '%.PRECc' % n }}", {"n": 65}),
+    ("unknown_verb", "{{ '%.PRECq' % n }}", {"n": 1}),
+    ("infinity", "{% set b = 1e308 %}{% set i = b * 10 %}{{ '%.PRECf' % i }}", {}),
+    ("boundary", "{{ '%.2147483648f' % x }}", {"x": 1.5}),
+    ("keyed", "{{ '%(a).2147483648f' % d }}", {"d": {"a": 1}}),
+    ("second_conversion", "{{ '%s %.2147483648s' % (s, s) }}", {"s": "a"}),
+    ("width_too_big", "{{ '%99999999999999999999d' % n }}", {"n": 1}),
+    ("width_boundary", "{{ '%9223372036854775808d' % n }}", {"n": 1}),
+    ("star_precision_c_int", "{{ '%.*f' % (2**31, x) }}", {"x": 1.5}),
+    ("star_precision_c_int_negative", "{{ '%.*f' % (-(2**31) - 1, x) }}", {"x": 1.5}),
+    ("star_precision_negative_clamps", "{{ '%.*f' % (-5, x) }}", {"x": 1.5}),
+    ("star_width_ssize_t", "{{ '%*d' % (2**63, n) }}", {"n": 1}),
+    ("star_width_ssize_t_negative", "{{ '%*d' % (-(2**63) - 1, n) }}", {"n": 1}),
+    ("star_not_an_int", "{{ '%*d' % ('a', n) }}", {"n": 1}),
+]:
+    case("format/percent_precision_too_big_" + _n, _src.replace("PREC", _BIG), **_ctx)
+case("format/percent_of_a_mapping_object", "{{ '%(a)s' % d.keys().mapping }}", d={"a": 1})
+case("filters/random_of_a_mapping_object", "{{ {'a': 1}.keys().mapping|random }}")
+case("filters/random_of_an_integer_keyed_mapping_object", "{{ {0: 'z'}.keys().mapping|random }}")
+case("loops/cycle_with_no_items", "{% for i in [1] %}{{ loop.cycle() }}{% endfor %}")
+case("include/select_from_an_empty_list", "{% include [] %}")
+case("include/select_from_none", "{% include none %}")
+# ...and the *signed* range is [-2**(8L-1), 2**(8L-1)-1], not "fits in 8L bits
+# once complemented". gojja2 checked the complement, so one byte held -200 and
+# 200 alike -- both of which CPython refuses. Zero bytes hold only zero.
+for _n, _src in [
+    ("signed_low", "{{ (-128).to_bytes(1,'big',signed=true) }}"),
+    ("signed_high", "{{ (127).to_bytes(1,'big',signed=true) }}"),
+    ("signed_under", "{{ (-129).to_bytes(1,'big',signed=true) }}"),
+    ("signed_over", "{{ (128).to_bytes(1,'big',signed=true) }}"),
+    ("signed_negative_fits_complemented", "{{ (-200).to_bytes(1,'big',signed=true) }}"),
+    ("signed_positive_fits_unsigned", "{{ (200).to_bytes(1,'big',signed=true) }}"),
+    ("signed_zero_length", "{{ (0).to_bytes(0,'big',signed=true) }}"),
+    ("signed_zero_length_negative", "{{ (-1).to_bytes(0,'big',signed=true) }}"),
+    ("signed_zero_length_positive", "{{ (1).to_bytes(0,'big',signed=true) }}"),
+    ("signed_two_bytes", "{{ (-32768).to_bytes(2,'big',signed=true) }}|"
+     "{{ (32767).to_bytes(2,'little',signed=true) }}|{{ (32768).to_bytes(2,'big',signed=true) }}"),
+    ("signed_wide", "{{ (10**30).to_bytes(16,'big',signed=true) }}|"
+     "{{ (10**40).to_bytes(16,'big',signed=true) }}"),
+]:
+    case("methods/to_bytes_" + _n, _src)
+
+# A `*` width or precision reads an argument of its own, so it can run out
+# before the conversion does.
+case("methods/percent_star_no_arguments", "{{ '%*d' % (()) }}")
+case("methods/percent_precision_star_no_arguments", "{{ '%.*f' % (()) }}")
+
+# A replacement field's spec may hold a field of its own, and the brace rules
+# inside one are their own.
+case("methods/format_nested_spec_unmatched", "{{ '{0:{1}'.format(1,2) }}")
+case("methods/format_nested_spec_stray_close", "{{ '{0:{1}}}'.format(1,2) }}")
+case("methods/format_nested_spec_after_align", "{{ '{0:>{1}'.format(1,5) }}")
+
+# --- pprint wraps a bytes, which nothing here did ------------------------------
+# pprint dispatches on type(obj).__repr__, and CPython has an arm for bytes as
+# well as for str: a bytes whose repr does not fit its line is split into
+# four-byte-aligned pieces, one literal per line, parenthesised at the top level
+# -- which is what makes adjacent literals one value in Python source. gojja2's
+# dispatch had str, list, tuple and dict, and everything else fell through to its
+# repr on one line.
+#
+# Found by `make fuzz` on `{{ 'ab'.encode().maketrans(...)|pprint }}`, whose
+# table is 256 bytes. The boundaries are here because they are where the rule is:
+# four bytes or fewer are printed whole (CPython measures the *value*, not its
+# repr), the parentheses appear only at the top level, and the allowance is
+# charged against the group that starts the last whole four -- so a length that
+# is already a multiple of four never charges it.
+case("filters/pprint_bytes_maketrans",
+     "{{ 'ab'.encode().maketrans('a'.encode(), 'z'.encode())|pprint }}")
+for _n, _src in [
+    ("four", "{{ 'abcd'.encode()|pprint }}"),
+    ("five", "{{ 'abcde'.encode()|pprint }}"),
+    ("fits", "{{ ('x' * 76).encode()|pprint }}"),
+    ("boundary", "{{ ('x' * 77).encode()|pprint }}"),
+    ("over", "{{ ('x' * 78).encode()|pprint }}"),
+    ("long", "{{ ('x' * 100).encode()|pprint }}"),
+    ("in_a_list", "{{ [('x' * 100).encode()]|pprint }}"),
+    ("in_a_dict", "{{ {'k': ('x' * 100).encode()}|pprint }}"),
+    ("nested_twice", "{{ [[('x' * 100).encode()]]|pprint }}"),
+    ("in_a_tuple", "{{ (('a' * 100).encode(), 1)|pprint }}"),
+    ("two_short", "{{ [('x' * 30).encode(), ('y' * 30).encode()]|pprint }}"),
+    ("multibyte", "{{ ('\u00e9' * 60).encode()|pprint }}"),
+    ("not_a_multiple_of_four", "{{ ('x' * 101).encode()|pprint }}"),
+    ("escapes", "{{ ('a\tb\nc' * 20).encode()|pprint }}"),
+]:
+    case("filters/pprint_bytes_" + _n, _src)
+
+# The parser runs to completion before CPython sees the module jinja2 generates,
+# so a template that is *both* an unbound break and malformed later reports the
+# malformed part. gojja2 refused at the tag, which made the first of these a
+# complaint about the break where jinja2 names the stray tag.
+case("errors/break_before_a_syntax_error", "{% break %}{% else %}",
+     __settings__={"extensions": ["loopcontrols"]})
+case("errors/break_before_an_unknown_tag", "{% break %}{% nosuchtag %}",
+     __settings__={"extensions": ["loopcontrols"]})
+case("errors/break_before_a_bad_expression", "{% break %}{{ nope. }}",
+     __settings__={"extensions": ["loopcontrols"]})
+
+# `%(name)s` against an *undefined* mapping: the lookup answers the way a
+# subscript of it would, so ChainableUndefined hands back another undefined and
+# the conversion then refuses it by type -- "%b requires a bytes-like object ...
+# not 'ChainableUndefined'" -- while every other class raises its own error
+# naming the variable. gojja2 raised for all four, which the generated
+# differential found under chainable.
+for _kind in ("default", "chainable", "debug", "strict"):
+    _set = {} if _kind == "default" else {"undefined": _kind}
+    case("undefined/%s_percent_mapping_key" % _kind,
+         "[{{ '%(k)s' % nope }}]", __settings__=_set)
+    case("undefined/%s_percent_mapping_from_attr" % _kind,
+         "[{{ '%(k)s' % (s|attr('nope')) }}]", __settings__=_set, s="x")
+    case("undefined/%s_percent_bytes_mapping" % _kind,
+         "[{{ ('%(k)b'.encode()) % (s|attr('nope')) }}]", __settings__=_set, s="x")
+    case("undefined/%s_percent_integer_verb" % _kind,
+         "[{{ '%d' % (s|attr('nope')) }}]", __settings__=_set, s="x")
+
+# A set as the *item* of a containment test. It is unhashable, and this is the
+# one place CPython does not stop there: set_contains catches the TypeError,
+# makes a frozenset of the key and looks that up, so `{1} in {2}` is False
+# rather than a refusal. A dict does not -- `{1} in d.keys()` refuses -- and
+# neither does anything else. Found by the coverage-guided fuzzer, on a chained
+# `html not in (d.keys() - []) not in (d.keys() - [])`, where the refusal
+# reached a template that renders under CPython.
+case("dictview/set_in_a_set",
+     "{% set d = {'a': 1, 'b': 2} %}{% set e = {} %}"
+     "{{ (d.keys() - []) in (d.keys() - []) }}|{{ (e.keys() - []) in (d.keys() - []) }}|"
+     "{{ (d.keys() - []) not in (d.keys() - []) }}")
+case("dictview/set_in_a_view",
+     "{% set d = {'a': 1} %}{{ (d.keys() - []) in d.keys() }}")
+case("dictview/set_in_an_items_view",
+     "{% set d = {'a': 1} %}{{ (d.keys() - []) in d.items() }}|{{ (d.keys() - []) in d.values() }}")
+case("dictview/set_in_a_list", "{% set d = {'a': 1} %}{{ (d.keys() - []) in [1] }}")
+case("dictview/set_in_a_dict", "{% set d = {'a': 1} %}{{ (d.keys() - []) in {} }}")
+case("dictview/unhashable_in_a_set",
+     "{% set d = {'a': 1} %}{{ [1] in (d.keys() - []) }}")
+case("dictview/chained_containment_over_sets",
+     "{% set d = {'b': 2, 'a': 1, 'C': 3} %}{{ html not in (d.keys() - []) not in (d.keys() - []) }}",
+     html="<b>a &amp; b</b>")
+
+# A nested field is a *field*, not a name read up to the next brace: its own
+# conversion and spec apply, so `'{0:{1:x}}'.format('y', 15)` formats 15 as hex
+# and the outer spec becomes "f" -- an error for a str -- where ignoring the
+# nested spec would use 15 as a width. One level and no more: CPython's
+# build_string carries a recursion budget of two.
+for _n, _src in [
+    ("nested_spec_applies", "{{ '{0:{1:x}}'.format('y', 15) }}"),
+    ("nested_spec_plain", "{{ '{0:{1:d}}'.format('y', 5) }}"),
+    ("nested_conversion", "{{ '{0:{1!r}}'.format('y', 5) }}"),
+    ("nested_field_plain", "{{ '{0:{1}}'.format('y', 5) }}"),
+    ("nested_spec_in_a_nested_spec", "{{ '{0:{1:{2}}}'.format(1,2,3) }}"),
+    ("brace_in_a_nested_name", "{{ '{0:{a{b}}}'.format(1) }}"),
+    ("nested_index", "{% set d = {'a': 2} %}{{ '{0:{1[a]}}'.format(1, d) }}"),
+    ("nested_attribute", "{{ '{0:{1.real}}'.format(1,2) }}"),
+    ("nested_after_align", "{{ '{0:>{1}}'.format(1,5) }}"),
+    ("two_nested", "{{ '{:{}{}}'.format(1,'>',5) }}"),
+    ("nested_automatic", "{{ '{0:{}}'.format(1,5) }}"),
+]:
+    case("methods/format_" + _n, _src)
+
+# The object.__format__ fall-back, which accepts only the empty spec.
+case("methods/format_none_with_a_spec", "{{ '{:x}'.format(none) }}")
+case("methods/format_list_with_a_spec", "{{ '{:x}'.format([1]) }}")
+case("methods/format_none_empty_spec", "[{{ '{}'.format(none) }}]|[{{ '{:}'.format(none) }}]")
+
+# The offset in "unexpected char" is in *code points*, because CPython counts
+# them in a str: `é{{ $ }}` is 4 there and 5 bytes here. Every template in the
+# corpus was ASCII, so the two agreed until the generated differential wrote one
+# with 'Ɤꟍ' in it.
+case("errors/unexpected_char_after_ascii", "aa{{ $ }}")
+case("errors/unexpected_char_after_latin1", "\u00e9{{ $ }}")
+case("errors/unexpected_char_after_three_bytes", "\u4e2d\u6587{{ $ }}")
+case("errors/unexpected_char_after_astral", "\U0001f600{{ $ }}")
+case("errors/unexpected_char_after_a_literal", "{{ '\u00e9' }}{{ $ }}")
+case("errors/unexpected_char_inside_a_tag", "{{ 1 }}\u00e9{{ 2 $ }}")
+
+# An `attribute=` that is an *index* reaches Environment.getitem like every other
+# lookup, so it indexes whatever the item is -- a list, a tuple, a str, a bytes,
+# and an object that presents a sequence. That last arm was missing: a range
+# answered undefined, which a `default=` then covered up and `|sum` turned into
+# an error. Found by the coverage-guided fuzzer, on
+# `[range(3)]|groupby(1, 2, 3)`.
+for _n, _src in [
+    ("groupby_index_of_a_range", "{{ [range(3)]|groupby(1)|list }}"),
+    ("groupby_index_with_a_default", "{{ [range(3)]|groupby(1, 2, 3)|list }}"),
+    ("map_index_of_a_range", "{{ [range(3)]|map(attribute=1)|list }}"),
+    ("map_index_of_a_range_as_a_string", "{{ [range(3)]|map(attribute='1')|list }}"),
+    ("map_negative_index_of_a_range", "{{ [range(3)]|groupby(-1)|list }}"),
+    ("map_index_past_a_range", "{{ [range(3)]|map(attribute=9)|list }}"),
+    ("map_index_past_a_range_with_a_default",
+     "{{ [range(3)]|map(attribute=9, default='d')|list }}"),
+    ("sum_index_of_a_range", "{{ [range(3)]|sum(attribute=1) }}"),
+    ("min_index_of_a_range", "{{ [range(3)]|min(attribute=1) }}"),
+    ("sort_index_of_a_range", "{{ [range(3)]|sort(attribute=1)|list }}"),
+    ("selectattr_index_of_a_range", "{{ [range(3)]|selectattr(1)|list }}"),
+    ("map_index_of_a_batch", "{{ ['ab'|batch(1)|list]|map(attribute=0)|list }}"),
+    ("map_index_of_an_empty_range", "{{ [range(0)]|map(attribute=0)|list }}"),
+    # ...and the objects that are *not* sequences still answer undefined.
+    ("map_index_of_a_cycler", "{{ [cycler('a','b')]|map(attribute=0)|list }}"),
+    ("map_index_of_a_namespace", "{{ [namespace(v=1)]|map(attribute=0)|list }}"),
+    ("map_index_of_a_dict", "{{ [{'a':1}]|map(attribute=0)|list }}"),
+    ("map_path_through_a_range", "{{ [[range(3)]]|map(attribute='0.1')|list }}"),
+]:
+    case("filters/" + _n, _src)
+
+# jinja2's operator tests are `operator.eq` and its neighbours, three of them
+# under two names -- and half of them had no corpus case at all: `is gt`, `is le`
+# and the three aliases were never written. What the aliases share is the
+# *function*, which is why an arity error about `equalto` names eq.
+for _n, _src in [
+    ("eq", "{{ 1 is eq 1 }}|{{ 1 is eq 2 }}|{{ 2 is eq 1 }}|"
+     "{{ 'a' is eq 'b' }}|{{ 1.0 is eq 1 }}|{{ [1] is eq [1] }}|"
+     "{{ none is eq none }}|{{ 1 is eq(1) }}"),
+    ("eq_mismatched", "{{ 1 is eq 'a' }}"),
+    ("eq_undefined", "{{ nope is eq 1 }}"),
+    ("ne", "{{ 1 is ne 1 }}|{{ 1 is ne 2 }}|{{ 2 is ne 1 }}|"
+     "{{ 'a' is ne 'b' }}|{{ 1.0 is ne 1 }}|{{ [1] is ne [1] }}|"
+     "{{ none is ne none }}|{{ 1 is ne(1) }}"),
+    ("ne_mismatched", "{{ 1 is ne 'a' }}"),
+    ("ne_undefined", "{{ nope is ne 1 }}"),
+    ("lt", "{{ 1 is lt 1 }}|{{ 1 is lt 2 }}|{{ 2 is lt 1 }}|"
+     "{{ 'a' is lt 'b' }}|{{ 1.0 is lt 1 }}|{{ [1] is lt [1] }}|"
+     "{{ none is lt none }}|{{ 1 is lt(1) }}"),
+    ("lt_mismatched", "{{ 1 is lt 'a' }}"),
+    ("lt_undefined", "{{ nope is lt 1 }}"),
+    ("le", "{{ 1 is le 1 }}|{{ 1 is le 2 }}|{{ 2 is le 1 }}|"
+     "{{ 'a' is le 'b' }}|{{ 1.0 is le 1 }}|{{ [1] is le [1] }}|"
+     "{{ none is le none }}|{{ 1 is le(1) }}"),
+    ("le_mismatched", "{{ 1 is le 'a' }}"),
+    ("le_undefined", "{{ nope is le 1 }}"),
+    ("gt", "{{ 1 is gt 1 }}|{{ 1 is gt 2 }}|{{ 2 is gt 1 }}|"
+     "{{ 'a' is gt 'b' }}|{{ 1.0 is gt 1 }}|{{ [1] is gt [1] }}|"
+     "{{ none is gt none }}|{{ 1 is gt(1) }}"),
+    ("gt_mismatched", "{{ 1 is gt 'a' }}"),
+    ("gt_undefined", "{{ nope is gt 1 }}"),
+    ("ge", "{{ 1 is ge 1 }}|{{ 1 is ge 2 }}|{{ 2 is ge 1 }}|"
+     "{{ 'a' is ge 'b' }}|{{ 1.0 is ge 1 }}|{{ [1] is ge [1] }}|"
+     "{{ none is ge none }}|{{ 1 is ge(1) }}"),
+    ("ge_mismatched", "{{ 1 is ge 'a' }}"),
+    ("ge_undefined", "{{ nope is ge 1 }}"),
+    ("equalto", "{{ 1 is equalto 1 }}|{{ 1 is equalto 2 }}|{{ 2 is equalto 1 }}|"
+     "{{ 'a' is equalto 'b' }}|{{ 1.0 is equalto 1 }}|{{ [1] is equalto [1] }}|"
+     "{{ none is equalto none }}|{{ 1 is equalto(1) }}"),
+    ("equalto_mismatched", "{{ 1 is equalto 'a' }}"),
+    ("equalto_undefined", "{{ nope is equalto 1 }}"),
+    ("greaterthan", "{{ 1 is greaterthan 1 }}|{{ 1 is greaterthan 2 }}|{{ 2 is greaterthan 1 }}|"
+     "{{ 'a' is greaterthan 'b' }}|{{ 1.0 is greaterthan 1 }}|{{ [1] is greaterthan [1] }}|"
+     "{{ none is greaterthan none }}|{{ 1 is greaterthan(1) }}"),
+    ("greaterthan_mismatched", "{{ 1 is greaterthan 'a' }}"),
+    ("greaterthan_undefined", "{{ nope is greaterthan 1 }}"),
+    ("lessthan", "{{ 1 is lessthan 1 }}|{{ 1 is lessthan 2 }}|{{ 2 is lessthan 1 }}|"
+     "{{ 'a' is lessthan 'b' }}|{{ 1.0 is lessthan 1 }}|{{ [1] is lessthan [1] }}|"
+     "{{ none is lessthan none }}|{{ 1 is lessthan(1) }}"),
+    ("lessthan_mismatched", "{{ 1 is lessthan 'a' }}"),
+    ("lessthan_undefined", "{{ nope is lessthan 1 }}"),
+]:
+    case("tests/operator_" + _n, _src)
+
+# Every type test against twenty operands, because one operand each is what the
+# corpus had: `tests/kinds` asks `1 is integer` and `'a' is string` and stops
+# there, which cannot see the answers that are *surprising* -- a bool is an
+# integer and a number in Python, a str is a sequence and an iterable but a
+# mapping is not a sequence, a range is both, a Markup is a string, and an
+# undefined is falsy for all of them without raising. An even/odd of a non-number
+# raises instead, which is the row that is an error rather than a line of
+# booleans.
+for _n, _src in [
+    ("boolean", "{{ 1 is boolean }}|{{ 0 is boolean }}|{{ -1 is boolean }}|{{ 1.5 is boolean }}|{{ true is boolean }}|{{ false is boolean }}|{{ none is boolean }}|{{ 'a' is boolean }}|{{ '' is boolean }}|{{ 'A' is boolean }}|{{ [1] is boolean }}|{{ [] is boolean }}|{{ ((1,)) is boolean }}|{{ {} is boolean }}|{{ {'a':1} is boolean }}|{{ range(3) is boolean }}|{{ nope is boolean }}|{{ ('x'|safe) is boolean }}|{{ dict is boolean }}|{{ d.keys() is boolean }}"),
+    ("integer", "{{ 1 is integer }}|{{ 0 is integer }}|{{ -1 is integer }}|{{ 1.5 is integer }}|{{ true is integer }}|{{ false is integer }}|{{ none is integer }}|{{ 'a' is integer }}|{{ '' is integer }}|{{ 'A' is integer }}|{{ [1] is integer }}|{{ [] is integer }}|{{ ((1,)) is integer }}|{{ {} is integer }}|{{ {'a':1} is integer }}|{{ range(3) is integer }}|{{ nope is integer }}|{{ ('x'|safe) is integer }}|{{ dict is integer }}|{{ d.keys() is integer }}"),
+    ("float", "{{ 1 is float }}|{{ 0 is float }}|{{ -1 is float }}|{{ 1.5 is float }}|{{ true is float }}|{{ false is float }}|{{ none is float }}|{{ 'a' is float }}|{{ '' is float }}|{{ 'A' is float }}|{{ [1] is float }}|{{ [] is float }}|{{ ((1,)) is float }}|{{ {} is float }}|{{ {'a':1} is float }}|{{ range(3) is float }}|{{ nope is float }}|{{ ('x'|safe) is float }}|{{ dict is float }}|{{ d.keys() is float }}"),
+    ("number", "{{ 1 is number }}|{{ 0 is number }}|{{ -1 is number }}|{{ 1.5 is number }}|{{ true is number }}|{{ false is number }}|{{ none is number }}|{{ 'a' is number }}|{{ '' is number }}|{{ 'A' is number }}|{{ [1] is number }}|{{ [] is number }}|{{ ((1,)) is number }}|{{ {} is number }}|{{ {'a':1} is number }}|{{ range(3) is number }}|{{ nope is number }}|{{ ('x'|safe) is number }}|{{ dict is number }}|{{ d.keys() is number }}"),
+    ("string", "{{ 1 is string }}|{{ 0 is string }}|{{ -1 is string }}|{{ 1.5 is string }}|{{ true is string }}|{{ false is string }}|{{ none is string }}|{{ 'a' is string }}|{{ '' is string }}|{{ 'A' is string }}|{{ [1] is string }}|{{ [] is string }}|{{ ((1,)) is string }}|{{ {} is string }}|{{ {'a':1} is string }}|{{ range(3) is string }}|{{ nope is string }}|{{ ('x'|safe) is string }}|{{ dict is string }}|{{ d.keys() is string }}"),
+    ("sequence", "{{ 1 is sequence }}|{{ 0 is sequence }}|{{ -1 is sequence }}|{{ 1.5 is sequence }}|{{ true is sequence }}|{{ false is sequence }}|{{ none is sequence }}|{{ 'a' is sequence }}|{{ '' is sequence }}|{{ 'A' is sequence }}|{{ [1] is sequence }}|{{ [] is sequence }}|{{ ((1,)) is sequence }}|{{ {} is sequence }}|{{ {'a':1} is sequence }}|{{ range(3) is sequence }}|{{ nope is sequence }}|{{ ('x'|safe) is sequence }}|{{ dict is sequence }}|{{ d.keys() is sequence }}"),
+    ("mapping", "{{ 1 is mapping }}|{{ 0 is mapping }}|{{ -1 is mapping }}|{{ 1.5 is mapping }}|{{ true is mapping }}|{{ false is mapping }}|{{ none is mapping }}|{{ 'a' is mapping }}|{{ '' is mapping }}|{{ 'A' is mapping }}|{{ [1] is mapping }}|{{ [] is mapping }}|{{ ((1,)) is mapping }}|{{ {} is mapping }}|{{ {'a':1} is mapping }}|{{ range(3) is mapping }}|{{ nope is mapping }}|{{ ('x'|safe) is mapping }}|{{ dict is mapping }}|{{ d.keys() is mapping }}"),
+    ("iterable", "{{ 1 is iterable }}|{{ 0 is iterable }}|{{ -1 is iterable }}|{{ 1.5 is iterable }}|{{ true is iterable }}|{{ false is iterable }}|{{ none is iterable }}|{{ 'a' is iterable }}|{{ '' is iterable }}|{{ 'A' is iterable }}|{{ [1] is iterable }}|{{ [] is iterable }}|{{ ((1,)) is iterable }}|{{ {} is iterable }}|{{ {'a':1} is iterable }}|{{ range(3) is iterable }}|{{ nope is iterable }}|{{ ('x'|safe) is iterable }}|{{ dict is iterable }}|{{ d.keys() is iterable }}"),
+    ("callable", "{{ 1 is callable }}|{{ 0 is callable }}|{{ -1 is callable }}|{{ 1.5 is callable }}|{{ true is callable }}|{{ false is callable }}|{{ none is callable }}|{{ 'a' is callable }}|{{ '' is callable }}|{{ 'A' is callable }}|{{ [1] is callable }}|{{ [] is callable }}|{{ ((1,)) is callable }}|{{ {} is callable }}|{{ {'a':1} is callable }}|{{ range(3) is callable }}|{{ nope is callable }}|{{ ('x'|safe) is callable }}|{{ dict is callable }}|{{ d.keys() is callable }}"),
+    ("none", "{{ 1 is none }}|{{ 0 is none }}|{{ -1 is none }}|{{ 1.5 is none }}|{{ true is none }}|{{ false is none }}|{{ none is none }}|{{ 'a' is none }}|{{ '' is none }}|{{ 'A' is none }}|{{ [1] is none }}|{{ [] is none }}|{{ ((1,)) is none }}|{{ {} is none }}|{{ {'a':1} is none }}|{{ range(3) is none }}|{{ nope is none }}|{{ ('x'|safe) is none }}|{{ dict is none }}|{{ d.keys() is none }}"),
+    ("true", "{{ 1 is true }}|{{ 0 is true }}|{{ -1 is true }}|{{ 1.5 is true }}|{{ true is true }}|{{ false is true }}|{{ none is true }}|{{ 'a' is true }}|{{ '' is true }}|{{ 'A' is true }}|{{ [1] is true }}|{{ [] is true }}|{{ ((1,)) is true }}|{{ {} is true }}|{{ {'a':1} is true }}|{{ range(3) is true }}|{{ nope is true }}|{{ ('x'|safe) is true }}|{{ dict is true }}|{{ d.keys() is true }}"),
+    ("false", "{{ 1 is false }}|{{ 0 is false }}|{{ -1 is false }}|{{ 1.5 is false }}|{{ true is false }}|{{ false is false }}|{{ none is false }}|{{ 'a' is false }}|{{ '' is false }}|{{ 'A' is false }}|{{ [1] is false }}|{{ [] is false }}|{{ ((1,)) is false }}|{{ {} is false }}|{{ {'a':1} is false }}|{{ range(3) is false }}|{{ nope is false }}|{{ ('x'|safe) is false }}|{{ dict is false }}|{{ d.keys() is false }}"),
+    ("odd", "{{ 1 is odd }}|{{ 0 is odd }}|{{ -1 is odd }}|{{ 1.5 is odd }}|{{ true is odd }}|{{ false is odd }}|{{ none is odd }}|{{ 'a' is odd }}|{{ '' is odd }}|{{ 'A' is odd }}|{{ [1] is odd }}|{{ [] is odd }}|{{ ((1,)) is odd }}|{{ {} is odd }}|{{ {'a':1} is odd }}|{{ range(3) is odd }}|{{ nope is odd }}|{{ ('x'|safe) is odd }}|{{ dict is odd }}|{{ d.keys() is odd }}"),
+    ("even", "{{ 1 is even }}|{{ 0 is even }}|{{ -1 is even }}|{{ 1.5 is even }}|{{ true is even }}|{{ false is even }}|{{ none is even }}|{{ 'a' is even }}|{{ '' is even }}|{{ 'A' is even }}|{{ [1] is even }}|{{ [] is even }}|{{ ((1,)) is even }}|{{ {} is even }}|{{ {'a':1} is even }}|{{ range(3) is even }}|{{ nope is even }}|{{ ('x'|safe) is even }}|{{ dict is even }}|{{ d.keys() is even }}"),
+    ("lower", "{{ 1 is lower }}|{{ 0 is lower }}|{{ -1 is lower }}|{{ 1.5 is lower }}|{{ true is lower }}|{{ false is lower }}|{{ none is lower }}|{{ 'a' is lower }}|{{ '' is lower }}|{{ 'A' is lower }}|{{ [1] is lower }}|{{ [] is lower }}|{{ ((1,)) is lower }}|{{ {} is lower }}|{{ {'a':1} is lower }}|{{ range(3) is lower }}|{{ nope is lower }}|{{ ('x'|safe) is lower }}|{{ dict is lower }}|{{ d.keys() is lower }}"),
+    ("upper", "{{ 1 is upper }}|{{ 0 is upper }}|{{ -1 is upper }}|{{ 1.5 is upper }}|{{ true is upper }}|{{ false is upper }}|{{ none is upper }}|{{ 'a' is upper }}|{{ '' is upper }}|{{ 'A' is upper }}|{{ [1] is upper }}|{{ [] is upper }}|{{ ((1,)) is upper }}|{{ {} is upper }}|{{ {'a':1} is upper }}|{{ range(3) is upper }}|{{ nope is upper }}|{{ ('x'|safe) is upper }}|{{ dict is upper }}|{{ d.keys() is upper }}"),
+    ("escaped", "{{ 1 is escaped }}|{{ 0 is escaped }}|{{ -1 is escaped }}|{{ 1.5 is escaped }}|{{ true is escaped }}|{{ false is escaped }}|{{ none is escaped }}|{{ 'a' is escaped }}|{{ '' is escaped }}|{{ 'A' is escaped }}|{{ [1] is escaped }}|{{ [] is escaped }}|{{ ((1,)) is escaped }}|{{ {} is escaped }}|{{ {'a':1} is escaped }}|{{ range(3) is escaped }}|{{ nope is escaped }}|{{ ('x'|safe) is escaped }}|{{ dict is escaped }}|{{ d.keys() is escaped }}"),
+    ("defined", "{{ 1 is defined }}|{{ 0 is defined }}|{{ -1 is defined }}|{{ 1.5 is defined }}|{{ true is defined }}|{{ false is defined }}|{{ none is defined }}|{{ 'a' is defined }}|{{ '' is defined }}|{{ 'A' is defined }}|{{ [1] is defined }}|{{ [] is defined }}|{{ ((1,)) is defined }}|{{ {} is defined }}|{{ {'a':1} is defined }}|{{ range(3) is defined }}|{{ nope is defined }}|{{ ('x'|safe) is defined }}|{{ dict is defined }}|{{ d.keys() is defined }}"),
+    ("undefined", "{{ 1 is undefined }}|{{ 0 is undefined }}|{{ -1 is undefined }}|{{ 1.5 is undefined }}|{{ true is undefined }}|{{ false is undefined }}|{{ none is undefined }}|{{ 'a' is undefined }}|{{ '' is undefined }}|{{ 'A' is undefined }}|{{ [1] is undefined }}|{{ [] is undefined }}|{{ ((1,)) is undefined }}|{{ {} is undefined }}|{{ {'a':1} is undefined }}|{{ range(3) is undefined }}|{{ nope is undefined }}|{{ ('x'|safe) is undefined }}|{{ dict is undefined }}|{{ d.keys() is undefined }}"),
+]:
+    case("tests/kinds_" + _n, "{% set d = {'k': 1} %}" + _src)
+
+# Whether a subscript folds is decided by its *argument* before the base's
+# undefinedness decides what the fold answers. jinja2 folds a node only when
+# every part of it is constant -- Name.as_const is Impossible -- so
+# `((3)[-2:])[n]` is left for the render, where a slice bypasses
+# Environment.getitem and raises. Chaining on the base first folded it to an
+# undefined under ChainableUndefined and the comparison above it to False: a
+# TypeError swallowed at compile time, which the coverage-guided fuzzer found.
+#
+# Every shape under every class, because the classes differ exactly here: only
+# chainable reaches through, and only the fold path can swallow.
+for _kind in ("default", "chainable", "debug", "strict"):
+    _set = {} if _kind == "default" else {"undefined": _kind}
+    for _n, _src in [
+    ("slice_of_an_int_by_name", "{{ ((3)[-2:])[n3] == 0 == 0 }}"),
+    ("undefined_by_name", "{{ (nope)[n3] }}"),
+    ("undefined_by_constant", "{{ (nope)[0] }}"),
+    ("chained_undefined_by_name", "{{ (nope.a)[n3] }}"),
+    ("undefined_sliced_by_name", "{{ (nope)[n3:] }}"),
+    ("undefined_sliced_by_constant", "{{ (nope)[0:1] }}"),
+    ("int_sliced_by_name", "{{ ((3)[n3:]) }}"),
+    ("int_sliced_by_name_then_indexed", "{{ ((3)[n3:])[0] }}"),
+    ("folded_undefined_by_name", "{{ (none.missing)[n3] }}"),
+    ("folded_undefined_by_constant", "{{ (none.missing)[1] }}"),
+    ("folded_undefined_attribute", "{{ (none.missing).x }}"),
+    ]:
+        case("fold/%s_%s" % (_kind, _n), _src, __settings__=_set, n3=3)
+
+# The filter *aliases*, which are the same function under a second name and had
+# almost no cases: `|d` had none at all, `|e` four, `|count` two. What an alias
+# shares is the function, so its arity error names the original -- do_default(),
+# escape(), len() -- and `|count` is Python's len rather than a filter of its
+# own.
+case("filters/alias_default", "{{ nope|d('x') }}|{{ 1|d('x') }}|{{ ''|d('x', true) }}|{{ none|d('x') }}")
+case("filters/alias_default_bare", "[{{ nope|d }}]|[{{ nope|d(boolean=true) }}]")
+case("filters/alias_escape", "{{ '<b>'|e }}|{{ ('<b>'|safe)|e }}|{{ 1|e }}|{{ none|e }}")
+case("filters/alias_count", "{{ [1,2]|count }}|{{ 'ab'|count }}|{{ {}|count }}|{{ range(5)|count }}")
+case("errors/alias_count_of_an_int", "{{ 1|count }}")
+case("errors/alias_default_too_many", "{{ nope|d('x', 1, 2) }}")
+case("errors/alias_escape_with_an_argument", "{{ 'a'|e(1) }}")
+case("errors/alias_count_with_an_argument", "{{ [1]|count(1) }}")
+
+# ...and the sequence filters the corpus had two or five cases for.
+case("filters/rejectattr_with_a_test", "{{ users|rejectattr('age', 'eq', 30)|list }}", **USERS)
+case("filters/rejectattr_bare", "{{ users|rejectattr('name')|list }}", **USERS)
+case("filters/selectattr_with_a_test",
+     "{{ users|selectattr('age', 'gt', 25)|map(attribute='name')|list }}", **USERS)
+case("filters/min_max_by_attribute",
+     "{{ users|min(attribute='age') }}|{{ users|max(attribute='age') }}", **USERS)
+case("filters/min_max_of_an_empty_sequence", "[{{ []|min }}]|[{{ []|max }}]")
+case("errors/min_takes_no_default", "{{ []|min(default='d') }}")
+case("filters/min_case_sensitive", "{{ [3,1,2]|min(case_sensitive=true) }}")
+case("filters/slice_with_fill", "{{ range(5)|slice(2)|list }}|{{ range(5)|slice(2, 'x')|list }}")
+case("filters/slice_more_slices_than_items", "{{ [1,2,3]|slice(4)|list }}")
+
+# The same census, per *method*: .copy() had no case at all, .extend(), .lower()
+# and .reverse() one each. A method with one case is a method whose *refusals*
+# are ungraded -- list.reverse() takes no arguments, .extend() wants an iterable,
+# .fromkeys() likewise -- and its edges with them.
+case("methods/list_copy_is_a_copy",
+     "{% set l = [1,2] %}{% set c = l.copy() %}{% do l.append(3) %}{{ c }}|{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("methods/dict_copy_is_a_copy",
+     "{% set d = {'a':1} %}{% set c = d.copy() %}{% do d.update(b=2) %}{{ c }}|{{ d }}",
+     __settings__={"extensions": ["do"]})
+case("methods/copy_of_a_literal", "{{ [1,2].copy() }}|{{ {'a':1}.copy() }}")
+case("errors/str_has_no_copy", "{{ 'ab'.copy() }}")
+case("methods/list_extend",
+     "{% set l = [1] %}{% do l.extend([2,3]) %}{{ l }}|{% do l.extend('ab') %}{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("errors/list_extend_an_int", "{% set l = [1] %}{% do l.extend(1) %}{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("methods/list_reverse",
+     "{% set l = [3,1,2] %}{% do l.reverse() %}{{ l }}|{% do l.reverse(1) %}{{ l }}",
+     __settings__={"extensions": ["do"]})
+case("methods/str_lower_cases",
+     "{{ 'AB'.lower() }}|{{ '\u00c9'.lower() }}|{{ '\u00df'.lower() }}|[{{ ''.lower() }}]")
+case("methods/str_capitalize_cases",
+     "{{ 'aB c'.capitalize() }}|[{{ ''.capitalize() }}]|{{ '\u00df'.capitalize() }}")
+case("methods/isascii",
+     "{{ 'ab'.isascii() }}|{{ '\u00e9'.isascii() }}|{{ ''.isascii() }}|"
+     "{{ 'ab'.encode().isascii() }}")
+case("methods/str_rindex", "{{ 'abc'.rindex('b') }}|{{ 'abcb'.rindex('b') }}")
+case("errors/str_rindex_missing", "{{ 'abc'.rindex('z') }}")
+case("methods/str_rfind", "{{ 'abc'.rfind('z') }}|{{ 'abcb'.rfind('b') }}")
+case("methods/str_expandtabs",
+     "{{ 'a\tb'.expandtabs() }}|{{ 'a\tb'.expandtabs(4) }}|{{ 'a\tb'.expandtabs(0) }}")
+# (setdefault, popitem and fromkeys already had a case each under these names;
+# what was missing was the refusal below.)
+case("errors/dict_fromkeys_an_int", "{{ {}.fromkeys(1) }}")
+case("methods/list_insert_clamps",
+     "{% set l = [1,3] %}{% do l.insert(1, 2) %}{{ l }}|{% do l.insert(99, 9) %}{{ l }}|"
+     "{% do l.insert(-99, 0) %}{{ l }}", __settings__={"extensions": ["do"]})
+case("methods/str_istitle",
+     "{{ 'A b'.istitle() }}|{{ 'A B'.istitle() }}|{{ ''.istitle() }}|{{ '1a'.istitle() }}")
+case("methods/str_zfill",
+     "{{ '5'.zfill(3) }}|{{ '-5'.zfill(3) }}|{{ '+5'.zfill(3) }}|{{ 'ab'.zfill(1) }}|"
+     "[{{ ''.zfill(2) }}]")
+
+# ...and `==` is decided the same way: the same length, and every element of one
+# in the other. Two *empty* views of different types are equal, and a view equals
+# the set a difference built from it -- where the kind check would call them
+# different things and stop. A values view is set-like in neither engine, so two
+# of them are equal only by identity. Found by the coverage-guided fuzzer, on
+# `{{ ed.items() == ed.keys() != 0 }}`.
+case("dictview/empty_views_are_equal",
+     "{% set e = {} %}{{ e.items() == e.keys() }}|{{ e.keys() == e.items() }}|"
+     "{{ e.items() != e.keys() }}|{{ e.items() == e.keys() != 0 }}")
+case("dictview/views_of_different_kinds",
+     "{% set d = {'a':1} %}{{ d.items() == d.keys() }}|{{ d.keys() == d.items() }}")
+case("dictview/views_of_the_same_kind",
+     "{% set d = {'a':1} %}{% set e = {'a':1} %}{% set f = {'a':2} %}"
+     "{{ d.keys() == e.keys() }}|{{ d.items() == e.items() }}|"
+     "{{ d.keys() == f.keys() }}|{{ d.items() == f.items() }}")
+case("dictview/values_are_equal_only_by_identity",
+     "{% set d = {'a':1} %}{% set e = {} %}{{ d.values() == d.values() }}|"
+     "{{ e.values() == e.values() }}|{{ e.values() == e.keys() }}")
+case("dictview/a_view_equals_a_set",
+     "{% set d = {'a':1} %}{% set e = {} %}{{ d.keys() == (d.keys() - []) }}|"
+     "{{ d.items() == (d.keys() - []) }}|{{ e.keys() == (e.keys() - []) }}|"
+     "{{ (e.keys() - []) == e.keys() }}")
+case("dictview/a_view_against_other_types",
+     "{% set e = {} %}{{ e.keys() == [] }}|{{ e.keys() == {} }}|{{ e.items() == 0 }}")
+
+# `{% set v | f %}` wraps the filter's *result* under autoescape --
+# `(Markup if autoescape else identity)(...)` -- so a filter that answers
+# something other than a string leaves a Markup of its str() behind, not the
+# value: `{% set v | length %}abc{% endset %}{{ v + 1 }}` is a TypeError there and
+# was 4 here. With escaping off the value keeps its type, which is what
+# identity() means. Found by teaching the generator to write the form at all.
+for _n, _src in [
+    ("length", "{% set v | length %}abc{% endset %}[{{ v }}][{{ v is string }}]"),
+    ("length_arithmetic", "{% set v | length %}abc{% endset %}[{{ v + 1 }}]"),
+    ("list", "{% set v | list %}a'b{% endset %}[{{ v }}]"),
+    ("int", "{% set v | int %}12{% endset %}[{{ v }}][{{ v is string }}]"),
+    ("first", "{% set v | first %}ab{% endset %}[{{ v }}]"),
+    ("upper", "{% set v | upper %}a'b{% endset %}[{{ v }}]"),
+    ("no_filter", "{% set v %}a'b{% endset %}[{{ v }}]"),
+]:
+    case("escape/set_block_filter_" + _n,
+         "{% autoescape true %}" + _src + "{% endautoescape %}")
+    case("control/set_block_filter_" + _n,
+         "{% autoescape false %}" + _src + "{% endautoescape %}")
+
+# ...and that Markup() *stringifies*, so a filter that answers an undefined
+# raises there under StrictUndefined -- `{% set v | first %}{% endset %}` over
+# an empty body is "No first item, sequence was empty." with escaping on and
+# assigns quietly with it off, where identity() keeps the undefined whole. The
+# wrap used the plain str(), which renders a strict undefined as "", so the
+# refusal only arrived if something later printed v -- and these shapes never
+# do. Graded under all four classes: the wrap must not make the default class
+# refuse, and it must not swallow the debug class's message either.
+for _n, _src in [
+    ("first_empty", "{% set v | first %}{% endset %}"),
+    ("last_empty", "{% set v | last %}{% endset %}"),
+    ("first_empty_printed", "{% set v | first %}{% endset %}[{{ v }}]"),
+    ("first_empty_length", "{% set v | first %}{% endset %}[{{ v|length }}]"),
+    ("map_attribute", "{% set v | map(attribute='x')|first %}{% endset %}"),
+    ("groupby_first", "{% set v | groupby('x')|first %}{% endset %}"),
+]:
+    for _kind in ("chainable", "default", "debug", "strict"):
+        case(f"escape/set_block_filter_undefined_{_n}_{_kind}",
+             "{% autoescape true %}" + _src + "{% endautoescape %}",
+             __settings__={"undefined": _kind})
+        case(f"control/set_block_filter_undefined_{_n}_{_kind}",
+             "{% autoescape false %}" + _src + "{% endautoescape %}",
+             __settings__={"undefined": _kind})
+
+# jinja2's code generator collects every block in a pre-pass, before it generates
+# a line, so a template that both defines a block twice *and* extends from
+# somewhere it may not says "block 'a' defined twice" whatever order the two sit
+# in. gojja2 checked the dependencies first.
+case("errors/block_twice_and_extends_in_a_macro",
+     "{% block a %}{% endblock %}{% macro mm(x) %}{% extends 'base.txt' %}"
+     "{% block a %}{% endblock %}{% endmacro %}", __templates__={"base.txt": "B"})
+case("errors/block_twice_and_extends_in_a_block",
+     "{% block a %}{% extends 'base.txt' %}{% block a %}{% endblock %}{% endblock %}",
+     __templates__={"base.txt": "B"})
+case("errors/extends_in_a_macro",
+     "{% macro m() %}{% extends 'base.txt' %}{% endmacro %}",
+     __templates__={"base.txt": "B"})
+case("errors/extends_in_a_loop",
+     "{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}",
+     __templates__={"base.txt": "B"})
+
+# Constant folding is not a pass over the tree -- it is something jinja2's code
+# *generator* does to each node it writes out, so a node the generator never
+# writes is never folded, and an error the fold would have raised never
+# happens. Three rules follow, and gojja2 had none of them.
+#
+# The first: below an {% extends %} the child's own body prints nothing, and
+# the generator leaves those print tags out entirely (`if self.has_known_
+# extends: return`) rather than guarding them. So a fold that refuses -- here a
+# subscript of an int, which is undefined, and `and` asks an undefined for its
+# truth -- refuses only where the tag is still written. A {% block %}, a macro
+# and a {% set %} body are written whatever the extends says, because none of
+# them writes to the template's own stream.
+_EXT = "{% extends 'base.txt' %}"
+
+
+def _refuses(k=0):
+    # A subscript of an int is undefined, and `and` asks an undefined for its
+    # truth -- which a StrictUndefined answers with an error, out of the fold.
+    # The index names the position, so a case can say *which* fold refused.
+    return "{{ (0 ** 0)[%d] and 0 }}" % k
+
+
+for _n, _src in [
+    ("below_extends", _EXT + "@X@"),
+    ("above_extends", "@X@" + _EXT),
+    ("below_extends_in_a_branch", _EXT + "{% if true %}@X@{% endif %}"),
+    ("below_extends_in_a_loop", _EXT + "{% for i in [1] %}@X@{% endfor %}"),
+    ("below_extends_in_a_block", _EXT + "{% block a %}@X@{% endblock %}"),
+    ("below_extends_in_a_macro", _EXT + "{% macro m() %}@X@{% endmacro %}"),
+    ("below_extends_in_a_set_block", _EXT + "{% set q %}@X@{% endset %}"),
+    ("below_extends_in_a_filter_block",
+     _EXT + "{% filter upper %}@X@{% endfilter %}"),
+    ("below_extends_in_a_with", _EXT + "{% with %}@X@{% endwith %}"),
+    ("below_extends_in_an_autoescape",
+     _EXT + "{% autoescape true %}@X@{% endautoescape %}"),
+    ("below_a_conditional_extends", "{% if true %}" + _EXT + "{% endif %}@X@"),
+    ("below_an_extends_a_branch_skips", "{% if false %}" + _EXT + "{% endif %}@X@"),
+    ("below_extends_beside_a_literal", _EXT + "{{ 'a' }}@X@"),
+    ("below_extends_after_a_block", _EXT + "{% block a %}{% endblock %}@X@"),
+    ("in_a_block_above_extends", "{% block a %}@X@{% endblock %}" + _EXT),
+    ("below_extends_in_an_assignment", _EXT + "{% set q = (0 ** 0)[0] and 0 %}"),
+    ("below_extends_in_a_condition", _EXT + "{% if (0 ** 0)[0] and 0 %}x{% endif %}"),
+    ("below_extends_in_a_loops_iterable",
+     _EXT + "{% for i in [(0 ** 0)[0] and 0] %}x{% endfor %}"),
+]:
+    case("fold/" + _n, _src.replace("@X@", _refuses()),
+         __settings__={"undefined": "strict"},
+         __templates__={"base.txt": "B[{% block a %}{% endblock %}]"})
+
+# The second: a {% block %} body is generated *after* the whole root body, from
+# the flat list the generator collects up front -- so of two folds that refuse,
+# the one in the root body wins however late it stands, and between two blocks
+# the list's order decides. The list is find_all's, which is a pre-order walk,
+# so a block nested inside another comes after its parent's own body rather
+# than where it is written. Each case names a different subscript in each
+# position, because what is being graded is *which* of the two refused.
+for _n, _src in [
+    ("root_after_a_block", "{% block a %}@7@{% endblock %}{% set q = (0 ** 0)[9] and 0 %}"),
+    ("root_before_a_block", "{% set q = (0 ** 0)[9] and 0 %}{% block a %}@7@{% endblock %}"),
+    ("a_macro_stays_where_it_is",
+     "{% macro m() %}@7@{% endmacro %}{% set q = (0 ** 0)[9] and 0 %}"),
+    ("a_block_loses_to_a_macro",
+     "{% block a %}@7@{% endblock %}{% macro m() %}@9@{% endmacro %}"),
+    ("a_block_loses_to_an_include",
+     "{% block a %}@7@{% endblock %}{% include (0 ** 0)[9] and 0 %}"),
+    ("a_nested_block_is_last",
+     "{% block a %}{% block b %}@8@{% endblock %}@6@{% endblock %}{% block c %}@7@{% endblock %}"),
+    ("a_nested_block_before_a_later_one",
+     "{% block a %}{% block b %}@8@{% endblock %}{% endblock %}{% block c %}@7@{% endblock %}"),
+]:
+    _t = _src
+    for _k in (6, 7, 8, 9):
+        _t = _t.replace("@%d@" % _k, _refuses(_k))
+    case("fold/order_" + _n, _t, __settings__={"undefined": "strict"},
+         __templates__={"base.txt": "B"})
+
+# The third: the two refusals the generator raises *before* it folds anything,
+# and the one it raises in the middle. Collecting the blocks is a pre-pass, so
+# a name defined twice is reported wherever the second definition stands; the
+# non-top-level {% extends %} is a failure of the generator's own walk, so it
+# beats a fold below it and loses to one above.
+case("fold/order_block_twice_beats_a_fold",
+     "{% block a %}{% endblock %}{% block a %}{% endblock %}" + _refuses(7),
+     __settings__={"undefined": "strict"})
+case("fold/order_block_twice_beats_an_earlier_fold",
+     _refuses(7) + "{% block a %}{% endblock %}{% block a %}{% endblock %}",
+     __settings__={"undefined": "strict"})
+case("fold/order_a_macros_extends_beats_a_fold",
+     "{% macro m() %}" + _EXT + "{% endmacro %}" + _refuses(7),
+     __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
+case("fold/order_a_fold_beats_a_macros_extends",
+     _refuses(7) + "{% macro m() %}" + _EXT + "{% endmacro %}",
+     __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
+case("fold/order_a_blocks_extends_beats_a_fold_in_a_later_block",
+     "{% block a %}" + _EXT + "{% endblock %}{% block b %}" + _refuses(7) + "{% endblock %}",
+     __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
+case("fold/order_a_root_fold_beats_a_blocks_extends",
+     "{% block a %}" + _EXT + "{% endblock %}" + _refuses(7),
+     __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
+
+# The same three rules again, for the other thing the generator does as it
+# writes a node out: look the filter or test up, and refuse a name the
+# environment does not have. A print tag below a root-level {% extends %} is
+# not written, so `{% extends 'base.txt' %}{{ 1|nosuch }}` renders the parent
+# where gojja2 refused to compile it -- a template jinja2 accepts, which is the
+# worse half of the divergence. The lookups inside a {% block %} happen where
+# its body is generated, after the root body, so an unknown name there loses to
+# one anywhere above.
+for _n, _src in [
+    ("below_extends", _EXT + "{{ 1|nosuchA }}"),
+    ("below_extends_a_test", _EXT + "{{ 1 is nosuchtest }}"),
+    ("below_extends_in_a_loop", _EXT + "{% for i in [1] %}{{ 1|nosuchA }}{% endfor %}"),
+    ("below_extends_in_a_filter_block",
+     _EXT + "{% filter upper %}{{ 1|nosuchA }}{% endfilter %}"),
+    ("below_extends_in_a_with", _EXT + "{% with %}{{ 1|nosuchA }}{% endwith %}"),
+    ("below_extends_in_a_branch", _EXT + "{% if true %}{{ 1|nosuchA }}{% endif %}"),
+    ("below_extends_in_a_block", _EXT + "{% block a %}{{ 1|nosuchA }}{% endblock %}"),
+    ("below_extends_in_a_macro", _EXT + "{% macro m() %}{{ 1|nosuchA }}{% endmacro %}"),
+    ("below_extends_in_a_set_block", _EXT + "{% set q %}{{ 1|nosuchA }}{% endset %}"),
+    ("below_extends_in_an_assignment", _EXT + "{% set q = 1|nosuchA %}"),
+    ("below_extends_in_a_loops_iterable",
+     _EXT + "{% for i in [1]|nosuchA %}x{% endfor %}"),
+    ("below_a_conditional_extends", "{% if true %}" + _EXT + "{% endif %}{{ 1|nosuchA }}"),
+    ("above_extends", "{{ 1|nosuchA }}" + _EXT),
+]:
+    case("fold/generated_lookup_" + _n, _src,
+         __templates__={"base.txt": "B[{% block a %}{% endblock %}]"})
+
+for _n, _src in [
+    ("root_after_a_block",
+     "{% block a %}{{ 1|nosuchA }}{% endblock %}{% set q = 1|nosuchB %}"),
+    ("root_before_a_block",
+     "{% set q = 1|nosuchB %}{% block a %}{{ 1|nosuchA }}{% endblock %}"),
+    ("a_block_loses_to_a_macro",
+     "{% block a %}{{ 1|nosuchA }}{% endblock %}"
+     "{% macro m() %}{{ 1|nosuchB }}{% endmacro %}"),
+    ("a_macro_stays_where_it_is",
+     "{% macro m() %}{{ 1|nosuchB }}{% endmacro %}"
+     "{% block a %}{{ 1|nosuchA }}{% endblock %}"),
+    ("a_nested_block_is_last",
+     "{% block a %}{% block b %}{{ 1|nosuchB }}{% endblock %}{{ 1|nosuchA }}"
+     "{% endblock %}{% block c %}{{ 1|nosuchC }}{% endblock %}"),
+    ("a_loop_beats_a_block",
+     "{% for i in [1] %}{{ 1|nosuchA }}{% endfor %}"
+     "{% block a %}{{ 1|nosuchB }}{% endblock %}"),
+    ("a_branch_defers_and_a_block_does_not",
+     "{% if true %}{{ 1|nosuchA }}{% endif %}{% block a %}{{ 1|nosuchB }}{% endblock %}"),
+]:
+    case("fold/order_lookup_" + _n, _src)
+
+# ...and the two are one walk, not two: jinja2 folds an expression and looks the
+# names in it up as it writes that one node out, so a template with a fold that
+# refuses and a filter that does not exist names whichever the generator reaches
+# first. Two passes cannot do that however carefully their walks are kept in
+# step, which is why there is one here.
+def _bad(k=7):
+    return "(0 ** 0)[%d] and 0" % k
+
+
+for _n, _src in [
+    ("a_lookup_before_a_fold", "{{ 1|nosuchA }}{{ @B@ }}"),
+    ("a_fold_before_a_lookup", "{{ @B@ }}{{ 1|nosuchA }}"),
+    ("a_lookup_in_an_assignment_before_a_fold", "{% set q = 1|nosuchA %}{{ @B@ }}"),
+    ("a_fold_before_a_lookup_in_an_assignment", "{{ @B@ }}{% set q = 1|nosuchA %}"),
+    ("a_block_fold_after_a_root_lookup",
+     "{% block a %}{{ @B@ }}{% endblock %}{{ 1|nosuchA }}"),
+    ("a_block_lookup_after_a_root_fold",
+     "{% block a %}{{ 1|nosuchA }}{% endblock %}{{ @B@ }}"),
+    ("a_macro_lookup_before_a_fold",
+     "{% macro m() %}{{ 1|nosuchA }}{% endmacro %}{{ @B@ }}"),
+    ("a_branch_defers_its_lookup", "{% if true %}{{ 1|nosuchA }}{% endif %}{{ @B@ }}"),
+    ("a_lookup_before_a_bad_extends",
+     "{{ 1|nosuchA }}{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}"),
+    ("a_bad_extends_before_a_lookup",
+     "{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}{{ 1|nosuchA }}"),
+]:
+    case("fold/order_mixed_" + _n, _src.replace("@B@", _bad()),
+         __settings__={"undefined": "strict"}, __templates__={"base.txt": "B"})
+
+# The order inside one statement is the generator's too, and it is not the
+# order the tag is written in: a loop's test becomes a function of its own,
+# written before the loop that calls it, and a {% filter %}, a {% set %} with a
+# body and a {% call %} all buffer their body first and write what consumes it
+# afterwards.
+for _n, _src in [
+    ("a_loops_test_before_its_iterable", "{% for i in [1]|nosuchA if 1|nosuchB %}x{% endfor %}"),
+    ("a_loops_test_folds_first", "{% for i in [1]|nosuchA if @B@ %}x{% endfor %}"),
+    ("a_loops_iterable_before_its_body",
+     "{% for i in [1]|nosuchA %}{{ 1|nosuchC }}{% endfor %}"),
+    ("a_loops_body_before_its_else",
+     "{% for i in [1] %}{{ 1|nosuchC }}{% else %}{{ 1|nosuchD }}{% endfor %}"),
+    ("a_filter_blocks_body_before_its_filter",
+     "{% filter nosuchA %}{{ 1|nosuchC }}{% endfilter %}"),
+    ("a_set_blocks_body_before_its_filter",
+     "{% set q | nosuchA %}{{ 1|nosuchC }}{% endset %}"),
+    ("a_call_blocks_body_before_its_call",
+     "{% call m(1|nosuchA) %}{{ 1|nosuchC }}{% endcall %}"),
+    ("a_call_blocks_signature_before_its_body",
+     "{% call(x=1|nosuchA) m() %}{{ 1|nosuchC }}{% endcall %}"),
+    ("a_macros_signature_before_its_body",
+     "{% macro m(a=1|nosuchA) %}{{ 1|nosuchC }}{% endmacro %}"),
+    ("a_withs_values_before_its_body",
+     "{% with x = 1|nosuchA %}{{ 1|nosuchC }}{% endwith %}"),
+    ("a_filter_blocks_fold_before_a_later_lookup",
+     "{% filter upper %}{{ @B@ }}{% endfilter %}{{ 1|nosuchA }}"),
+]:
+    case("fold/order_within_" + _n, _src.replace("@B@", _bad()),
+         __settings__={"undefined": "strict"})
+
+# A macro parameter that was not provided binds to an undefined carrying a
+# *hint* -- jinja2's `undefined(f"parameter {name!r} was not provided")` -- not
+# to one named after the parameter. The difference only speaks when the undefined
+# does: the message under StrictUndefined, the hint's own rendering under
+# DebugUndefined. Found by the generated differential once it could write a
+# `{% call(p) %}` signature, where the caller supplies no argument at all.
+for _kind in ("default", "chainable", "debug", "strict"):
+    _set = {} if _kind == "default" else {"undefined": _kind}
+    for _n, _src in [
+        ("missing_parameter", "{% macro m(x) %}[{{ x }}]{% endmacro %}{{ m() }}"),
+        ("missing_second_parameter", "{% macro m(x, y) %}[{{ y }}]{% endmacro %}{{ m(1) }}"),
+        ("missing_parameter_reached_through",
+         "{% macro m(x) %}[{{ x.attr }}]{% endmacro %}{{ m() }}"),
+        ("missing_parameter_is_defined",
+         "{% macro m(x) %}[{{ x is defined }}]{% endmacro %}{{ m() }}"),
+        ("missing_parameter_default",
+         "{% macro m(x) %}[{{ x|default('d') }}]{% endmacro %}{{ m() }}"),
+        ("caller_argument_not_provided",
+         "{% macro takes() %}<{{ caller() }}>{% endmacro %}"
+         "{% call(p) takes() %}{{ p }}{% endcall %}"),
+    ]:
+        case("macro/%s_%s" % (_kind, _n), _src, __settings__=_set)
+
+# A `{% filter %}` block's result is appended to jinja2's buffer rather than
+# emitted, so it is neither escaped nor finalized. It usually makes no difference
+# -- a filter over a Markup answers Markup -- but `|join` answers a plain str
+# holding the body's escapes, and escaping it again turned `&#39;` into
+# `&amp;#39;`.
+for _n, _src in [
+    ("join", "{% filter join('-') %}{{ \"it's\" }}{% endfilter %}"),
+    ("join_include", "{% filter wordwrap(4) %}{% include 'inc.txt' %}{% endfilter %}"),
+    ("upper_literal", "{% filter upper %}<b>{% endfilter %}"),
+    ("upper_printed", "{% filter upper %}{{ '<b>' }}{% endfilter %}"),
+    ("replace_ampersand", "{% filter replace('a','&') %}a{% endfilter %}"),
+    ("trim", "{% filter trim %} <b> {% endfilter %}"),
+    ("safe", "{% filter safe %}<b>{% endfilter %}"),
+]:
+    case("escape/filter_block_" + _n,
+         "{% autoescape true %}" + _src + "{% endautoescape %}",
+         __templates__={"inc.txt": "<{{ n|default('?') }}>"}, n=3)
+    case("control/filter_block_" + _n,
+         "{% autoescape false %}" + _src + "{% endautoescape %}",
+         __templates__={"inc.txt": "<{{ n|default('?') }}>"}, n=3)
+
+# --- a dict view compares as a set --------------------------------------------
+# `<`, `<=`, `>` and `>=` between two views are the *subset* relation, not an
+# ordering: CPython's dictview_richcompare answers containment, and neither
+# `a < b` nor `a > b` need hold. The lengths decide first, which is why a longer
+# view is not a proper subset without an element ever being looked at -- so
+# `{'x': [1]}.items() > {}.keys()` is False rather than a complaint about the
+# unhashable list.
+#
+# A values view is not set-like in either engine: its elements need be neither
+# unique nor hashable, so the four raise for it. gojja2 raised for *every* pair
+# of views, which the generated differential found through a chained comparison
+# -- `[0o17] not in nested.items() < ed.keys()` -- where CPython answers False
+# and carries on to fail somewhere else entirely.
+_VIEWS = "{% set a = {'x': 1, 'y': 2} %}{% set b = {'x': 1} %}{% set e = {} %}"
+for _n, _src in [
+    ("keys_lt_keys", "{{ a.keys() < b.keys() }}|{{ b.keys() < a.keys() }}"),
+    ("keys_le_keys", "{{ a.keys() <= b.keys() }}|{{ b.keys() <= a.keys() }}"),
+    ("keys_gt_keys", "{{ a.keys() > b.keys() }}|{{ b.keys() > a.keys() }}"),
+    ("keys_ge_keys", "{{ a.keys() >= b.keys() }}|{{ b.keys() >= a.keys() }}"),
+    ("keys_lt_itself", "{{ a.keys() < a.keys() }}|{{ a.keys() <= a.keys() }}"),
+    ("empty_keys", "{{ e.keys() < a.keys() }}|{{ e.keys() <= e.keys() }}|{{ a.keys() > e.keys() }}"),
+    ("items_lt_items", "{{ a.items() < b.items() }}|{{ b.items() < a.items() }}"),
+    ("items_le_items_same_key_other_value",
+     "{% set c = {'x': 9} %}{{ b.items() <= c.items() }}|{{ b.items() <= b.items() }}"),
+    ("items_across_views", "{{ a.keys() < b.items() }}|{{ a.items() < b.keys() }}"),
+    ("values_are_not_a_set", "{{ a.values() < b.values() }}"),
+    ("values_on_the_right", "{{ a.keys() < b.values() }}"),
+    ("values_on_the_left", "{{ a.values() < b.keys() }}"),
+    ("keys_against_a_list", "{{ a.keys() < [1] }}"),
+    ("keys_against_a_string", "{{ a.keys() < 'x' }}"),
+    ("set_against_a_view", "{{ (b.keys() - []) < a.keys() }}|{{ (a.keys() - []) < a.keys() }}"),
+    ("view_against_a_set", "{{ a.keys() < (a.keys() - []) }}|{{ b.keys() <= (a.keys() - []) }}"),
+    ("set_against_a_set", "{{ (b.keys() - []) < (a.keys() - []) }}"),
+]:
+    case("dictview/" + _n, _VIEWS + _src)
+# An unhashable value in an items view: the lengths answer before anything is
+# hashed one way, and the containment looks the key up rather than hashing the
+# pair the other.
+case("dictview/items_with_an_unhashable_value",
+     "{% set a = {'x': [1]} %}{% set b = {'x': [1], 'y': 2} %}"
+     "{{ a.items() <= b.items() }}|{{ a.items() < b.items() }}|{{ b.items() < a.items() }}")
+case("dictview/unhashable_against_empty_keys",
+     "{% set a = {'x': [1]} %}{% set e = {} %}{{ a.items() > e.keys() }}|{{ a.items() <= e.keys() }}")
+
+# --- how a replacement field ends ---------------------------------------------
+# CPython's parse_field reads the *name* up to the first '}', ':' or '!', then a
+# conversion of exactly one character, then a spec whose braces it counts. Each
+# of those three stages has its own complaint when the string runs out, and
+# gojja2 had one message for all of them past the name: `'{:d'` and `'{0!r'`
+# hold no nested field and CPython still calls them an unmatched brace.
+#
+# The conversion is one character and whatever character it is -- `'{!}'` takes
+# '}' as the conversion and then finds nothing closing the field, which is why it
+# reports the unmatched brace rather than the missing conversion. Found by the
+# generated differential once the soak could draw custom delimiters, on
+# `${- '{:z#]'.format(1e20) -}$`.
+for _n, _src in [
+    ("spec_ends_the_string", "{{ '{:z'.format(1) }}"),
+    ("empty_spec_ends_the_string", "{{ '{:'.format(1) }}"),
+    ("numbered_spec_ends_the_string", "{{ '{0:'.format(1) }}"),
+    ("align_ends_the_string", "{{ '{0:>'.format(1) }}"),
+    ("width_ends_the_string", "{{ '{0:>5'.format(1) }}"),
+    ("type_ends_the_string", "{{ '{:d'.format(1) }}"),
+    ("conversion_ends_the_string", "{{ '{!r'.format(1) }}"),
+    ("numbered_conversion_ends_the_string", "{{ '{0!r'.format(1) }}"),
+    ("bang_ends_the_string", "{{ '{0!'.format(1) }}"),
+    ("conversion_then_junk", "{{ '{0!rr}'.format(1) }}"),
+    ("conversion_then_bracket", "{{ '{0![a'.format(1) }}"),
+    ("brace_is_the_conversion", "{{ '{!}'.format(1) }}"),
+    ("colon_is_the_conversion", "{{ '{!:}'.format(1) }}"),
+    ("brace_in_the_name", "{{ '{a{b}'.format() }}"),
+    ("field_in_the_name", "{{ '{0{1}}'.format(1,2) }}"),
+    ("brace_in_an_index", "{% set d = {'a{b': 1} %}{{ '{0[a{b]}'.format(d) }}"),
+    ("name_ends_the_string", "{{ '{ '.format(1) }}"),
+    ("index_ends_the_string", "{% set d = {'a': 1} %}{{ '{0[a'.format(d) }}"),
+    ("attribute_ends_the_string", "{{ '{0.a'.format(1) }}"),
+    # An empty attribute is a *parse* error, not a lookup: CPython's
+    # FieldNameIterator refuses it when the chain reaches that step. gojja2 asked
+    # for an attribute called "" and reported that instead. The order is what the
+    # rest of these hold: `{0.a.}` still reports the failed 'a' first, and
+    # `{0.}` with no argument 0 still reports the missing argument.
+    ("empty_attribute", "{{ '{0.}'.format(1) }}"),
+    ("empty_attribute_no_index", "{{ '{.}'.format(1) }}"),
+    ("empty_attribute_twice", "{{ '{0..a}'.format(1) }}"),
+    ("empty_attribute_then_index", "{{ '{0.[0]}'.format(1) }}"),
+    ("empty_attribute_after_a_good_one", "{{ '{0.real.}'.format(1) }}"),
+    ("empty_attribute_after_a_bad_one", "{{ '{0.a.}'.format(1) }}"),
+    ("empty_attribute_with_a_spec", "{{ '{0.:5}'.format(1) }}"),
+    ("empty_attribute_with_a_conversion", "{{ '{0.!r}'.format(1) }}"),
+    ("empty_attribute_no_argument", "{{ '{0.}'.format() }}"),
+    # The conversion specifier is checked before the spec is expanded, and after
+    # the field is resolved. gojja2 expanded first, so a bad conversion beside a
+    # nested field reported the *numbering* instead.
+    ("unknown_conversion_before_a_nested_spec", "{{ '{0!q:{}}'.format(1, 3) }}"),
+    ("unknown_conversion_before_a_named_spec", "{{ '{0!q:{nosuch}}'.format(1) }}"),
+    ("unknown_conversion_before_an_indexed_spec", "{{ '{0!q:{9}}'.format(1) }}"),
+    ("unknown_conversion_after_the_field", "{{ '{nope!q:{}}'.format(1, 3) }}"),
+    ("unknown_conversion_after_an_attribute", "{{ '{0.nope!q:{}}'.format(1, 3) }}"),
+    ("unknown_conversion_after_an_index", "{{ '{9!q:{}}'.format(1, 3) }}"),
+    ("good_conversion_before_a_nested_spec", "{{ '{0!s:{}}'.format(1, 3) }}"),
+    # The same order inside a nested field. The conversion beats even the
+    # recursion refusal, and putting the check before the field's own lookup --
+    # which is how the first attempt at the rule above was written -- turned
+    # `{0:{nope!q}}` from the KeyError into the conversion error.
+    ("nested_unknown_conversion", "{{ '{0:{1!q}}'.format(1, 2) }}"),
+    ("nested_unknown_conversion_beats_recursion", "{{ '{0:{1!q:{}}}'.format(1, 2) }}"),
+    ("nested_field_beats_its_conversion", "{{ '{0:{nope!q}}'.format(1) }}"),
+    ("nested_recursion_with_a_good_conversion", "{{ '{0:{1!r:{2}}}'.format(1, 2, 3) }}"),
+]:
+    case("methods/format_field_" + _n, _src)
+
+# pprint has an arm for a set too, and it is the same layout a list gets: one
+# element per line in braces. What is different is the order -- CPython sorts
+# with pprint._safe_key, the values' own ordering where they have one, so a set
+# of integers pprints as 0, 1, 2 where this set's *repr* order (which is by
+# repr, for a total order over mixed types) would give 0, 1, 10. Only the
+# homogeneous case is gradable: _safe_key falls back to the object's id, which no
+# other process can reproduce. See docs/divergences.md.
+case("filters/pprint_set_of_strings",
+     "{% set d = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, '11': 11, '12': 12, '13': 13, '14': 14, '15': 15, '16': 16, '17': 17, '18': 18, '19': 19, '20': 20, '21': 21, '22': 22, '23': 23, '24': 24, '25': 25, '26': 26, '27': 27, '28': 28, '29': 29, '30': 30, '31': 31, '32': 32, '33': 33, '34': 34, '35': 35, '36': 36, '37': 37, '38': 38, '39': 39} %}{{ (d.keys() - [])|pprint }}")
+case("filters/pprint_set_of_integers",
+     "{% set d = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12, 13: 13, 14: 14, 15: 15, 16: 16, 17: 17, 18: 18, 19: 19, 20: 20, 21: 21, 22: 22, 23: 23, 24: 24, 25: 25, 26: 26, 27: 27, 28: 28, 29: 29, 30: 30, 31: 31, 32: 32, 33: 33, 34: 34, 35: 35, 36: 36, 37: 37, 38: 38, 39: 39} %}{{ (d.keys() - [])|pprint }}")
+# (A set short enough to fit on one line is printed by its repr, which is the
+# hash order CPython randomises per process -- so there is no short-set case
+# here. filters/pprint_set_empty is the exception: set() has one spelling.)
+# A view has two attributes, and gojja2 had neither: `isdisjoint`, which only
+# the set-like views have -- a values view is not a set, its elements need be
+# neither unique nor hashable -- and `mapping`, the read-only proxy of the dict
+# every view carries since 3.10. `{{ d.keys().mapping }}` printed nothing.
+#
+# The proxy is a dict in nearly every way a template can observe: it indexes,
+# iterates, sizes, is `is mapping`, and equals the dict in either position
+# because it delegates __eq__ to it. It differs in four: its repr says
+# mappingproxy, it has only the five read-only methods, json.dumps refuses it,
+# and hashing it complains about the *dict* it wraps. Found by coverage --
+# dictView.GetAttr was 0%.
+_DV = "{% set d = {'a': 1, 'b': 2} %}"
+for _n, _src in [
+    ("keys_mapping", "{{ d.keys().mapping }}"),
+    ("items_mapping", "{{ d.items().mapping }}"),
+    ("values_mapping", "{{ d.values().mapping }}"),
+    ("mapping_through_attr", "{{ d.keys()|attr('mapping') }}"),
+    ("mapping_repr", "{{ d.keys().mapping|pprint }}"),
+    ("mapping_str", "{{ d.keys().mapping|string }}"),
+    ("mapping_indexes", "{% set m = d.keys().mapping %}[{{ m['a'] }}][{{ m['z'] }}]"),
+    ("mapping_iterates", "{% for k in d.keys().mapping %}[{{ k }}]{% endfor %}"),
+    ("mapping_length", "{{ d.keys().mapping|length }}"),
+    ("mapping_is_mapping",
+     "{% set m = d.keys().mapping %}{{ m is mapping }}{{ m is sequence }}{{ m is iterable }}"),
+    ("mapping_equals_the_dict",
+     "{% set m = d.keys().mapping %}{{ m == d }}{{ d == m }}{{ m == d.keys().mapping }}"),
+    ("mapping_dictsort", "{{ d.keys().mapping|dictsort }}"),
+    ("mapping_items_filter", "{{ d.keys().mapping|items|list }}"),
+    ("mapping_methods",
+     "{% set m = d.keys().mapping %}{{ m.keys()|list }}{{ m.values()|list }}"
+     "{{ m.items()|list }}{{ m.get('a') }}{{ m.get('z', 9) }}{{ m.copy() }}"),
+    ("mapping_has_no_mapping", "[{{ d.keys().mapping.mapping }}]"),
+    ("mapping_has_no_update", "{{ d.keys().mapping.update({'q': 1}) }}"),
+    ("mapping_copy_is_a_dict", "{{ d.keys().mapping.copy().__class__ }}"),
+    ("mapping_class", "{{ d.keys().mapping.__class__ }}"),
+    ("mapping_tojson", "{{ d.keys().mapping|tojson }}"),
+    ("mapping_is_unhashable", "{{ d.keys().mapping in d }}"),
+    ("mapping_copy_arity", "{{ d.keys().mapping.copy(1) }}"),
+    ("mapping_get_arity", "{{ d.keys().mapping.get() }}"),
+    ("isdisjoint_true", "{{ d.keys().isdisjoint([1]) }}"),
+    ("isdisjoint_false", "{{ d.keys().isdisjoint(['a']) }}"),
+    ("isdisjoint_empty", "{{ d.keys().isdisjoint([]) }}"),
+    ("isdisjoint_a_string", "{{ d.keys().isdisjoint('a') }}"),
+    ("isdisjoint_a_dict", "{{ d.keys().isdisjoint(d) }}"),
+    ("isdisjoint_unhashable", "{{ d.keys().isdisjoint([['x']]) }}"),
+    ("isdisjoint_items_pair", "{{ d.items().isdisjoint([('a', 1)]) }}"),
+    ("isdisjoint_items_list", "{{ d.items().isdisjoint([['a', 1]]) }}"),
+    ("isdisjoint_values_has_none", "{{ d.values().isdisjoint([1]) }}"),
+    ("isdisjoint_no_argument", "{{ d.keys().isdisjoint() }}"),
+    ("isdisjoint_two_arguments", "{{ d.keys().isdisjoint(1, 2) }}"),
+    ("isdisjoint_a_keyword", "{{ d.keys().isdisjoint(x=1) }}"),
+    ("isdisjoint_not_iterable", "{{ d.keys().isdisjoint(5) }}"),
+    # The proxy's class *is* constructible, unlike a view's, and what it
+    # accepts is PyMapping_Check minus list and tuple -- so a string is a
+    # mapping here and another proxy is one too.
+    ("proxy_class_constructs", "{% set C = d.keys().mapping.__class__ %}{{ C({'a': 1}) }}"),
+    ("proxy_class_needs_an_argument", "{{ d.keys().mapping.__class__() }}"),
+    ("proxy_class_names_its_argument",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(mapping={'q': 1}) }}"),
+    ("proxy_class_takes_one",
+     "{% set C = d.keys().mapping.__class__ %}{{ C({'a': 1}, {}) }}"),
+    ("proxy_class_refuses_a_list", "{% set C = d.keys().mapping.__class__ %}{{ C([1]) }}"),
+    ("proxy_class_refuses_a_tuple", "{% set C = d.keys().mapping.__class__ %}{{ C((1,)) }}"),
+    ("proxy_class_refuses_an_int", "{% set C = d.keys().mapping.__class__ %}{{ C(5) }}"),
+    ("proxy_class_takes_a_string",
+     "{% set C = d.keys().mapping.__class__ %}{{ C('ab') }}|{{ C('ab')|pprint }}"
+     "|{{ C('ab')|list }}|{{ C('ab')|length }}"),
+    ("proxy_class_nests", "{% set C = d.keys().mapping.__class__ %}{{ C(C({'a': 1}))|pprint }}"),
+    ("view_class_is_not_constructible", "{{ d.keys().__class__() }}"),
+    # What the proxy accepts is PyMapping_Check -- "defines __getitem__" --
+    # minus list and tuple, which CPython excludes by name. So bytes, a range
+    # and jinja2's own Undefined are mappings here, and a view, a set, a
+    # namespace and a class are not. Only a dict and a string were taken.
+    ("proxy_class_takes_bytes", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ C('ab'.encode())|pprint }}|{{ C('ab'.encode())[0] }}|"
+     "{{ C('ab'.encode())|length }}|{{ C('ab'.encode())|list }}"),
+    ("proxy_class_takes_a_range", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ C(range(2))|pprint }}|{{ C(range(2))[0] }}|{{ C(range(2))|length }}|"
+     "{{ C(range(2))|list }}"),
+    ("proxy_class_takes_an_undefined", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(nope) }}]|{{ C(nope)|pprint }}|{{ C(nope)|length }}|{{ C(nope)|list }}"),
+    ("proxy_class_takes_self",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}"
+     "{{ C(self)|pprint }}|{{ C(self)['b']() }}"),
+    ("proxy_class_refuses_a_view", "{% set C = d.keys().mapping.__class__ %}{{ C(d.keys()) }}"),
+    ("proxy_class_refuses_an_items_view",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(d.items()) }}"),
+    ("proxy_class_refuses_a_set",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(d.keys() - 'a') }}"),
+    ("proxy_class_refuses_a_namespace",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(namespace(a=1)) }}"),
+    ("proxy_class_refuses_a_class", "{% set C = d.keys().mapping.__class__ %}{{ C(C) }}"),
+    ("proxy_class_refuses_none", "{% set C = d.keys().mapping.__class__ %}{{ C(none) }}"),
+    # The five read-only methods are an attribute lookup on whatever is
+    # wrapped, not dict's methods applied to it: CPython's mappingproxy_keys is
+    # PyObject_CallMethodNoArgs(pp->mapping, "keys"). Over a string there is no
+    # such method. keys, items and values answered an empty view here, and get
+    # and copy *panicked*, both unwrapping a dict that was not there.
+    ("proxy_keys_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').keys() }}"),
+    ("proxy_items_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').items() }}"),
+    ("proxy_values_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').values() }}"),
+    ("proxy_get_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').get(0, 'no') }}"),
+    ("proxy_copy_over_a_string", "{% set C = d.keys().mapping.__class__ %}{{ C('ab').copy() }}"),
+    ("proxy_keys_over_bytes",
+     "{% set C = d.keys().mapping.__class__ %}{{ C('ab'.encode()).keys() }}"),
+    ("proxy_get_over_a_range", "{% set C = d.keys().mapping.__class__ %}{{ C(range(2)).get(0) }}"),
+    ("proxy_copy_over_a_range", "{% set C = d.keys().mapping.__class__ %}{{ C(range(2)).copy() }}"),
+    # ...and over another proxy it delegates twice, which is the arm that says
+    # the lookup is a lookup and not a special case for dicts.
+    ("proxy_methods_over_a_proxy", "{% set C = d.keys().mapping.__class__ %}"
+     "{% set m = C(d.keys().mapping) %}{{ m.keys()|list }}|{{ m.items()|list }}|"
+     "{{ m.values()|list }}|{{ m.get('a') }}|{{ m.copy() }}"),
+    # An undefined raises from __getattr__ before the name is looked for, and
+    # from __getitem__ whatever the key is -- including the key an attribute
+    # falls back to.
+    ("proxy_keys_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(nope).keys() }}"),
+    ("proxy_copy_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(nope).copy() }}"),
+    ("proxy_index_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(nope)[0] }}"),
+    ("proxy_attr_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ C(nope).mapping }}"),
+    # `in` is PySequence_Contains on the wrapped object, so a proxy over a
+    # string is a string here: an int on the left is the string's TypeError and
+    # a substring is found. Hashing the key and looking it up as a dict key
+    # made the first True and the second False.
+    ("proxy_contains_over_a_string", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ 'a' in C('ab') }}|{{ 'ab' in C('ab') }}|{{ 'z' in C('ab') }}"),
+    ("proxy_contains_an_int_over_a_string",
+     "{% set C = d.keys().mapping.__class__ %}{{ 0 in C('ab') }}"),
+    ("proxy_contains_over_bytes", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ 97 in C('ab'.encode()) }}|{{ 0 in C('ab'.encode()) }}"),
+    ("proxy_contains_a_string_over_bytes",
+     "{% set C = d.keys().mapping.__class__ %}{{ 'a' in C('ab'.encode()) }}"),
+    ("proxy_contains_over_a_range", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ 0 in C(range(2)) }}|{{ 5 in C(range(2)) }}|{{ 'a' in C(range(2)) }}"),
+    ("proxy_contains_over_an_undefined",
+     "{% set C = d.keys().mapping.__class__ %}{{ 0 in C(nope) }}"),
+    # The subscript is PyObject_GetItem on the wrapped value, so each kind
+    # indexes as it does on its own -- negative from the end, a miss for a key
+    # it cannot take, and an undefined for a key out of range.
+    ("proxy_index_over_a_string", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C('ab')[0] }}][{{ C('ab')[-1] }}][{{ C('ab')[5] }}][{{ C('ab')['x'] }}]"),
+    ("proxy_index_over_bytes", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C('ab'.encode())[1] }}][{{ C('ab'.encode())[-1] }}]"
+     "[{{ C('ab'.encode())[9] }}][{{ C('ab'.encode())['x'] }}]"),
+    ("proxy_index_over_a_range", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(range(3))[1] }}][{{ C(range(3))[-1] }}][{{ C(range(3))[9] }}]"
+     "[{{ C(range(3))['x'] }}]"),
+    ("proxy_index_over_a_proxy", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(d.keys().mapping)['a'] }}][{{ C(d.keys().mapping)['z'] }}]"),
+    ("proxy_index_over_a_range_not_an_int", "{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(range(3))[1.5] }}][{{ C(range(3))[2**40] }}][{{ C(range(3))[none] }}]"),
+    ("proxy_over_a_proxy_lists", "{% set C = d.keys().mapping.__class__ %}"
+     "{{ C(C(d))|list }}|{{ C(C(d))|length }}"),
+    # len(), bool() and `is sequence` of a proxy are len() of what it wraps,
+    # refusal included: the template reference has __getitem__ and no
+    # __len__. They answered 0, False and True here, because the proxy's
+    # length had nowhere to put the error.
+    ("proxy_over_self_length",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}{{ C(self)|length }}"),
+    ("proxy_over_a_proxy_over_self_length",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}{{ C(C(self))|length }}"),
+    ("proxy_over_self_truth",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}"
+     "{% if C(self) %}t{% else %}f{% endif %}"),
+    ("proxy_over_self_is_sequence",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}"
+     "{{ C(self) is sequence }}|{{ C(self) is iterable }}|{{ C(d) is sequence }}"),
+    ("proxy_over_self_index",
+     "{% block b %}B{% endblock %}{% set C = d.keys().mapping.__class__ %}"
+     "[{{ C(self)[0] }}][{{ C(self)['nope'] }}]"),
+]:
+    case("dictview/" + _n, _DV + _src)
+# dict.update, dict(), |items and |dictsort never walk a mapping argument as a
+# mapping: PyDict_Merge calls its keys() and indexes it by each, and jinja2's
+# two filters call its items(). A proxy's methods are the wrapped object's, so
+# over a string, a range, bytes or the template reference each of them is an
+# AttributeError -- and each answered pairs invented from the characters.
+_PC = "{% set C = d.keys().mapping.__class__ %}"
+for _n, _src in [
+    ("update_over_a_string", "{% set x = {} %}{% set _ = x.update(C('ab')) %}{{ x }}"),
+    ("update_over_a_range", "{% set x = {} %}{% set _ = x.update(C(range(2))) %}{{ x }}"),
+    ("update_over_bytes", "{% set x = {} %}{% set _ = x.update(C('ab'.encode())) %}{{ x }}"),
+    ("update_over_a_proxy", "{% set x = {'z': 0} %}{% set _ = x.update(C(C({'q': 2, 'a': 1}))) %}{{ x }}"),
+    ("update_over_a_dict", "{% set x = {'z': 0} %}{% set _ = x.update(C({'q': 2})) %}{{ x }}"),
+    ("dict_over_a_string", "{{ dict(C('ab')) }}"),
+    ("dict_over_a_proxy", "{{ dict(C({'q': 2}), r=3) }}|{{ dict(C(C({'q': 2}))) }}"),
+    ("dict_over_an_undefined", "{{ dict(C(nope)) }}"),
+    ("dictsort_over_a_string", "{{ C('ab')|dictsort }}"),
+    ("dictsort_over_a_range", "{{ C(range(2))|dictsort }}"),
+    ("dictsort_over_a_proxy", "{{ C({'q': 2, 'a': 1})|dictsort }}|{{ C(C({'q': 2, 'a': 1}))|dictsort(by='value') }}"),
+    ("items_filter_over_a_string", "{{ C('ab')|items|list }}"),
+    ("items_filter_over_a_proxy", "{{ C({'q': 2, 'a': 1})|items|list }}|{{ C(C({'q': 2}))|items|list }}"),
+    ("items_filter_over_an_undefined", "{{ C(nope)|items|list }}"),
+    ("dict_over_self", "{% block b %}B{% endblock %}{{ dict(C(self)) }}"),
+    ("dictsort_over_self", "{% block b %}B{% endblock %}{{ C(self)|dictsort }}"),
+]:
+    case("dictview/proxy_" + _n, _DV + _PC + _src)
+
+# list.index's start and stop are slice indices: clamped when past either end,
+# however far, refused when not an integer, and an empty window when the stop
+# is before the start. A bound written -(2**70) is parenthesised on purpose.
+for _n, _src in [
+    ("start_past_the_end", "{{ [1, 2, 3, 2].index(2, 2**70) }}"),
+    ("start_far_before", "{{ [1, 2, 3, 2].index(2, -(2**70)) }}|{{ [1, 2, 3, 2].index(2, -10) }}|"
+     "{{ [1, 2, 3, 2].index(2, -1) }}"),
+    ("stop_far_past", "{{ [1, 2, 3, 2].index(2, 2, 2**70) }}"),
+    ("stop_far_before", "{{ [1, 2, 3, 2].index(2, 0, -(2**70)) }}"),
+    ("start_not_an_int", "{{ [1, 2, 3, 2].index(2, 1.5) }}"),
+    ("stop_before_start", "{{ [1, 2, 3, 2].index(2, 3, 1) }}"),
+    ("tuple_wide_bounds", "{{ (1, 2).index(2, -(2**70), 2**70) }}"),
+    # Jinja's unary minus binds tighter than **, so this start is (-2)**70,
+    # which is positive and past the end.
+    ("unary_minus_before_power", "{{ [1, 2, 3, 2].index(2, -2**70) }}"),
+]:
+    case("methods/list_index_bounds_" + _n, _src)
+
+# |tojson's string writer and its non-finite floats had no case at all: a quote,
+# a backslash, the five short escapes, a control character, an astral
+# character as a surrogate pair, and Infinity, -Infinity and NaN -- which
+# json.dumps writes because allow_nan is on. The infinities are computed at run
+# time: a literal one folds, and jinja2 writes it into its generated code as
+# `inf`, which is a divergence of its own.
+for _n, _src in [
+    ("short_escapes", "{{ 'a\"b'|tojson }}|{{ 'a\\\\b'|tojson }}|{{ 'a\\tb'|tojson }}|"
+     "{{ 'a\\bb'|tojson }}|{{ 'a\\fb'|tojson }}|{{ 'a\\nb\\rc'|tojson }}"),
+    ("control", "{{ '\\x00\\x01\\x1f\\x7f'|tojson }}"),
+    ("astral", "{{ '\U0001f600'|tojson }}|{{ '\u00e9\u4e2d'|tojson }}|{{ '\\U0010ffff'|tojson }}|"
+     "{{ {'\U0001f600': '\\t'}|tojson }}"),
+    ("keys_escaped", "{{ {'k\"': 'v\\\\'}|tojson }}"),
+    ("non_finite", "{% set b = 1e308 %}{% set a = b * 10 %}{{ a|tojson }}|{{ (-a)|tojson }}|"
+     "{{ (a - a)|tojson }}|{{ [a, -a, a - a]|tojson }}|{{ {'x': a}|tojson(indent=2) }}"),
+    ("floats", "{{ 1.5|tojson }}|{{ 1e16|tojson }}|{{ 1e-7|tojson }}|{{ (0.1 + 0.2)|tojson }}|"
+     "{{ -0.0|tojson }}|{{ (2**70)|tojson }}|{{ 1e22|tojson }}|{{ 5e-324|tojson }}"),
+    # A key json.dumps accepts is written as a string of what it is, and a
+    # non-finite float key is spelled as the value would be.
+    ("non_finite_keys", "{% set b = 1e308 %}{% set a = b * 10 %}{{ {a: 1}|tojson }}|{{ {-a: 2}|tojson }}|"
+     "{{ {a - a: 3}|tojson }}"),
+    ("scalar_keys", "{{ {1.5: 'x'}|tojson }}|{{ {true: 1}|tojson }}|{{ {false: 1}|tojson }}|"
+     "{{ {none: 1}|tojson }}|{{ {2**70: 1}|tojson }}|{{ {-0.0: 1, 1e16: 2}|tojson }}"),
+]:
+    case("filters/tojson_writes_" + _n, _src)
+
+# <, <=, > and >= on a proxy are the wrapped object's: mappingproxy_richcompare
+# is PyObject_RichCompare(pp->mapping, w, op). On the left it delegates; on the
+# right the left side declines first and the reflected operator reaches it --
+# so the refusal names the wrapped type, with the operator as the innermost
+# comparison saw it, and a proxy over a string orders as the string. Found by
+# the render soak, once the generator wrote proxies:
+# `{{ ... <= 1e3 >= (ed.values().mapping) }}`.
+_PM = "{% set C = d.keys().mapping.__class__ %}{% set m = C({'a': 1}) %}"
+for _n, _src in [
+    ("left_refused", "{{ m < 1 }}"),
+    ("right_refused", "{{ 1e3 >= m }}"),
+    ("both_sides", "{{ m < m }}"),
+    ("against_a_dict", "{{ m <= {'a': 1} }}"),
+    ("dict_on_the_left", "{{ {'a': 1} > m }}"),
+    ("list_on_the_left", "{{ [1] < m }}"),
+    ("over_a_string", "{{ C('ab') < 'b' }}|{{ C('ab') >= 'ab' }}|{{ 'b' > C('ab') }}|{{ C(C('ab')) < 'b' }}"),
+    ("over_a_range", "{{ C(range(3)) < range(2) }}"),
+    ("over_an_undefined", "{{ C(nope) < 1 }}"),
+    ("sorted", "{{ [C('b'), C('a')]|sort|map('list')|list }}|{{ C('b')|min }}|{{ [C('b'), C('a')]|max|list }}"),
+    ("chained", "{{ ['A b-c'] is not callable <= 1e3 >= (ed.values().mapping) }}"),
+]:
+    case("dictview/proxy_orders_" + _n, _DV + _PM + _src, ed={})
+
+# A loop over a proxy that stops early stops the wrapped object's iteration.
+case("dictview/proxy_iteration_stops_early",
+     _DV + "{% set C = d.keys().mapping.__class__ %}{% for k in C('ab') %}{{ k }}{% break %}{% endfor %}",
+     __settings__={"extensions": ["loopcontrols"]})
+# A StrictUndefined's __len__, __iter__ and __bool__ all raise, and a proxy
+# over one hands each of them on; the proxy answered 0, nothing and False.
+for _n, _src in [
+    ("length", "{{ C(nope)|length }}"),
+    ("list", "{{ C(nope)|list }}"),
+    ("truth", "{% if C(nope) %}t{% else %}f{% endif %}"),
+]:
+    case("dictview/proxy_over_a_strict_undefined_" + _n,
+         _DV + "{% set C = d.keys().mapping.__class__ %}" + _src,
+         __settings__={"undefined": "strict"})
+
+# A set's seventeen methods, which a template reaches because `d.keys() - xs`
+# gives it a set to call them on. All seventeen answered "'set object' has no
+# attribute" until this was swept.
+#
+# Every result that is itself a set is compared through `|list|sort`, never by
+# its repr: a multi-element set prints in hash order on CPython and in repr
+# order here, which is the one thing about a set that cannot be reproduced. See
+# docs/divergences.md.
+_S = ("{% set d = {'a': 1, 'b': 2, 'c': 3} %}{% set s = d.keys() - ['a'] %}"
+      "{% set t = d.keys() - ['b', 'c'] %}")
+for _n, _src in [
+    # The four that build a new set take any number of iterables, and fold left.
+    ("union", "{{ s.union(t)|list|sort }}"),
+    ("union_of_nothing", "{{ s.union()|list|sort }}"),
+    ("union_of_a_list", "{{ s.union(['z'])|list|sort }}"),
+    ("union_of_a_string", "{{ s.union('xy')|list|sort }}"),
+    ("union_of_a_dict", "{{ s.union(d)|list|sort }}"),
+    ("union_of_two", "{{ s.union(t, ['z'])|list|sort }}"),
+    ("intersection", "{{ s.intersection(t)|list|sort }}"),
+    ("intersection_of_a_list", "{{ s.intersection(['b'])|list|sort }}"),
+    ("intersection_of_nothing", "{{ s.intersection()|list|sort }}"),
+    ("difference", "{{ s.difference(t)|list|sort }}"),
+    ("difference_of_a_list", "{{ s.difference(['b'])|list|sort }}"),
+    ("difference_of_two", "{{ s.difference(['b'], ['c'])|list|sort }}"),
+    ("symmetric_difference", "{{ s.symmetric_difference(t)|list|sort }}"),
+    ("symmetric_difference_of_a_list", "{{ s.symmetric_difference(['b'])|list|sort }}"),
+    # ...and the four that land back in the receiver answer None.
+    ("update", "{{ s.update(t) }}|{{ s|list|sort }}"),
+    ("update_of_nothing", "{{ s.update() }}|{{ s|list|sort }}"),
+    ("intersection_update", "{{ s.intersection_update(['b']) }}|{{ s|list|sort }}"),
+    ("difference_update", "{{ s.difference_update(['b']) }}|{{ s|list|sort }}"),
+    ("symmetric_difference_update",
+     "{{ s.symmetric_difference_update(['b', 'z']) }}|{{ s|list|sort }}"),
+    # The three relations, which also take any iterable.
+    ("issubset", "{{ s.issubset(t) }}|{{ s.issubset(d) }}|{{ s.issubset('bc') }}"),
+    ("issuperset", "{{ s.issuperset(t) }}|{{ s.issuperset(['b']) }}"),
+    ("isdisjoint", "{{ s.isdisjoint(t) }}|{{ s.isdisjoint(['b']) }}"),
+    # add, remove, discard, pop, clear, copy.
+    ("add", "{{ s.add('z') }}|{{ s|list|sort }}"),
+    ("add_an_element_it_has", "{{ s.add('b') }}|{{ s|list|sort }}"),
+    ("add_unhashable", "{{ s.add(['z']) }}"),
+    ("add_a_set", "{{ s.add(t) }}"),
+    ("remove", "{{ s.remove('b') }}|{{ s|list|sort }}"),
+    ("remove_a_missing_element", "{{ s.remove('z') }}"),
+    ("remove_unhashable", "{{ s.remove(['z']) }}"),
+    # remove and discard take a set where add refuses one: set_remove catches
+    # the unhashable TypeError and looks up a frozenset instead, so the
+    # complaint is a KeyError naming the set.
+    ("remove_a_set", "{{ s.remove(t) }}"),
+    ("discard", "{{ s.discard('b') }}|{{ s|list|sort }}"),
+    ("discard_a_missing_element", "{{ s.discard('z') }}|{{ s|list|sort }}"),
+    ("discard_a_set", "{{ s.discard(t) }}|{{ s|list|sort }}"),
+    ("discard_unhashable", "{{ s.discard(['z']) }}"),
+    # pop takes an arbitrary element, so only the *set* it leaves is compared:
+    # popping everything and sorting is order-free on both sides.
+    ("pop_everything", "{% set out = [] %}{% for i in range(2) %}"
+     "{% do out.append(s.pop()) %}{% endfor %}{{ out|sort }}|{{ s|list }}"),
+    ("pop_from_an_empty_set", "{{ (d.keys() - d.keys()).pop() }}"),
+    ("clear", "{{ s.clear() }}|{{ s|list }}|{{ s|length }}"),
+    ("copy_is_a_new_set", "{% set c = s.copy() %}{{ c|list|sort }}|{{ s.add('z') }}|"
+     "{{ c|list|sort }}|{{ s|list|sort }}"),
+    ("union_is_a_new_set", "{% set c = s.union() %}{{ s.add('z') }}|{{ c|list|sort }}"),
+    # What each one refuses. The arity wordings are CPython's own, probed into
+    # method_arity.go rather than written out here.
+    ("add_needs_one", "{{ s.add() }}"),
+    ("add_takes_one", "{{ s.add(1, 2) }}"),
+    ("pop_takes_none", "{{ s.pop(1) }}"),
+    ("clear_takes_none", "{{ s.clear(1) }}"),
+    ("copy_takes_none", "{{ s.copy(1) }}"),
+    ("isdisjoint_needs_one", "{{ s.isdisjoint() }}"),
+    ("isdisjoint_takes_one", "{{ s.isdisjoint(t, t) }}"),
+    ("symmetric_difference_needs_one", "{{ s.symmetric_difference() }}"),
+    ("union_takes_no_keywords", "{{ s.union(x=1) }}"),
+    ("add_takes_no_keywords", "{{ s.add(x=1) }}"),
+    ("union_of_an_int", "{{ s.union(1) }}"),
+    ("union_of_none", "{{ s.union(none) }}"),
+    ("union_of_unhashable", "{{ s.union([['z']]) }}"),
+    ("issubset_of_an_int", "{{ s.issubset(1) }}"),
+    ("update_of_an_int", "{{ s.update(1) }}|{{ s|list|sort }}"),
+    # The operator takes a set and not an iterable, which is the difference
+    # between it and the methods.
+    ("minus_a_set", "{{ (s - t)|list|sort }}"),
+    ("minus_a_view", "{{ (s - d.keys())|list|sort }}"),
+    ("a_view_minus_a_set", "{{ (d.keys() - s)|list|sort }}"),
+    ("minus_a_list", "{{ s - ['b'] }}"),
+    ("minus_a_string", "{{ s - 'b' }}"),
+    ("minus_an_int", "{{ s - 1 }}"),
+]:
+    case(f"sets/{_n}", _S + _src)
+
+case("filters/pprint_set_empty", "{% set d = {'a': 1} %}{{ (d.keys() - d.keys())|pprint }}")
+case("filters/pprint_set_in_a_list",
+     "{% set d = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, '11': 11, '12': 12, '13': 13, '14': 14, '15': 15, '16': 16, '17': 17, '18': 18, '19': 19, '20': 20, '21': 21, '22': 22, '23': 23, '24': 24, '25': 25, '26': 26, '27': 27, '28': 28, '29': 29, '30': 30, '31': 31, '32': 32, '33': 33, '34': 34, '35': 35, '36': 36, '37': 37, '38': 38, '39': 39} %}{{ [(d.keys() - [])]|pprint }}")
+case("filters/pprint_set_long_strings",
+     "{% set d = {'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': 1,"
+     " 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': 2} %}{{ (d.keys() - [])|pprint }}")
+
+# --- a guard over an arm that can fail ----------------------------------------
+# The dataflow analysis answers whether a variable can stop the render, and a
+# *guard* decides whether whatever it guards runs at all. Two shapes had it
+# wrong, both found by rendering the analysis's negatives:
+#
+#   - an arm holding only an attribute access. Reaching through an undefined
+#     raises, so the guard decides whether the render fails -- and Getattr had
+#     been left out of the walk's list of what can fail, beside its sibling
+#     Getitem.
+#   - under StrictUndefined, an arm that merely *reads* a name. Reading one that
+#     was not passed raises there, where every other class renders it.
+#
+# The cases are here so the rule is graded by testdata/nameflow as well as by
+# the probe: what each records is the effect set for `c`.
+case("dataflow/guard_over_getattr", "{% if c %}{{ nope.attr }}{% endif %}ok", c=1)
+case("dataflow/guard_over_getattr_false", "{% if c %}{{ nope.attr }}{% endif %}ok", c=0)
+case("dataflow/guard_over_getitem", "{% if c %}{{ nope['a'] }}{% endif %}ok", c=1)
+case("dataflow/guard_over_text", "{% if c %}text{% endif %}ok", c=1)
+case("dataflow/guard_over_a_name_strict", "{% if c %}{{ nope }}{% endif %}ok",
+     __settings__={"undefined": "strict"}, c=0)
+case("dataflow/guard_over_a_name_default", "{% if c %}{{ nope }}{% endif %}ok", c=1)
+case("dataflow/loop_guard_over_getattr",
+     "{% for i in seq %}{% if c %}{{ nope.attr }}{% endif %}{% endfor %}ok", c=0, **SEQ)
+
+# --- a guard over a body that becomes a value ---------------------------------
+# A branch inside a `{% set %}` with a body puts nothing of its own in the
+# document, and the analysis said so -- but it decides what the *captured
+# string* is, and whatever consumes that string can fail for one branch and not
+# the other. `{% set v | last %}{% if c %}xx{% endif %}{% endset %}` is "x" when
+# c is truthy and an undefined when it is not, which raises the moment it is
+# printed under StrictUndefined and raises in `{% filter last %}` under every
+# class. The analysis said "the render cannot fail because of c", which is the
+# one answer it must never give; the syntax differential found it by rendering
+# that negative with two values of c.
+#
+# The fix is an edge of its own, not a data edge: c decides what v holds without
+# being part of it, so FLOW and REQUIRED travel back along it and OUTPUT does
+# not. Each case pins which of the three the guard gets.
+case("dataflow/capture_guard_filtered_in_the_block",
+     "{% set fv | last %}{% if c %}xx{% endif %}{% endset %}[{{ fv }}]", c=1)
+case("dataflow/capture_guard_filtered_at_the_use",
+     "{% set fv %}{% if c %}xx{% endif %}{% endset %}[{{ fv|last }}]", c=1)
+case("dataflow/capture_guard_printed_plainly",
+     "{% set fv %}{% if c %}xx{% endif %}{% endset %}[{{ fv }}]", c=1)
+case("dataflow/capture_guard_never_used",
+     "{% set fv | last %}{% if c %}xx{% endif %}{% endset %}ok", c=1)
+case("dataflow/capture_guard_strict",
+     "{% set fv | last %}{% if c %}xx{% endif %}{% endset %}[{{ fv }}]",
+     __settings__={"undefined": "strict"}, c=1)
+case("dataflow/capture_guard_in_a_filter_block",
+     "{% filter last %}{% if c %}xx{% endif %}{% endfilter %}", c=1)
+case("dataflow/capture_guard_in_a_macro",
+     "{% macro m() %}{% if c %}xx{% endif %}{% endmacro %}[{{ m()|last }}]", c=1)
+case("dataflow/capture_guard_in_a_macro_printed",
+     "{% macro m() %}{% if c %}xx{% endif %}{% endmacro %}[{{ m() }}]", c=1)
+case("dataflow/capture_loop_test_steers",
+     "{% set fv | last %}{% for i in seq if c %}x{% endfor %}{% endset %}[{{ fv }}]",
+     c=1, **SEQ)
+case("dataflow/capture_loop_length_steers",
+     "{% set fv | last %}{% for i in seq %}x{% endfor %}{% endset %}[{{ fv }}]", **SEQ)
+case("dataflow/capture_guard_nested",
+     "{% set outer %}{% set inner | last %}{% if c %}xx{% endif %}{% endset %}"
+     "[{{ inner }}]{% endset %}{{ outer }}", c=1)
+case("dataflow/capture_guard_in_an_else",
+     "{% set fv | last %}{% if c %}{% else %}yy{% endif %}{% endset %}[{{ fv }}]", c=1)
+
+# --- newline_sequence, which nothing had ever graded -------------------------
+# jinja2 normalises the newlines it finds in the *template* -- both in data and
+# inside a string literal -- to the environment's newline_sequence, before the
+# parser ever sees them. Nothing that arrives from the context is touched.
+#
+# The option had validation tests on both sides and not one case about what it
+# does. It changes what a literal *is*, so `{{ 'a\r\nb'|length }}` is 4 under
+# "\r\n" and 3 under "\n", and `|list` of it holds a different number of
+# elements. A filter that re-joins lines does not use it: do_indent splits with
+# splitlines() and joins with "\n" whatever the setting says.
+_NEWLINE_BODIES = [
+    ("data_mixed", "x\ny|x\r\ny|x\ry"),
+    ("literal_mixed", "{{ 'a\nb' }}|{{ 'a\rb' }}|{{ 'a\r\nb' }}"),
+    ("literal_length", "{{ 'a\r\nb'|length }}|{{ 'a\nb'|length }}|{{ 'a\rb'|length }}"),
+    ("literal_list", "{{ 'a\r\nb'|list }}"),
+    ("context_untouched", "{{ v }}"),
+    ("block_body", "{% if 1 %}\na\r\nb\rc\n{% endif %}"),
+    ("loop_body", "{% for i in [1,2] %}\r\n{{ i }}{% endfor %}"),
+    ("indent_joins_with_lf", "{{ 'a\r\nb'|indent(2, true) }}"),
+    ("splitlines", "{{ 'a\r\nb'.splitlines() }}"),
+    ("wordwrap", "{{ 'a\r\nb'|wordwrap(1) }}"),
+    ("raw_block", "{% raw %}a\r\nb{% endraw %}"),
+    ("around_a_comment", "a\r\n{#c#}\r\nb"),
+    ("trailing", "a\r\n"),
+]
+for _n, _src in _NEWLINE_BODIES:
+    for _label, _seq in (("lf", "\n"), ("crlf", "\r\n"), ("cr", "\r")):
+        case(f"newline/{_n}_{_label}", _src,
+             __settings__={"newline_sequence": _seq}, v="a\r\nb")
+# ...and the interaction with the two settings that also eat newlines.
+case("newline/keep_trailing_crlf", "a\r\n",
+     __settings__={"newline_sequence": "\r\n", "keep_trailing_newline": True}, v="")
+case("newline/trim_blocks_crlf", "{% if 1 %}\r\na{% endif %}\r\nb",
+     __settings__={"newline_sequence": "\r\n", "trim_blocks": True}, v="")
+case("newline/lstrip_blocks_cr", "  {% if 1 %}\ra{% endif %}",
+     __settings__={"newline_sequence": "\r", "lstrip_blocks": True}, v="")
+
+# --- coverage pass over filters.go and bytes_methods.go ------------------------
+# Each of these reached a block no case did. Most agreed with CPython already and
+# are here so a change to the path is graded; two did not, and are marked.
+
+# `attribute=` reads a run of digits as an int *however wide*: the lookup is then
+# with an int key, which no key spelled as the digits answers. gojja2 kept a run
+# that overflowed 64 bits as a name and found the dict entry.
+for _n, _src in [
+    ("wide_int_is_not_the_name",
+     "{{ [{'99999999999999999999': 7}]|map(attribute='99999999999999999999')|list }}"),
+    ("wide_int_indexes_nothing", "{{ [[5]]|map(attribute='99999999999999999999')|list }}"),
+    ("max_int64_indexes_nothing", "{{ [[5]]|map(attribute='9223372036854775807')|list }}"),
+    ("empty_part_is_a_name", "{{ [{'': 1}]|map(attribute='')|list }}|{{ [{'a': {'': 2}}]|map(attribute='a.')|list }}"),
+    ("missing_then_more", "{{ [{'a': 1}]|map(attribute='b.c')|list }}"),
+    ("missing_then_more_sort", "{{ [{'a': 1}]|sort(attribute='b.c') }}"),
+    ("missing_then_more_deep", "{{ [{'a': 1}]|map(attribute='b.c.d')|list }}"),
+    ("missing_then_map", "{{ [{'a': 1}]|map(attribute='b')|map(attribute='c')|list }}"),
+    ("missing_then_sum", "{{ [{'a': 1}, {'a': 2}]|sum(attribute='b.c') }}"),
+    ("missing_then_max", "{{ [{'a': 1}, {'a': 2}]|max(attribute='b.c') }}"),
+]:
+    case("filters/attribute_" + _n, _src)
+
+# Markup has two methods str has not. Both answer a plain str -- so autoescape
+# escapes what they return -- and both are Python functions, so a call is
+# refused in a Python function's words. gojja2 had neither.
+for _n, _src in [
+    ("striptags", "{{ ('<b>x &amp; y</b>'|safe).striptags()|pprint }}"),
+    ("unescape", "{{ ('a &amp; b'|safe).unescape()|pprint }}"),
+    ("unescape_is_str", "{{ ('a &amp; b'|safe).unescape() is escaped }}|{{ ('a'|safe).striptags() is escaped }}"),
+    ("striptags_positional", "{{ ('<b>x</b>'|safe).striptags(1)|pprint }}"),
+    ("unescape_positional", "{{ ('a'|safe).unescape(1, 2)|pprint }}"),
+    ("striptags_keyword", "{{ ('<b>x</b>'|safe).striptags(a=1)|pprint }}"),
+    ("unescape_keyword", "{{ ('a'|safe).unescape(a=1)|pprint }}"),
+    ("bound_repr", "{{ ('<b>x</b>'|safe).striptags|pprint }}"),
+    ("autoescaped", "{% autoescape true %}{{ ('<b>x</b> &lt;'|safe).unescape() }}|{{ ('<b>x</b> &lt;'|safe).striptags() }}{% endautoescape %}"),
+    ("on_a_str", "{{ 'a'.unescape() }}"),
+]:
+    case("markup/method_" + _n, _src)
+
+# The references an unescape resolves to something other than the code point:
+# past the last one, a surrogate, NUL, the C1 controls that Windows-1252 gives
+# characters to, and the invalid ones that vanish.
+for _n, _ref in [
+    ("huge_decimal", "&#99999999999;"), ("huge_hex", "&#x99999999999;"),
+    ("over_int32", "&#4294967296;"), ("int32_max", "&#2147483647;"),
+    ("control", "&#1;"), ("delete", "&#x7f;"), ("nul", "&#0;"),
+    ("surrogate", "&#xD800;"), ("past_unicode", "&#x110000;"),
+    ("cp1252", "&#128;"), ("plain", "&#65;"),
+]:
+    case("filters/striptags_charref_" + _n, "{{ '" + _ref + "'|striptags|pprint }}")
+    case("markup/unescape_charref_" + _n, "{{ ('" + _ref + "'|safe).unescape()|pprint }}")
+
+# round(x, none) is an integer, ties to even, whichever side the tie is on.
+for _n, _v in [("up", "3.5"), ("down", "2.5"), ("neg_down", "-2.5"), ("neg_up", "-3.5"),
+               ("over_half", "2.7"), ("neg_over_half", "-2.7"), ("tiny", "5e-324")]:
+    case("filters/round_none_" + _n, "{{ " + _v + "|round(none) }}")
+
+# A wide value that gets past bytes_methods' bounds and edge cases.
+for _n, _src in [
+    ("find_negative_start_past_front", "{{ 'abc'.encode().find('a'.encode(), -10) }}"),
+    ("find_end_past_back", "{{ 'abc'.encode().find('c'.encode(), -10, 10) }}"),
+    ("find_empty_end_past_back", "{{ 'abc'.encode().find(''.encode(), 0, 10) }}"),
+    ("rfind_both_past", "{{ 'abc'.encode().rfind('c'.encode(), -10, 10) }}"),
+    ("count_both_past", "{{ 'abc'.encode().count('c'.encode(), -10, 10) }}"),
+    ("istitle_lone_lower", "{{ 'a'.encode().istitle() }}|{{ 'aB'.encode().istitle() }}|{{ 'Ab Cd'.encode().istitle() }}"),
+    ("startswith_tuple_none_match", "{{ 'abc'.encode().startswith(('x'.encode(), 'y'.encode())) }}"),
+    ("endswith_tuple_none_match", "{{ 'abc'.encode().endswith(('x'.encode(), 'y'.encode())) }}"),
+    ("strip_chars", "{{ ' abc '.encode().strip('a '.encode()) }}|{{ ' abc '.encode().lstrip('a '.encode()) }}|{{ ' abc '.encode().rstrip('c '.encode()) }}"),
+    ("strip_none", "{{ ' abc '.encode().strip(none) }}"),
+    ("strip_int", "{{ ' abc '.encode().strip(1) }}"),
+    ("lstrip_str", "{{ ' abc '.encode().lstrip('x') }}"),
+    ("rsplit_zero", "{{ 'a b'.encode().rsplit(' '.encode(), 0) }}|{{ 'a b'.encode().rsplit(none, 0) }}"),
+    ("splitlines_crlf", "{{ 'a\\r\\nb\\rc\\nd\\r\\n'.encode().splitlines() }}|{{ 'a\\r\\nb\\rc\\nd\\r\\n'.encode().splitlines(true) }}"),
+    ("removeprefix_hit", "{{ 'abc'.encode().removeprefix('a'.encode()) }}|{{ 'abc'.encode().removeprefix('abc'.encode()) }}"),
+    ("removesuffix_hit", "{{ 'abc'.encode().removesuffix('c'.encode()) }}"),
+    ("remove_miss_and_empty", "{{ 'abc'.encode().removeprefix('x'.encode()) }}|{{ 'abc'.encode().removesuffix(''.encode()) }}"),
+]:
+    case("bytes/method_" + _n, _src)
+
+
+# indent's `s += newline` is an augmented assignment, so a list survives it and
+# dies on splitlines, where everything else dies on the `+=`.
+case("filters/indent_list", "{{ [1, 2]|indent }}")
+
+# pprint writes every column of indent, however far in a value sits: under a key
+# a hundred characters wide the value starts at column 100, and everything that
+# wraps there is placed at that column. gojja2 capped the indent at the line
+# width of 80. (A value ninety lists deep shows the same thing, and allocates
+# too much for TestRenderAllocationStaysInProportion, which reads this corpus.)
+for _n, _src in [
+    ("bytes_under_a_long_key", "{{ {'k' * 90: 'abcdefgh'.encode()}|pprint }}"),
+    ("empty_string_under_a_long_key", "{{ {'k' * 90: ''}|pprint }}"),
+    ("string_under_a_long_key", "{{ {'k' * 90: ('a b' * 30)}|pprint }}"),
+    ("dict_under_a_long_key", "{{ {'k' * 90: {'a': 1, 'b': 2}}|pprint }}"),
+    ("long_keys", "{{ {'k' * 100: {'k' * 100: ('a b' * 100)}}|pprint }}"),
+    ("long_keys_bytes", "{{ {'k' * 100: {'k' * 100: ('a b' * 100).encode()}}|pprint }}"),
+    ("tuple_one_wide", "{{ (['a' * 30, 'b' * 30, 'c' * 30],)|pprint }}"),
+    ("tuple_one_string", "{{ (('a' * 100),)|pprint }}"),
+    ("tuple_three", "{{ ('a' * 30, 'b' * 30, 'c' * 30)|pprint }}"),
+    ("tuple_one_of_tuple", "{{ (('a' * 30, 'b' * 30, 'c' * 30),)|pprint }}"),
+    ("markup_wide", "{{ ('a' * 100)|safe|pprint }}"),
+    ("markup_wide_in_list", "{{ [('a' * 100)|safe]|pprint }}"),
+    ("crlf_lines", "{{ ('a\\r\\nb' * 40)|pprint }}"),
+    ("cr_lines", "{{ ('a\\r\\nbcd\\r' * 20)|pprint }}"),
+    ("mixed_line_ends", "{{ ('ab\\n\\r\\n\\rc' * 30)|pprint }}"),
+    ("crlf_in_list", "{{ [('a\\r\\nb' * 40)]|pprint }}"),
+]:
+    case("filters/pprint_" + _n, _src)
+
+# round of a float with no digits: an infinity or a NaN is returned as it is at
+# every precision that keeps its type, and refused where the answer is an int.
+for _n, _src in [
+    ("inf_neg_precision", "{% set x = 1e308 %}{{ (x * x)|round(-1) }}|{{ (x * x - x * x)|round(-1) }}"),
+    ("inf_far_neg_precision", "{% set x = 1e308 %}{{ (x * x)|round(-400) }}|{{ (x * x - x * x)|round(-400) }}"),
+    ("inf_pos_precision", "{% set x = 1e308 %}{{ (x * x)|round(1) }}|{{ (x * x - x * x)|round(1) }}"),
+    ("inf_floor", "{% set x = 1e308 %}{{ (x * x)|round(-1, 'floor') }}"),
+    ("inf_ceil", "{% set x = 1e308 %}{{ (x * x)|round(1, 'ceil') }}"),
+    ("nan_ceil", "{% set x = 1e308 %}{{ (x * x - x * x)|round(1, 'ceil') }}"),
+    ("inf_none", "{% set x = 1e308 %}{{ (x * x)|round(none) }}"),
+    ("nan_none", "{% set x = 1e308 %}{{ (x * x - x * x)|round(none) }}"),
+]:
+    case("filters/round_" + _n, _src)
+
+# jinja2's base is an int, so the comparison with each unit is exact: 1e24 is a
+# float *below* 1000**8 and belongs to the ZB row, as "1000.0 ZB". Comparing
+# with a float power of the base sent it to YB as "1.0 YB".
+for _n, _src in [
+    ("decimal_yb_boundary", "{{ 1e24|filesizeformat }}|{{ (1e24 + 1e9)|filesizeformat }}"),
+    ("decimal_yb_next_float", "{% set x = 1e24 %}{{ (x * 1.0000000000000002)|filesizeformat }}"),
+    ("decimal_zb_boundary", "{{ 1e21|filesizeformat }}"),
+    ("decimal_huge", "{{ 1e27|filesizeformat }}|{{ 1e30|filesizeformat }}"),
+    ("binary_yib_boundary", "{{ (1024 ** 8)|filesizeformat(true) }}|{{ (1024 ** 8 - 1)|filesizeformat(true) }}"),
+    ("infinity", "{% set x = 1e308 %}{{ (x * x)|filesizeformat }}|{{ (x * x)|filesizeformat(true) }}"),
+    ("negative_infinity", "{% set x = 1e308 %}{{ (-(x * x))|filesizeformat }}"),
+    ("nan", "{% set x = 1e308 %}{{ (x * x - x * x)|filesizeformat }}"),
+]:
+    case("filters/filesizeformat_value_" + _n, _src)
+
+# The chainable undefined lets an attribute path carry on from a missing step.
+for _u in ("chainable", "strict", "debug", ""):
+    _n = _u or "default"
+    case(f"filters/attribute_missing_then_more_{_n}",
+         "{{ [{'a': 1}]|map(attribute='b.c')|list }}",
+         __settings__={"undefined": _u} if _u else {})
+
+# A word that starts with hyphens is cut where it is too long, not after the
+# hyphen: everything before it is a hyphen, so there is nothing to break at.
+for _n, _src in [
+    ("leading_hyphens", "{{ '--abcdefghij'|wordwrap(4)|pprint }}"),
+    ("three_leading_hyphens", "{{ '---abcdef'|wordwrap(5)|pprint }}"),
+    ("hyphen_after_letters", "{{ 'a--abcdefghij'|wordwrap(4)|pprint }}"),
+    ("hyphens_after_a_space", "{{ 'xx --abcdefghij'|wordwrap(4)|pprint }}"),
+    ("single_leading_hyphen", "{{ '-abcdefghij'|wordwrap(4)|pprint }}"),
+]:
+    case("filters/wordwrap_" + _n, _src)
+
+# A coverage pass over methods.go, numbers.go, globals.go and value/. The
+# shapes below were found by asking what a template could reach in each
+# uncovered block; the first group disagreed with CPython, the rest agreed and
+# are graded so the paths stay agreed.
+#
+# str.translate is `table[ord(c)]` per character, so an object is a table only
+# if it has __getitem__. A range is indexed by position (table 97 of
+# range(100, 300) is 197), a mappingproxy by key, and anything else -- a
+# namespace, a cycler, a dict view -- is "not subscriptable"; an Undefined
+# raises its own error from __getitem__ rather than being called one.
+case("methods/translate_range_table", "{{ 'abca'.translate(range(100, 300)) }}")
+case("methods/translate_short_range_table", "{{ 'abca'.translate(range(98)) }}|{{ 'abca'.translate(range(0)) }}")
+case("methods/translate_mappingproxy_table",
+     "{% set mp = {97: 'X', 98: none}.keys().mapping %}{{ 'abca'.translate(mp) }}")
+for _n, _tbl in [
+    ("namespace", "namespace()"),
+    ("cycler", "cycler(1)"),
+    ("dict_keys", "{}.keys()"),
+    ("dict_items", "{}.items()"),
+    ("undefined", "nope"),
+    ("undefined_attribute", "[1].nope"),
+]:
+    case("methods/translate_table_" + _n, "{{ 'abc'.translate(" + _tbl + ") }}")
+case("methods/translate_undefined_table_of_nothing", "{{ ''.translate(nope) }}")
+# Each Undefined class answers __getitem__ its own way: the default, debug and
+# strict ones raise, and a ChainableUndefined answers itself -- a replacement
+# of the wrong type, which translate refuses as such.
+for _kind in ["default", "chainable", "debug", "strict"]:
+    case(f"methods/translate_undefined_table_{_kind}", "{{ 'abc'.translate(nope) }}",
+         __settings__={"undefined": _kind})
+    case(f"methods/translate_undefined_attribute_table_{_kind}", "{{ 'abc'.translate([1].nope) }}",
+         __settings__={"undefined": _kind})
+
+# A replacement field's `[key]` is followed by `.`, `[` or the end. Anything
+# else is refused when the iterator reaches it, so a failure among the steps
+# before it is the one reported. A mappingproxy that lacks the key is a
+# KeyError, as a dict is.
+for _n, _src in [
+    ("letter", "{{ '{0[a]x}'.format({'a': 3}) }}"),
+    ("bracket", "{{ '{0[a]]}'.format({'a': 1}) }}"),
+    ("after_two_steps", "{{ '{0[a][b]x}'.format({'a': {'b': 1}}) }}"),
+    ("after_attribute", "{{ '{0.a[1]x}'.format(namespace(a=[0, 2])) }}"),
+    ("keeps_the_earlier_failure", "{{ '{0[9]x}'.format([1]) }}"),
+    ("keeps_the_missing_argument", "{{ '{0[0]x}'.format() }}"),
+    ("before_the_spec", "{{ '{0[a]x:>5}'.format({'a': 1}) }}"),
+    ("before_the_conversion", "{{ '{0[a]x!r}'.format({'a': 1}) }}"),
+    ("named_field", "{{ '{a[x]y}'.format(a={'x': 1}) }}"),
+]:
+    case("methods/format_after_bracket_" + _n, _src)
+case("methods/format_mappingproxy_subscript",
+     "{% set mp = {'a': 1}.keys().mapping %}{{ '{0[a]}'.format(mp) }}")
+case("methods/format_mappingproxy_missing_key",
+     "{% set mp = {'a': 1}.keys().mapping %}{{ '{0[b]}'.format(mp) }}")
+case("methods/format_mappingproxy_int_key",
+     "{% set mp = {1: 'z'}.keys().mapping %}{{ '{0[1]}'.format(mp) }}")
+case("methods/format_range_subscript", "{{ '{0[1]}'.format(range(5)) }}")
+
+# float.fromhex's exponent is an optional sign and decimal digits. Go's parser
+# would also take underscores between them, and float.hex() of a non-finite
+# float is its own spelling.
+for _n, _src in [
+    ("exponent_underscore", "{{ (1.0).fromhex('0x1p1_0') }}"),
+    ("exponent_signed_underscore", "{{ (1.0).fromhex('0x1p+1_0') }}"),
+    ("exponent_leading_underscore", "{{ (1.0).fromhex('0x1p_1') }}"),
+    ("exponent_double_underscore", "{{ (1.0).fromhex('0x1p1__0') }}"),
+    ("exponent_sign_only", "{{ (1.0).fromhex('0x1p+') }}"),
+    ("exponent_minus_only", "{{ (1.0).fromhex('0x1p-') }}"),
+    ("exponent_bare_p", "{{ (1.0).fromhex('0x1p') }}"),
+    ("exponent_letter", "{{ (1.0).fromhex('0x1pz') }}"),
+    ("exponent_fraction", "{{ (1.0).fromhex('0x1p1.5') }}"),
+    ("exponent_space", "{{ (1.0).fromhex('0x1p 5') }}"),
+    ("exponent_arabic_digit", "{{ (1.0).fromhex('0x1p٣') }}"),
+    ("sign_only", "{{ (1.0).fromhex('+') }}"),
+    ("minus_only", "{{ (1.0).fromhex('-') }}"),
+    ("prefix_only_upper", "{{ (1.0).fromhex('0X') }}"),
+    ("signed_prefix_only", "{{ (1.0).fromhex('-0x') }}"),
+    ("point_only", "{{ (1.0).fromhex('.') }}"),
+    ("prefixed_point_only", "{{ (1.0).fromhex('0x.') }}"),
+    ("point_then_exponent", "{{ (1.0).fromhex('0x.p1') }}"),
+    ("non_hex_digit", "{{ (1.0).fromhex('0x1g') }}"),
+    ("two_points", "{{ (1.0).fromhex('0x1..8') }}"),
+    ("sign_after_prefix", "{{ (1.0).fromhex('0x-1') }}"),
+    ("two_signs", "{{ (1.0).fromhex('--1') }}"),
+    ("underscore_in_mantissa", "{{ (1.0).fromhex('0x1_0') }}"),
+    ("overflowing_exponent", "{{ (1.0).fromhex('0x1p99999999999999999999') }}"),
+]:
+    case("methods/float_fromhex_" + _n, _src)
+case("methods/float_fromhex_accepts",
+     "{{ (1.0).fromhex('0x1p-0') }}|{{ (1.0).fromhex('0x1P+3') }}|{{ (1.0).fromhex('0x1.8p1') }}|"
+     "{{ (1.0).fromhex('0x1p-99999999999999999999') }}|{{ (1.0).fromhex('0x1e5') }}")
+case("methods/float_fromhex_marker_without_digits", "{{ (1.0).fromhex('1P') }}")
+case("methods/float_fromhex_non_finite",
+     "{{ (1.0).fromhex('nan') }}|{{ (1.0).fromhex('-NaN') }}|{{ (1.0).fromhex('+inf') }}|"
+     "{{ (1.0).fromhex(' -Infinity ') }}")
+case("methods/float_hex_non_finite",
+     "{% set i = x|float %}{{ i.hex() }}|{{ (-i).hex() }}|{{ (i - i).hex() }}|{{ (-(i - i)).hex() }}",
+     x="inf")
+case("methods/float_of_a_nan_is_not_an_integer_ratio",
+     "{% set i = x|float %}{{ (i - i).as_integer_ratio() }}", x="inf")
+
+# jinja2's Cycler sets `items` and `pos`, its Joiner `sep` and `used`, in
+# __init__; none is a method, so a template reads them back.
+case("globals/cycler_pos",
+     "{% set c = cycler(1, 2) %}{{ c.pos }}|{{ c.next() }}|{{ c.pos }}|{{ c.next() }}|{{ c.pos }}|"
+     "{{ c.reset() }}|{{ c.pos }}|{{ c.items }}")
+case("globals/joiner_used",
+     "{% set j = joiner('-') %}{{ j.used }}|{{ j() }}|{{ j.used }}|{{ j() }}|{{ j.used }}")
+case("globals/joiner_sep",
+     "{% set j = joiner('-') %}{{ j.sep }}|{{ j.sep.__class__ }}|"
+     "{% set k = joiner() %}{{ k.sep }}|{% set m = joiner(1) %}{{ m.sep }}|{{ m.sep.__class__ }}")
+case("globals/joiner_sep_after_calls",
+     "{% set j = joiner('-') %}{{ j() }}{{ j() }}{{ j.sep }}")
+case("globals/joiner_unknown_attribute", "{% set j = joiner('-') %}{{ j.bogus }}|{{ j.pos }}")
+case("globals/cycler_unknown_attribute", "{% set c = cycler(1) %}{{ c.bogus }}|{{ c.used }}")
+
+# Ranges are equal by the sequence they stand for.
+case("globals/range_equality_shapes",
+     "{{ range(0) == range(1, 1) }}|{{ range(1, 3) == range(2, 4) }}|{{ range(2, 3) == range(2, 4, 2) }}|"
+     "{{ range(0, 3, 2) == range(0, 4, 2) }}|{{ range(3) == [0, 1, 2] }}|{{ [0, 1, 2] == range(3) }}|"
+     "{{ range(3) == 3 }}|{{ range(0, 6, 2) == range(0, 6, 3) }}")
+case("globals/range_membership", "{{ 1 in range(5) }}|{{ 7 in range(5) }}|{{ 'a' in range(5) }}|{{ 1.0 in range(5) }}")
+
+# Truth of the objects a template can hold: only a container's emptiness
+# decides, and a cycler, joiner, namespace, macro or loop is always true.
+case("value/truth_of_objects",
+     "{% macro m() %}{% endmacro %}"
+     "{% if namespace() %}y{% else %}n{% endif %}|{% if joiner() %}y{% else %}n{% endif %}|"
+     "{% if cycler(1) %}y{% else %}n{% endif %}|{% if m %}y{% else %}n{% endif %}|"
+     "{% if range %}y{% else %}n{% endif %}|{% if range(0) %}y{% else %}n{% endif %}|"
+     "{% if range(1) %}y{% else %}n{% endif %}|"
+     "{% for x in [1] %}{% if loop %}y{% else %}n{% endif %}{% endfor %}|"
+     "{% if {}.keys() %}y{% else %}n{% endif %}|{% if {1: 2}.keys() %}y{% else %}n{% endif %}|"
+     "{% if {}.values() %}y{% else %}n{% endif %}|{% if {}.items() %}y{% else %}n{% endif %}|"
+     "{% if {}.keys().mapping %}y{% else %}n{% endif %}|{% if {1: 2}.keys().mapping %}y{% else %}n{% endif %}|"
+     "{% for g in [{'a': 1}]|groupby('a') %}{% if g %}y{% else %}n{% endif %}{% endfor %}|"
+     "{{ namespace() or 'z' }}|{{ range(0) or 'z' }}|{{ {}.keys() or 'z' }}")
+
+# Equality of objects is identity unless the object says otherwise.
+case("value/equality_of_objects",
+     "{% set n = namespace() %}{% macro m() %}{% endmacro %}{% macro q() %}{% endmacro %}"
+     "{{ namespace() == namespace() }}|{{ cycler(1) == cycler(1) }}|{{ n == n }}|"
+     "{{ range == range }}|{{ lipsum == lipsum }}|{{ range == dict }}|{{ range != range }}|"
+     "{{ m == m }}|{{ m == q }}|{{ m != m }}|"
+     "{{ n == 1 }}|{{ 1 == n }}|{{ n == 'a' }}|{{ n == none }}|{{ joiner() == joiner() }}|"
+     "{{ cycler(1) == 1 }}|{{ 1 == cycler(1) }}")
+case("value/dict_equality_shapes",
+     "{% set d = {'a': 1} %}{% set e = {'b': 1} %}"
+     "{{ d == e }}|{{ e == d }}|{{ d != e }}|{{ d == {'a': 2} }}|{{ d == {'a': 1, 'b': 2} }}|"
+     "{{ {'a': [1]} == {'a': [1]} }}|{{ {'a': [1]} == {'a': [2]} }}")
+case("value/proxy_equality_shapes",
+     "{% set mp = {'a': 1}.keys().mapping %}"
+     "{{ mp == mp }}|{{ mp == {'a': 1} }}|{{ {'a': 1} == mp }}|{{ mp == 1 }}|{{ mp != {'a': 2} }}|{{ mp == [1] }}")
+case("value/group_equality_shapes",
+     "{% for g in [{'a': 1}]|groupby('a') %}"
+     "{{ g == (g.grouper, g.list) }}|{{ (g.grouper, g.list) == g }}|{{ g == g }}|{{ g != (1, []) }}|"
+     "{{ g < (2, []) }}|{{ (0, []) < g }}|{{ g.list == g[1] }}|{{ g == g.list }}|{{ g == 5 }}|"
+     "{{ [g] == [(1, [{'a': 1}])] }}|{{ [g, 1] == [(1, [{'a': 1}]), 1] }}{% endfor %}")
+
+# `in` over the objects a template holds: a range by arithmetic, a group by
+# scanning its two elements, a loop by iterating it (and finding nothing, as
+# LoopContext.__iter__ is a fresh iterator of the remaining items), a
+# mappingproxy by hashing its key.
+case("value/membership_of_objects",
+     "{% for x in [1] %}{{ 1 in loop }}|{{ x in loop }}|{{ 5 in loop }}{% endfor %}|"
+     "{% for g in [{'a': 1}, {'a': 1}]|groupby('a') %}"
+     "{{ 1 in g }}|{{ g.grouper in g }}|{{ g in g }}|{{ g.list in g }}|{{ (1, g.list) in g }}{% endfor %}|"
+     "{% set mp = {'a': 1}.keys().mapping %}{{ 'a' in mp }}|{{ 'b' in mp }}|{{ 'a' in {}.keys().mapping }}|"
+     "{{ 1 in {}.values() }}|{{ 1 in {1: 1}.values() }}|{{ 1 in nope }}|{{ nope in [] }}|{{ nope in [1] }}")
+for _n, _src in [
+    ("cycler", "{{ 1 in cycler(1) }}"),
+    ("namespace", "{{ 1 in namespace() }}"),
+    ("joiner", "{{ 1 in joiner() }}"),
+    ("none", "{{ 1 in none }}"),
+    ("int", "{{ 'a' in 5 }}"),
+    ("unhashable_in_proxy", "{% set mp = {'a': 1}.keys().mapping %}{{ [] in mp }}"),
+]:
+    case("value/membership_refused_" + _n, _src)
+
+# Set-like views compare as sets. A difference builds a real set, and the
+# comparison between a set and a view, a proxy, or a list is a subset test or a
+# refusal.
+for _n, _src in [
+    ("view_and_set",
+     "{% set d = {1: 2} %}{% set s = d.keys() - [] %}"
+     "{{ d.keys() <= s }}|{{ s <= d.keys() }}|{{ s >= d.keys() }}|{{ s < d.keys() }}|{{ d.keys() > s }}"),
+    ("set_and_itself",
+     "{% set s = {1: 2}.keys() - [] %}{{ s <= s }}|{{ s < s }}|{{ s == s }}|{{ s == {1: 2}.keys() }}|"
+     "{{ {1: 2}.keys() == s }}|{{ s != {1: 2}.keys() }}"),
+    ("set_and_smaller_view",
+     "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ s > {1: 0}.keys() }}|{{ s >= {1: 0}.keys() }}|"
+     "{{ {1: 0}.keys() <= s }}|{{ {5: 0}.keys() <= s }}"),
+    ("items_and_keys",
+     "{% set d = {1: 2, 3: 4} %}{{ {(1, 2): 0}.keys() <= d.items() }}|{{ d.items() >= {(1, 2): 0}.keys() }}"),
+    ("empty_views_of_two_kinds",
+     "{% set s = {1: 2}.keys() - [] %}{{ {}.keys() == s - s }}|{{ s - s == {}.items() }}|{{ s - s == {}.values() }}"),
+    ("tuple_keys",
+     "{% set d = {(1, 2): 3} %}{% set s = d.keys() - [] %}{{ (1, 2) in s }}|{{ s <= d.keys() }}|{{ [s] == [d.keys()] }}"),
+    ("refused_set_and_mapping_proxy",
+     "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ s <= {1: 2, 3: 4, 5: 6}.keys().mapping }}"),
+    ("refused_mapping_proxy_and_set",
+     "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ {1: 2, 3: 4, 5: 6}.keys().mapping >= s }}"),
+    ("refused_view_and_mapping_proxy",
+     "{{ {1: 2, 3: 4}.keys() <= {1: 2, 3: 4, 5: 6}.keys().mapping }}"),
+]:
+    case("value/set_compare_" + _n, _src)
+for _n, _src in [
+    ("set_and_list", "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ s <= [1, 3, 4] }}"),
+    ("list_and_set", "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ [1, 3, 4] >= s }}"),
+    ("set_and_values", "{% set s = {1: 2, 3: 4}.keys() - [] %}{{ s <= {1: 2}.values() }}"),
+    ("set_and_string", "{% set s = {1: 2}.keys() - [] %}{{ s <= 'a' }}"),
+    ("values_and_values", "{% set d = {1: 2} %}{{ d.values() <= d.values() }}"),
+    ("view_and_list", "{{ {1: 2}.keys() <= [1] }}"),
+]:
+    case("value/set_compare_refused_" + _n, _src)
+case("value/set_equality_lengths",
+     "{{ {}.keys() == {1: 2}.keys() }}|{{ {1: 2}.keys() == {}.keys() }}|"
+     "{{ {1: 2}.keys() == {1: 2, 3: 4}.keys() }}|{{ {1: 2, 3: 4}.keys() == {1: 2}.keys() }}|"
+     "{% set s = {1: 2}.keys() - [] %}{{ s == {1: 2, 3: 4}.keys() }}|{{ {1: 2, 3: 4}.keys() == s }}")
+case("value/set_equality_other_kinds",
+     "{% set s = {1: 2}.keys() - [] %}{{ s == [1] }}|{{ s == 'a' }}|{{ s == namespace() }}|{{ namespace() == s }}")
+
+# A list or tuple compares element by element, and an element that is unequal
+# and unordered -- a NaN -- makes the sequences unordered: every ordering is
+# False, while equality is still decided by identity first.
+case("value/nan_in_sequence_ordering",
+     "{% set i = x|float %}{% set n = i - i %}"
+     "{{ [n] < [1.0] }}|{{ [1.0] < [n] }}|{{ [1, n] >= [1, 2] }}|{{ [n] == [n] }}|"
+     "{{ (1, n) <= (1, 3.0) }}|{{ [1, n] == [1, n] }}|{{ [n, 1] < [n, 2] }}",
+     x="inf")
+
+# Integer edges the 64-bit fast path has to hand to the wide one.
+case("value/int64_edges",
+     "{% set x = 9223372036854775807 %}{% set y = -x - 1 %}"
+     "{{ y * -1 }}|{{ -1 * y }}|{{ y * y }}|{{ y // -1 }}|{{ y % -1 }}|{{ -y }}|{{ y|abs }}|"
+     "{{ y - 1 }}|{{ y + -1 }}|{{ x + 1 }}|{{ x * 2 }}|{{ y * 2 }}|{{ y * 1 }}|{{ 1 * y }}|{{ y * 0 }}")
+case("value/float_floor_division_shapes",
+     "{% set a = 9007199254740993.0 %}"
+     "{{ 0.3 // 0.1 }}|{{ 1 // 0.1 }}|{{ 1e17 // 0.1 }}|{{ 5.5 // 1.1 }}|{{ 1e300 // 3.0 }}|{{ 7.0 // 0.5 }}|"
+     "{{ 0.7 // 0.1 }}|{{ 2.3 // 0.1 }}|{{ a // 3.0 }}|{{ a // 0.3 }}|{{ 1e22 // 7.0 }}|"
+     "{{ 123456789.0 // 0.001 }}|{{ 1e15 // 0.3 }}|{{ 4.35 // 0.05 }}|{{ 1.1 // 0.1 }}")
+case("value/power_of_trivial_bases_and_a_wide_exponent",
+     "{% set b = 2 ** 70 %}{{ 1 ** b }}|{{ 0 ** b }}|{{ (-1) ** b }}|{{ (-1) ** (b + 1) }}")
+case("value/power_negative_wide_exponent",
+     "{% set b = -(2 ** 70) %}{{ 2 ** b }}")
+case("value/float_power_wide_exponent", "{% set b = 2 ** 70 %}{{ 2.0 ** b }}")
+
+# A str, list or tuple is a table too: each answers for the code points it is
+# long enough to index and leaves the rest alone. maketrans reads an integer
+# key as it is and a one-character string as its ordinal.
+for _n, _src in [
+    ("str", "{% set t = 'x' * 98 %}{{ 'abca'.translate(t) }}"),
+    ("short_str", "{% set t = 'abc' %}{{ 'ab'.translate(t) }}"),
+    ("list", "{% set t = ['x'] * 98 %}{{ 'abca'.translate(t) }}"),
+    ("short_list", "{% set t = ['x', 5, none] %}{{ 'abca'.translate(t) }}"),
+    ("tuple", "{% set t = ('xy',) * 100 %}{{ 'abca'.translate(t) }}"),
+    ("int_out_of_range", "{% set t = [1114112] * 100 %}{{ 'abca'.translate(t) }}"),
+    ("negative_int", "{% set t = [-1] * 100 %}{{ 'abca'.translate(t) }}"),
+    ("float_entry", "{% set t = [1.5] * 100 %}{{ 'abca'.translate(t) }}"),
+]:
+    case("methods/translate_" + _n + "_table", _src)
+case("methods/maketrans_mixed_keys",
+     "{{ 'abc'.maketrans({97: 'X', 'b': 'Y'}) }}|{{ 'abc'.translate('abc'.maketrans({97: 'X', 'b': none})) }}|"
+     "{{ 'abca'.maketrans({97: 'X', 97: 'Y'}) }}")
+case("methods/maketrans_float_key", "{{ 'abc'.maketrans({1.5: 'X'}) }}")
+case("methods/dict_setdefault_shapes",
+     "{% set d = {'a': 1} %}{{ d.setdefault('a') }}|{{ d.setdefault('a', 5) }}|{{ d.setdefault('z') }}|"
+     "{{ d.setdefault('y', 7) }}|{{ d }}")
+case("methods/dict_setdefault_unhashable", "{{ {}.setdefault([], 1) }}")
+
+# `in` over a loop walks the loop the body is running in, which yields
+# (item, loop) pairs and advances the enclosing loop as it goes.
+case("value/loop_membership_walks_the_loop",
+     "{% for x in [1, 2, 3] %}{{ 3 in loop }}|{{ loop.index }}|{% endfor %}")
+case("value/loop_membership_finds_a_pair",
+     "{% for x in [1, 2, 3] %}{{ (2, loop) in loop }}|{{ loop.index }}|{% endfor %}")
+case("value/loop_membership_finds_the_last_pair",
+     "{% for x in [1, 2, 3] %}{{ (3, loop) in loop }}|{{ loop.index }}|{% endfor %}")
+case("value/loop_membership_misses_a_pair",
+     "{% for x in [1, 2, 3] %}{{ (3, 1) in loop }}|{{ loop in loop }}|{{ loop.index }}|{% endfor %}")
+
+
+# --- coverage pass 7: eval.go, exec.go, optimize.go, runtime.go, set_methods.go,
+# dictview.go ------------------------------------------------------------------
+
+# A mappingproxy over an undefined is reached as `d.keys().mapping.__class__(nope)`.
+# str(), iter(), len(), bool(), ==, hash() and `in` of a proxy are those of the
+# mapping it wraps, so over a StrictUndefined every one of them raises; a proxy
+# over a plain Undefined answers as the undefined does, and a ChainableUndefined
+# behind it hands back itself for a subscript.
+_PU = "{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}"
+_STRICT = {"undefined": "strict"}
+_CHAIN = {"undefined": "chainable"}
+for _n, _src in [
+    ("prints", "{{ C(nope) }}"),
+    ("prints_nested", "{{ C(C(nope)) }}"),
+    ("string_filter", "{{ C(nope)|string }}"),
+    ("concatenated", "{{ C(nope) ~ 'x' }}"),
+    ("upper_filter", "{{ C(nope)|upper }}"),
+    ("format_field", "{{ '{}'.format(C(nope)) }}"),
+    ("percent_s", "{{ '%s' % C(nope) }}"),
+    ("iterable_test", "{{ C(nope) is iterable }}"),
+    ("equal_to_itself", "{% set m = C(nope) %}{{ m == m }}"),
+    ("as_a_dict_key", "{{ {C(nope): 1} }}"),
+    ("as_a_subscript", "{{ d[C(nope)] }}"),
+    ("subscripted_by_undefined", "{{ C(d)[nope] }}"),
+    ("attribute_filter", "{{ [C(nope)]|map(attribute='x')|list }}"),
+    ("groupby_attribute", "{{ [C(nope)]|groupby('x') }}"),
+    ("sliced_by_undefined", "{{ d[C(nope):] }}"),
+]:
+    case("dictview/proxy_of_undefined_" + _n + "_strict", _PU + _src, __settings__=_STRICT)
+
+# The same shapes under the default class, where an undefined prints as nothing.
+for _n, _src in [
+    ("prints", "[{{ C(nope) }}][{{ C(C(nope)) }}][{{ C(nope)|string }}][{{ C(nope) ~ 'x' }}]"),
+    ("subscript", "{{ C(nope)['a'] }}"),
+    ("attribute", "{{ C(nope).a }}"),
+    ("attribute_filter", "{{ [C(nope)]|map(attribute='x')|list }}"),
+    ("equality", "{% set m = C(nope) %}{% set n = C(m) %}{{ m == m }}|{{ m != m }}|{{ m == n }}|"
+     "{{ n == m }}|{{ n == n }}|{{ m == nope }}|{{ nope == m }}|{{ m in [m] }}"),
+    ("as_a_key", "{% set k = C(nope) %}{{ {k: 1}[k] }}|{{ k in d }}|{{ [k, k]|unique|list|length }}|"
+     "{{ {k: 1, C(nope): 2}|length }}"),
+    ("slice", "{{ C(nope)[1:] }}"),
+    ("reversed", "{{ C(nope)|reverse|list }}"),
+    ("last", "{{ C(nope)|last }}"),
+    ("reversed_nested", "{{ C(C(nope))|reverse|list }}"),
+    ("xmlattr", "{{ C(nope)|xmlattr }}"),
+]:
+    case("dictview/proxy_of_undefined_" + _n, _PU + _src)
+
+for _n, _src in [
+    ("subscript", "{{ C(nope)['a'] }}|{{ C(nope).a }}|{{ C(nope).a.b }}|{{ C(nope)['a']['b'] }}"),
+    ("attribute_filter", "{{ [C(nope)]|map(attribute='x')|list }}|{{ [C(nope)]|map(attribute='x.y')|list }}"),
+    ("slice", "{{ C(nope)[1:] }}"),
+    ("equality", "{% set m = C(nope) %}{{ m == m }}|{{ m != m }}|{{ m == nope }}"),
+]:
+    case("dictview/proxy_of_undefined_" + _n + "_chainable", _PU + _src, __settings__=_CHAIN)
+
+# A proxy over a dict is what `mappingproxy` is usually asked to be; these are
+# the shapes whose answers come from the wrapped object.
+_PD = _PU + "{% set m = C(d) %}"
+for _n, _src in [
+    ("attribute_falls_back_to_the_item", "{{ m.a }}|{{ m['a'] }}|{{ m.zz }}|{{ m['zz'] }}|{{ m.keys()|list }}"),
+    ("reversed", "{{ m|reverse|list }}|{{ m|last }}"),
+    ("xmlattr", "{{ m|xmlattr }}"),
+    ("sliced", "{{ m[1:] }}"),
+    ("subscripted_by_unhashable", "[{{ m[[1]] }}][{{ m[{}] }}][{{ d[[1]] }}][{{ d[{}] }}]"),
+    ("as_a_key_is_refused", "{{ {m: 1} }}"),
+    ("as_a_key_is_refused_nested", "{{ {C(m): 1} }}"),
+    ("in_a_dict_is_refused", "{{ m in d }}"),
+]:
+    case("dictview/proxy_of_dict_" + _n, _PU + "{% set m = C(d) %}" + _src)
+
+# ...and over a string, a bytes and a range, which are hashable, subscript and
+# slice as themselves, and refuse only what they refuse alone.
+for _n, _src in [
+    ("string_slice", "{{ C('abc')[1:] }}|{{ C('abc')[::-1] }}|{{ C('abc')[0] }}|{{ C('abc')[-1] }}|{{ C('abc')[9] }}"),
+    ("range_slice", "{{ C(range(5))[1:3] }}|{{ C(range(5))[::-1] }}|{{ C(range(5))[2] }}"),
+    ("bad_slice_bound", "{{ C('abc')[1.5:] }}"),
+    ("string_reversed", "{{ C('abc')|reverse|list }}"),
+    ("bytes_reversed", "{{ C('ab'.encode())|reverse|list }}"),
+    ("range_reversed", "{{ C(range(3))|reverse|list }}|{{ C(range(3))|last }}"),
+    ("string_xmlattr", "{{ C('ab')|xmlattr }}"),
+    ("string_is_a_key", "{% set k = C('ab') %}{{ {k: 1}|length }}|{{ {k: 1}['ab'] }}|{{ 'ab' in {k: 1} }}|"
+     "{{ k in d }}|{{ d.get(k) }}|{{ [k, k]|unique|list|length }}"),
+    ("range_is_a_key", "{% set k = C(range(3)) %}{{ {k: 1}|length }}|{{ {k: 1}[range(3)] }}|{{ k in d }}"),
+    ("bytes_is_a_key", "{% set b = 'ab'.encode() %}{% set k = C(b) %}{{ {k: 1}|length }}|{{ {k: 1}[b] }}|{{ k in d }}"),
+    ("string_is_a_set_member", "{% set s = d.keys() - [] %}{% set k = C('ab') %}"
+     "{{ s.add(k) }}|{{ k in s }}|{{ s|length }}|{{ s.discard(k) }}|{{ s|length }}"),
+]:
+    case("dictview/proxy_of_scalar_" + _n, _PU + _src)
+
+# --- a set method's argument ---------------------------------------------------
+_SM = "{% set d = {'a': 1, 'b': 2, 'c': 3} %}{% set s = d.keys() - ['a'] %}"
+for _n, _src in [
+    ("union", "{{ s.union(nope) }}"),
+    ("update", "{{ s.update(nope) }}"),
+    ("issubset", "{{ s.issubset(nope) }}"),
+    ("issuperset", "{{ s.issuperset(nope) }}"),
+    ("isdisjoint", "{{ s.isdisjoint(nope) }}"),
+    # issuperset and isdisjoint walk a non-set argument one element at a time
+    # and stop at the first that decides, so what follows is never hashed.
+    ("issuperset_stops_at_a_miss", "{{ s.issuperset(['a', nope]) }}"),
+    ("isdisjoint_stops_at_a_hit", "{{ s.isdisjoint(['b', nope]) }}"),
+    ("issuperset_reaches_it", "{{ s.issuperset(['b', nope]) }}"),
+    ("isdisjoint_reaches_it", "{{ s.isdisjoint(['z', nope]) }}"),
+    ("intersection_stops_when_full", "{{ s.intersection(['b', 'c', nope])|list|sort }}"),
+    ("intersection_reaches_it", "{{ s.intersection(['b', nope, 'c']) }}"),
+    ("issubset_stops_when_full", "{{ s.issubset(['b', 'c', nope]) }}"),
+]:
+    case("sets/argument_" + _n + "_strict", _SM + _src, __settings__=_STRICT)
+for _n, _src in [
+    ("issuperset_stops_at_a_miss", "{{ s.issuperset(['a', [1]]) }}|{{ s.issuperset(['a', {}]) }}"),
+    ("isdisjoint_stops_at_a_hit", "{{ s.isdisjoint(['b', [1]]) }}"),
+    ("issuperset_reaches_it", "{{ s.issuperset(['b', [1]]) }}"),
+    ("isdisjoint_reaches_it", "{{ s.isdisjoint(['z', [1]]) }}"),
+    ("issuperset_of_a_view", "{{ s.issuperset(d.keys()) }}|{{ s.issuperset(['b', 'c']) }}|{{ s.issuperset('bc') }}|"
+     "{{ s.issuperset([]) }}"),
+    ("isdisjoint_of_a_view", "{{ s.isdisjoint(d.keys()) }}|{{ s.isdisjoint(['z']) }}|{{ s.isdisjoint('a') }}|"
+     "{{ s.isdisjoint([]) }}"),
+    # An intersection stops reading a non-set argument once the result holds the
+    # whole receiver, so an element after that point is never hashed; issubset
+    # does the same from 3.12.
+    ("issubset_stops_when_full", "{{ s.issubset(['b', 'c', [1]]) }}|{{ s.issubset(['c', 'z', 'b', {}]) }}"),
+    ("issubset_reaches_it", "{{ s.issubset(['b', [1]]) }}"),
+    ("intersection_stops_when_full",
+     "{{ s.intersection(['b', 'c', [1]])|list|sort }}|{{ s.intersection(['c', 'b', 'b', [1]])|list|sort }}|"
+     "{{ s.intersection(['z', 'c', 'b', [2]])|list|sort }}"),
+    ("intersection_reaches_it", "{{ s.intersection(['b', [1]]) }}"),
+    ("intersection_one_member_stops", "{% set one = d.keys() - ['a', 'b'] %}{{ one.intersection(['c', [1]])|list }}"),
+    ("intersection_of_an_empty_set_reads_all", "{% set e = d.keys() - ['a', 'b', 'c'] %}{{ e.intersection(['b', [1]]) }}"),
+    ("intersection_second_argument", "{{ s.intersection(['b', 'c', [1]], ['b'])|list }}"),
+    ("intersection_second_argument_reaches_it", "{{ s.intersection(['b', 'c'], ['b', [1]]) }}"),
+    ("intersection_update_stops_when_full", "{{ s.intersection_update(['b', 'c', [1]]) }}|{{ s|list|sort }}"),
+    ("intersection_update_reaches_it", "{{ s.intersection_update(['c', [1]]) }}"),
+    ("union_hashes_everything", "{{ s.union(['b', 'c', [1]]) }}"),
+    ("difference_hashes_everything", "{{ s.difference(['b', 'c', [1]]) }}"),
+    ("issuperset_not_iterable", "{{ s.issuperset(1) }}"),
+    ("isdisjoint_not_iterable", "{{ s.isdisjoint(none) }}"),
+]:
+    case("sets/argument_" + _n, _SM + _src)
+
+# --- format fields and attribute lookups on an undefined ----------------------
+for _n, _src in [
+    ("format_empty_spec", "{{ '{}'.format(nope) }}"),
+    ("format_conversion_s", "{{ '{!s}'.format(nope) }}"),
+    ("format_keyword", "{{ '{a}'.format(a=nope) }}"),
+    ("format_map", "{{ '{a}'.format_map({'a': nope}) }}"),
+]:
+    case("undefined/" + _n + "_strict", _src, __settings__=_STRICT)
+case("undefined/format_conversion_r_strict", "{{ '{!r}'.format(nope) }}", __settings__=_STRICT)
+for _n, _src in [
+    ("format_attribute", "{{ '{0.a}'.format(nope) }}"),
+    ("format_attribute_chain", "{{ '{0.a.b}'.format(nope) }}"),
+    ("format_subscript", "{{ '{0[a]}'.format(nope) }}"),
+    ("format_dunder_attribute", "{{ '{0.__a__}'.format(nope) }}"),
+    ("format_half_dunder_attribute", "{{ '{0.__a}'.format(nope) }}"),
+    ("format_bare_dunder_attribute", "{{ '{0.__}'.format(nope) }}"),
+    ("attr_filter_dunder", "{{ nope|attr('__a__') }}"),
+    ("attr_filter_half_dunder", "{{ nope|attr('__a') }}"),
+    ("attr_filter_trailing_dunder", "{{ nope|attr('a__') }}"),
+    ("attr_filter_bare_dunder", "{{ nope|attr('__') }}"),
+]:
+    if _n != "format_subscript":  # the default class is errors/field_index_on_an_undefined
+        case("undefined/" + _n, _src)
+    case("undefined/" + _n + "_strict", _src, __settings__=_STRICT)
+    case("undefined/" + _n + "_chainable", _src, __settings__=_CHAIN)
+case("undefined/format_empty_spec", "[{{ '{}'.format(nope) }}][{{ '{!s:>3}'.format(nope) }}][{{ '{!r}'.format(nope) }}]")
+
+# --- a scoped block sees every enclosing frame --------------------------------
+for _n, _src in [
+    ("nested_loops", "{% for i in [1, 2] %}{% for j in [1] %}{% block b scoped %}{{ i }}{{ j }}{% endblock %}"
+     "{% endfor %}{% endfor %}"),
+    ("nested_loops_macro", "{% for i in [1, 2] %}{% for j in [1] %}{% block b scoped %}"
+     "{% macro m() %}{{ i }}{{ j }}{% endmacro %}{{ m() }}{% endblock %}{% endfor %}{% endfor %}"),
+    ("nested_loop_index", "{% for i in [1, 2] %}{% for j in [1] %}{% block b scoped %}"
+     "[{{ loop.index }}{{ loop.length }}]{% endblock %}{% endfor %}{% endfor %}"),
+    ("nested_shadowed", "{% for i in [1, 2] %}{% for i in [7] %}{% block b scoped %}[{{ i }}]{% endblock %}"
+     "{% endfor %}{% endfor %}"),
+    ("outer_body_set", "{% for i in [1, 2] %}{% set y = i * 5 %}{% for j in [1] %}{% block b scoped %}"
+     "{{ y }}{{ i }}{{ j }}{% endblock %}{% endfor %}{% endfor %}"),
+    ("with_inside_loops", "{% for i in [1, 2] %}{% with a = i %}{% for j in [1] %}{% block b scoped %}"
+     "[{{ a }}{{ i }}{{ j }}]{% endblock %}{% endfor %}{% endwith %}{% endfor %}"),
+    ("macro_argument", "{% macro m(p) %}{% for i in [1] %}{% block b scoped %}[{{ p }}{{ i }}]{% endblock %}"
+     "{% endfor %}{% endmacro %}{{ m(3) }}"),
+    ("three_deep", "{% for i in [1] %}{% for j in [2] %}{% block b scoped %}{% for k in [3] %}"
+     "{% block c scoped %}[{{ i }}{{ j }}{{ k }}]{% endblock %}{% endfor %}{% endblock %}{% endfor %}{% endfor %}"),
+    ("root_name_from_the_arguments", "{% for i in [1] %}{% for j in [1] %}{% block b scoped %}[{{ x }}]"
+     "{% endblock %}{% endfor %}{% endfor %}{% set x = 1 %}"),
+    ("set_inside_stays_inside", "{% for i in [1] %}{% for j in [1] %}{% block b scoped %}{% set i = 9 %}{{ i }}"
+     "{% endblock %}{{ i }}{% endfor %}{% endfor %}"),
+]:
+    case("scope/scoped_block_" + _n, _src, **SCOPE)
+
+# --- builtin functions carry no `name` -----------------------------------------
+case("runtime/builtin_function_has_no_name",
+     "[{{ range.name }}][{{ lipsum.name }}][{{ cycler.name }}][{{ joiner.name }}][{{ namespace.name }}]"
+     "[{{ 'a'.upper.name }}][{{ [].append.name }}][{{ range.name is defined }}][{{ lipsum|attr('name') }}]")
+
+# --- subscripts and slices in eval.go ------------------------------------------
+case("subscript/bytes_index",
+     "{% set b = 'abc'.encode() %}{{ b[0] }}|{{ b[-1] }}|{{ b[-3] }}|{{ b[2] }}|[{{ b[3] }}]|[{{ b[-4] }}]|"
+     "[{{ b[none] }}]|[{{ b['x'] }}]|{{ b[true] }}")
+case("subscript/scalar_index_is_undefined",
+     "{% set n = 5 %}{% set z = none %}{% set f = 1.5 %}"
+     "[{{ n[0] }}][{{ n[-1] }}][{{ n['a'] }}][{{ z[0] }}][{{ z['a'] }}][{{ true[0] }}][{{ f[0] }}][{{ n[none] }}]")
+case("subscript/scalar_slice_is_refused_int", "{% set n = 5 %}{{ n[1:2] }}")
+case("subscript/scalar_slice_is_refused_none", "{% set z = none %}{{ z[1:2] }}")
+_G = "{% set g = [{'a': 1}, {'a': 2}]|groupby('a')|first %}"
+for _n, _src in [
+    ("indexes", "{{ g[0] }}|{{ g[1] }}|{{ g[-1] }}|[{{ g[2] }}]|[{{ g[-3] }}]|[{{ g[none] }}]|[{{ g['a'] }}]"),
+    ("slices", "{{ g[0:1] }}|{{ g[::-1] }}|{{ g[1:] }}|{{ g[5:] }}"),
+    ("slice_step_zero", "{{ g[::0] }}"),
+    ("slice_bad_bound", "{{ g[1.5:] }}"),
+    ("fields_and_list", "{{ g.grouper }}|{{ g.list }}|{{ g|list }}|{{ g|length }}"),
+]:
+    case("grouptuple/subscript_" + _n, _G + _src)
+case("subscript/safe_string_slice_stays_safe",
+     "{{ ('<b>x</b>'|safe)[0:3] }}|{{ ('<b>'|safe)[1] }}|{{ ('<b>'|safe)[::-1] }}|{{ '<b>'[0:2] }}|{{ '<b>'[1] }}",
+     __settings__={"autoescape": True})
+
+# A splatted `**` argument is folded with dict.update, which takes an iterable of
+# pairs where the unfolded call insists on a mapping; a repeated name replaces
+# the first, and a pair of the wrong length is left to the call to refuse.
+for _n, _arg in [
+    ("tuple_pair", "[('d', '-')]"),
+    ("list_pair", "[['d', '-']]"),
+    ("repeated_name", "[('d', '-'), ('d', '+')]"),
+    ("two_character_string_is_a_pair", "['dd']"),
+    ("tuple_of_pairs", "(('d', '-'),)"),
+    ("empty_list", "[]"),
+    ("dict", "{'d': '-'}"),
+    ("triple", "[('d', '-', 'x')]"),
+    ("single", "[('d',)]"),
+    ("not_a_pair", "[1]"),
+    ("one_character_string", "['a']"),
+    ("integer_key", "[(1, '-')]"),
+    ("a_string", "'ab'"),
+    ("none", "none"),
+    ("dict_items", "{'d': '-'}.items()"),
+]:
+    case("folding/kwargs_splat_" + _n, "{{ [1, 2]|join(**" + _arg + ") }}")
+    case("folding/kwargs_splat_runtime_" + _n, "{% set a = " + _arg + " %}{{ [1, 2]|join(**a) }}")
+
+# The index a {% filter %} block's TypeError names counts the pieces written to
+# the buffer it is in, and a {% call %} body is a buffer of its own.
+case("folding/filter_block_in_a_call_body_counts",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}ab{% filter length %}x{% endfilter %}{% endcall %}")
+case("folding/filter_block_in_a_call_body_counts_two",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}{{ 1 }}{{ 2 }}{% filter length %}x{% endfilter %}{% endcall %}")
+case("folding/filter_block_first_in_a_call_body",
+     "{% macro m() %}{{ caller() }}{% endmacro %}{% call m() %}{% filter length %}x{% endfilter %}{% endcall %}")
+
+
+# A macro defined in a loop body reads the loop's variables from the loop's live
+# frame, as a Python closure reads a cell: the value at the moment it is called,
+# and jinja2's `missing` once the loop is over. gojja2 gives each iteration a
+# frame of its own, so a macro keeps the values it was defined with. Recorded in
+# docs/divergences.md.
+_MC = "{% set ns = namespace(f=[]) %}"
+case("divergence/macro_reads_the_loop_variable_after_the_loop",
+     _MC + "{% for i in [1, 2] %}{% macro m() %}{{ i }}{% endmacro %}{% set _ = ns.f.append(m) %}{% endfor %}"
+     "{{ ns.f[0]() }}|{{ ns.f[1]() }}")
+case("divergence/macro_reads_the_current_loop_value",
+     _MC + "{% for i in [1, 2] %}{% macro m() %}{{ i }}{% endmacro %}{% set _ = ns.f.append(m) %}"
+     "[{{ ns.f[0]() }}]{% endfor %}")
+case("divergence/macro_reads_a_body_set_after_the_loop",
+     _MC + "{% for i in [1, 2] %}{% set x = i * 10 %}{% macro m() %}{{ x }}{% endmacro %}"
+     "{% set _ = ns.f.append(m) %}{% endfor %}[{{ ns.f[0]() }}][{{ ns.f[1]() }}]")
+
+
+# A proxy over a str is that str as a key: it hashes to it and is equal to it, in
+# a dict small enough to scan and in one big enough to carry a string index.
+_BIG = "{'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'ab': 9}"
+case("dictview/proxy_of_scalar_string_key_meets_a_plain_one",
+     _PU + "{% set k = C('ab') %}{{ {'ab': 1}[k] }}|{{ k in {'ab': 1} }}|{{ {'ab': 1}.get(k) }}|"
+     "{{ {'ab': 1, k: 2} }}|{{ {k: 2, 'ab': 1} }}|{{ {k: 1}['ab'] }}|{{ 'ab' in {k: 1} }}|{{ {k: 1}.get('ab') }}")
+case("dictview/proxy_of_scalar_string_key_in_a_big_dict",
+     _PU + "{% set k = C('ab') %}{% set b = " + _BIG + " %}{{ b[k] }}|{{ k in b }}|{{ b.get(k) }}|"
+     "{% set c = " + _BIG + " %}{% set _ = c.update({k: 5}) %}{{ c['ab'] }}|{{ c|length }}|"
+     "{% set e = {'x': 1, k: 2} %}{{ e['ab'] }}|{{ e|length }}|"
+     "{% set g = {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, k: 9} %}"
+     "{{ g['ab'] }}|{{ 'ab' in g }}|{{ g.get('ab') }}|{{ g|length }}")
+case("dictview/proxy_of_scalar_string_key_deleted_as_the_plain_string",
+     _PU + "{% set k = C('ab') %}{% set e = {k: 1, 'x': 2} %}{{ e.pop('ab') }}|{{ e }}|{{ 'ab' in e }}|{{ e.get('ab') }}|"
+     "{{ e['x'] }}|{{ e|length }}|{% set _ = e.update({'ab': 3}) %}{{ e }}|"
+     "{% set f = {'ab': 1, 'x': 2} %}{{ f.pop(k) }}|{{ f }}|{{ k in f }}|{{ f['x'] }}")
+case("dictview/proxy_of_undefined_in_a_tuple_key_strict", _PU + "{{ {(C(nope), 1): 1} }}", __settings__=_STRICT)
+case("dictview/proxy_of_dict_in_a_tuple_key", _PU + "{{ {(C(d), 1): 1} }}")
+case("dictview/proxy_of_undefined_is_a_set_member_or_refused",
+     _PU + "{% set s = d.keys() - [] %}{% set m = C(nope) %}{{ s.add(m) }}|{{ m in s }}|{{ s|length }}|{{ s.discard(m) }}|"
+     "{{ s|length }}")
+
+# A range is hashed by the sequence it stands for, as it is compared.
+case("value/range_as_a_dict_key",
+     "{{ {range(3): 1}[range(0, 3, 1)] }}|{{ {range(3): 1, range(0, 3): 2}|length }}|{{ range(3) in {range(3): 1} }}|"
+     "{{ {range(0): 1, range(1, 1): 2}|length }}|{{ {range(0, 1, 2): 1, range(0, 1, 5): 2}|length }}|"
+     "{{ {range(0, 4, 2): 1, range(0, 3, 2): 2}|length }}|{{ [range(2), range(2)]|unique|list|length }}|"
+     "{{ {range(0, 6, 2): 1, range(0, 6, 3): 2}|length }}|{{ {range(3): 1}[range(4)] }}")
+case("value/range_as_a_set_member",
+     "{% set s = {'a': 1}.keys() - [] %}{{ s.add(range(3)) }}|{{ range(0, 3) in s }}|{{ s.add(range(3)) }}|{{ s|length }}|"
+     "{{ range(4) in s }}")
+
+# A literal dict with a key that cannot be hashed is refused at run time; folding
+# it must not turn it into something smaller.
+for _n, _src in [
+    ("list_key", "{{ {[1]: 2} }}"),
+    ("dict_key", "{{ {{}: 1} }}"),
+    ("tuple_key_holding_a_list", "{{ {(1, [2]): 3} }}"),
+    ("nested_value", "{{ {1: {[2]: 3}} }}"),
+    ("in_a_dead_branch", "{{ 'ok' if true else {[1]: 2} }}"),
+]:
+    case("folding/dict_literal_unhashable_" + _n, _src)
+
+# A literal sequence sliced by bounds only known at run time is not folded.
+_SB = "{% set n = 2 %}{% set m = 3 %}"
+for _n, _base in [
+    ("list", "[1, 2, 3, 4]"), ("string", "'abcd'"), ("tuple", "(1, 2, 3, 4)"), ("range", "range(5)"),
+]:
+    case("slice/const_base_run_time_bound_" + _n,
+         _SB + "{{ %s[:n] }}|{{ %s[n:] }}|{{ %s[::n] }}|{{ %s[n:m] }}|{{ %s[1:m:n] }}|{{ %s[-n:] }}"
+         % ((_base,) * 6))
+    case("slice/const_base_argument_bound_" + _n,
+         "{{ %s[:n] }}|{{ %s[n:] }}|{{ %s[::n] }}|{{ %s[n:m] }}|{{ %s[1:m:n] }}|{{ %s[-n:] }}"
+         % ((_base,) * 6), n=2, m=3)
+for _n, _base in [("dict", "{'a': 1}"), ("none", "none"), ("int", "5")]:
+    case("slice/const_base_run_time_bound_refused_" + _n, _SB + "{{ %s[:n] }}" % _base)
+case("slice/const_base_run_time_bound_bad_bound", "{% set n = 'x' %}{{ [1, 2, 3][:n] }}")
+case("slice/const_base_run_time_bound_undefined", "{{ [1, 2, 3][:nope] }}")
+case("slice/const_base_run_time_bound_undefined_strict", "{{ [1, 2, 3][:nope] }}", __settings__=_STRICT)
+
+# An {% autoescape %} whose flag is not known until run time is not folded
+# through: the literals inside it are escaped, or not, when it is.
+_AE = ("{{ '<b>' }}|{{ '<' ~ 'b' }}|{{ ['<']|join }}|{{ '<b>'|upper }}|{{ ('<b>'|safe)|upper }}|"
+       "{{ [1, '<']|join('&') }}|{{ {'a': '<'} }}|{{ 'a<'|replace('a', '&') }}")
+for _n, _flag in [
+    ("true", "a"), ("false", "b"), ("and", "a and b"), ("not", "not b"), ("string", "a|string"),
+    ("empty_list", "[]"), ("list", "[0]"), ("none", "none"),
+]:
+    case("escape/autoescape_block_run_time_flag_" + _n,
+         "{% set a = true %}{% set b = false %}{% autoescape " + _flag + " %}" + _AE + "{% endautoescape %}|{{ '<' }}")
+case("escape/autoescape_block_run_time_flag_nested",
+     "{% set a = true %}{% autoescape a %}{% autoescape false %}" + _AE + "{% endautoescape %}{{ '<' }}"
+     "{% endautoescape %}{{ '<' }}")
+case("escape/autoescape_block_run_time_flag_inner",
+     "{% set a = false %}{% autoescape true %}{% autoescape a %}{{ '<' }}{% endautoescape %}{{ '<' }}{% endautoescape %}")
+case("escape/autoescape_block_undefined_flag", "{% autoescape nope %}{{ '<' }}{% endautoescape %}")
+# Under StrictUndefined the flag's truth is asked where the body first escapes
+# something at run time, not at the tag. CPython therefore renders a body whose
+# output is empty or folded at compile time; gojja2 asks at the tag. A body that
+# escapes anything at run time raises in both. Recorded in docs/divergences.md.
+case("escape/autoescape_block_strict_flag_reaches_the_body",
+     "{% set x = '<' %}{% autoescape nope %}{{ x }}{% endautoescape %}", __settings__=_STRICT)
+case("escape/autoescape_block_strict_flag_reaches_raw_text",
+     "{% autoescape nope %}text{% endautoescape %}", __settings__=_STRICT)
+case("divergence/autoescape_flag_strict_folded_output",
+     "{% autoescape nope %}{{ '<' }}{% endautoescape %}", __settings__=_STRICT)
+case("divergence/autoescape_flag_strict_empty_body", "{% autoescape nope %}{% endautoescape %}",
+     __settings__=_STRICT)
+case("divergence/autoescape_flag_strict_folded_number", "{% autoescape nope %}{{ 1 }}{% endautoescape %}",
+     __settings__=_STRICT)
+case("escape/autoescape_block_undefined_flag_chainable", "{% autoescape nope.x %}{{ '<' }}{% endautoescape %}",
+     __settings__=_CHAIN)
+
+
+# --- a coverage-guided pass over the value layer ------------------------------
+# Shapes a template reaches that no case graded, found by asking `go tool cover`
+# what the corpus never ran and then asking CPython what each one does.
+
+# A slice among several subscripts. jinja2 writes a slice out as `start:stop:step`
+# and only the subscript holding it alone puts that inside brackets; among
+# several it comes out as `(1:2, 3)`, which Python cannot parse. So it is a
+# SyntaxError out of the generated module -- unless the whole print folds first,
+# and then getitem swallows the TypeError into an undefined. The refusal is a
+# *parse* error, which beats a compile error such as a repeated keyword.
+_SLICE_AMONG = [
+    ("name", "{% set l = [1, 2, 3] %}{{ l[1:2, 3] }}"),
+    ("empty_bounds", "{% set l = [1, 2, 3] %}{{ l[:, 1] }}"),
+    ("both_slices", "{% set l = [1, 2, 3] %}{{ l[:, ::] }}"),
+    ("slice_last", "{% set d = {'a': 1} %}{{ d['a', 1:2] }}"),
+    ("bound_is_a_name", "{% set y = 1 %}{{ [1, 2, 3][1:y, 3] }}"),
+    ("chained", "{% set l = [[1]] %}{{ l[0:1, 3][0:1, 4] }}"),
+    ("inside_a_subscript", "{% set l = [[1]] %}{{ l[l[0:1, 3]] }}"),
+    ("in_a_loop", "{% for i in [1] %}{{ i[0:1, 3] }}{% endfor %}"),
+    ("in_an_if_test", "{% if [1][0:1, 3] %}x{% endif %}"),
+    ("in_a_set", "{% set x = [1, 2, 3][1:2, 3] %}{{ x }}"),
+    ("in_a_dead_branch", "{% if false %}{{ z[1:2, 3] }}{% endif %}ok"),
+    ("in_a_macro", "{% macro m() %}{{ z[1:2, 3] }}{% endmacro %}ok"),
+    ("beats_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{% set l = [1] %}{{ m(a=1, a=2) }}{{ l[1:2, 3] }}"),
+    ("follows_a_repeated_keyword",
+     "{% macro m(a=1) %}{{ a }}{% endmacro %}{% set l = [1] %}{{ l[1:2, 3] }}{{ m(a=1, a=2) }}"),
+]
+for _n, _src in _SLICE_AMONG:
+    case("errors/slice_among_subscripts_" + _n, _src)
+case("errors/slice_among_subscripts_folded_under_strict", "{{ [1, 2, 3][1:2, 3] }}",
+     __settings__={"undefined": "strict"})
+# The generator's own refusals come first, whichever order they were written in.
+case("fold/order_a_lookup_beats_a_slice_among_subscripts",
+     "{% set l = [1] %}{{ l[1:2, 3] }}{{ 1|nosuchS }}")
+case("fold/order_a_slice_among_subscripts_beats_nothing_later",
+     "{{ 1|nosuchS }}{% set l = [1] %}{{ l[1:2, 3] }}")
+# A subscript of constants is folded to the undefined getitem makes of it.
+for _n, _src in [
+    ("list", "[{{ [1, 2, 3][1:2, 3] }}]"),
+    ("string", "[{{ 'abc'[:, 'x', 3.5] }}]"),
+    ("dict", "[{{ {'a': 1}[1:2, 3] }}]"),
+    ("markup", "[{{ ('a'|e)[1:2, 3] }}]"),
+    ("with_a_default", "{{ [1, 2, 3][1:2, 3]|default('d') }}"),
+    ("is_defined", "{{ [1, 2, 3][1:2, 3] is defined }}"),
+    ("concatenated", "{{ [1, 2, 3][1:2, 3] ~ 'a' }}"),
+    ("negative_bounds_stringified", "{{ [1, 2][-1:1, 'k']|string }}"),
+    ("under_a_condition", "{{ 1 if [1, 2, 3][1:2, 3] else 2 }}"),
+    ("attribute_of_it", "{{ [1, 2, 3][1:2, 3].x }}"),
+]:
+    case("fold/slice_among_subscripts_" + _n, _src)
+for _n, _src in [
+    ("list", "{{ [1, 2, 3][1:2, 3] }}"),
+    ("string", "{{ 'abc'[:, 'x', 3.5] }}"),
+    ("markup", "{{ ('a'|e)[1:2, 3] }}"),
+    ("stringified", "{{ [1, 2][-1:1, 'k']|string }}"),
+    ("concatenated", "{{ [1, 2, 3][1:2, 3] ~ 'a' }}"),
+]:
+    case("fold/slice_among_subscripts_debug_" + _n, _src, __settings__={"undefined": "debug"})
+case("fold/slice_among_subscripts_chainable", "{{ [1, 2, 3][1:2, 3].x.y }}|{{ [1, 2, 3][1:2, 3][0] }}",
+     __settings__={"undefined": "chainable"})
+
+# `%ld` is `%d`: one length modifier is skipped, and only one.
+case("format/percent_length_modifier_skipped",
+     "{% set v = 5 %}{% set f = 1.5 %}{{ '%ld|%hd|%Ld|%li|%lf|%Lf|%hu' % (v, v, v, v, f, f, v) }}")
+for _n, _fmt in [("ll", "%lld"), ("hh", "%hhd"), ("lh", "%lhd"), ("l_then_f", "%llf")]:
+    case("format/percent_length_modifier_twice_" + _n, "{% set v = 5 %}{{ '" + _fmt + "' % v }}")
+case("format/percent_key_with_nested_parentheses",
+     "{% set d = {'a(b)': 1, 'c(d(e))': 2} %}{{ '%(a(b))s|%(c(d(e)))s' % d }}")
+case("format/percent_key_unbalanced_parentheses",
+     "{% set d = {'a(b': 1} %}{{ '%(a(b)s' % d }}")
+case("format/percent_capital_F", "{% set v = 1.5 %}{{ '%F|%.0F|%#.0F|%10.2F' % (v, v, v, v) }}")
+case("format/percent_precision_pads_a_wide_integer",
+     "{% set v = 10 ** 20 %}{{ '%.30d|%.30i|%.25u|%+.25d|%030.25d|%.30d' % (v, v, v, v, v, -v) }}")
+case("format/percent_precision_pads_a_small_integer", "{% set v = 5 %}{{ '%.30d|%.3d|%-8.4d|' % (v, v, v) }}")
+case("format/spec_grouped_zero_padding_exponent",
+     "{% set f = 1e20 %}{{ '{:030,.0e}|{:030,.2e}|{:030,g}|{:030_.0e}|{:030,E}'.format(f, f, f, f, f) }}"
+     "|{% set g = 1e-7 %}{{ '{:030,g}'.format(g) }}")
+case("format/spec_grouped_zero_padding_radix",
+     "{% set n = 255 %}{{ '{:#030_x}|{:#030_X}|{:#030_b}|{:#030_o}|{:030_x}'.format(n, n, n, n, n) }}")
+case("format/spec_grouped_zero_padding_nonfinite",
+     "{% set i = (range(1)|first + 1e308) * 10 %}{% set n = i - i %}"
+     "{{ '{:020,}|{:020,f}|{:020_.2f}|{:020,e}|{:020,%}|{:=20,}'.format(i, i, i, i, i, -i) }}"
+     "|{{ '{:020,.2f}|{:020,}|{:<20,}|'.format(n, n, n) }}")
+
+# A tuple that reaches itself through a list marks itself as the tuple it is.
+_DO = {"extensions": ["do"]}
+case("repr/recursive_tuple_through_a_list",
+     "{% set l = [] %}{% set t = (l,) %}{% do l.append(t) %}{{ t }}|{{ '%r' % [t] }}|{{ '%a' % (t,) }}|{{ l }}",
+     __settings__=_DO)
+case("repr/recursive_tuple_through_a_dict",
+     "{% set d = {} %}{% set t = (d,) %}{% do d.update({'k': t}) %}{{ t }}|{{ d }}", __settings__=_DO)
+# ascii() escapes what a groupby group renders for itself, at each width.
+for _n, _ch in [("latin1", 0xE9), ("bmp", 0x4E2D), ("astral", 0x1F600), ("replacement", 0xFFFD)]:
+    case("repr/ascii_of_a_group_" + _n,
+         "{% set g = [{'k': '" + chr(_ch) + "'}]|groupby('k') %}{{ '%a' % [g[0]] }}|{{ '%a' % (g[0],) }}|{{ '%r' % [g[0]] }}")
+
+# A dict past the size that builds a string index, copied and then changed.
+_D10 = "{% set d = {'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10} %}"
+case("value/dict_copy_past_the_index_size",
+     _D10 + "{% set e = d.copy() %}{% do e.update({'z': 1}) %}{% do e.pop('a') %}"
+     "{{ d|length }}|{{ e|length }}|{{ 'a' in d }}|{{ 'a' in e }}|{{ e['z'] }}|{{ d['j'] }}", __settings__=_DO)
+case("value/dict_constructor_past_the_index_size",
+     _D10 + "{% set e = dict(d) %}{% do e.pop('a') %}{% do e.update(k=1) %}{{ d|length }}|{{ e|length }}|{{ e['k'] }}",
+     __settings__=_DO)
+# A callable is a key that hashes by identity.
+case("value/callable_as_a_dict_key",
+     "{% macro m() %}{% endmacro %}{{ {m: 1}|length }}|{{ {m: 1}[m] }}|{{ m in {m: 1} }}|{{ {lipsum: 1}|length }}"
+     "|{{ lipsum in {lipsum: 1} }}|{{ {namespace: 1}|length }}|{{ {cycler: 1}|length }}|{{ {m: 1, lipsum: 2}|length }}")
+# A set walked only as far as its first item.
+_S1 = "{% set s = {'a': 1}.keys() - 'x' %}"
+for _n, _src in [
+    ("first", "{{ s|first }}"), ("batch_first", "{{ s|batch(1)|first }}"),
+    ("slice_first", "{{ s|slice(1)|first|first }}"), ("map_first", "{{ s|map('string')|first }}"),
+    ("select_first", "{{ s|select|first }}"), ("unique_first", "{{ s|unique|first }}"),
+    ("loop_break", "{% for x in s %}{{ x }}{% break %}{% endfor %}"),
+]:
+    case("sets/walk_stops_early_" + _n, _S1 + _src, __settings__={"extensions": ["loopcontrols"]})
+# A range slice with no step is refused whatever its width.
+for _n, _src in [
+    ("small", "{{ range(10)[::0] }}"), ("wide", "{% set r = range(2 ** 70) %}{{ r[::0] }}"),
+    ("wide_bounded", "{% set r = range(2 ** 70) %}{{ r[1:5:0] }}"),
+]:
+    case("slice/range_step_zero_" + _n, _src)
+# A class names its module.
+case("classes/module_of_a_class",
+     "{{ (1).__class__.__module__ }}|{{ ''.__class__.__module__ }}|{{ ('a'|e).__class__.__module__ }}"
+     "|{{ [].__class__.__module__ }}|{{ ('a'|e).__class__.__qualname__ }}")
+case("classes/mappingproxy_of_a_group",
+     "{% set C = {'a': 1}.keys().mapping.__class__ %}{% set g = [{'k': 1}]|groupby('k') %}{{ C(g[0]) }}")
+
+# str() and bytes() take encoding and errors by keyword, in any combination, and
+# an argument that was not given is not an undefined one.
+_CONV = ("{% set S = ''.__class__ %}{% set B = 'a'.encode().__class__ %}"
+         "{% set b = 'a" + chr(0xE9) + "'.encode('latin-1') %}")
+for _cls, _srcs in [("S", ["b", "'a'", "5", "none", "nope", "[1]"]),
+                    ("B", ["'a'", "b", "5", "none", "nope", "'" + chr(0xE9) + "'"])]:
+    for _si, (_sn, _src) in enumerate(zip("bstinl" if _cls == "S" else "sbtinu", _srcs)):
+        for _kn, _kw in [
+            ("plain", ""), ("enc", ", 'utf8'"), ("enc_err", ", 'utf8', 'strict'"),
+            ("kw_errors", ", errors='strict'"), ("kw_encoding", ", encoding='utf8'"),
+            ("kw_both", ", encoding='utf8', errors='strict'"),
+            ("kw_both_reversed", ", errors='strict', encoding='utf8'"),
+            ("errors_replace", ", errors='replace'"), ("errors_not_str", ", errors=5"),
+            ("pos_errors_not_str", ", 'utf8', 5"), ("encoding_not_str", ", encoding=5"),
+            ("ascii_replace", ", 'ascii', 'replace'"),
+        ]:
+            # Past the two subjects the codec accepts, the answer is the same
+            # refusal whichever way the arguments are spelt; keep the spellings
+            # that reach a different check.
+            if _si >= 2 and _kn not in ("plain", "kw_errors", "kw_both", "pos_errors_not_str"):
+                continue
+            case("classes/construct_%s_%s_%s" % (_cls.lower(), _sn, _kn),
+                 _CONV + "{{ %s(%s%s) }}" % (_cls, _src, _kw))
+    for _kn, _kw in [
+        ("none", ""), ("encoding", "encoding='utf8'"), ("errors", "errors='strict'"),
+        ("both", "encoding='utf8', errors='strict'"), ("both_reversed", "errors='strict', encoding='utf8'"),
+        ("errors_not_str", "errors=5"), ("encoding_not_str", "encoding=5"),
+        ("object_by_name", "object=b" if _cls == "S" else "source='a'"),
+        ("object_and_encoding_by_name",
+         "object=b, encoding='utf8'" if _cls == "S" else "source='a', encoding='utf8'"),
+        ("object_by_name_and_position",
+         "b, object=b" if _cls == "S" else "'a', source='a'"),
+    ]:
+        case("classes/construct_%s_%s" % (_cls.lower(), _kn), _CONV + "{{ %s(%s) }}" % (_cls, _kw))
+
+# random.choice is `seq[i]`: a value with a length and no subscript is refused,
+# and `loop` used to be an internal error.
+_R = "{% set d = {'a': 1} %}"
+for _n, _src in [
+    ("dict_keys", _R + "{{ d.keys()|random }}"), ("dict_values", _R + "{{ d.values()|random }}"),
+    ("dict_items", _R + "{{ d.items()|random }}"),
+    ("set", "{% set s = {'a': 1}.keys() - 'x' %}{{ s|random }}"),
+    ("loop", "{% for x in [1] %}{{ loop|random }}{% endfor %}"),
+]:
+    case("errors/random_not_subscriptable_" + _n, _src)
+case("filters/random_of_an_empty_view_or_set",
+     "{% set d = {} %}[{{ d.keys()|random }}][{{ d.items()|random }}][{{ ({'a': 1}.keys() - 'a')|random }}]")
+case("filters/random_of_a_proxy_by_index",
+     "{% set C = {'a': 1}.keys().mapping.__class__ %}{{ C({0: 5})|random }}")
+case("errors/random_of_a_proxy_missing_the_index",
+     "{% set C = {'a': 1}.keys().mapping.__class__ %}{{ C({'a': 5})|random }}")
+
+
+# A mappingproxy forwards its subscript to what it wraps, so `%`, str.format and
+# format_map -- which take the failure as it comes -- get the wrapped object's own
+# complaint: a string is indexed by integers, an undefined raises whatever the
+# key is, a range names itself. The first three answered a KeyError for all of
+# them. Each consumer below is a different door into the same subscript, and the
+# second table reads the wrapped value as a mapping through the ones that walk it.
+_PXY = "{% set C = {'a': 1}.keys().mapping.__class__ %}"
+_WRAPPED = [("str", "'ab'"), ("bytes", "'ab'.encode()"), ("undefined", "nope"),
+            ("range", "range(3)"), ("dict", "{'a': 1}"), ("nested", "C({'a': 1})")]
+for _wn, _w in _WRAPPED:
+    for _cn, _c in [
+        ("percent_name", "{{ '%(a)s' % p }}"), ("percent_index", "{{ '%(0)s' % p }}"),
+        ("format_index", "{{ '{0[1]}'.format(p) }}"), ("format_past_the_end", "{{ '{0[9]}'.format(p) }}"),
+        ("format_name", "{{ '{0[a]}'.format(p) }}"), ("format_map", "{{ '{a}'.format_map(p) }}"),
+    ]:
+        case("dictview/proxy_subscript_%s_%s" % (_wn, _cn), _PXY + "{% set p = C(" + _w + ") %}" + _c)
+    for _cn, _c in [
+        ("list", "{{ p|list }}"), ("length", "{{ p|length }}"), ("first", "{{ p|first }}"),
+        ("contains", "{{ 'a' in p }}|{{ 0 in p }}"), ("loop", "{% for k in p %}{{ k }},{% endfor %}"),
+        ("dict", "{{ dict(p) }}"), ("items", "{{ p|items|list }}"), ("keys", "{{ p.keys()|list }}"),
+        ("dictsort", "{{ p|dictsort }}"), ("join", "{{ p|join(',') }}"),
+    ]:
+        case("dictview/proxy_walk_%s_%s" % (_wn, _cn), _PXY + "{% set p = C(" + _w + ") %}" + _c)
+for _u in ("strict", "chainable"):
+    for _cn, _c in [
+        ("percent_name", "{{ '%(a)s' % p }}"), ("format_index", "{{ '{0[1]}'.format(p) }}"),
+        ("format_map", "{{ '{a}'.format_map(p) }}"), ("list", "{{ p|list }}"), ("dict", "{{ dict(p) }}"),
+    ]:
+        case("dictview/proxy_subscript_undefined_%s_%s" % (_u, _cn),
+             _PXY + "{% set p = C(nope) %}" + _c, __settings__={"undefined": _u})
+
+
+# A filter block in an `elif` body is counted like any other. (What a macro or a
+# call block there keeps of its loop's iteration is pinned by
+# loop_scope_reuse_test.go: what it sees once the loop has moved on is a
+# documented divergence, so CPython cannot grade it.)
+case("errors/filteridx_in_an_elif",
+     "x{% if false %}{% elif true %}{% filter length %}abc{% endfilter %}{% endif %}")
+case("errors/filteridx_in_a_second_elif",
+     "x{{ v }}{% if false %}{% elif false %}{% elif true %}{% filter length %}abc{% endfilter %}{% endif %}", v="V")
+
+# A subscript that a str or a list cannot take falls back to the attribute of
+# that name, which is how Environment.getitem reads `x['upper']`.
+case("subscript/string_key_falls_back_to_a_method",
+     "{{ 'abc'['upper']() }}|{{ [3, 1, 2]['index'](1) }}|{{ (1, 2)['count'](2) }}|{{ 'a-b'['split']('-') }}")
+case("subscript/string_key_falls_back_to_an_attribute_or_nothing",
+     "[{{ 'abc'['nope'] }}]|[{{ [1]['nope'] }}]|{{ [1]['append'] is defined }}|{{ 'abc'['upper'] is callable }}")
+
+# markupsafe's % takes numbers through int() and float(), and a string through
+# their parsers: whitespace trims, underscores separate digits, nothing else.
+_MUP = [
+    ("precision_pads_a_small_integer", "{% set v = 5 %}{{ ('%.30d|%.3d|%+.4i|% .6u'|safe) % (v, v, v, v) }}"),
+    ("precision_pads_a_wide_integer", "{% set v = 10 ** 20 %}{{ ('%.30d'|safe) % v }}|{{ ('%.30d'|safe) % -v }}"),
+    ("precision_pads_a_truncated_float", "{% set v = 5.7 %}{{ ('%.4d'|safe) % v }}"),
+    ("precision_pads_a_bool", "{% set v = true %}{{ ('%.4d'|safe) % v }}"),
+    ("int_of_a_blank_string", "{% set v = ' ' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_an_empty_string", "{% set v = '' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_padded_string", "{% set v = ' 12 ' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_an_underscored_string", "{% set v = '1_0' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_doubled_underscore", "{% set v = '1__0' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_float_string", "{% set v = '1.5' %}{{ ('%d'|safe) % v }}"),
+    ("int_of_an_arabic_digit", "{% set v = '" + chr(0x663) + "' %}{{ ('%d'|safe) % v }}"),
+    ("float_of_a_blank_string", "{% set v = ' ' %}{{ ('%f'|safe) % v }}"),
+    ("float_of_an_empty_string", "{% set v = '' %}{{ ('%e'|safe) % v }}"),
+    ("float_of_an_underscored_string", "{% set v = '1_0.5' %}{{ ('%f'|safe) % v }}"),
+    ("int_of_none", "{% set v = none %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_list", "{% set v = [1] %}{{ ('%d'|safe) % v }}"),
+    ("int_of_an_undefined", "{% set v = nope %}{{ ('%d'|safe) % v }}"),
+    ("int_of_a_blank_string_among_others", "{% set v = ' ' %}{{ ('%s|%d'|safe) % ('a', v) }}"),
+]
+for _n, _src in _MUP:
+    case("markup/percent_" + _n, _src)
+case("markup/percent_int_of_an_undefined_strict", "{% set v = nope %}{{ ('%d'|safe) % v }}",
+     __settings__={"undefined": "strict"})
+
 
 def main() -> int:
     if DST.exists():

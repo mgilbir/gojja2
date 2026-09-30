@@ -1,0 +1,6 @@
+{
+  "case": "format/percent_key_of_a_mapping_object.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

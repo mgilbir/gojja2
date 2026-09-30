@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{{ ('[%e]'.encode()) % nope }}|{{ ('[%G]'.encode()) % nope }}

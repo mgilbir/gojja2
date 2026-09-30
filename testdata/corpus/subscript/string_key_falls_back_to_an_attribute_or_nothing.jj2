@@ -1,0 +1,3 @@
+{}
+---
+[{{ 'abc'['nope'] }}]|[{{ [1]['nope'] }}]|{{ [1]['append'] is defined }}|{{ 'abc'['upper'] is callable }}

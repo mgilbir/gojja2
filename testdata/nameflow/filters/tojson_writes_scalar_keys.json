@@ -1,0 +1,4 @@
+{
+  "case": "filters/tojson_writes_scalar_keys.jj2",
+  "variables": {}
+}

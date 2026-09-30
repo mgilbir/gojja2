@@ -1,0 +1,6 @@
+{
+  "case": "divergence/self_list_through_a_proxy.jj2",
+  "variables": {
+    "self": "or"
+  }
+}

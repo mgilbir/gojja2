@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mgilbir/gojja2/errs"
+	"github.com/mgilbir/gojja2/value"
 )
 
 // hostileTemplates is every template the audit found that could panic the
@@ -186,10 +187,27 @@ func TestLipsumMatchesCPythonOnEdgeCases(t *testing.T) {
 	// jinja2 calls randrange(min, max), which raises on an empty range.
 	// Quietly repairing the range is what used to create a zero-word
 	// paragraph and then panic formatting it.
-	if _, err := renderVars(t, env, `{{ lipsum(1, true, 0, 0) }}`, nil); err == nil {
-		t.Error("lipsum(1, true, 0, 0) should raise, as randrange does")
-	} else if !strings.Contains(err.Error(), "empty range for randrange()") {
-		t.Errorf("got %q, want CPython's randrange wording", err)
+	//
+	// The wording moved in 3.12, so it is asked of both sides of that: the
+	// message it used to assert was 3.11's, checked against the pinned
+	// interpreter, and it agreed with neither.
+	for _, tc := range []struct {
+		py   value.PythonVersion
+		want string
+	}{
+		{value.DefaultPythonVersion, "empty range in randrange(0, 0)"},
+		{value.Python312, "empty range in randrange(0, 0)"},
+		{value.Python311, "empty range for randrange() (0, 0, 0)"},
+	} {
+		env, err := New(WithPythonVersion(tc.py))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := renderVars(t, env, `{{ lipsum(1, true, 0, 0) }}`, nil); err == nil {
+			t.Errorf("%s: lipsum(1, true, 0, 0) should raise, as randrange does", tc.py)
+		} else if err.Error() != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.py, err, tc.want)
+		}
 	}
 	// A paragraph really can come out empty, and jinja2 renders just the
 	// full stop.

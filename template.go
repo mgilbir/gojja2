@@ -114,7 +114,7 @@ func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[strin
 		putWriter(bw)
 	}()
 	defer catchPanic(&err)
-	return t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env))
+	return t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env), nil)
 }
 
 // renderGo is Render and RenderString's shared path.
@@ -132,7 +132,7 @@ func (t *Template) renderGo(ctx context.Context, w io.Writer, vars map[string]an
 	defer catchPanic(&err)
 	st := t.newState(nil, 0, newBudget(ctx, t.env))
 	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, t.env.methods, st
-	return t.renderState(st, &stringWriter{w: bw})
+	return t.renderState(st, &stringWriter{w: bw}, nil)
 }
 
 // writerPool holds the output buffers between renders.
@@ -192,14 +192,20 @@ var ErrInternal = errors.New("gojja2: internal error")
 // `{% include %}` renders into a fresh State, so a counter that started at
 // zero each time would never fire and a self-including template would take the
 // stack out instead.
-func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int, b *budget) error {
-	return t.renderState(t.newState(vars, depth, b), out)
+func (t *Template) renderInto(out writer, vars map[string]value.Value, depth int, b *budget, chunks *int) error {
+	return t.renderState(t.newState(vars, depth, b), out, chunks)
 }
 
 // renderState runs a prepared state, which is where the two entry points meet.
-func (t *Template) renderState(st *State, out writer) error {
-	ex := &exec{st: st, sc: st.ctx, out: out, stream: out, autoescape: st.autoescape}
-	if t.countsChunks {
+//
+// chunks is the piece count of the stream this render is part of, when it is
+// part of one: an {% include %} yields its pieces into the includer's stream in
+// jinja2, so a filter block inside it is numbered from where the includer had
+// got to. Nil starts a count of its own, for a template that has a filter block
+// to number.
+func (t *Template) renderState(st *State, out writer, chunks *int) error {
+	ex := &exec{st: st, sc: st.ctx, out: out, stream: out, autoescape: st.autoescape, chunks: chunks}
+	if ex.chunks == nil && t.countsChunks {
 		ex.chunks = new(int)
 	}
 
@@ -268,6 +274,12 @@ type State struct {
 	// root frame has shadowed but not yet assigned.
 	contextVars *scope
 
+	// loopFailure is a loop filter's failure, recorded by the source it
+	// happened in so that the loop can report it even after a break. Shared
+	// across the nested execs of one render, which is what lets a failure
+	// inside a body reach the loop that owns the source.
+	loopFailure error
+
 	blocks map[string][]blockEntry
 	// autoescape is the escaping in force *now*: {% autoescape %} moves it
 	// for the dynamic extent of its body, so a filter called from inside
@@ -289,6 +301,24 @@ type State struct {
 	// budget bounds the work of the whole render. It is shared with every
 	// nested render, so an {% include %} cannot start a fresh allowance.
 	budget *budget
+}
+
+// noteLoopFailure records a loop filter's failure so that runLoop can report it
+// even when a `{% break %}` ended the walk. See the call in runLoop.
+func (s *State) noteLoopFailure(err error) {
+	if s != nil && s.loopFailure == nil {
+		s.loopFailure = err
+	}
+}
+
+// takeLoopFailure returns a recorded loop-filter failure once.
+func (s *State) takeLoopFailure() error {
+	if s == nil {
+		return nil
+	}
+	err := s.loopFailure
+	s.loopFailure = nil
+	return err
 }
 
 // Context returns the context the render was started with. A filter or global
@@ -340,6 +370,17 @@ func (s *State) PythonVersion() PythonVersion {
 		return DefaultPythonVersion
 	}
 	return s.env.pyVersion
+}
+
+// NewlineSequence is what a newline in the template renders as, which the
+// lexer applies to data and to string literals -- and which |wordwrap joins
+// its lines with, since jinja2's do_wordwrap defaults its wrapstring to
+// environment.newline_sequence rather than to "\n".
+func (s *State) NewlineSequence() string {
+	if s == nil || s.env == nil || s.env.syntax.NewlineSequence == "" {
+		return "\n"
+	}
+	return s.env.syntax.NewlineSequence
 }
 
 // Name returns the name of the template currently executing.

@@ -1,0 +1,5 @@
+{
+  "x": 5
+}
+---
+{% for i in [1, 2] %}{% set y = i * 5 %}{% for j in [1] %}{% block b scoped %}{{ y }}{{ i }}{{ j }}{% endblock %}{% endfor %}{% endfor %}

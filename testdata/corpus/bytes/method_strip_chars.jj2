@@ -1,0 +1,3 @@
+{}
+---
+{{ ' abc '.encode().strip('a '.encode()) }}|{{ ' abc '.encode().lstrip('a '.encode()) }}|{{ ' abc '.encode().rstrip('c '.encode()) }}

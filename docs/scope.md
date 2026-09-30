@@ -47,6 +47,22 @@ Everything a template can express, including the parts that look Pythonic:
   to them, and to call its no-argument methods. If that is more than they should
   have, hand the template a narrower value -- that is the boundary, and it is
   drawn by what the caller puts in the context, not by an allow-list here.
+- **`Environment(optimized=False)`.** jinja2's optimizer can be turned off;
+  gojja2's constant folding is always on. Measured rather than assumed: 3,000
+  generated templates render identically with the flag either way, and a probe
+  of the shapes where folding could show found exactly two families, both of
+  which gojja2 already reproduces at jinja2's *default*.
+
+  The first is the negative-power lift --- `{% set m = 2 %}{{ (-8) ** m }}` is
+  -64 with the optimizer and 64 without it, because the fold turns `-8` into a
+  constant whose repr carries the minus and the generated `-8 ** m` then reads
+  as `-(8 ** m)`. The second is a constant that folds to an infinity:
+  `{{ ('1e400')|float|int }}` is the `NameError` the folded `inf` produces with
+  the optimizer, and an `OverflowError` from `int(inf)` without it. Both are in
+  [divergences.md](divergences.md) already.
+
+  So the flag is not a surface with its own conformance story; it is a way of
+  asking for the two behaviours recorded there in the other order.
 - **The i18n extension.** `{% trans %}`, `gettext`, `ngettext`.
 - **Bytecode caches**, which have no meaning without Python bytecode.
 

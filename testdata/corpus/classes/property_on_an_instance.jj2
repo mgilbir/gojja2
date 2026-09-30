@@ -1,0 +1,5 @@
+{
+  "n3": 3
+}
+---
+{{ n3.real }}|{{ n3.imag }}|{{ (1.5).real }}|{{ true.numerator }}

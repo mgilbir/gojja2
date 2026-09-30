@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.encode().index('a'.encode(), 5, 2) }}

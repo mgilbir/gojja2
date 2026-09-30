@@ -1,0 +1,6 @@
+{
+  "case": "filters/alias_default.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

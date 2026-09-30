@@ -1,0 +1,6 @@
+{
+  "case": "methods/range_count_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "case": "errors/unclosed_line_comment_splits_the_tail.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateSyntaxError",
+    "message": "Unexpected end of template. Jinja was looking for the following tags: 'endset'. The innermost block that needs to be closed is 'set'.",
+    "lineno": 1,
+    "name": "errors/unclosed_line_comment_splits_the_tail.jj2"
+  }
+}

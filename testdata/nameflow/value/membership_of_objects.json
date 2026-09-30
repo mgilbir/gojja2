@@ -1,0 +1,6 @@
+{
+  "case": "value/membership_of_objects.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

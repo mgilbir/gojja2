@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2, 'c': 3} %}{% set s = d.keys() - ['a'] %}{{ s.isdisjoint(d.keys()) }}|{{ s.isdisjoint(['z']) }}|{{ s.isdisjoint('a') }}|{{ s.isdisjoint([]) }}

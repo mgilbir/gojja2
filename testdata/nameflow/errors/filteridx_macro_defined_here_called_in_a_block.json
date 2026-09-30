@@ -1,0 +1,6 @@
+{
+  "case": "errors/filteridx_macro_defined_here_called_in_a_block.jj2",
+  "variables": {
+    "v": "or"
+  }
+}

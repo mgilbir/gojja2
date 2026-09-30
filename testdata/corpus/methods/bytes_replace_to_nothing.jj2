@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 'abc'.encode() %}{{ 'aaa'.encode().replace('a'.encode(), ''.encode()) }}

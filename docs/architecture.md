@@ -52,23 +52,46 @@ flowchart TD
     L --> CO
     B["FromString(source)<br/>FromNamedString(name, source)"] --> CO
 
-    subgraph CO["compile() — environment.go:578, under defer catchPanic"]
+    subgraph CO["compile() — environment.go:899, under defer catchPanic"]
         direction TB
         P1["parser.Parse<br/><i>lexer.Tokenize: whole source, all tokens up front</i><br/><i>then recursive descent, jinja2 precedence</i>"]
-        P2["foldConstantExpressions<br/><i>the general fold, as jinja2's optimizer does</i>"]
+        P2["collectBlocks<br/><i>the pre-pass: index by name, refuse duplicates,<br/>and fix the order the bodies are folded in</i>"]
         P3["foldConstantPrints<br/><i>print tags only; also accepts undefined results</i>"]
-        P4["checkDependencies<br/><i>unknown filter/test names</i>"]
-        P5["collectBlocks<br/><i>index by name, refuse duplicates</i>"]
+        P4["foldConstantExpressions<br/><i>the general fold, as jinja2's optimizer does,<br/>and the filter and test lookups with it;<br/>root body first, then each block</i>"]
+        P5["findUnsupported<br/><i>constructs gojja2 diverges on</i>"]
         P1 --> P2 --> P3 --> P4 --> P5
     end
     CO --> T(["*Template — tree + blocks"])
     T -->|"GetTemplate only, on success"| PUT["cache.put"]
 
     classDef warn fill:#fde68a,stroke:#b45309,color:#000
-    class P2,P3 warn
+    class P3,P4 warn
 ```
 
-Three things about this path catch people out.
+Four things about this path catch people out.
+
+**The order of what those boxes do is observable.** A fold that refuses ends the
+compile, and so does an unknown filter name, so which of two broken expressions
+is named depends on which is reached first — and jinja2 does both from its *code
+generator*, node by node, rather than in passes of its own. Three consequences
+are reproduced in the fold and in the dependency check alike: a block's body is
+handled after the whole root body (and blocks in the order the pre-pass
+collected them, not where they are written); a print tag below a root-level
+`{% extends %}` is not handled at all, because the generator leaves it out
+rather than guarding it — `{% extends 'base.txt' %}{{ 1|nosuch }}` renders the
+parent; and a duplicate block name, collected before a line is generated, beats
+both. `fold/order_*` and `fold/generated_*` in the corpus grade each one.
+
+That is also why the fold and the dependency check are one walk rather than
+two. jinja2 folds an expression and looks its filters up as it writes that one
+node out, so `{{ 1|nosuch }}{{ (0 ** 0)[7] and 0 }}` names the filter and the
+same two swapped name the subscript; two passes cannot do that, however
+carefully their walks are kept in step. The order inside a statement is the
+generator's too, and it is not the order the tag is written in: a loop's test
+becomes a function of its own, written before the loop that calls it, and a
+`{% filter %}`, a `{% set %}` with a body and a `{% call %}` all buffer their
+body first and write what consumes it afterwards. `fold/order_within_*` and
+`fold/order_mixed_*` grade those.
 
 **Compilation takes no `context.Context` and has no budget.** The bounds in
 [limits.md](limits.md) are *render* bounds. What protects compile time instead is

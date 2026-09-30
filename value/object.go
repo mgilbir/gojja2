@@ -51,6 +51,18 @@ type Slicer interface {
 	Slice(start, stop, step *int) (Value, error)
 }
 
+// BigSlicer lets an Object answer a slice in arbitrary precision, beside Slicer.
+//
+// It exists for the same reason BigSequence does, and for the same one type: the
+// slice of a range is another range, and CPython computes every part of it from
+// PyLongs -- `range(2**70)[::-1]` is `range(1180591620717411303423, -1, -1)`,
+// which no int can hold. An Object implementing this must agree with its Slicer
+// wherever both answer.
+type BigSlicer interface {
+	Object
+	BigSlice(start, stop, step *big.Int) (Value, error)
+}
+
 // TupleView is an Object that stands for a Python tuple subclass, so it is
 // serialised and treated as the tuple it represents. A range is a sequence but
 // not a tuple, which is why this is opt-in rather than inferred from Sequence.
@@ -67,6 +79,36 @@ type Sized interface {
 	Len() int
 }
 
+// SizedErr is Sized for an object whose len() can raise, and IterableErr is
+// Iterable for one whose iteration can: Len and Iterate consult them first.
+//
+// The plain interfaces have nowhere to put an error, so an object that
+// delegates -- a mappingproxy is len() and iter() of whatever it wraps --
+// answered 0 and nothing where CPython raises: `mappingproxy(self)|length` is
+// "object of type 'TemplateReference' has no len()". The same shape as
+// EqualerErr beside Equaler.
+type SizedErr interface {
+	Object
+	LenErr() (int, error)
+}
+
+// IterableErr is described with SizedErr.
+type IterableErr interface {
+	Object
+	IterateErr() (iter.Seq[Value], error)
+}
+
+// OrderDelegate is an Object whose ordering comparisons are another value's:
+// CPython's mappingproxy_richcompare is `PyObject_RichCompare(pp->mapping, w,
+// op)` and nothing else. So a proxy on the left is its wrapped object, refusal
+// and all, and one on the right answers the reflected operator the same way:
+// `1e3 >= mappingproxy(d)` is "'<=' not supported between instances of 'dict'
+// and 'float'", and a proxy over a string orders as the string.
+type OrderDelegate interface {
+	Object
+	OrderDelegate() Value
+}
+
 // Equaler lets an Object decide == for itself. The second result reports
 // whether it has an opinion; without one, objects compare by identity.
 //
@@ -75,6 +117,15 @@ type Sized interface {
 type Equaler interface {
 	Object
 	Equals(other Value) (equal bool, known bool)
+}
+
+// EqualerErr is [Equaler] for an Object whose comparison can fail: a dict view
+// compares element by element, so a StrictUndefined among the elements refuses
+// rather than answering. It is consulted before Equaler, so an Object may
+// implement either one.
+type EqualerErr interface {
+	Object
+	EqualsErr(other Value, py PythonVersion) (equal bool, known bool, err error)
 }
 
 // Reprer overrides how an Object renders. Repr is Python's repr(), used inside
@@ -108,13 +159,66 @@ type BigLener interface {
 	BigLen() *big.Int
 }
 
+// BigSequence is a Sequence whose length and indices can exceed an int.
+//
+// It exists for the one place CPython's own arithmetic goes past a Py_ssize_t:
+// reversed(range(2**70)) answers its first element by computing
+// start + (len-1)*step, never by narrowing the length, so `range(2**70)|last`
+// answers there while `len()` of that range raises. Walking to it instead cost
+// the whole render budget and then failed.
+//
+// Len and GetIndex stay as they are -- saturating -- so iteration keeps
+// working on an int; BigIndex is the exact path beside them, and SequenceItem
+// is how a subscript reaches it.
+type BigSequence interface {
+	Sequence
+	BigLener
+	BigIndex(i *big.Int) (Value, bool)
+}
+
+// SequenceItem is seq[key] for an Object that presents a sequence: an integer
+// key (a bool is one), counted from the end when it is negative. The second
+// result is false when the key is out of range or not an integer.
+//
+// A BigSequence is answered exactly. Wrapping a negative key against the
+// saturated Len instead made `range(2**70)[-1]` 9223372036854775806 -- a
+// wrong number rather than a refusal -- and a key past an int64, which
+// range_subscript takes as a PyLong, was simply not found.
+func SequenceItem(seq Sequence, key Value) (Value, bool) {
+	if !key.IsInteger() {
+		return Undefined, false
+	}
+	if b, ok := seq.(BigSequence); ok {
+		k, _ := key.BigInt()
+		if k.Sign() < 0 {
+			k = new(big.Int).Add(k, b.BigLen())
+		}
+		return b.BigIndex(k)
+	}
+	i, fits := key.Int64()
+	if !fits {
+		return Undefined, false
+	}
+	n := int64(seq.Len())
+	if i < 0 {
+		i += n
+	}
+	if i < 0 || i >= n {
+		return Undefined, false
+	}
+	return seq.GetIndex(int(i))
+}
+
 // Container is an Object that answers `x in obj` itself.
 //
 // It exists for the types where scanning is the wrong algorithm rather than
-// merely a slow one: Python's range decides membership by arithmetic, so
-// `{{ 5 in range(10000000000) }}` is a division and not a walk of ten billion
-// elements. The second result reports whether the object has an opinion;
-// without one the generic scan runs, charged element by element.
+// merely a slow one. The second result reports whether the object has an
+// opinion; without one the generic scan runs, charged element by element.
+//
+// No built-in object implements it any more: a range, which is the case that
+// motivated it, decides membership by arithmetic through ContainsErr, the
+// sibling that can also refuse. It stays for a host object that wants the
+// shortcut without the refusal.
 type Container interface {
 	Object
 	Contains(item Value) (found, known bool)

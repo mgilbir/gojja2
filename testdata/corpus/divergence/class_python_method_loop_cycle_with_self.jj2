@@ -1,0 +1,3 @@
+{}
+---
+{% for i in [1, 2] %}{{ loop.__class__.cycle(loop, 'a', 'b') }}{% endfor %}

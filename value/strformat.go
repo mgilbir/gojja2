@@ -12,6 +12,28 @@ import (
 	"github.com/mgilbir/gojja2/errs"
 )
 
+// ParseFormatInteger reads a run of decimal digits the way the format
+// mini-language does: CPython accumulates digit by digit and checks before each
+// step that the result will still fit in a Py_ssize_t, so anything wider is
+// "Too many decimal digits in format string" and not a wrapped number. It is
+// the same routine behind a width, a precision and a replacement field's index,
+// which is why the three report the same thing.
+//
+// gojja2 multiplied and added without the check, so `'{18446744073709551616}'`
+// wrapped to 0 and printed the *first* argument.
+func ParseFormatInteger(digits string) (int, error) {
+	n := 0
+	for i := range len(digits) {
+		d := int(digits[i] - '0')
+		if n > (math.MaxInt-d)/10 {
+			return 0, errs.New(errs.ValueError,
+				"Too many decimal digits in format string")
+		}
+		n = n*10 + d
+	}
+	return n, nil
+}
+
 // FormatValue is Python's format(v, spec) -- the __format__ behind every
 // replacement field in str.format.
 //
@@ -22,9 +44,16 @@ import (
 //
 // An empty spec is str(v) for every type, which is why `{}` renders a list or
 // None happily while `{:>8}` on either is a TypeError.
-func FormatValue(v Value, spec string, budget Budget) (string, error) {
+func FormatValue(v Value, spec string, py PythonVersion, budget Budget) (string, error) {
 	if spec == "" {
-		return Str(v), nil
+		// StrFor: an empty spec is str(), and a container's str() is its
+		// repr, which escapes by the interpreter's isprintable.
+		// StrictUndefined and what wraps one refuse: object.__format__
+		// with an empty spec is str(self).
+		if err := StrictRefusal(v); err != nil {
+			return "", err
+		}
+		return StrFor(v, py), nil
 	}
 	// A type with no __format__ of its own inherits object's, which takes
 	// the empty spec and nothing else -- and never looks at what the spec
@@ -39,6 +68,7 @@ func FormatValue(v Value, spec string, budget Budget) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	f.budget = budget
 	body, numeric, err := f.body(v, spec)
 	if err != nil {
 		return "", err
@@ -63,6 +93,9 @@ type formatSpec struct {
 	// Python 3.11 added it (PEP 682), which is every version modelled here,
 	// so it needs no version gate.
 	zcoerce bool
+	// budget pays for the digits a float's precision asks for, before
+	// strconv allocates them.
+	budget Budget
 }
 
 func parseFormatSpec(spec string, v Value) (formatSpec, error) {
@@ -89,17 +122,11 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 	if i < len(r) && r[i] == 'z' {
 		f.zcoerce = true
 		i++
-		// Which values may ask for it is decided here rather than at the
-		// render, because CPython decides it here too: `{:zx}` on an int
-		// is about the z and not about the x.
-		switch {
-		case v.Kind() == KindInt || v.Kind() == KindBool:
-			return f, errs.New(errs.ValueError,
-				"Negative zero coercion (z) not allowed in integer format specifier")
-		case v.Kind() == KindString:
-			return f, errs.New(errs.ValueError,
-				"Negative zero coercion (z) not allowed in string format specifier")
-		}
+		// Who may ask for it is settled by the *presentation type*, not by
+		// the value's own, so the complaint waits for the formatter that
+		// the type dispatches to. An int with a float code converts before
+		// it is rendered, and the z rides along: `{:zG}` on -1234567 is
+		// "-1.23457E+06", where `{:zd}` on the same int is refused.
 	}
 	if i < len(r) && r[i] == '#' {
 		f.alt = true
@@ -130,15 +157,31 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 		i++
 	}
 	if i > start {
-		n, err := strconv.Atoi(string(r[start:i]))
+		n, err := ParseFormatInteger(string(r[start:i]))
 		if err != nil {
-			return f, invalidSpec(spec, v)
+			return f, err
 		}
 		f.width, f.hasWidth = n, true
 	}
-	if i < len(r) && (r[i] == ',' || r[i] == '_') {
-		f.grouping = byte(r[i])
+	if i < len(r) && r[i] == ',' {
+		f.grouping = ','
 		i++
+	}
+	if i < len(r) && r[i] == '_' {
+		// The two separators are read one after the other, so a spec
+		// carrying both says so -- in either order -- rather than letting
+		// the second fall through to the presentation type. Two of the
+		// *same* separator is a different complaint: there the second one
+		// is read as the type, which is why `{:,,}` says "Cannot specify
+		// ',' with ','." and `{:,_}` does not.
+		if f.grouping != 0 {
+			return f, commaAndUnderscore()
+		}
+		f.grouping = '_'
+		i++
+		if i < len(r) && r[i] == ',' {
+			return f, commaAndUnderscore()
+		}
 	}
 	if i < len(r) && r[i] == '.' {
 		i++
@@ -147,11 +190,18 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 			i++
 		}
 		if i == start {
-			return f, invalidSpec(spec, v)
+			// A dot with no digits after it is settled while the spec
+			// is being read, so the complaint names neither the
+			// presentation type nor the value's own -- `{:.f}` and
+			// `{:.>5.}` both report it, on an int as on a str. The
+			// digits must be bare: a sign or a space after the dot is
+			// this and not a width.
+			return f, errs.New(errs.ValueError,
+				"Format specifier missing precision")
 		}
-		n, err := strconv.Atoi(string(r[start:i]))
+		n, err := ParseFormatInteger(string(r[start:i]))
 		if err != nil {
-			return f, invalidSpec(spec, v)
+			return f, err
 		}
 		f.prec, f.hasPrec = n, true
 	}
@@ -190,6 +240,13 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 // the spec left it out -- which is how `{:,}` on a string says "with 's'".
 func cannotGroup(sep, typ byte) error {
 	return errs.New(errs.ValueError, "Cannot specify '%c' with '%c'.", sep, typ)
+}
+
+// commaAndUnderscore is what a spec asking for both groupings says. It names
+// neither the order they were written in nor the presentation type, so the one
+// message covers `{:,_}`, `{:_,}` and every spec that follows them.
+func commaAndUnderscore() error {
+	return errs.New(errs.ValueError, "Cannot specify both ',' and '_'.")
 }
 
 func isAlign(r rune) bool {
@@ -259,6 +316,13 @@ func (f formatSpec) formatString(v Value) (string, bool, error) {
 		return "", false, errs.New(errs.ValueError,
 			"Sign not allowed in string format specifier")
 	}
+	// After the sign, because the sign comes first in the grammar and so a
+	// string spec can carry both: `{: zs}` is about the space. Before the
+	// alternate form and the '=' alignment, which come after z there.
+	if f.zcoerce {
+		return "", false, errs.New(errs.ValueError,
+			"Negative zero coercion (z) not allowed in string format specifier")
+	}
 	if f.alt {
 		return "", false, errs.New(errs.ValueError,
 			"Alternate form (#) not allowed in string format specifier")
@@ -282,7 +346,13 @@ func (f formatSpec) formatString(v Value) (string, bool, error) {
 func (f formatSpec) formatInt(b *big.Int, v Value) (string, error) {
 	switch f.typ {
 	case 'e', 'E', 'f', 'F', 'g', 'G', '%':
-		x, _ := new(big.Float).SetInt(b).Float64()
+		// A float code converts the integer first, and an integer too
+		// wide for a float64 is an OverflowError rather than an
+		// infinity -- `{{ '{:f}'.format(10 ** 400) }}` printed "inf".
+		x, err := floatOperand(v)
+		if err != nil {
+			return "", err
+		}
 		return f.formatFloat(x, v)
 	}
 	base, prefix := 10, ""
@@ -304,6 +374,13 @@ func (f formatSpec) formatInt(b *big.Int, v Value) (string, error) {
 	if f.hasPrec {
 		return "", errs.New(errs.ValueError,
 			"Precision not allowed in integer format specifier")
+	}
+	// After the code has been recognised and the precision refused, and
+	// before anything 'c' has to say: `{:zq}` is about the q, `{:z.2d}`
+	// about the precision, and `{:zc}` about the z.
+	if f.zcoerce {
+		return "", errs.New(errs.ValueError,
+			"Negative zero coercion (z) not allowed in integer format specifier")
 	}
 	if f.typ == 'c' {
 		if f.sign != 0 {
@@ -415,24 +492,76 @@ func group(digits string, sep byte, size int) string {
 }
 
 func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
+	// CPython's format_float_internal refuses a precision past INT_MAX --
+	// after the type code is recognised and before it looks at the value,
+	// so an infinity is refused too -- and attempts everything below it.
+	// strconv allocates the digits it is asked for, so they are paid for
+	// first: `{:.99999999999999f}` took the process down with "fatal error:
+	// out of memory", which no recover can catch.
+	switch f.typ {
+	case 'f', 'F', 'e', 'E', 'g', 'G', 'n', '%', 0:
+	default:
+		return "", unknownCode(f.typ, v)
+	}
+	if f.hasPrec && f.prec > math.MaxInt32 {
+		return "", errs.New(errs.ValueError, "precision too big")
+	}
+	if err := chargeBytes(f.budget, int64(f.prec)); err != nil {
+		return "", err
+	}
 	prec := f.prec
 	if !f.hasPrec {
 		prec = 6
 	}
+	// '%' scales before it lays anything out, so its result can be the
+	// infinity even where x is finite: `{:%}` of 1e308 is "inf%". The
+	// magnitude that is actually written is what decides whether there are
+	// digits at all.
+	mag := math.Abs(x)
+	percent := f.typ == '%'
+	if percent {
+		mag *= 100
+	}
+	if math.IsInf(mag, 0) || math.IsNaN(mag) {
+		// An infinity has no digits to lay out, so neither the alternate
+		// form nor the grouping has anything to do -- but the sign, the
+		// fill and the percent sign all still go on. None of the
+		// formatters below may be asked for it: Go writes "+Inf", which
+		// has no exponent to split and no digits to group, and expForm
+		// and generalForm both indexed into what was not there.
+		//
+		// An unknown type is still refused first, exactly as CPython
+		// parses the spec before it looks at the value.
+		switch f.typ {
+		case 'f', 'F', 'e', 'E', 'g', 'G', 'n', '%', 0:
+		default:
+			return "", unknownCode(f.typ, v)
+		}
+		body := FormatFloat(mag)
+		if f.typ == 'E' || f.typ == 'G' || f.typ == 'F' {
+			body = strings.ToUpper(body)
+		}
+		if percent {
+			body += "%"
+		}
+		// A NaN is never negative in Python's output, however its sign
+		// bit happens to be set -- `{:f}` of `inf - inf` is "nan" and
+		// `{:+f}` of it is "+nan". 'z' has nothing to coerce either:
+		// there is no digit here to round.
+		return f.withSign(math.Signbit(x) && !math.IsNaN(x), "", body), nil
+	}
 	var body string
-	percent := false
 	switch f.typ {
 	case 'f', 'F':
-		body = strconv.FormatFloat(math.Abs(x), 'f', prec, 64)
+		body = strconv.FormatFloat(mag, 'f', prec, 64)
 	case 'e', 'E':
-		body = expForm(math.Abs(x), prec, f.typ == 'E')
+		body = expForm(mag, prec, f.typ == 'E')
 	case 'g', 'G', 'n':
-		body = generalForm(math.Abs(x), prec, f.typ == 'G', f.alt, false)
+		body = generalForm(mag, prec, f.typ == 'G', f.alt, false)
 	case '%':
 		// The sign goes on after the grouping: appending it here let the
 		// separator fall between the last digits and the '%' itself.
-		body = strconv.FormatFloat(math.Abs(x)*100, 'f', prec, 64)
-		percent = true
+		body = strconv.FormatFloat(mag, 'f', prec, 64)
 	case 0:
 		// No type at all is str(float) laid out, not %g: it keeps the
 		// shortest round-tripping digits rather than six of them.
@@ -443,40 +572,44 @@ func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
 		// keeps a ".0" on a result that would otherwise be all digits.
 		// So `{:.0}` on 1.5 is "2e+00" where `{:.0g}` is "2".
 		if f.hasPrec {
-			body = generalForm(math.Abs(x), prec, false, f.alt, true)
+			body = generalForm(mag, prec, false, f.alt, true)
 		} else {
-			body = FormatFloat(math.Abs(x))
+			body = FormatFloat(mag)
 		}
 	default:
 		return "", unknownCode(f.typ, v)
 	}
-	if math.IsInf(x, 0) || math.IsNaN(x) {
-		// An infinity has no digits to lay out, so neither the
-		// alternate form nor the grouping has anything to do -- but the
-		// percent sign still goes on.
-		body = strings.TrimPrefix(FormatFloat(math.Abs(x)), "-")
-		if f.typ == 'E' || f.typ == 'G' || f.typ == 'F' {
-			body = strings.ToUpper(body)
-		}
-	} else {
-		if f.alt {
-			body = withAltPoint(body)
-		}
-		if f.grouping != 0 {
-			body = groupMantissa(body, f.grouping)
-		}
+	if f.alt {
+		body = withAltPoint(body)
+	}
+	if f.grouping != 0 {
+		body = groupMantissa(body, f.grouping)
 	}
 	if percent {
 		body += "%"
 	}
 	// 'z' drops the sign from what *rounds* to zero rather than from -0.0
 	// alone, so `{:z.1f}` of -0.04 is "0.0" while `{:z.2%}` of -0.001 keeps
-	// its sign at "-0.10%". An infinity has no digits and is never coerced.
+	// its sign at "-0.10%".
 	negative := math.Signbit(x)
-	if f.zcoerce && negative && !math.IsInf(x, 0) && !math.IsNaN(x) && !hasNonZeroDigit(body) {
+	if f.zcoerce && negative && !hasNonZeroDigit(body) {
 		negative = false
 	}
 	return f.withSign(negative, "", body), nil
+}
+
+// isNonFiniteBody reports whether a formatted numeric body is an infinity or a
+// NaN rather than digits, which is what says a grouping has nothing to separate.
+//
+// It cannot be decided from the characters: "inf" and "nan" are spelled with
+// hexadecimal digits, so a rule of "has no digit" skipped the grouping on
+// `{:#015_x}` of 255 -- whose body past the 0x prefix is "ff".
+func isNonFiniteBody(body string) bool {
+	switch strings.TrimSuffix(body, "%") {
+	case "inf", "nan", "INF", "NAN":
+		return true
+	}
+	return false
 }
 
 // hasNonZeroDigit reports whether a formatted body still has a digit that is
@@ -651,10 +784,13 @@ func (f formatSpec) pad(body string, numeric bool, budget Budget) (string, error
 			strings.IndexByte("bBoOxX", body[i+1]) >= 0 {
 			i += 2
 		}
-		if f.grouping != 0 && f.fill == '0' {
+		if f.grouping != 0 && f.fill == '0' && !isNonFiniteBody(body[i:]) {
 			// Zeros written into a grouped number join it rather
 			// than sitting in front of it, so they take separators
-			// of their own: `{:06,}` on 1 is "00,001".
+			// of their own: `{:06,}` on 1 is "00,001". There has to
+			// be a number for them to join: an infinity has no
+			// digits, so `{:015,}` of one is twelve plain zeros and
+			// "inf", not "0,000,000,000inf".
 			return body[:i] + padGrouped(body[i:], f.width-StrLen(body[:i]),
 				f.grouping, f.groupWidth()), nil
 		}

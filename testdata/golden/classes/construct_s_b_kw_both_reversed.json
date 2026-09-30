@@ -1,0 +1,14 @@
+{
+  "case": "classes/construct_s_b_kw_both_reversed.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "UnicodeDecodeError",
+    "message": "'utf-8' codec can't decode byte 0xe9 in position 1: unexpected end of data"
+  }
+}

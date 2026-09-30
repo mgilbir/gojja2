@@ -1,0 +1,17 @@
+{
+  "__settings__": {
+    "extensions": [
+      "loopcontrols"
+    ]
+  },
+  "e": [],
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{% for x in e %}a{% else %}{% for y in seq %}{% break %}{% endfor %}E{% endfor %}

@@ -1,0 +1,6 @@
+{
+  "case": "nonfinite/subscript_by_nan.jj2",
+  "variables": {
+    "s_nan": "ofr"
+  }
+}

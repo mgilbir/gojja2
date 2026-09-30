@@ -1,0 +1,6 @@
+{
+  "case": "control/break_discards_filter_buffer.jj2",
+  "variables": {
+    "seq": "fr"
+  }
+}

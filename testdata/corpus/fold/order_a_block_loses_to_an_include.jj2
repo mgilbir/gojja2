@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "__templates__": {
+    "base.txt": "B"
+  }
+}
+---
+{% block a %}{{ (0 ** 0)[7] and 0 }}{% endblock %}{% include (0 ** 0)[9] and 0 %}

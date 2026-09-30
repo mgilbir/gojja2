@@ -1,0 +1,6 @@
+{
+  "case": "methods/float_hex_non_finite.jj2",
+  "variables": {
+    "x": "or"
+  }
+}

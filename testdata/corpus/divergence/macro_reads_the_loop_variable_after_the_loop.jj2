@@ -1,0 +1,3 @@
+{}
+---
+{% set ns = namespace(f=[]) %}{% for i in [1, 2] %}{% macro m() %}{{ i }}{% endmacro %}{% set _ = ns.f.append(m) %}{% endfor %}{{ ns.f[0]() }}|{{ ns.f[1]() }}

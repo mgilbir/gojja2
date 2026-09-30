@@ -1,0 +1,3 @@
+{}
+---
+{{ 'ͺ'.isidentifier() }}|{{ 'aͺ'.isidentifier() }}|{{ '·'.isidentifier() }}|{{ 'a·'.isidentifier() }}|{{ 'ำ'.isidentifier() }}|{{ 'a·'.isidentifier() }}

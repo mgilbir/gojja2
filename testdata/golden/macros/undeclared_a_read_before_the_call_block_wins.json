@@ -1,0 +1,11 @@
+{
+  "case": "macros/undeclared_a_read_before_the_call_block_wins.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "[{'b': 2}<>]"
+}

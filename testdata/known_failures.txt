@@ -32,6 +32,9 @@ jinja-harvest/security_ccdfed5fc2.jj2     # __builtins__[__import__]
 # "Lazy sequence filters".
 chat-templates/models_llama-cpp-deepseek-r1__tool_call.jj2   # map()|tojson: generator is not JSON serializable
 chat-templates/models_llama-cpp-deepseek-r1__tools.jj2       # map()|tojson: generator is not JSON serializable
+own/divergence/lazy_reverse_length.jj2            # reversed() has no len(); the list here does
+own/divergence/lazy_reverse_truth.jj2             # reversed() is always true
+own/divergence/lazy_reverse_of_a_wide_range.jj2   # the list is built in full and meets the budget
 
 # --- generator addresses (not gradable) ---------------------------------------
 # `{{ [] | items }}` and friends: jinja2's items is lazy, so printing it renders
@@ -67,13 +70,57 @@ own/limits/integer_width_power.jj2      # gojja2 bounds a computed integer at 2*
 # Both refuse the template; only the wording differs. jinja2 compiles a macro to
 # a Python function, so a duplicate parameter reaches the Python compiler, and
 # the SyntaxError it raises names `l_1_a` -- the identifier jinja2 generated --
-# and a line of the generated module. Neither exists here, so gojja2 raises its
-# own TemplateSyntaxError naming the parameter the template wrote.
+# and a line of the generated module. Neither exists here, so gojja2 raises the
+# same SyntaxError naming the parameter the template wrote.
 #
 # This was a *behavioural* divergence until the macro was refused: gojja2
 # compiled it and the later parameter won, so a macro written here failed when
 # the template was run under CPython. See docs/divergences.md.
 own/macro/duplicate_parameter.jj2   # same refusal, different wording: jinja2 names a generated identifier
+
+# --- a keyword written twice in one call --------------------------------------
+# The same shape one level out, and the same admission. jinja2 writes a call's
+# keywords as `name=value` pairs, so CPython refuses the module it generated and
+# names a line *of that module*: "keyword argument repeated: a (<template>,
+# line 23)". gojja2 has no module to name a line of and stops at the wording.
+#
+# This too was behavioural until the call was refused: gojja2 bound the first
+# and swept the second into kwargs, so `{{ m(a=1, a=2) }}` rendered here and
+# failed under jinja2. A node that *folds* first never reaches the generator and
+# is not refused on either side -- fold/keyword_repeated_but_folded grades that
+# half, and it is an exact match. See docs/divergences.md.
+own/errors/keyword_repeated_in_a_macro_call.jj2   # CPython names a line of the generated module
+own/errors/keyword_repeated_in_a_filter.jj2       # likewise
+own/errors/keyword_repeated_in_a_test.jj2         # likewise
+own/errors/keyword_repeated_in_a_global.jj2       # likewise
+own/errors/keyword_repeated_in_a_method.jj2       # likewise
+own/errors/keyword_repeated_in_a_call_block.jj2   # likewise
+own/errors/keyword_repeated_among_three.jj2       # likewise
+own/errors/keyword_repeated_in_a_dead_branch.jj2  # likewise
+
+# --- a slice among several subscripts -----------------------------------------
+# `x[1:2, 3]`: jinja2 writes the slice out as `1:2` inside a tuple, so the module
+# it generates does not parse, and CPython's SyntaxError names a line of that
+# module. gojja2 refuses the template at the same point with the same class and
+# the same words, and the line of the template. TestSliceAmongSubscriptsIsRefused
+# pins the class and the words. A subscript of constants folds first and is an
+# exact match: fold/slice_among_subscripts_* grades that half.
+own/errors/slice_among_subscripts_beats_a_repeated_keyword.jj2    # CPython names a line of the generated module
+own/errors/slice_among_subscripts_both_slices.jj2                 # CPython names a line of the generated module
+own/errors/slice_among_subscripts_bound_is_a_name.jj2             # CPython names a line of the generated module
+own/errors/slice_among_subscripts_chained.jj2                     # CPython names a line of the generated module
+own/errors/slice_among_subscripts_empty_bounds.jj2                # CPython names a line of the generated module
+own/errors/slice_among_subscripts_folded_under_strict.jj2         # CPython names a line of the generated module
+own/errors/slice_among_subscripts_follows_a_repeated_keyword.jj2  # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_a_dead_branch.jj2            # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_a_loop.jj2                   # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_a_macro.jj2                  # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_a_set.jj2                    # CPython names a line of the generated module
+own/errors/slice_among_subscripts_in_an_if_test.jj2               # CPython names a line of the generated module
+own/errors/slice_among_subscripts_inside_a_subscript.jj2          # CPython names a line of the generated module
+own/errors/slice_among_subscripts_name.jj2                        # CPython names a line of the generated module
+own/errors/slice_among_subscripts_slice_last.jj2                  # CPython names a line of the generated module
+own/fold/slice_among_subscripts_attribute_of_it.jj2               # likewise: the attribute of an undefined raises, so it is left for the render
 
 # --- a builtin type's generic alias -------------------------------------------
 # Python 3.9 made a builtin type subscriptable as a *type annotation*, so
@@ -94,6 +141,8 @@ own/divergence/dict_attr_fallback.jj2    dict.nosuch falls back to a generic ali
 # failing. See docs/divergences.md.
 own/divergence/self_is_iterable.jj2      the legacy iteration protocol accepts __getitem__
 own/divergence/self_list.jj2             list(self) asks for index 0 and raises KeyError
+own/divergence/self_list_through_a_proxy.jj2  likewise, through a mappingproxy
+own/divergence/self_loop_through_a_proxy.jj2  likewise, as a for loop
 
 # --- a `{% set %}` block writing to a name that was never set ------------------
 # The block form is an item assignment, not a namespace write -- jinja2 emits no
@@ -122,6 +171,14 @@ own/divergence/class_generic_alias_item.jj2    # list['a'] is a generic alias
 own/divergence/class_generic_alias_slice.jj2   # so is list[slice(...)]
 own/divergence/class_generic_alias_attr.jj2    # .a falls back to ['a']
 
+# --- a folded infinity in a position jinja2 writes out ---
+# jinja2 writes a folded constant into the generated Python as its repr, and a
+# float infinity reprs as `inf`, which is not a Python name. gojja2 answers the
+# number; CPython raises NameError at render. It accepts what CPython cannot run.
+own/divergence/folded_infinity_in_a_set.jj2
+own/divergence/folded_infinity_in_a_filter_default.jj2
+own/divergence/folded_infinity_nan_in_a_set.jj2
+
 # --- a type object's dunders ---
 # A class's methods are implemented; its dunders are not, because gojja2 exposes
 # no `__len__` or `__abs__` on a value for the type object to hand out. CPython
@@ -132,6 +189,24 @@ own/divergence/class_unbound_dunder_len_with_self.jj2
 own/divergence/class_unbound_dunder_abs_with_self.jj2
 own/divergence/class_unbound_dunder_abs_wrong_self.jj2
 own/divergence/class_unbound_bool_arity_names_int.jj2
+
+# --- a Python-written class's methods, through its type object ---
+# jinja2's own classes (Cycler, LoopContext) carry their methods as plain Python
+# functions, which accept any self and fail inside the body. gojja2's type
+# objects for them carry no methods, so the name is undefined. See
+# docs/divergences.md, "Python object introspection".
+own/divergence/class_python_method_cycler_next_is_defined.jj2
+own/divergence/class_python_method_cycler_next_with_self.jj2
+own/divergence/class_python_method_cycler_reset_with_self.jj2
+own/divergence/class_python_method_loop_cycle_with_self.jj2
+
+# --- a bound method's receiver compared by identity ---
+# Two bound methods are equal when their receivers are the same object. Two
+# literal 300s are two objects on CPython and one value here. See
+# docs/divergences.md, "`is sameas` on two literals".
+own/divergence/bound_method_literal_receiver_int.jj2
+own/divergence/bound_method_literal_receiver_float.jj2
+own/divergence/bound_method_literal_receiver_wide_int.jj2
 
 # --- an unpack count over a lazy filter's result ---------------------------------
 # The @3.14 suffix means "agrees with the pin, diverges on that one". 3.14 names
@@ -151,3 +226,45 @@ own/divergence/unpack_count_lazy_filter.jj2@3.14   # |reverse is a list here
 own/divergence/undefined_exc_callable_class_global.jj2      # raise range(msg)
 own/divergence/undefined_exc_callable_class_that_refuses.jj2  # raise dict(msg)
 own/divergence/undefined_exc_callable_macro.jj2             # raise macro(msg)
+
+# --- a break or a continue that binds to no loop -------------------------------
+# Both refuse the template at compile time, with the same class and the same
+# words; only a suffix differs. jinja2 implements these tags by emitting Python's
+# own keywords, so CPython refuses the generated module and names a line *of that
+# module*: "'break' outside loop (<template>, line 11)". gojja2 has no generated
+# module to name a line of, so it stops at the wording CPython chose.
+#
+# Which shapes bind nothing is jinja2's, measured rather than guessed: a loop's
+# `{% else %}` body is emitted after the loop, a recursive loop's `{% else %}`
+# with it, and a macro, a block and a `{% call %}` body are each functions of
+# their own. A filter block, a `{% set %}` block, `{% with %}` and
+# `{% autoescape %}` are inline and a break reaches the loop through them -- those
+# are graded, and they pass. See docs/divergences.md and
+# TestUnboundLoopControlIsRefused.
+own/errors/break_outside_loop.jj2            # CPython names a line of the generated module
+own/errors/continue_outside_loop.jj2         # likewise
+own/errors/break_in_loop_else.jj2            # likewise
+own/errors/continue_in_loop_else.jj2         # likewise
+own/errors/break_in_recursive_loop_else.jj2  # likewise
+own/errors/break_in_macro.jj2                # likewise
+own/errors/break_in_block.jj2                # likewise
+own/errors/break_in_call_block.jj2           # likewise
+
+# --- a macro's view of the loop it was defined in ------------------------------
+# jinja2 compiles a loop body into the enclosing Python function, so a macro
+# defined there closes over the loop's variables as cells: it reads whatever
+# they hold when it is called, and `missing` (which prints as "missing") once
+# the loop has ended. gojja2 builds a frame per iteration, so the macro keeps
+# the value it was defined with. Matching it would mean modelling jinja2's code
+# generator rather than its language. See docs/divergences.md.
+own/divergence/macro_reads_the_loop_variable_after_the_loop.jj2   jinja2 prints "missing|missing"
+own/divergence/macro_reads_the_current_loop_value.jj2             the cell holds the current iteration's value
+own/divergence/macro_reads_a_body_set_after_the_loop.jj2          a body-assigned name is unbound after the loop
+
+# --- an {% autoescape %} flag that is a StrictUndefined ------------------------
+# jinja2 keeps the flag as it is and asks for its truth where a run-time output
+# escapes, so a body with nothing of the sort renders. gojja2 asks at the tag.
+# See docs/divergences.md.
+own/divergence/autoescape_flag_strict_folded_output.jj2   CPython renders "<"; the truth is never asked
+own/divergence/autoescape_flag_strict_empty_body.jj2      CPython renders nothing; the truth is never asked
+own/divergence/autoescape_flag_strict_folded_number.jj2   CPython renders "1"; the truth is never asked

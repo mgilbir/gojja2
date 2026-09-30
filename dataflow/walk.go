@@ -63,26 +63,32 @@ func (a *analyzer) expr(n *syntax.Node) symset {
 		return out
 
 	case syntax.KindGetattr:
-		// Reaching *through* an undefined raises, and the thing most
-		// likely to be one is an attribute that was not there. So `x.a`
-		// cannot fail whatever x holds -- a missing attribute is
-		// undefined and prints empty -- while `(x.a).b` can, because
-		// `x.a` is undefined for most x and `.b` on an undefined raises.
+		// An attribute that is not there raises under StrictUndefined,
+		// at the access itself, so `x.a` decides whether the render
+		// finishes: `{{ neg.denominator }}` renders for an int and stops
+		// the render dead for a string.
 		//
-		// A plain name or a constant as the subject is what makes the
-		// one-step case safe. Anything computed -- another attribute, an
-		// item, a filter, a call -- can hand back an undefined, so
-		// reaching through it decides whether the render finishes.
-		if sub := n.Child(syntax.RoleSubject); sub != nil &&
-			sub.Kind != syntax.KindName && sub.Kind != syntax.KindConst {
-			defer func() { a.apply(out, Required) }()
-		}
+		// This used to exempt a one-step access on a plain name or a
+		// constant, on the grounds that a missing attribute is undefined
+		// and prints empty. That is true of three of the four Undefined
+		// classes and false of the one that exists to refuse, and the
+		// analysis has no environment to tell them apart -- so the
+		// exemption was a false negative, which is the one kind of error
+		// a caller reading "cannot fail because of this" cannot recover
+		// from. It cost 17 of 167 claims over the corpus to drop; the
+		// remaining 150 are true under every class. A soak seed found it
+		// through `{{ neg.denominator }}` after a generator change moved
+		// what that seed draws.
+		//
+		// A namespace field returns first, before this: the field is
+		// named in the template, so whether it is there is not in doubt.
 		if ns := a.namespaceOf(n.Child(syntax.RoleSubject)); ns != nil {
 			if f := a.namespaceField(ns, n.Attr("attr")); f != nil {
 				out[f] = true
 				return out
 			}
 		}
+		defer func() { a.apply(out, Required) }()
 		out.add(a.expr(n.Child(syntax.RoleSubject)))
 		return out
 
@@ -239,16 +245,29 @@ func (a *analyzer) callMacro(sym *syntax.Symbol, call *syntax.Node) symset {
 		}
 		a.depend(p, srcs)
 	}
+	// What steered the macro's body steers this call's result. The result
+	// is not a symbol, so the choice is between saying nothing and saying
+	// it here: a call can be handed to anything, so Required is the answer
+	// that cannot be wrong in the direction that matters.
+	if steers := a.macroSteers[sym]; len(steers) > 0 {
+		a.apply(steers, Required)
+		a.steerEmit(steers)
+	}
 	return a.macroOut[sym]
 }
 
 // captureBody is what a block set's or filter block's body would have printed.
-func (a *analyzer) captureBody(n *syntax.Node) symset {
+// captureBody collects a body into a value instead of the document: what the
+// text is made of, and what decided how much of it there is.
+func (a *analyzer) captureBody(n *syntax.Node) (out, steers symset) {
 	a.capture = append(a.capture, symset{})
+	a.steered = append(a.steered, symset{})
 	a.stmts(n)
-	out := a.capture[len(a.capture)-1]
+	out = a.capture[len(a.capture)-1]
+	steers = a.steered[len(a.steered)-1]
 	a.capture = a.capture[:len(a.capture)-1]
-	return out
+	a.steered = a.steered[:len(a.steered)-1]
+	return out, steers
 }
 
 func (a *analyzer) stmts(n *syntax.Node) {
@@ -314,6 +333,11 @@ func (a *analyzer) ifStmt(n *syntax.Node, chainFails bool) {
 	if chainFails {
 		a.apply(test, Required)
 	}
+	// Inside a captured body the arm decides what the *value* is, and what
+	// consumes that value can fail for one string and not another --
+	// `{% set v | last %}{% if t %}xx{% endif %}{% endset %}` is "x" or an
+	// undefined that the wrap prints. Outside one this is the Steers above.
+	a.steerEmit(test)
 	a.stmts(n)
 	for _, c := range n.Children(syntax.RoleElif) {
 		a.ifStmt(c, chainFails)
@@ -344,9 +368,9 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		// whatever happens, so it is not guarded by itself. An elif's test
 		// is guarded, because it only runs when the ones before it were
 		// false, and it travels with the arms.
-		a.ifStmt(n, canFailInAny(n.Children(syntax.RoleBody)) ||
-			canFailInAny(n.Children(syntax.RoleElif)) ||
-			canFailInAny(n.Children(syntax.RoleElse)))
+		a.ifStmt(n, a.canFailInAny(n.Children(syntax.RoleBody)) ||
+			a.canFailInAny(n.Children(syntax.RoleElif)) ||
+			a.canFailInAny(n.Children(syntax.RoleElse)))
 
 	case syntax.KindFor:
 		// The sequence's length decides how many times the body runs, so
@@ -362,8 +386,13 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		}
 		loopTest := a.expr(n.Child(syntax.RoleTest))
 		a.apply(loopTest, Steers)
+		// How many times the body runs decides what a capture around it
+		// holds, exactly as a branch does. The iterable is already
+		// Required above, for the same reason and one step earlier.
+		a.steerEmit(loopTest)
+		a.steerEmit(srcs)
 		for _, guarded := range n.Children(syntax.RoleBody) {
-			if canFailIn(guarded) {
+			if a.canFailIn(guarded) {
 				a.apply(loopTest, Required)
 				break
 			}
@@ -382,14 +411,26 @@ func (a *analyzer) stmt(n *syntax.Node) {
 		a.bind(target, a.expr(value))
 
 	case syntax.KindAssignBlk:
-		srcs := a.captureBody(n)
+		srcs, steers := a.captureBody(n)
 		srcs.add(a.expr(n.Child(syntax.RoleFilter)))
 		a.bind(n.Child(syntax.RoleTarget), srcs)
+		// What steered the body steers the variable, so a later use that
+		// can fail -- `{{ v|last }}` -- reaches back to it.
+		a.steerTarget(n.Child(syntax.RoleTarget), steers)
+		if n.Child(syntax.RoleFilter) != nil {
+			// ...and a filter here runs whether or not the variable is
+			// ever used, so it can fail on the spot.
+			a.apply(steers, Required)
+		}
 
 	case syntax.KindFilterBlk:
-		srcs := a.captureBody(n)
+		srcs, steers := a.captureBody(n)
 		srcs.add(a.expr(n.Child(syntax.RoleFilter)))
 		a.emit(srcs)
+		// The filter runs over whatever the body left, so what decided
+		// that can decide whether it fails.
+		a.apply(steers, Required)
+		a.steerEmit(steers)
 
 	case syntax.KindMacro:
 		// Looked up outside the macro's own scope. A macro binds its name
@@ -419,7 +460,16 @@ func (a *analyzer) stmt(n *syntax.Node) {
 				a.expr(d)
 			}
 		}
-		out := a.captureBody(n)
+		out, steers := a.captureBody(n)
+		// A macro's body is captured here and emitted where it is
+		// called, so what steered it steers the call's result. There is
+		// no symbol for that result to hang an edge on, so the names are
+		// recorded against the macro and applied at the call.
+		if sym != nil {
+			a.macroSteers[sym] = steers
+		} else {
+			a.steerEmit(steers)
+		}
 		if sym != nil {
 			a.macroOut[sym] = out
 		} else {
@@ -545,7 +595,7 @@ func canRaise(k syntax.Kind) bool {
 // does.
 //
 // An over-approximation, like Required itself: the construct *can* raise.
-func canFailIn(n *syntax.Node) bool {
+func (a *analyzer) canFailIn(n *syntax.Node) bool {
 	found := false
 	syntax.Walk(n, func(nd *syntax.Node, _ syntax.Role) bool {
 		if found {
@@ -555,6 +605,17 @@ func canFailIn(n *syntax.Node) bool {
 		case syntax.KindBinOp, syntax.KindUnaryOp, syntax.KindCompare,
 			syntax.KindOperand, syntax.KindTest, syntax.KindFilter,
 			syntax.KindCall, syntax.KindGetitem, syntax.KindPair,
+			// Getattr, beside its sibling Getitem, which had been here
+			// alone: reaching through an undefined raises, so an arm
+			// holding `{{ nope.attr }}` can stop the render and the
+			// test that guards it decides whether it does. The analysis
+			// already says as much about the *base* -- it marks `nope`
+			// Required -- so leaving the guard out was inconsistent with
+			// what it says one node down. Found by a generated
+			// `{% if users %}{% do nope.nothing %}{% endif %}`, which is
+			// the minimal arm: anything else in it is usually a filter
+			// or a call, and those were already listed.
+			syntax.KindGetattr,
 			syntax.KindFor, syntax.KindInclude, syntax.KindExtends,
 			syntax.KindImport, syntax.KindFromImport,
 			// An nsref appears only as the target of a `{% set %}`, and
@@ -563,9 +624,28 @@ func canFailIn(n *syntax.Node) bool {
 			// assignment that a list, a string or a None refuses. So a
 			// branch holding one can stop the render, and the test that
 			// guards it decides whether it does.
-			syntax.KindNSRef:
+			syntax.KindNSRef,
+			// A break or a continue does not fail, but it decides
+			// whether the statements after it in the loop body run
+			// at all -- which is the same question this asks. A
+			// generated template found the hole:
+			// `{% for i in xs %}{% if c %}{% continue %}{% endif %}
+			// {{ d.nope ** 0 }}{% endfor %}` cannot fail when c is
+			// truthy and does when it is not, and the analysis said
+			// c could not matter, because the arm it guards holds
+			// nothing that fails.
+			syntax.KindBreak, syntax.KindContinue:
 			found = true
 			return false
+		case syntax.KindName:
+			// Only under StrictUndefined, where reading a name that
+			// was not passed raises rather than rendering empty --
+			// so `{% if c %}{{ nope }}{% endif %}` fails exactly
+			// when c is truthy. See WithStrictUndefined.
+			if a.strict {
+				found = true
+				return false
+			}
 		}
 		return true
 	})
@@ -573,9 +653,9 @@ func canFailIn(n *syntax.Node) bool {
 }
 
 // canFailInAny is canFailIn over a list.
-func canFailInAny(list []*syntax.Node) bool {
+func (a *analyzer) canFailInAny(list []*syntax.Node) bool {
 	for _, n := range list {
-		if canFailIn(n) {
+		if a.canFailIn(n) {
 			return true
 		}
 	}

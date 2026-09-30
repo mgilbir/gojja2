@@ -1,0 +1,6 @@
+{
+  "case": "errors/percent_c_names_an_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

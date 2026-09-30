@@ -71,7 +71,8 @@ func TestDataflowMatchesTheReference(t *testing.T) {
 			}
 			return other.Syntax()
 		}
-		flow := dataflow.Analyze(tree, dataflow.WithResolver(resolve))
+		flow := dataflow.Analyze(tree,
+			append(c.DataflowOptions(), dataflow.WithResolver(resolve))...)
 		got := map[string]string{}
 		for name, e := range flow.Context(tree) {
 			got[name] = encodeEffect(e)

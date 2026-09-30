@@ -1,0 +1,8 @@
+{
+  "v": "V",
+  "__templates__": {
+    "base.txt": "{% block b %}p{% endblock %}z{{ v }}{% filter length %}abc{% endfilter %}"
+  }
+}
+---
+{% extends 'base.txt' %}{% block b %}c{% endblock %}

@@ -1,0 +1,6 @@
+{
+  "case": "control/loop_cycle_no_items.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

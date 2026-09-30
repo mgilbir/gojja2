@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/guard_over_text.jj2",
+  "variables": {
+    "c": "f"
+  }
+}

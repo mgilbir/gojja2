@@ -1,0 +1,4 @@
+{
+  "case": "numbers/float_power_overflows_an_int_base.jj2",
+  "variables": {}
+}

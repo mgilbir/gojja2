@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "__templates__": {
+    "base.txt": "B[{% block a %}{% endblock %}]"
+  }
+}
+---
+{% if false %}{% extends 'base.txt' %}{% endif %}{{ (0 ** 0)[0] and 0 }}

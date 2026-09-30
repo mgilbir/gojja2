@@ -25,7 +25,10 @@ func TestNamespaceFieldsAreFollowed(t *testing.T) {
 		},
 		{
 			// Field by field, so a variable that only ever reaches an
-			// unprinted field gets a real negative.
+			// unprinted field gets a real negative. Neither is
+			// Required: a namespace field is named in the template,
+			// so unlike an ordinary attribute there is no question of
+			// its being missing. See KindGetattr in walk.go.
 			"fields are separate",
 			`{% set ns = namespace(a=p, b=q) %}{{ ns.a }}`,
 			"p:o q:-",

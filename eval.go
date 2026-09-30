@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"math"
+	"math/big"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -113,6 +114,7 @@ func (ex *exec) evalName(n *ast.Name) (value.Value, error) {
 			// currently being rendered, one step toward the base.
 			return value.FromObject(&blockReference{
 				st: ex.st, name: ex.blockName, index: ex.blockIndex + 1,
+				sc: ex.blockScope,
 			}), nil
 		}
 	}
@@ -246,20 +248,32 @@ func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
 	// for every other use of the result: `{{ (sv ~ n)|length }}` counted
 	// the entities it had just introduced, `|upper` shouted them, and a
 	// type error named Markup where CPython names str.
-	parts := make([]value.Value, 0, len(n.Nodes))
+	// Every operand is evaluated before any of them is converted, which is
+	// what jinja2's `str_join((a, b))` does: building that tuple is a name
+	// lookup, and an Undefined only refuses when str() reaches it. So an
+	// operand that fails outright is reported before an *earlier*
+	// StrictUndefined's refusal -- `{{ nope ~ (1|list) }}` names the list
+	// filter's TypeError, not the undefined. Refusing inside the evaluation
+	// loop got that the wrong way round.
+	//
+	// The fold interleaves instead, and that is upstream too: Concat.as_const
+	// joins a generator, so `str()` reaches each operand before the next one
+	// is folded. See constConcatItems.
+	parts, err := ex.evalAll(n.Nodes)
+	if err != nil {
+		return value.Undefined, err
+	}
 	markup := false
-	for _, node := range n.Nodes {
-		v, err := ex.eval(node)
-		if err != nil {
+	for _, v := range parts {
+		// markup_join maps soft_str over the sequence and stops at the
+		// first operand that is already Markup, so the refusal and the
+		// scan happen together and in order.
+		if err := value.StrictRefusal(v); err != nil {
 			return value.Undefined, err
-		}
-		if v.IsUndefined() && v.UndefinedBehavior() == value.UndefinedStrict {
-			return value.Undefined, v.UndefinedError()
 		}
 		if v.IsSafe() {
 			markup = true
 		}
-		parts = append(parts, v)
 	}
 	// One Markup operand escapes every other one, including those already
 	// passed -- markup_join rejoins the whole sequence when it finds one.
@@ -279,7 +293,10 @@ func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
 
 	var b strings.Builder
 	for _, v := range parts {
-		text := value.Str(v)
+		// StrFor, because a container's text is its repr and repr
+		// escapes by the interpreter's isprintable. See the same call in
+		// optimize.go, which folds this at compile time.
+		text := value.StrFor(v, ex.pyVersion())
 		if escaping && !v.IsSafe() {
 			text = escapeHTML(text)
 		}
@@ -402,7 +419,21 @@ func (ex *exec) getAttr(base value.Value, name string) (value.Value, error) {
 		}
 		return v, nil
 	}
-	if v, ok := lookupItem(base, value.String(name), ex.pyVersion()); ok {
+	// The item fallback, which is what Environment.getattr does when
+	// getattr raises AttributeError -- and it can raise in its own right:
+	// `mappingproxy(nope).mapping` finds no attribute, looks for the key,
+	// and the undefined refuses that.
+	if obj, ok := base.Interface().(interface {
+		GetItemErr(value.Value) (value.Value, bool, error)
+	}); ok {
+		v, found, err := obj.GetItemErr(value.String(name))
+		if err != nil {
+			return value.Undefined, err
+		}
+		if found {
+			return v, nil
+		}
+	} else if v, ok := lookupItem(base, value.String(name), ex.pyVersion()); ok {
 		return v, nil
 	}
 	return ex.st.Undefined(value.UndefinedAttr(base, name)), nil
@@ -478,7 +509,20 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 		if base.UndefinedBehavior() == value.UndefinedChainable {
 			return base, nil
 		}
-		return value.Undefined, base.UndefinedError()
+		err := base.UndefinedError()
+		// jinja2's getitem catches AttributeError, TypeError and
+		// LookupError from the subscript and answers a fresh undefined,
+		// which is why `{{ 1[0] }}` is empty. An UndefinedError is none
+		// of those and travels out -- unless the undefined was built
+		// with a fourth argument that is not an exception class, where
+		// *raising* it is itself a TypeError and so gets caught:
+		// `{{ nope.__class__(1, 2, 3, 4)[0] }}` renders nothing, while
+		// `.x` on the same undefined is the TypeError, because getattr
+		// catches AttributeError alone.
+		if errs.KindOf(err) != errs.UndefinedError {
+			return ex.st.Undefined(value.UndefinedElement(base, key)), nil
+		}
+		return value.Undefined, err
 	}
 
 	switch base.Kind() {
@@ -489,7 +533,12 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 		v, ok, err := d.Get(key, ex.pyVersion())
 		if err != nil {
 			// An unhashable key is a TypeError, which getitem
-			// catches like any other: `{{ d[[]] }}` is empty.
+			// catches like any other: `{{ d[[]] }}` is empty. A
+			// StrictUndefined key is not one -- hashing it raises the
+			// undefined's own error, which getitem does not catch.
+			if errs.KindOf(err) != errs.TypeError {
+				return value.Undefined, err
+			}
 			return ex.st.Undefined(value.UndefinedElement(base, key)), nil
 		}
 		if ok {
@@ -497,6 +546,20 @@ func (ex *exec) getItem(base, key value.Value) (value.Value, error) {
 		}
 	case value.KindObject:
 		switch obj := base.Interface().(type) {
+		// A mapping whose lookup can raise says so through the
+		// sibling, as a container whose containment can raise does
+		// through ContainsErr. Only mappingproxy has one, and only for
+		// an undefined inside it.
+		case interface {
+			GetItemErr(value.Value) (value.Value, bool, error)
+		}:
+			v, ok, err := obj.GetItemErr(key)
+			if err != nil {
+				return value.Undefined, err
+			}
+			if ok {
+				return v, nil
+			}
 		case value.Mapping:
 			if v, ok := obj.GetItem(key); ok {
 				return v, nil
@@ -568,6 +631,15 @@ func undefinedFor(s *State, v value.Value) value.Value {
 }
 
 func (ex *exec) indexSequence(base, key value.Value) (value.Value, error) {
+	// An object that presents a sequence -- a range, a group -- is indexed
+	// exactly, before the key is narrowed: a range's positions go past an
+	// int64. See value.SequenceItem.
+	if seq, ok := base.Interface().(value.Sequence); ok && base.Kind() == value.KindObject && key.IsInteger() {
+		if v, found := value.SequenceItem(seq, key); found {
+			return v, nil
+		}
+		return ex.st.Undefined(value.UndefinedElement(base, key)), nil
+	}
 	i, ok := key.Int64()
 	if !ok {
 		if key.Kind() == value.KindString {
@@ -615,17 +687,6 @@ func (ex *exec) indexSequence(base, key value.Value) (value.Value, error) {
 			return ex.st.Undefined(value.UndefinedIndex(base, int(i))), nil
 		}
 		return s.At(idx), nil
-	case value.KindObject:
-		seq := base.Interface().(value.Sequence)
-		idx := int(i)
-		if idx < 0 {
-			idx += seq.Len()
-		}
-		v, ok := seq.GetIndex(idx)
-		if !ok {
-			return ex.st.Undefined(value.UndefinedIndex(base, int(i))), nil
-		}
-		return v, nil
 	}
 	return ex.st.Undefined(value.UndefinedIndex(base, int(i))), nil
 }
@@ -712,15 +773,54 @@ func sliceIndex(v value.Value) (*int, error) {
 	return &idx, nil
 }
 
-// sliceBounds converts all three operands together.
+// bigSliceBounds is sliceBounds without the saturation, for a base that slices
+// in arbitrary precision. The order and the zero check are the same.
+func bigSliceBounds(start, stop, step value.Value) (a, b, c *big.Int, err error) {
+	one := func(v value.Value) (*big.Int, error) {
+		if v.IsNone() {
+			return nil, nil
+		}
+		if n, whole := v.BigInt(); whole {
+			return n, nil
+		}
+		return nil, errs.New(errs.TypeError,
+			"slice indices must be integers or None or have an __index__ method")
+	}
+	if c, err = one(step); err != nil {
+		return nil, nil, nil, err
+	}
+	if c != nil && c.Sign() == 0 {
+		return nil, nil, nil, errs.New(errs.ValueError, "slice step cannot be zero")
+	}
+	if a, err = one(start); err != nil {
+		return nil, nil, nil, err
+	}
+	if b, err = one(stop); err != nil {
+		return nil, nil, nil, err
+	}
+	return a, b, c, nil
+}
+
+// sliceBounds converts all three operands, in PySlice_Unpack's order.
+//
+// The step is converted *first* and its zero refused there, before start and
+// stop are looked at at all. The order is observable because the two refusals
+// are not alike: a bound that is not an integer is a TypeError, which jinja2's
+// getitem catches and turns into an undefined, while a zero step is a
+// ValueError it does not catch. Converting start and stop first therefore made
+// `{{ "abcde"[:1.5:0] }}` print nothing where CPython fails the render with
+// "slice step cannot be zero".
 func sliceBounds(start, stop, step value.Value) (a, b, c *int, err error) {
+	if c, err = sliceIndex(step); err != nil {
+		return nil, nil, nil, err
+	}
+	if c != nil && *c == 0 {
+		return nil, nil, nil, errs.New(errs.ValueError, "slice step cannot be zero")
+	}
 	if a, err = sliceIndex(start); err != nil {
 		return nil, nil, nil, err
 	}
 	if b, err = sliceIndex(stop); err != nil {
-		return nil, nil, nil, err
-	}
-	if c, err = sliceIndex(step); err != nil {
 		return nil, nil, nil, err
 	}
 	return a, b, c, nil
@@ -736,8 +836,9 @@ func sliceBounds(start, stop, step value.Value) (a, b, c *int, err error) {
 // sliceRepr is repr(slice(a, b, c)), which is the whole of the KeyError a
 // mapping raises for a slice from 3.12 on. An omitted bound is None there, not
 // absent, so all three always appear.
-func sliceRepr(start, stop, step value.Value) string {
-	return "slice(" + value.Repr(start) + ", " + value.Repr(stop) + ", " + value.Repr(step) + ")"
+func sliceRepr(start, stop, step value.Value, py value.PythonVersion) string {
+	return "slice(" + value.ReprFor(start, py) + ", " + value.ReprFor(stop, py) +
+		", " + value.ReprFor(step, py) + ")"
 }
 
 func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.PythonVersion) (value.Value, error) {
@@ -794,6 +895,16 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.Python
 		}
 		return value.Undefined, base.UndefinedError()
 	case value.KindObject:
+		// BigSlicer first: a range's positions can exceed an int, and
+		// converting the bounds through sliceIndexOf saturates all three
+		// parts of the result.
+		if sl, ok := base.Interface().(value.BigSlicer); ok {
+			start, stop, step, err := bigSliceBounds(startV, stopV, stepV)
+			if err != nil {
+				return value.Undefined, err
+			}
+			return sl.BigSlice(start, stop, step)
+		}
 		if sl, ok := base.Interface().(value.Slicer); ok {
 			start, stop, step, err := indices()
 			if err != nil {
@@ -817,6 +928,12 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.Python
 			}
 			return value.NewTuple(items...), nil
 		}
+		// A proxy subscripts what it wraps, and a slice is a subscript:
+		// `mappingproxy('abc')[1:]` is 'bc', and over a dict it is the
+		// dict's own KeyError for the slice.
+		if m, ok := base.Interface().(*mappingProxy); ok {
+			return sliceOf(m.d, startV, stopV, stepV, py)
+		}
 		if seq, ok := base.Interface().(value.Sequence); ok {
 			start, stop, step, err := indices()
 			if err != nil {
@@ -838,8 +955,21 @@ func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.Python
 		// that was a TypeError; 3.12 made slices hashable, so it became
 		// an ordinary KeyError naming the slice that missed.
 		if py.SliceKeysAreHashable() {
+			// Hashable, but only as far as its parts are: a slice's
+			// hash is built from start, stop and step, so an
+			// unhashable bound is refused *before* the miss is
+			// reported. `{'a':1}[[1,2]:]` is "unhashable type:
+			// 'list'" and not a KeyError naming the slice.
+			for _, part := range []value.Value{startV, stopV, stepV} {
+				// CheckHashableAs, not CheckHashable: from 3.14
+				// the refusal names what was used as the key,
+				// which is the slice and not the part.
+				if err := value.CheckHashableAs(part, "slice", py, value.AsDictKey); err != nil {
+					return value.Undefined, err
+				}
+			}
 			return value.Undefined, errs.New(errs.KeyError, "%s",
-				sliceRepr(startV, stopV, stepV))
+				sliceRepr(startV, stopV, stepV, py))
 		}
 		return value.Undefined, errs.New(errs.TypeError, "unhashable type: 'slice'")
 	}

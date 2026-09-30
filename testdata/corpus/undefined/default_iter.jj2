@@ -1,7 +1,0 @@
-{
-  "__settings__": {
-    "undefined": "default"
-  }
-}
----
-{% for x in nope %}{{ x }}{% endfor %}

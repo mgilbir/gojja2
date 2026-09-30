@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.translate([1].nope) }}

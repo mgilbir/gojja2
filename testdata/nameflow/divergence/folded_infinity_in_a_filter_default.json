@@ -1,0 +1,6 @@
+{
+  "case": "divergence/folded_infinity_in_a_filter_default.jj2",
+  "variables": {
+    "x": "or"
+  }
+}

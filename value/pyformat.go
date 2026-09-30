@@ -46,7 +46,7 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 	// `"" % []` is "" while `"" % 1` is a TypeError -- even though looking
 	// a name up in one can only fail. The operand is still available as the
 	// single positional argument either way, so `"%s" % {}` renders "{}".
-	mapping, hasMapping := args, isMappingArg(args)
+	mapping, hasMapping := args, isMappingArg(args, asBytes)
 
 	positional := []Value{args}
 	if s, ok := args.Seq(); ok && args.kind == KindTuple {
@@ -96,7 +96,7 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 		// `"%*s" % (5, "x")` read the 5 as the string and the "x" as
 		// the width, so every starred conversion failed.
 		if conv.starWidth {
-			w, err := takeStarInt(&positional, &next)
+			w, err := takeStarInt(&positional, &next, false)
 			if err != nil {
 				return Undefined, err
 			}
@@ -107,7 +107,7 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 			conv.width, conv.hasWidth = w, true
 		}
 		if conv.starPrec {
-			p, err := takeStarInt(&positional, &next)
+			p, err := takeStarInt(&positional, &next, true)
 			if err != nil {
 				return Undefined, err
 			}
@@ -136,6 +136,7 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 			}
 		}
 
+		conv.budget = budget
 		text, err := conv.apply(arg, escaping, budget)
 		if err != nil {
 			return Undefined, err
@@ -162,18 +163,20 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 
 // isMappingArg reports whether the right operand of % is subscriptable in
 // CPython's sense: dict and list qualify, tuple and str explicitly do not.
-func isMappingArg(v Value) bool {
+func isMappingArg(v Value, asBytes bool) bool {
 	switch v.kind {
 	case KindDict, KindList:
 		return true
 	case KindBytes:
-		// CPython's test is "supports subscripting", with tuple and str
-		// named as the two exceptions. A bytes is subscriptable and is
-		// not one of the two, so it counts -- which is why `"0" % b""`
-		// renders "0" rather than complaining that the b"" was never
-		// converted. Looking a *name* up in one still fails, as it does
-		// for a list; see lookupFormatKey.
-		return true
+		// CPython's test is "supports subscripting", and the exceptions
+		// are the format's *own* type: PyUnicode_Format names tuple and
+		// str, PyBytes_Format names tuple, bytes and bytearray. So a
+		// bytes counts when a str is being formatted -- which is why
+		// `"0" % b""` renders "0" rather than complaining that the b""
+		// was never converted -- and does not when a bytes is, where
+		// `b"0" % b""` is "not all arguments converted". Looking a
+		// *name* up in one still fails either way; see lookupFormatKey.
+		return !asBytes
 	case KindUndefined:
 		// Undefined defines __getitem__, so it passes the subscript
 		// check and `"x" % nope` formats rather than complaining about
@@ -188,57 +191,84 @@ func isMappingArg(v Value) bool {
 	return false
 }
 
-// lookupFormatKey resolves `%(name)s` against the right operand.
-// lookupFormatKeyAs is lookupFormatKey with the key's type decided by the
-// format string's: `b'%(k)s' % {'k': b'v'}` raises KeyError b'k', because the
-// name parsed out of a bytes format is itself bytes and a str key does not
-// match it.
+// lookupFormatKeyAs resolves `%(name)s` against the right operand, with the
+// key's own type decided by the format string's: the name parsed out of a bytes
+// format is itself bytes, so `b'%(k)s' % {'k': b'v'}` raises KeyError b'k' --
+// a str key does not match it -- and the complaint an operand that cannot be
+// indexed by name makes names bytes too, as in "list indices must be integers
+// or slices, not bytes".
 func lookupFormatKeyAs(mapping Value, key string, asBytes bool) (Value, error) {
-	if !asBytes {
-		return lookupFormatKey(mapping, key)
+	if asBytes {
+		return lookupFormatKey(mapping, Bytes([]byte(key)))
 	}
-	if d, ok := mapping.Dict(); ok {
-		if v, found := d.GetKnown(Bytes([]byte(key))); found {
-			return v, nil
-		}
-		return Undefined, errs.New(errs.KeyError, "%s", Repr(Bytes([]byte(key))))
-	}
-	return lookupFormatKey(mapping, key)
+	return lookupFormatKey(mapping, String(key))
 }
 
-func lookupFormatKey(mapping Value, key string) (Value, error) {
+func lookupFormatKey(mapping Value, key Value) (Value, error) {
 	switch mapping.kind {
 	case KindDict:
 		d, _ := mapping.Dict()
-		v, ok := d.GetString(key)
+		v, ok := d.GetKnown(key)
 		if !ok {
-			return Undefined, errs.New(errs.KeyError, "%s", Repr(String(key)))
+			return Undefined, errs.New(errs.KeyError, "%s", Repr(key))
 		}
 		return v, nil
 	case KindList:
 		// A list is subscriptable enough to be treated as a mapping but
 		// cannot actually be indexed by name.
 		return Undefined, errs.New(errs.TypeError,
-			"list indices must be integers or slices, not str")
+			"list indices must be integers or slices, not %s", key.TypeName())
 	case KindBytes:
 		// The same, and CPython says "byte" rather than "bytes" here.
+		// Only a str format reaches this: a bytes operand is the bytes
+		// format's own type, so isMappingArg refuses it there.
 		return Undefined, errs.New(errs.TypeError,
-			"byte indices must be integers or slices, not str")
+			"byte indices must be integers or slices, not %s", key.TypeName())
 	case KindUndefined:
 		// An undefined passes the subscript check -- it defines
-		// __getitem__ -- and then raises its own error when the key is
-		// actually looked up, which names the variable that was never
-		// set rather than complaining about the operand's type.
+		// __getitem__ -- and then answers the way a subscript of it
+		// would: ChainableUndefined hands back another undefined, which
+		// the conversion then refuses by *type*, and every other class
+		// raises its own error naming the variable that was never set.
+		// Raising for all of them made `b'%(k)b' % (x|attr('nope'))`
+		// under ChainableUndefined an UndefinedError where jinja2 says
+		// "%b requires a bytes-like object ... not 'ChainableUndefined'".
+		if mapping.UndefinedBehavior() == UndefinedChainable {
+			return mapping, nil
+		}
 		return Undefined, mapping.UndefinedError()
 	case KindObject:
+		// An object that can say why a subscript failed does: a proxy over a
+		// string is refused by *type*, not by a missing key.
+		if sub, ok := mapping.Interface().(interface {
+			Subscript(Value) (Value, error)
+		}); ok {
+			return sub.Subscript(key)
+		}
 		if m, ok := mapping.Interface().(Mapping); ok {
-			v, ok := m.GetItem(String(key))
+			v, ok := m.GetItem(key)
 			if !ok {
-				return Undefined, errs.New(errs.KeyError, "%s", Repr(String(key)))
+				return Undefined, errs.New(errs.KeyError, "%s", Repr(key))
 			}
 			return v, nil
 		}
+		if _, ok := mapping.Interface().(Sequence); ok {
+			// Subscriptable, so CPython does the lookup -- and the
+			// complaint is the object's own, naming its type:
+			// `'%(a)s' % range(3)` is "range indices must be
+			// integers or slices, not str". The blanket "format
+			// requires a mapping" was gojja2's answer for every one
+			// of these, which is what CPython says only for
+			// something it cannot subscript at all.
+			return Undefined, errs.New(errs.TypeError,
+				"%s indices must be integers or slices, not %s",
+				mapping.TypeName(), key.TypeName())
+		}
 	}
+	// Unreachable while this switch handles every kind isMappingArg accepts,
+	// which is the invariant between the two: nothing else gets this far,
+	// because a format with a `%(name)s` and a non-mapping operand is refused
+	// before the lookup. It is the right answer if that ever stops being true.
 	return Undefined, errs.New(errs.TypeError, "format requires a mapping")
 }
 
@@ -256,6 +286,10 @@ type conversion struct {
 	// bytes is set when the format string is a bytes, which changes what
 	// %b, %s, %r and %c accept. See FormatPercent.
 	bytes bool
+	// budget pays for what a precision asks for before it is built: a
+	// float's digits and an integer's zero padding are both sized by a
+	// number the template chose.
+	budget Budget
 	// at is the offset just past the verb, which is the position
 	// CPython names when the verb is not one it knows.
 	at int
@@ -302,8 +336,11 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 			i++
 		}
 		if i > start {
-			c.width, _ = strconv.Atoi(spec[start:i])
-			c.hasWidth = true
+			w, ok := boundedDigits(spec[start:i], math.MaxInt64)
+			if !ok {
+				return 0, errs.New(errs.ValueError, "width too big")
+			}
+			c.width, c.hasWidth = int(w), true
 		}
 	}
 
@@ -317,13 +354,17 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 			for i < len(spec) && spec[i] >= '0' && spec[i] <= '9' {
 				i++
 			}
-			c.prec, _ = strconv.Atoi(spec[start:i])
-			c.hasPrec = true
+			p, ok := boundedDigits(spec[start:i], math.MaxInt32)
+			if !ok {
+				return 0, errs.New(errs.ValueError, "precision too big")
+			}
+			c.prec, c.hasPrec = int(p), true
 		}
 	}
 
-	// Length modifiers are accepted and ignored, as in Python.
-	for i < len(spec) && strings.IndexByte("hlL", spec[i]) >= 0 {
+	// One length modifier is accepted and ignored, as in Python: `%ld` is
+	// `%d`, and `%lld` is an unsupported 'l'.
+	if i < len(spec) && strings.IndexByte("hlL", spec[i]) >= 0 {
 		i++
 	}
 
@@ -334,15 +375,44 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 	return i + 1, nil
 }
 
-func takeStarInt(positional *[]Value, next *int) (int, error) {
+// boundedDigits reads a run of ASCII digits, refusing one above limit -- the
+// check CPython's printf parser makes as it accumulates, PY_SSIZE_T_MAX for a
+// width and INT_MAX for a precision. strconv.Atoi clamped an out-of-range run
+// to MaxInt64 and reported it in an error nothing read, so a long precision
+// became 9223372036854775807: fmt printed "%!(NOVERB)" for a float and %d
+// tried to allocate that many zeros.
+func boundedDigits(s string, limit int64) (int64, bool) {
+	var n int64
+	for i := 0; i < len(s); i++ {
+		d := int64(s[i] - '0')
+		if n > (limit-d)/10 {
+			return 0, false
+		}
+		n = n*10 + d
+	}
+	return n, true
+}
+
+// takeStarInt reads the argument a `*` stands for. CPython converts a width
+// with PyLong_AsSsize_t and a precision with PyLong_AsInt, so each overflows
+// at its own C type -- `'%.*f' % (2**31, 1.5)` is "Python int too large to
+// convert to C int" -- where a bare Int64 check called an integer that was
+// merely large "not an int".
+func takeStarInt(positional *[]Value, next *int, precision bool) (int, error) {
 	if *next >= len(*positional) {
 		return 0, errs.New(errs.TypeError, "not enough arguments for format string")
 	}
 	v := (*positional)[*next]
 	*next++
-	n, ok := v.Int64()
-	if !ok {
+	if !v.IsInteger() {
 		return 0, errs.New(errs.TypeError, "* wants int")
+	}
+	n, fits := v.Int64()
+	if !fits {
+		return 0, errs.New(errs.OverflowError, "Python int too large to convert to C ssize_t")
+	}
+	if precision && (n > math.MaxInt32 || n < math.MinInt32) {
+		return 0, errs.New(errs.OverflowError, "Python int too large to convert to C int")
 	}
 	return int(n), nil
 }
@@ -425,6 +495,17 @@ func (c *conversion) bytesArg(v Value) (formatted, error) {
 	return formatted{body: c.truncate(v.str)}, nil
 }
 
+// errPercentCBytes is errPercentC for a bytes format, which has a message of its
+// own -- and 3.14 appended the type to both of them, not just the str one.
+func (c *conversion) errPercentCBytes(what string) error {
+	if c.py.PercentCNamesTheType() {
+		return errs.New(errs.TypeError,
+			"%%c requires an integer in range(256) or a single byte, not %s", what)
+	}
+	return errs.New(errs.TypeError,
+		"%%c requires an integer in range(256) or a single byte")
+}
+
 func (c *conversion) errPercentC(v Value, what string) error {
 	if c.py.PercentCNamesTheType() {
 		return errs.New(errs.TypeError,
@@ -461,7 +542,14 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 	//	           undefined's own error, naming the missing variable
 	//	%x %o %c   go through __index__, which Undefined does not
 	//	           define, so CPython raises its own TypeError instead
-	if v.IsUndefined() && strings.IndexByte("diueEfFgG", c.verb) >= 0 {
+	//
+	// A *bytes* format's float verbs are the exception: formatfloat in
+	// bytesobject.c replaces whatever the conversion raised with its own
+	// "float argument required, not Undefined", so the undefined's error
+	// never gets out there. Its integer verbs do not do that, which is why
+	// this is the float half and not the whole set.
+	if v.IsUndefined() && strings.IndexByte("diueEfFgG", c.verb) >= 0 &&
+		(!c.bytes || strings.IndexByte("diu", c.verb) >= 0) {
 		return formatted{}, v.UndefinedError()
 	}
 
@@ -532,21 +620,33 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 			// A byte, or a code point that fits in one.
 			if v.kind == KindBytes {
 				if len(v.str) != 1 {
-					return formatted{}, errs.New(errs.TypeError,
-						"%%c requires an integer in range(256) or a single byte")
+					// A bytes of the wrong length is named by
+					// its length in 3.14, the way the padding
+					// methods name a fill's: "not a bytes
+					// object of length 2" rather than "not
+					// bytes". Anything that is not a bytes at
+					// all keeps the plain type name --
+					// str.center's argument 2 splits the same
+					// way, see FillCharMessageNamesTheLength.
+					return formatted{}, c.errPercentCBytes(
+						fmt.Sprintf("a bytes object of length %d", len(v.str)))
 				}
 				return formatted{body: text(v.str)}, nil
 			}
 			if !v.IsInteger() {
-				return formatted{}, errs.New(errs.TypeError,
-					"%%c requires an integer in range(256) or a single byte")
+				// Qualified, as the str form above is: the two
+				// `%c` messages are the pair 3.14 changed.
+				return formatted{}, c.errPercentCBytes(QualifiedTypeName(v))
 			}
 			n, ok := v.Int64()
 			if !ok || n < 0 || n > 255 {
 				return formatted{}, errs.New(errs.OverflowError,
 					"%%c arg not in range(256)")
 			}
-			return formatted{body: text(string(rune(n)))}, nil
+			// One byte, not the code point's encoding: `b'%c' % 205`
+			// is b'\xcd' where the str form is 'Í'. Writing the rune
+			// put two bytes in for everything over 127.
+			return formatted{body: text(string([]byte{byte(n)}))}, nil
 		}
 		// Precision is accepted and ignored, as in Python.
 		if v.kind == KindString {
@@ -561,7 +661,13 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 		// one: the first says %c took the wrong kind of thing, the
 		// second says the code point does not exist.
 		if !v.IsInteger() {
-			return formatted{}, c.errPercentC(v, v.TypeName())
+			// The *qualified* name, which is the only thing 3.14
+			// qualifies in this family: `%c` of an Undefined is
+			// "not jinja2.runtime.Undefined" while `%f` of the same
+			// value is "not Undefined" and `%x` "not Undefined".
+			// A builtin is unqualified either way, so a dict view
+			// stays "dict_keys".
+			return formatted{}, c.errPercentC(v, QualifiedTypeName(v))
 		}
 		n, ok := v.Int64()
 		if !ok || n < 0 || n > 0x10FFFF {
@@ -653,6 +759,9 @@ func (c *conversion) integerDigits(v Value, base int, allowFloat bool) (string, 
 	// For an integer, precision is a minimum number of digits. Python
 	// keeps the single zero that C's "%.0d" of zero drops.
 	if c.hasPrec && len(digits) < c.prec {
+		if err := chargeBytes(c.budget, int64(c.prec-len(digits))); err != nil {
+			return "", false, err
+		}
 		digits = strings.Repeat("0", c.prec-len(digits)) + digits
 	}
 	return digits, negative, nil
@@ -660,10 +769,26 @@ func (c *conversion) integerDigits(v Value, base int, allowFloat bool) (string, 
 
 // floatBody renders a float conversion, in Python's spelling.
 func (c *conversion) floatBody(v Value) (formatted, error) {
-	f, ok := v.Float64()
-	if !ok {
-		return formatted{}, errs.New(errs.TypeError,
-			"must be real number, not %s", v.TypeName())
+	if c.bytes {
+		// PyBytes_Format words this after the verb rather than after the
+		// type: "float argument required, not str" where
+		// PyUnicode_Format says "must be real number, not str". It says
+		// the same for an integer too wide for a float64 -- "float
+		// argument required, not int" -- where the str side reports the
+		// overflow. One conversion either succeeds or does not; it does
+		// not distinguish why. The integer verbs agree on both sides;
+		// only the float ones split.
+		if _, err := FloatOrOverflow(v); !v.IsNumber() || err != nil {
+			return formatted{}, errs.New(errs.TypeError,
+				"float argument required, not %s", v.TypeName())
+		}
+	}
+	f, err := floatOperand(v)
+	if err != nil {
+		// Both halves come from floatOperand: "must be real number" for
+		// something that is not one, and the OverflowError for an
+		// integer too wide for a float64, which `%f` printed as "inf".
+		return formatted{}, err
 	}
 	negative := math.Signbit(f)
 	sign := c.sign(negative)
@@ -701,6 +826,12 @@ func (c *conversion) floatBody(v Value) (formatted, error) {
 		spec += "#"
 	}
 	spec += "." + strconv.Itoa(prec) + string(verb)
+	// The digits a precision asks for are allocated by Sprintf, so they are
+	// paid for first. Up to INT_MAX is CPython's to attempt; the parser
+	// refused anything past it.
+	if err := chargeBytes(c.budget, int64(prec)); err != nil {
+		return formatted{}, err
+	}
 	body := fmt.Sprintf(spec, math.Abs(f))
 	return formatted{prefix: sign, body: body, numeric: true}, nil
 }
@@ -734,7 +865,10 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 		if err != nil {
 			return formatted{}, true, err
 		}
-		digits, negative := c.padDigits(n)
+		digits, negative, err := c.padDigits(n)
+		if err != nil {
+			return formatted{}, true, err
+		}
 		return formatted{prefix: c.sign(negative), body: digits, numeric: true}, true, nil
 
 	case 'e', 'E', 'f', 'F', 'g', 'G':
@@ -750,12 +884,15 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 
 // padDigits renders an integer's magnitude and applies the minimum-digit
 // precision, which is the part %d shares between the two paths.
-func (c *conversion) padDigits(b *big.Int) (string, bool) {
+func (c *conversion) padDigits(b *big.Int) (string, bool, error) {
 	digits := new(big.Int).Abs(b).Text(10)
 	if c.hasPrec && len(digits) < c.prec {
+		if err := chargeBytes(c.budget, int64(c.prec-len(digits))); err != nil {
+			return "", false, err
+		}
 		digits = strings.Repeat("0", c.prec-len(digits)) + digits
 	}
-	return digits, b.Sign() < 0
+	return digits, b.Sign() < 0, nil
 }
 
 // markupInt is Python's int() over the helper: a number truncates, a string is
@@ -783,7 +920,7 @@ func markupInt(v Value, verb byte, py PythonVersion) (*big.Int, error) {
 			}
 		}
 		return nil, errs.New(errs.ValueError,
-			"invalid literal for int() with base 10: %s", Repr(v))
+			"invalid literal for int() with base 10: %s", TruncatedRepr(v, py))
 	}
 	return nil, errs.New(errs.TypeError,
 		"%%%c format: a real number is required, not _MarkupEscapeHelper", verb)
@@ -801,7 +938,7 @@ func markupFloat(v Value, py PythonVersion) (float64, error) {
 			}
 		}
 		return 0, errs.New(errs.ValueError,
-			"could not convert string to float: %s", Repr(v))
+			"could not convert string to float: %s", ReprFor(v, py))
 	}
 	return 0, errs.New(errs.TypeError,
 		"float() argument must be a string or a real number, not '%s'", v.TypeName())

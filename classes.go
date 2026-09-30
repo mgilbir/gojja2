@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"math/big"
 	"slices"
 	"strings"
 
@@ -60,6 +61,21 @@ var classProbes = map[string]value.Value{
 	"int":   value.Int(0),
 	"float": value.Float(0),
 	"bool":  value.Bool(false),
+	// The classes of gojja2's own objects, whose methods are found the same
+	// way. `{{ range(3).__class__.index(range(3), 2) }}` is 2 in CPython and
+	// was "'type object' has no attribute 'index'" here.
+	"range":        value.FromObject(newRange(big.NewInt(0), big.NewInt(0), big.NewInt(1))),
+	"set":          value.FromObject(emptySet()),
+	"dict_keys":    value.FromObject(&dictView{d: value.NewDict(), kind: viewKeys}),
+	"dict_values":  value.FromObject(&dictView{d: value.NewDict(), kind: viewValues}),
+	"dict_items":   value.FromObject(&dictView{d: value.NewDict(), kind: viewItems}),
+	"mappingproxy": value.FromObject(&mappingProxy{d: value.NewDict()}),
+}
+
+// emptySet is a set with nothing in it, which cannot fail to build.
+func emptySet() *value.Set {
+	s, _ := value.NewSet(nil, value.DefaultPythonVersion, nil)
+	return s
 }
 
 // unboundMethod is `T.m`: the method with self supplied at the call.
@@ -73,6 +89,14 @@ var classProbes = map[string]value.Value{
 // Everything past the first argument is the method's own, so an arity error
 // comes from the method rather than from here.
 func (c *classObject) unboundMethod(name string) (value.Value, bool) {
+	// A descriptor is a property of the class itself and needs no probe, and
+	// it must be answered before one: the range probe would find `start` and
+	// hand back its value, 0, where the class has a member descriptor.
+	if kind, isDescriptor := classDescriptors[c.qualified][name]; isDescriptor {
+		return value.FromObject(&descriptorObject{
+			kind: kind, class: methodOwner(c.qualified), name: name,
+		}), true
+	}
 	probe, ok := classProbes[c.qualified]
 	if !ok {
 		return value.Undefined, false
@@ -129,6 +153,45 @@ func selfMatches(self value.Value, class string) bool {
 
 // unboundMethodObject is what `T.m` evaluates to, and it is a value in its own
 // right: it prints, it is defined, and it is callable.
+// classDescriptors are the names a class carries as a *descriptor* rather than
+// a method: `int.real` is a getset_descriptor and `range.start` a member one.
+// Neither is callable, and the repr says "attribute" or "member" rather than
+// "method" -- `{{ n.__class__.real() }}` is "'getset_descriptor' object is not
+// callable" where gojja2 answered the unbound method's own complaint.
+//
+// bool inherits all four of int's, and the repr names the owner: `True
+// .__class__.real` is "<attribute 'real' of 'int' objects>".
+var classDescriptors = map[string]map[string]string{
+	"int":   {"real": "attribute", "imag": "attribute", "numerator": "attribute", "denominator": "attribute"},
+	"bool":  {"real": "attribute", "imag": "attribute", "numerator": "attribute", "denominator": "attribute"},
+	"float": {"real": "attribute", "imag": "attribute"},
+	"range": {"start": "member", "stop": "member", "step": "member"},
+	// Every view carries its dict as a proxy (3.10), and the class says so:
+	// `<attribute 'mapping' of 'dict_items' objects>`.
+	"dict_keys":   {"mapping": "attribute"},
+	"dict_values": {"mapping": "attribute"},
+	"dict_items":  {"mapping": "attribute"},
+}
+
+// descriptorObject is one of those: a value that prints itself and refuses to
+// be called.
+type descriptorObject struct{ kind, class, name string }
+
+func (d *descriptorObject) GetAttr(string) (value.Value, bool) {
+	return value.Undefined, false
+}
+
+func (d *descriptorObject) TypeName() string {
+	if d.kind == "member" {
+		return "member_descriptor"
+	}
+	return "getset_descriptor"
+}
+
+func (d *descriptorObject) Repr() string {
+	return "<" + d.kind + " '" + d.name + "' of '" + d.class + "' objects>"
+}
+
 type unboundMethodObject struct{ class, name string }
 
 func (m *unboundMethodObject) GetAttr(string) (value.Value, bool) {
@@ -226,6 +289,8 @@ func init() {
 		"jinja2.utils.Namespace": globalNamespace,
 		"jinja2.utils.Cycler":    globalCycler,
 		"jinja2.utils.Joiner":    globalJoiner,
+		"mappingproxy":           constructMappingProxy,
+		"set":                    constructSet,
 	}
 	// An undefined's class builds another undefined. Which class it was
 	// decides how the result behaves, and the class name is the only thing
@@ -311,6 +376,19 @@ func constructInt(s *State, args *value.CallArgs) (value.Value, error) {
 	if len(args.Pos) > 1 {
 		base, haveBase = args.Pos[1], true
 	}
+	// The counts come before the names, as they do in bindConversionArgs:
+	// with a keyword present CPython counts every argument against the
+	// maximum, so `int(s, 2, base=8)` is "int() takes at most 2 arguments
+	// (3 given)" and not a word about `base`, and `int(1, base=2, nope=3)`
+	// names the count rather than `nope`. Only this check moved: with it in
+	// place, more than two positional arguments means either no keyword at
+	// all (and the count below answers) or a total over two (and this one
+	// does), so the order of the two checks below cannot be observed --
+	// swapping them fails nothing, which is how that was established.
+	if n := len(args.Pos) + len(args.Kwargs); len(args.Kwargs) > 0 && n > 2 {
+		return value.Undefined, errs.New(errs.TypeError,
+			"int() takes at most 2 arguments (%d given)", n)
+	}
 	for _, kw := range args.Kwargs {
 		if kw.Name != "base" {
 			return value.Undefined, clinicKeyword(s.PythonVersion(), "int", kw.Name)
@@ -359,36 +437,31 @@ func constructFloat(s *State, args *value.CallArgs) (value.Value, error) {
 // call: a codec gojja2 does not implement diverges in exactly one place rather
 // than two, and the handler wordings are already graded there.
 func constructStr(s *State, args *value.CallArgs) (value.Value, error) {
-	pos, err := bindConversionArgs(s.PythonVersion(), "str", "object", args, 3)
+	got, err := bindConversionArgs(s.PythonVersion(), "str", "object", args, 3)
 	if err != nil {
 		return value.Undefined, err
 	}
-	if len(pos) == 0 {
+	if !got.hasObject {
 		return value.String(""), nil
 	}
-	if len(pos) == 1 {
+	if !got.hasEncoding && !got.hasErrors {
 		// strictStr rather than value.Str: a StrictUndefined refuses to
 		// become a string, and that refusal is what the template sees.
-		text, err := strictStr(pos[0])
+		text, err := strictStrFor(got.object, s.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
 		return value.String(text), nil
 	}
-	// CPython checks the encoding's own type before it looks at the subject.
-	if !pos[1].IsString() {
-		return value.Undefined, errs.New(errs.TypeError,
-			"str() argument 'encoding' must be str, not %s", pos[1].TypeName())
-	}
 	switch {
-	case pos[0].Kind() == value.KindBytes:
-		return methodDecode(s, pos[0], &value.CallArgs{Pos: pos[1:]})
-	case pos[0].IsString():
+	case got.object.Kind() == value.KindBytes:
+		return methodDecode(s, got.object, got.codecArgs())
+	case got.object.IsString():
 		return value.Undefined, errs.New(errs.TypeError,
 			"decoding str is not supported")
 	}
 	return value.Undefined, errs.New(errs.TypeError,
-		"decoding to str: need a bytes-like object, %s found", pos[0].TypeName())
+		"decoding to str: need a bytes-like object, %s found", got.object.TypeName())
 }
 
 // constructMarkup is str() with the result marked safe. Markup does not escape
@@ -432,6 +505,75 @@ func constructBool(_ *State, args *value.CallArgs) (value.Value, error) {
 		return value.Undefined, err
 	}
 	return value.Bool(ok), nil
+}
+
+// constructMappingProxy is types.MappingProxyType(mapping), which a template
+// can reach through `d.keys().mapping.__class__`. Its one argument may be
+// named, and what it accepts is PyMapping_Check minus list and tuple -- so a
+// *string* is a mapping here, and another proxy is one too.
+func constructMappingProxy(s *State, args *value.CallArgs) (value.Value, error) {
+	if len(args.Pos)+len(args.Kwargs) > 1 {
+		return value.Undefined, errs.New(errs.TypeError,
+			"mappingproxy() takes at most 1 argument (%d given)",
+			len(args.Pos)+len(args.Kwargs))
+	}
+	arg, ok := args.Kwarg("mapping")
+	if !ok {
+		if len(args.Pos) == 0 {
+			// Any other keyword is reported as the missing one:
+			// CPython checks that the argument is there before it
+			// asks what the caller named.
+			return value.Undefined, errs.New(errs.TypeError,
+				"mappingproxy() missing required argument 'mapping' (pos 1)")
+		}
+		arg = args.Pos[0]
+	}
+	if !mappingCheck(arg) {
+		return value.Undefined, errs.New(errs.TypeError,
+			"mappingproxy() argument must be a mapping, not %s", arg.TypeName())
+	}
+	return value.FromObject(&mappingProxy{d: arg, py: s.PythonVersion()}), nil
+}
+
+// mappingCheck is PyMapping_Check minus list and tuple, which is the whole of
+// what mappingproxy() asks of its argument.
+//
+// PyMapping_Check is `tp_as_mapping->mp_subscript != NULL`, which is to say
+// "defines __getitem__" -- str, bytes and range do, and so does jinja2's
+// Undefined, which is why `mappingproxy(nope)` is a proxy rather than a
+// TypeError. list and tuple define it too and are excluded by name, in
+// CPython's own code and here. A dict view, a set, a namespace, a cycler and a
+// bound method do not define it, and are refused with their type's name.
+//
+// Only a dict was accepted before, plus anything whose Go type happened to
+// implement Mapping -- which let `mappingproxy(range(2))` and
+// `mappingproxy('ab'.encode())` be TypeErrors where CPython builds a proxy that
+// indexes, sizes and iterates as the wrapped value does.
+func mappingCheck(v value.Value) bool {
+	switch v.Kind() {
+	case value.KindDict, value.KindString, value.KindBytes, value.KindUndefined:
+		return true
+	case value.KindList, value.KindTuple:
+		return false
+	case value.KindObject:
+		// A tuple subclass -- a |groupby pair -- is a tuple to
+		// PyTuple_Check, so the exclusion catches it as well.
+		if _, ok := v.Interface().(value.TupleView); ok {
+			return false
+		}
+		if _, ok := v.Interface().(value.Mapping); ok {
+			return true
+		}
+		// `self` defines __getitem__ -- `self['body']` is the block --
+		// even though gojja2 answers it through the attribute path
+		// rather than a Mapping, so PyMapping_Check passes on it.
+		if _, ok := v.Interface().(*templateReference); ok {
+			return true
+		}
+		_, ok := v.Interface().(value.Sequence)
+		return ok
+	}
+	return false
 }
 
 func constructNone(_ *State, args *value.CallArgs) (value.Value, error) {
@@ -525,27 +667,59 @@ func constructTuple(s *State, args *value.CallArgs) (value.Value, error) {
 	return value.NewTuple(items...), nil
 }
 
-// constructBytes is bytes(), bytes(count), bytes(iterable of ints) and
-// bytes(str, encoding[, errors]).
-func constructBytes(s *State, args *value.CallArgs) (value.Value, error) {
-	pos, err := bindConversionArgs(s.PythonVersion(), "bytes", "source", args, 3)
+// constructSet is set(), set(iterable) -- reachable because a view difference
+// hands a template a set and every object's `__class__` is its constructor.
+//
+// It takes what list and tuple take, with one more rule on top: the elements
+// are hashed, so `set([[1]])` is "unhashable type: 'list'" where `list([[1]])`
+// is a list of one list. The arity and keyword wordings are the shared ones --
+// "set expected at most 1 argument, got 2", "set() takes no keyword arguments"
+// -- which is what CPython says here as well.
+func constructSet(s *State, args *value.CallArgs) (value.Value, error) {
+	items, err := constructSeq(s, "set", args)
 	if err != nil {
 		return value.Undefined, err
 	}
-	if len(pos) == 0 {
+	out, err := value.NewSet(items, s.PythonVersion(), s)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.FromObject(out), nil
+}
+
+// constructBytes is bytes(), bytes(count), bytes(iterable of ints) and
+// bytes(str, encoding[, errors]).
+func constructBytes(s *State, args *value.CallArgs) (value.Value, error) {
+	got, err := bindConversionArgs(s.PythonVersion(), "bytes", "source", args, 3)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if !got.hasObject {
+		switch {
+		case got.hasEncoding:
+			return value.Undefined, errs.New(errs.TypeError,
+				"encoding without a string argument")
+		case got.hasErrors:
+			return value.Undefined, errs.New(errs.TypeError,
+				"errors without a string argument")
+		}
 		return value.Bytes(nil), nil
 	}
-	if len(pos) > 1 {
-		if !pos[1].IsString() {
-			return value.Undefined, errs.New(errs.TypeError,
-				"bytes() argument 'encoding' must be str, not %s",
-				pos[1].TypeName())
-		}
-		if !pos[0].IsString() {
+	pos := []value.Value{got.object}
+	if got.hasEncoding {
+		if !got.object.IsString() {
 			return value.Undefined, errs.New(errs.TypeError,
 				"encoding without a string argument")
 		}
-		return methodEncode(s, pos[0], &value.CallArgs{Pos: pos[1:]})
+		return methodEncode(s, got.object, got.codecArgs())
+	}
+	if got.hasErrors {
+		if got.object.IsString() {
+			return value.Undefined, errs.New(errs.TypeError,
+				"string argument without an encoding")
+		}
+		return value.Undefined, errs.New(errs.TypeError,
+			"errors without a string argument")
 	}
 	built, done, err := value.ConstructBytes(pos[0])
 	if done {
@@ -576,37 +750,84 @@ func constructBytes(s *State, args *value.CallArgs) (value.Value, error) {
 	return value.Bytes(make([]byte, b.Int64())), nil
 }
 
+// conversionArgs is what str() and bytes() were given, by slot. A slot is
+// either given or not: str(errors='strict') has no object and no encoding, and
+// a placeholder in their place is an argument the caller never wrote.
+type conversionArgs struct {
+	// object is str's object and bytes's source.
+	object, encoding, errors value.Value
+	// given says which of the three were supplied.
+	hasObject, hasEncoding, hasErrors bool
+}
+
 // bindConversionArgs binds str's and bytes's shared (object, encoding, errors)
 // signature, which unlike the others does accept its parameters by keyword.
-func bindConversionArgs(py value.PythonVersion, name, first string, args *value.CallArgs, most int) ([]value.Value, error) {
+func bindConversionArgs(py value.PythonVersion, name, first string, args *value.CallArgs, most int) (conversionArgs, error) {
 	names := []string{first, "encoding", "errors"}
-	pos := append([]value.Value(nil), args.Pos...)
-	if len(pos) > most {
+	var got conversionArgs
+	if len(args.Pos) > most {
 		// bytes kept the older arity wording when int and str changed
 		// it, so the two halves of this signature moved apart in 3.13.
 		// Generalising them together is wrong, and was.
 		if name == "bytes" {
-			return nil, errs.New(errs.TypeError,
-				"bytes() takes at most %d arguments (%d given)", most, len(pos))
+			return got, errs.New(errs.TypeError,
+				"bytes() takes at most %d arguments (%d given)", most, len(args.Pos))
 		}
-		return nil, clinicArity(py, name, most, len(pos))
+		return got, clinicArity(py, name, most, len(args.Pos))
+	}
+	// With a keyword present CPython counts *every* argument against the
+	// maximum and reports that before it looks at any name: `int(s, 2,
+	// base=8)` is "int() takes at most 2 arguments (3 given)" and not a word
+	// about `base`, and `bytes(b, encoding='x', errors='y', nope=1)` names
+	// the count rather than `nope`. The positional-only overflow above keeps
+	// its own wording, which is where the two halves of this signature moved
+	// apart in 3.13 -- so this is a third case and not a rewrite of that one.
+	if n := len(args.Pos) + len(args.Kwargs); len(args.Kwargs) > 0 && n > most {
+		return got, errs.New(errs.TypeError,
+			"%s() takes at most %d arguments (%d given)", name, most, n)
+	}
+	slots := [3]*value.Value{&got.object, &got.encoding, &got.errors}
+	has := [3]*bool{&got.hasObject, &got.hasEncoding, &got.hasErrors}
+	for i, v := range args.Pos {
+		*slots[i], *has[i] = v, true
 	}
 	for _, kw := range args.Kwargs {
 		i := slices.Index(names, kw.Name)
 		if i < 0 {
-			return nil, clinicKeyword(py, name, kw.Name)
+			return got, clinicKeyword(py, name, kw.Name)
 		}
-		if i < len(pos) {
-			return nil, errs.New(errs.TypeError,
+		if i < len(args.Pos) {
+			return got, errs.New(errs.TypeError,
 				"argument for %s() given by name ('%s') and position (%d)",
 				name, kw.Name, i+1)
 		}
-		for len(pos) < i {
-			pos = append(pos, value.Undefined)
-		}
-		pos = append(pos, kw.Value)
+		*slots[i], *has[i] = kw.Value, true
 	}
-	return pos, nil
+	// The two text arguments are typed before anything is done with the
+	// object, encoding first, whichever way they were passed.
+	if got.hasEncoding && !got.encoding.IsString() {
+		return got, errs.New(errs.TypeError,
+			"%s() argument 'encoding' must be str, not %s", name, got.encoding.TypeName())
+	}
+	if got.hasErrors && !got.errors.IsString() {
+		return got, errs.New(errs.TypeError,
+			"%s() argument 'errors' must be str, not %s", name, got.errors.TypeName())
+	}
+	return got, nil
+}
+
+// codecArgs is the (encoding, errors) pair for decode() or encode(), with the
+// encoding CPython falls back on when only errors was given.
+func (a conversionArgs) codecArgs() *value.CallArgs {
+	enc := value.String("utf-8")
+	if a.hasEncoding {
+		enc = a.encoding
+	}
+	pos := []value.Value{enc}
+	if a.hasErrors {
+		pos = append(pos, a.errors)
+	}
+	return &value.CallArgs{Pos: pos}
 }
 
 // Equals compares type objects by the class they name.

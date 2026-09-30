@@ -1,0 +1,6 @@
+{
+  "case": "control/continue_keeps_counting.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

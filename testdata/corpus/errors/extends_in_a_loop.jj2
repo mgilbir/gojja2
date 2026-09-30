@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "base.txt": "B"
+  }
+}
+---
+{% for i in [1] %}{% extends 'base.txt' %}{% endfor %}

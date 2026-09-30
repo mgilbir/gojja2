@@ -1,0 +1,6 @@
+{
+  "case": "policies/rel_named.jj2",
+  "variables": {
+    "u": "or"
+  }
+}

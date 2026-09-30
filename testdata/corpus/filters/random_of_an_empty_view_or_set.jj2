@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {} %}[{{ d.keys()|random }}][{{ d.items()|random }}][{{ ({'a': 1}.keys() - 'a')|random }}]

@@ -1,0 +1,12 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "__templates__": {
+    "esc.txt": "{% autoescape true %}[{% block a %}<A>{% endblock %}]{% endautoescape %}{% autoescape false %}|{% block b %}<B>{% endblock %}|{% endautoescape %}",
+    "mac.txt": "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}",
+    "macesc.txt": "{% autoescape false %}{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{% endautoescape %}"
+  }
+}
+---
+{% extends 'esc.txt' %}{% block a %}{% macro takes() %}{{ caller(1) }}>{% endmacro %}{% call(p) takes() %}<c>{% endcall %}{% endblock %}

@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "yes": true
+}
+---
+{{ range(3) in [yes, nope] }}

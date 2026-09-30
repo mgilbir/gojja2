@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "v": "<u>"
+}
+---
+{% print '<i>', ('<b>'|safe), v %}

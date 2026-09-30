@@ -1,0 +1,4 @@
+{
+  "case": "errors/encode_run_broken_by_an_encodable.jj2",
+  "variables": {}
+}

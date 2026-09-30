@@ -1,0 +1,4 @@
+{
+  "case": "tests/select_operator_test_needing_an_argument.jj2",
+  "variables": {}
+}

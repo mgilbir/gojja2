@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% with x = 1|nosuchA %}{{ 1|nosuchC }}{% endwith %}

@@ -19,7 +19,10 @@ func registerDefaultGlobals(env *Environment) {
 	env.AddGlobal("namespace", Class("namespace", "jinja2.utils.Namespace", globalNamespace))
 	env.AddGlobal("cycler", Class("cycler", "jinja2.utils.Cycler", globalCycler))
 	env.AddGlobal("joiner", Class("joiner", "jinja2.utils.Joiner", globalJoiner))
-	env.AddGlobal("lipsum", Func("lipsum", globalLipsum))
+	// lipsum is the one global that is a *function* rather than a class, and
+	// it is jinja2.utils.generate_lorem_ipsum reached under another name:
+	// `{{ lipsum.__name__ }}` is that name and not "lipsum".
+	env.AddGlobal("lipsum", pyFunc("lipsum", "generate_lorem_ipsum", "jinja2.utils", globalLipsum))
 }
 
 // rangeObject is Python's range: a sequence with a known length that holds no
@@ -60,8 +63,11 @@ func newRange(start, stop, step *big.Int) *rangeObject {
 	} else {
 		r.wide = &wideRange{start: start, stop: stop, step: step}
 	}
-	// A range longer than maxInt cannot be walked under any budget, so the
-	// clamp is unobservable except through len(), which uses BigLen.
+	// A range longer than maxInt cannot be walked under any budget, which is
+	// why iteration may use the clamp. Nothing that *computes* a position may:
+	// len() uses BigLen, and a subscript goes through value.SequenceItem --
+	// wrapping a negative key against this clamp made `range(2**70)[-1]`
+	// 9223372036854775806.
 	if r.length.IsInt64() && r.length.Int64() <= int64(math.MaxInt) {
 		r.n = int(r.length.Int64())
 	} else {
@@ -127,6 +133,19 @@ func (r *rangeObject) GetIndex(i int) (value.Value, bool) {
 	return value.BigInt(e.Add(e, r.wide.start)), true
 }
 
+// BigIndex is GetIndex for an index that does not fit an int, which is what a
+// range wider than a Py_ssize_t needs: CPython's reversed() answers such a
+// range's first element by arithmetic and never asks for its length as a
+// Py_ssize_t.
+func (r *rangeObject) BigIndex(i *big.Int) (value.Value, bool) {
+	if i.Sign() < 0 || i.Cmp(r.length) >= 0 {
+		return value.Undefined, false
+	}
+	start, _, step := r.bounds()
+	e := new(big.Int).Mul(step, i)
+	return value.BigInt(e.Add(e, start)), true
+}
+
 // bound returns one of the three bounds as a value, which is what the start,
 // stop and step attributes answer.
 func (r *rangeObject) bound(narrow int64, wide func(*wideRange) *big.Int) value.Value {
@@ -148,27 +167,36 @@ func (r *rangeObject) GetAttr(name string) (value.Value, bool) {
 	return value.Undefined, false
 }
 
-// Slice returns the sub-range a slice selects. Slicing a range in Python
-// yields another range rather than a list, so `range(3)[1:]` renders
-// "range(1, 3)" and not "[1, 2]".
-func (r *rangeObject) Slice(start, stop, step *int) (value.Value, error) {
-	begin, end, st, err := value.SliceBounds(r.n, start, stop, step)
+// BigSlice returns the sub-range a slice selects.
+//
+// Slicing a range in Python yields another range rather than a list, so
+// `range(3)[1:]` renders "range(1, 3)" and not "[1, 2]" -- and Python keeps the
+// slice's stop rather than deriving one from the last element, so `range(3)[::2]`
+// is `range(0, 3, 2)` and not `range(0, 4, 2)`.
+//
+// It is the arbitrary-precision BigSlicer rather than the int Slicer because
+// that is the only correct version for a range: CPython's range_subscript works
+// entirely in PyLongs, so `range(2**70)[::-1]` is
+// `range(1180591620717411303423, -1, -1)` -- three values an int cannot hold,
+// and an int implementation saturated all three.
+func (r *rangeObject) BigSlice(start, stop, step *big.Int) (value.Value, error) {
+	begin, end, st, err := value.BigSliceBounds(r.length, start, stop, step)
 	if err != nil {
 		return value.Undefined, err
 	}
-	// The bounds are positions within this range, so they map back onto
-	// the original start and step: position p stands for start + p*step.
+	// The bounds are positions within this range, so they map back onto the
+	// original start and step: position p stands for start + p*step.
 	bs, _, bstep := r.bounds()
-	at := func(pos int) *big.Int {
-		v := new(big.Int).Mul(bstep, big.NewInt(int64(pos)))
+	at := func(pos *big.Int) *big.Int {
+		v := new(big.Int).Mul(bstep, pos)
 		return v.Add(v, bs)
 	}
 	return value.FromObject(newRange(
-		at(begin), at(end), new(big.Int).Mul(bstep, big.NewInt(int64(st))),
+		at(begin), at(end), new(big.Int).Mul(bstep, st),
 	)), nil
 }
 
-// Contains decides `x in range(...)` by arithmetic, as Python's range does.
+// ContainsErr decides `x in range(...)` by arithmetic, as Python's range does.
 //
 // Falling through to the generic scan makes membership cost the length of the
 // range: `{{ -1 in range(9223372036854775807) }}` walked toward nine quintillion
@@ -179,26 +207,36 @@ func (r *rangeObject) Slice(start, stop, step *int) (value.Value, error) {
 // answered False without looking. CPython only takes this path for an exact
 // int and scans for anything else; the answer is the same either way, so the
 // arithmetic is used for every number that is one.
-func (r *rangeObject) Contains(item value.Value) (found, known bool) {
+//
+// What the scan does produce, and arithmetic does not, is the *comparison*: a
+// StrictUndefined on the left refuses from the first element CPython reaches, so
+// `{{ nope in range(3) }}` raises where `{{ nope in range(0) }}` is False. That
+// is answered here from the length rather than by walking, which keeps the bound
+// above -- the alternative reintroduces it for every non-integer item and not
+// just the undefined ones.
+func (r *rangeObject) ContainsErr(item value.Value, _ value.PythonVersion) (found, known bool, err error) {
 	n, ok := integerOf(item)
 	if !ok {
-		// Not an integer -- a float with a fraction, a string, a list.
-		// None of them can equal an element of a range.
-		return false, true
+		if r.length.Sign() > 0 {
+			if err := value.StrictRefusal(item); err != nil {
+				return false, true, err
+			}
+		}
+		return false, true, nil
 	}
 	start, stop, step := r.bounds()
 	offset := new(big.Int).Sub(n, start)
 	// Before the start, or at or past the stop, in the step's direction.
 	if step.Sign() > 0 {
 		if offset.Sign() < 0 || n.Cmp(stop) >= 0 {
-			return false, true
+			return false, true, nil
 		}
 	} else {
 		if offset.Sign() > 0 || n.Cmp(stop) <= 0 {
-			return false, true
+			return false, true, nil
 		}
 	}
-	return new(big.Int).Rem(offset, step).Sign() == 0, true
+	return new(big.Int).Rem(offset, step).Sign() == 0, true, nil
 }
 
 // integerOf reports the exact integer a value stands for: an int, a bool, or a
@@ -240,6 +278,22 @@ func (r *rangeObject) Equals(other value.Value) (bool, bool) {
 		return false, true
 	}
 	return r.length.Cmp(big.NewInt(1)) == 0 || rStep.Cmp(oStep) == 0, true
+}
+
+// HashKey is what a range is as a dict key or a set member, and it is exactly
+// what Equals compares: the sequence it stands for. Equal ranges hash alike --
+// every empty range is one key, a one-element range ignores its step -- so
+// `{range(3): 1}[range(0, 3, 1)]` finds the entry, where hashing by identity
+// found nothing and let `{range(3): 1, range(3): 2}` hold both.
+func (r *rangeObject) HashKey() (string, bool) {
+	if r.length.Sign() == 0 {
+		return "range:empty", true
+	}
+	start, _, step := r.bounds()
+	if r.length.Cmp(big.NewInt(1)) == 0 {
+		return "range:1:" + start.String(), true
+	}
+	return "range:" + r.length.String() + ":" + start.String() + ":" + step.String(), true
 }
 
 func (r *rangeObject) TypeName() string { return "range" }
@@ -314,7 +368,7 @@ func globalDict(s *State, args *value.CallArgs) (value.Value, error) {
 	if len(args.Pos) == 1 {
 		// dict() and dict.update() accept exactly the same shapes and
 		// refuse them the same way, so they share one implementation.
-		if err := updateDictFrom(d, args.Pos[0], s.PythonVersion()); err != nil {
+		if err := updateDictFrom(s, d, args.Pos[0]); err != nil {
 			return value.Undefined, err
 		}
 	}
@@ -331,7 +385,7 @@ func globalNamespace(s *State, args *value.CallArgs) (value.Value, error) {
 	if err != nil {
 		return value.Undefined, err
 	}
-	ns := newNamespace()
+	ns := newNamespace(s.PythonVersion())
 	d, _ := built.Dict()
 	for _, e := range d.Entries() {
 		ns.SetAttr(value.Str(e.Key), e.Value)
@@ -351,26 +405,30 @@ func (c *cyclerObject) GetAttr(name string) (value.Value, bool) {
 		// jinja2's Cycler stores its rotation here. It is not a method,
 		// which is why `cycler(...)|xmlattr` fails calling a tuple.
 		return value.NewTuple(c.items...), true
+	case "pos":
+		return value.Int(int64(c.pos)), true
 	case "current":
 		if len(c.items) == 0 {
 			return value.Undefined, true
 		}
 		return c.items[c.pos], true
 	case "next":
-		return Func("next", func(_ *State, a *value.CallArgs) (value.Value, error) {
-			if err := bindArgs(runtimeSignatures["Cycler.next"], a, 1); err != nil {
-				return value.Undefined, err
-			}
-			return c.next()
-		}), true
+		return Method("next", "Cycler", "jinja2.utils.Cycler", value.FromObject(c),
+			func(_ *State, a *value.CallArgs) (value.Value, error) {
+				if err := bindArgs(runtimeSignatures["Cycler.next"], a, 1); err != nil {
+					return value.Undefined, err
+				}
+				return c.next()
+			}), true
 	case "reset":
-		return Func("reset", func(_ *State, a *value.CallArgs) (value.Value, error) {
-			if err := bindArgs(runtimeSignatures["Cycler.reset"], a, 1); err != nil {
-				return value.Undefined, err
-			}
-			c.pos = 0
-			return value.None, nil
-		}), true
+		return Method("reset", "Cycler", "jinja2.utils.Cycler", value.FromObject(c),
+			func(_ *State, a *value.CallArgs) (value.Value, error) {
+				if err := bindArgs(runtimeSignatures["Cycler.reset"], a, 1); err != nil {
+					return value.Undefined, err
+				}
+				c.pos = 0
+				return value.None, nil
+			}), true
 	}
 	return value.Undefined, false
 }
@@ -417,10 +475,20 @@ type joinerObject struct {
 	used bool
 }
 
-func (j *joinerObject) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
-func (j *joinerObject) TypeName() string                   { return "Joiner" }
-func (j *joinerObject) QualifiedName() string              { return "jinja2.utils.Joiner" }
-func (j *joinerObject) Repr() string                       { return pyObjectRepr(j.QualifiedName(), j) }
+// GetAttr answers the two attributes jinja2's Joiner sets in __init__. Neither
+// is a method, so both are plain values a template can read back.
+func (j *joinerObject) GetAttr(name string) (value.Value, bool) {
+	switch name {
+	case "sep":
+		return j.sep, true
+	case "used":
+		return value.Bool(j.used), true
+	}
+	return value.Undefined, false
+}
+func (j *joinerObject) TypeName() string      { return "Joiner" }
+func (j *joinerObject) QualifiedName() string { return "jinja2.utils.Joiner" }
+func (j *joinerObject) Repr() string          { return pyObjectRepr(j.QualifiedName(), j) }
 
 func (j *joinerObject) Call(args *value.CallArgs) (value.Value, error) {
 	if err := bindArgs(runtimeSignatures["Joiner.__call__"], args, 1); err != nil {
@@ -498,6 +566,10 @@ func globalLipsum(s *State, args *value.CallArgs) (value.Value, error) {
 	// count==0 case that then panicked on text[:1] below: a silently fixed
 	// argument turned a clean ValueError into a crash.
 	if hi <= lo {
+		if s.PythonVersion().RandrangeNamesItsBounds() {
+			return value.Undefined, errs.New(errs.ValueError,
+				"empty range in randrange(%d, %d)", lo, hi)
+		}
 		return value.Undefined, errs.New(errs.ValueError,
 			"empty range for randrange() (%d, %d, %d)", lo, hi, hi-lo)
 	}

@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% for i in [1]|nosuchA if (0 ** 0)[7] and 0 %}x{% endfor %}

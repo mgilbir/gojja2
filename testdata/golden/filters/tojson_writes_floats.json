@@ -1,0 +1,11 @@
+{
+  "case": "filters/tojson_writes_floats.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "1.5|1e+16|1e-07|0.30000000000000004|-0.0|1180591620717411303424|1e+22|5e-324"
+}

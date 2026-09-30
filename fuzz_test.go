@@ -183,7 +183,11 @@ func FuzzRender(f *testing.F) {
 // reproducible. `random` and `shuffle` say so, `lipsum` generates text, and
 // `now` and `range(...)|random` reach the same places by other names.
 func mayVary(src string) bool {
-	for _, name := range []string{"random", "shuffle", "lipsum", "now"} {
+	// `__class__` reaches a str() or a list() of a bound method or of any
+	// object with no repr of its own, whose text carries an address; taken
+	// apart by |sort or |list the address is no longer recognisable as one,
+	// and it differs on every render exactly as CPython's does.
+	for _, name := range []string{"random", "shuffle", "lipsum", "now", "__class__"} {
 		if strings.Contains(src, name) {
 			return true
 		}

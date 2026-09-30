@@ -1,0 +1,14 @@
+{
+  "case": "folding/filter_block_in_a_call_body_counts_two.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "sequence item 1: expected str instance, int found"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "__settings__": {}
+}
+---
+{{ [{'a': 1}]|map(attribute='b.c')|list }}

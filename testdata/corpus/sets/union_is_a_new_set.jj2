@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2, 'c': 3} %}{% set s = d.keys() - ['a'] %}{% set t = d.keys() - ['b', 'c'] %}{% set c = s.union() %}{{ s.add('z') }}|{{ c|list|sort }}

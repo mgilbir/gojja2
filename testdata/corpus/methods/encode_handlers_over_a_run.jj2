@@ -1,0 +1,3 @@
+{}
+---
+{{ 'ƛɤx'.encode('ascii', 'replace') }}|{{ 'ƛɤx'.encode('ascii', 'ignore') }}|{{ 'ƛɤx'.encode('ascii', 'backslashreplace') }}|{{ 'ƛɤx'.encode('ascii', 'xmlcharrefreplace') }}

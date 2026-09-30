@@ -1,0 +1,14 @@
+{
+  "case": "dictview/proxy_subscript_nested_percent_index.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "KeyError",
+    "message": "'0'"
+  }
+}

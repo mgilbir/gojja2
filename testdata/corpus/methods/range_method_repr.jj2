@@ -1,0 +1,3 @@
+{}
+---
+{{ range(3).count.__name__ }}|{{ range(3).count.__qualname__ }}|{{ range(3).index is callable }}

@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is escaped }}|{{ 0 is escaped }}|{{ -1 is escaped }}|{{ 1.5 is escaped }}|{{ true is escaped }}|{{ false is escaped }}|{{ none is escaped }}|{{ 'a' is escaped }}|{{ '' is escaped }}|{{ 'A' is escaped }}|{{ [1] is escaped }}|{{ [] is escaped }}|{{ ((1,)) is escaped }}|{{ {} is escaped }}|{{ {'a':1} is escaped }}|{{ range(3) is escaped }}|{{ nope is escaped }}|{{ ('x'|safe) is escaped }}|{{ dict is escaped }}|{{ d.keys() is escaped }}

@@ -1,0 +1,3 @@
+{}
+---
+{{ [cycler('a','b')]|map(attribute=0)|list }}

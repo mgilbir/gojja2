@@ -1,0 +1,3 @@
+{}
+---
+{{ 'abc'.encode().rfind('c'.encode(), -10, 10) }}

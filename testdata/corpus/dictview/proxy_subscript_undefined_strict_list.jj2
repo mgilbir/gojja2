@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% set C = {'a': 1}.keys().mapping.__class__ %}{% set p = C(nope) %}{{ p|list }}

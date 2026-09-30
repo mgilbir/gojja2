@@ -1,0 +1,15 @@
+{
+  "__settings__": {
+    "autoescape": "select"
+  },
+  "__templates__": {
+    "base.html": "H[{% block a %}<A>{% endblock %}|{{ '<p>' }}]",
+    "base.txt": "B[{% block a %}<A>{% endblock %}|{{ '<p>' }}]",
+    "mac.html": "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{% set ex = '<E>' %}",
+    "mac.txt": "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{% set ex = '<E>' %}",
+    "inc.html": "<inc {{ '<x>' }}>",
+    "inc.txt": "<inc {{ '<x>' }}>"
+  }
+}
+---
+{% extends 'base.html' %}{% block a %}{% import 'mac.txt' as mm %}{{ mm.m(1) }}{% endblock %}

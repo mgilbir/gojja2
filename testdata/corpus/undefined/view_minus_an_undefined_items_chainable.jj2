@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{% set q = {'a': 1} %}{{ q.items() - nope }}

@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_loop_changed_second_call.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

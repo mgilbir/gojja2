@@ -1,0 +1,6 @@
+{
+  "case": "sets/argument_issuperset_stops_at_a_miss_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

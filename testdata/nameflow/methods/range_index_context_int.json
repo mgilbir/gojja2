@@ -1,0 +1,6 @@
+{
+  "case": "methods/range_index_context_int.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

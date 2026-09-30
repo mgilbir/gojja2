@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 'ab'.encode() %}{{ 'ab'.center(6, none) }}

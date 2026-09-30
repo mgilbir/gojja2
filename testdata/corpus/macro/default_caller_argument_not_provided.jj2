@@ -1,0 +1,5 @@
+{
+  "__settings__": {}
+}
+---
+{% macro takes() %}<{{ caller() }}>{% endmacro %}{% call(p) takes() %}{{ p }}{% endcall %}

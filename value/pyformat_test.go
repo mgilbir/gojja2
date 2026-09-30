@@ -234,7 +234,7 @@ func TestFormatSpecRules(t *testing.T) {
 		{value.Float(1.5), ".0g", "2"},
 		{value.Float(1.5), "#.3", "1.50"},
 	} {
-		got, err := value.FormatValue(tc.v, tc.spec, nil)
+		got, err := value.FormatValue(tc.v, tc.spec, value.DefaultPythonVersion, nil)
 		if err != nil {
 			t.Errorf("format(%s, %q): %v", value.Repr(tc.v), tc.spec, err)
 			continue
@@ -272,7 +272,7 @@ func TestFormatSpecRules(t *testing.T) {
 		{value.NewList(value.Int(1)), "_a", "unsupported format string passed to list.__format__"},
 		{value.None, ">5", "unsupported format string passed to NoneType.__format__"},
 	} {
-		_, err := value.FormatValue(tc.v, tc.spec, nil)
+		_, err := value.FormatValue(tc.v, tc.spec, value.DefaultPythonVersion, nil)
 		if err == nil {
 			t.Errorf("format(%s, %q): no error, want %q", value.Repr(tc.v), tc.spec, tc.want)
 			continue

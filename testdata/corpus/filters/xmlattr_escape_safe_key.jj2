@@ -1,0 +1,3 @@
+{}
+---
+{% set k = 'a<b'|safe %}{{ {k: 'v'}|xmlattr }}

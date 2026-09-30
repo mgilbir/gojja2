@@ -1,0 +1,14 @@
+{
+  "case": "methods/endswith_bad_prefix_out_of_range.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "endswith first arg must be str or a tuple of str, not int"
+  }
+}

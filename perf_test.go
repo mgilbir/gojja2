@@ -250,6 +250,12 @@ func TestRangeMembershipIsConstantTime(t *testing.T) {
 		{`{{ 4611686018427387903 in range(0, 9223372036854775807, 2) }}`, "False"},
 		{`{{ "x" in range(9223372036854775807) }}`, "False"},
 		{`{{ 1.5 in range(9223372036854775807) }}`, "False"},
+		// A StrictUndefined refuses from the comparison CPython makes,
+		// and that is answered from the *length* rather than by walking
+		// to find something to compare against. Scanning for it would
+		// reintroduce the cost for every non-integer item, undefined or
+		// not; see rangeObject.ContainsErr.
+		{`{{ nope in range(9223372036854775807) }}`, "False"},
 	} {
 		tmpl, err := env.FromString(tc.src)
 		if err != nil {
@@ -265,6 +271,28 @@ func TestRangeMembershipIsConstantTime(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s = %q, want %q", tc.src, got, tc.want)
 		}
+	}
+}
+
+// TestStrictRangeMembershipIsConstantTime is TestRangeMembershipIsConstantTime's
+// other half: under StrictUndefined the same membership *raises*, and it has to
+// raise as quickly as the other cases answer.
+func TestStrictRangeMembershipIsConstantTime(t *testing.T) {
+	env, err := New(WithUndefined(value.UndefinedStrict))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := env.FromString(`{{ nope in range(9223372036854775807) }}`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	start := time.Now()
+	if _, err := tmpl.RenderString(ctx, nil); err == nil {
+		t.Fatal("membership answered where a StrictUndefined should refuse")
+	} else if ctx.Err() != nil {
+		t.Fatalf("refused only after %v, so it walked the range: %v", time.Since(start), err)
 	}
 }
 

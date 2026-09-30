@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is none }}|{{ 0 is none }}|{{ -1 is none }}|{{ 1.5 is none }}|{{ true is none }}|{{ false is none }}|{{ none is none }}|{{ 'a' is none }}|{{ '' is none }}|{{ 'A' is none }}|{{ [1] is none }}|{{ [] is none }}|{{ ((1,)) is none }}|{{ {} is none }}|{{ {'a':1} is none }}|{{ range(3) is none }}|{{ nope is none }}|{{ ('x'|safe) is none }}|{{ dict is none }}|{{ d.keys() is none }}

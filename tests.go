@@ -6,7 +6,6 @@ package gojja2
 import (
 	"math"
 
-	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/value"
 )
 
@@ -41,6 +40,12 @@ func registerDefaultTests(env *Environment) {
 		// try/except, so a class that refuses len() is simply not a
 		// sequence rather than an error.
 		if value.StrictRefusal(v) != nil {
+			return false, nil
+		}
+		// ...and asks len() before anything else, so an object whose
+		// length is its contents' -- a mappingproxy over the template
+		// reference -- is not a sequence when that refuses.
+		if _, err := value.Len(v); err != nil {
 			return false, nil
 		}
 		return isSequenceValue(v), nil
@@ -159,7 +164,7 @@ func isCallableValue(v value.Value) bool {
 // refuses it rather than being tested as "".
 func stringCased(f func(string, *value.UnicodeOverrides) bool) Test {
 	return func(s *State, v value.Value, _ *value.CallArgs) (bool, error) {
-		text, err := strictStr(v)
+		text, err := strictStrFor(v, s.PythonVersion())
 		if err != nil {
 			return false, err
 		}
@@ -188,10 +193,12 @@ func intParity(want int64) Test {
 // are the names arity.go carries, which is what a wrong one is checked
 // against.
 func testDivisibleBy(s *State, v value.Value, args *value.CallArgs) (bool, error) {
-	divisor, ok := arg(args, 0, "num")
-	if !ok {
-		return false, errs.New(errs.TypeError, "divisibleby requires an argument")
-	}
+	// Not checked for: arity.go carries jinja2's signature and checkArity
+	// refuses the call before the test runs, with CPython's own wording --
+	// "test_divisibleby() missing 1 required positional argument: 'num'".
+	// The guard that stood here answered something else and could not be
+	// reached to say it, through `is`, `select`, `reject` or `selectattr`.
+	divisor, _ := arg(args, 0, "num")
 	rem, err := value.Mod(v, divisor, s, s.PythonVersion())
 	if err != nil {
 		return false, err
@@ -208,10 +215,8 @@ func testDivisibleBy(s *State, v value.Value, args *value.CallArgs) (bool, error
 // types have an identity; for everything else jinja2's answer coincides with
 // equality of value and type.
 func testSameAs(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
-	other, ok := arg(args, 0, "other")
-	if !ok {
-		return false, errs.New(errs.TypeError, "sameas requires an argument")
-	}
+	// Refused by checkArity before this runs; see testDivisibleBy.
+	other, _ := arg(args, 0, "other")
 	if v.Kind() != other.Kind() {
 		return false, nil
 	}
@@ -227,20 +232,21 @@ func testSameAs(_ *State, v value.Value, args *value.CallArgs) (bool, error) {
 	case value.KindList, value.KindDict, value.KindObject, value.KindFunc:
 		return v.Interface() == other.Interface(), nil
 	case value.KindFloat:
-		// NaN is not identical to another NaN unless it is the same
-		// object, which for a float value it never is here.
+		// A NaN is the one scalar whose identity is not its value, and
+		// it carries one: `{% set x = b - b %}{{ x is sameas x }}` is
+		// True, and it is False for a second NaN computed separately.
+		// Every other float equals itself, so identity and equality
+		// coincide and the fallthrough answers.
 		if math.IsNaN(v.AsFloat()) {
-			return false, nil
+			return value.SameObject(v, other), nil
 		}
 	}
 	return value.Equal(v, other), nil
 }
 
 func testIn(s *State, v value.Value, args *value.CallArgs) (bool, error) {
-	container, ok := arg(args, 0, "seq")
-	if !ok {
-		return false, errs.New(errs.TypeError, "in requires an argument")
-	}
+	// Refused by checkArity before this runs; see testDivisibleBy.
+	container, _ := arg(args, 0, "seq")
 	return value.Contains(v, container, s, s.PythonVersion())
 }
 
@@ -278,10 +284,10 @@ func hasRegistered(v value.Value, lookup func(string) bool, py value.PythonVersi
 
 func comparisonTest(op string) Test {
 	return func(s *State, v value.Value, args *value.CallArgs) (bool, error) {
-		other, ok := args.Arg(0)
-		if !ok {
-			return false, errs.New(errs.TypeError, "%s requires an argument", op)
-		}
+		// Refused by checkArity before this runs, with the wording a C
+		// function gets: "eq expected 2 arguments, got 1". See
+		// testDivisibleBy.
+		other, _ := args.Arg(0)
 		return compareStep(op, v, other, s, s.PythonVersion())
 	}
 }
@@ -300,12 +306,15 @@ func isEscaped(v value.Value) bool {
 // escapeIfNeeded is shared by the escaping filters. It is markupsafe's
 // escape(): Markup passes through, a value carrying its own escaped form hands
 // that over, and everything else is escaped.
-func escapeIfNeeded(v value.Value) value.Value {
+func escapeIfNeeded(v value.Value, py value.PythonVersion) value.Value {
 	if v.IsSafe() {
 		return v
 	}
 	if html, ok := value.HTML(v); ok {
 		return value.Safe(html)
 	}
-	return value.Safe(escapeHTML(value.Str(v)))
+	// StrFor: a container's text is its repr and repr escapes by the
+	// interpreter's isprintable, so `{{ ['\ua7da']|urlize }}` shows the
+	// character under 3.14 and the escape under the pin.
+	return value.Safe(escapeHTML(value.StrFor(v, py)))
 }
