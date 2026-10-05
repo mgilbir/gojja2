@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-eight divergences below, **one** is worth going looking for:
+Of the thirty-nine divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -65,6 +65,13 @@ are safety controls rather than behavioural choices, and they live in
 | [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
 | [No automatic template reload](#no-automatic-template-reload) | no `auto_reload`; use `ClearCache` | Changes when an edit is picked up |
 | [The default autoescape extension set](#the-default-autoescape-extension-set) | adds `xhtml` to jinja2's three | Only ever escapes *more*, never less |
+| [The debug extension](#the-debug-extension) | `{% debug %}` is refused; `jinja2.ext.debug` is not offered | Only a template that uses `{% debug %}` |
+| [Native-type rendering](#native-type-rendering) | no `NativeEnvironment`; a render is always text | No -- a host API, not template behaviour |
+| [Evaluating a lone expression](#evaluating-a-lone-expression) | no `compile_expression` | No -- a host API |
+| [Calling a template's macros from the host](#calling-a-templates-macros-from-the-host) | no `Template.module` or `make_module` | No -- a host API; `{% import %}` between templates works |
+| [Listing the templates a loader has](#listing-the-templates-a-loader-has) | no `list_templates` | No -- a host API |
+| [Logging undefined access](#logging-undefined-access) | no `make_logging_undefined` | No -- the four Undefined classes are all there |
+| [A loader made from a function](#a-loader-made-from-a-function) | no `FunctionLoader` | No -- `Loader` is one method, so any function is one adapter away |
 
 ---
 
@@ -1286,6 +1293,89 @@ the configured extensions, a leading dot is optional, matching happens on a
 whole extension rather than on any trailing substring, and a template compiled
 from a string is escaped by default (jinja2's `default_for_string=True`).
 Asserted by the tests in `autoescape_test.go`.
+
+## jinja2 APIs gojja2 does not have
+
+Every entry above is about what a template renders, or what the host sees
+around a render. These are parts of jinja2's *Python* API with no counterpart
+here. One is reachable from a template (`{% debug %}`); the rest change only
+what a host can ask for. Each was checked against jinja2 3.1.6, the version
+the corpus is graded against, and against the API gojja2 actually exports.
+None is ruled out on principle the way async rendering or the sandbox are in
+[scope.md](scope.md); they are absent because nothing has needed them yet.
+
+### The debug extension
+
+```jinja
+{% debug %}
+```
+
+jinja2's `jinja2.ext.debug` adds a `{% debug %}` tag that prints, through
+`pprint`, the current context and the names of every available filter and test.
+gojja2 offers `do` and `loopcontrols` and nothing else, so asking for it is
+refused when the environment is built:
+
+```
+unknown extension "debug": the known ones are do and loopcontrols
+```
+
+and the tag on its own does not compile (`Encountered unknown tag 'debug'.`),
+exactly as it does not in jinja2 without the extension. For one value,
+`{{ x|pprint }}` prints what the tag would; there is no template-side way to
+list the filters and tests.
+
+### Native-type rendering
+
+`jinja2.nativetypes.NativeEnvironment` renders to a Python value rather than a
+string: `{{ [1, 2] + [3] }}` is the list `[1, 2, 3]`, by passing the output
+through `ast.literal_eval`. Every gojja2 render writes text -- `Render`,
+`RenderString` and `RenderValues` differ in how the *context* is passed, not in
+what comes back. A host that wants a value back can render `|tojson` and decode
+it.
+
+### Evaluating a lone expression
+
+`Environment.compile_expression("a + b")` returns a callable that evaluates one
+expression against keyword arguments and returns its value, `3` for `a=1, b=2`.
+gojja2 has no expression-only entry point. `FromString("{{ a + b }}")` evaluates
+the same expression, but what comes back is its text.
+
+### Calling a template's macros from the host
+
+jinja2 exposes a template's exports to Python: `get_template("a.html").module`
+is an object whose attributes are the template's macros and top-level `{% set %}`
+names, so `module.m(5)` calls a macro from host code and `module.v` reads a
+variable. gojja2 has no handle on a template's exports from Go. Between
+templates it works as in jinja2 -- `{% import %}` and `{% from ... import %}`
+reach both -- so a host can still call a macro by rendering a small template
+that imports and calls it.
+
+### Listing the templates a loader has
+
+`Environment.list_templates()` asks the loader for every name it can load.
+gojja2's `Loader` interface is one method, `Load(name)`, so neither the loaders
+nor the environment can enumerate. A host knows what it put there: a
+`DictLoader` is a map, and an `FSLoader`'s names are what `fs.WalkDir` finds
+under its `Root` in its `FS`.
+
+### Logging undefined access
+
+`jinja2.make_logging_undefined(logger)` builds an Undefined class that logs
+every use of a missing name and then behaves as the default one. gojja2 has all
+four of jinja2's own classes -- default, chainable, debug and strict, chosen with
+`WithUndefined` -- but no hook that observes an undefined being used. Before a
+render, `dataflow.Analyze(t.Syntax()).Context(t.Syntax())` reports every name a
+template reads from its context, and what each one does there, which answers
+"which names does this template expect" without rendering it at all.
+
+### A loader made from a function
+
+`jinja2.FunctionLoader(fn)` turns a function from a name to source into a
+loader. gojja2 has no adapter of that name, and needs little: `Loader` is the
+single method `Load(name string) (string, error)`, so a function becomes one by
+declaring a function type with that method. What the adapter must get right is
+the miss -- returning an error satisfying `errors.Is(err, gojja2.ErrNotFound)`,
+which is what `ignore missing`, `ChoiceLoader` and `select_template` test for.
 
 ## The bounds gojja2 puts on a render
 
