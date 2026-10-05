@@ -168,7 +168,8 @@ func FuzzRender(f *testing.F) {
 			ctx2, cancel2 := context.WithTimeout(context.Background(), fuzzDeadline)
 			defer cancel2()
 			again, err2 := tmpl.RenderString(ctx2, fuzzVars())
-			if err2 == nil && !hasAddress(again) && again != out {
+			if err2 == nil && !hasAddress(again) && again != out &&
+				(!strings.Contains(src, "__class__") || !differsOnlyByAddress(out, again)) {
 				t.Fatalf("rendering %q twice gave different documents:\n  %q\n  %q",
 					src, out, again)
 			}
@@ -183,16 +184,54 @@ func FuzzRender(f *testing.F) {
 // reproducible. `random` and `shuffle` say so, `lipsum` generates text, and
 // `now` and `range(...)|random` reach the same places by other names.
 func mayVary(src string) bool {
-	// `__class__` reaches a str() or a list() of a bound method or of any
-	// object with no repr of its own, whose text carries an address; taken
-	// apart by |sort or |list the address is no longer recognisable as one,
-	// and it differs on every render exactly as CPython's does.
-	for _, name := range []string{"random", "shuffle", "lipsum", "now", "__class__"} {
+	for _, name := range []string{"random", "shuffle", "lipsum", "now"} {
 		if strings.Contains(src, name) {
 			return true
 		}
 	}
 	return false
+}
+
+// differsOnlyByAddress reports two renders that are the same document apart
+// from the digits of an object address.
+//
+// `{{ s.__class__(d.items)|sort }}` stringifies a bound method, whose repr
+// carries an address, and |sort scatters its characters, so hasAddress cannot
+// see it; CPython varies the same way. Only a template naming `__class__` can
+// get there, and it is excused for that and for nothing else: the two outputs
+// must hold the same characters except for hex digits, and no more of those
+// than the addresses they could have come from (sixteen digits for each "x" of
+// a "0x"). A different letter, a different count of anything else, or a change
+// that is not an address's size is a real difference. What it cannot tell is a
+// real difference that happens to be hex digits and no more than an address's
+// worth: those look exactly like an address changing.
+func differsOnlyByAddress(a, b string) bool {
+	var diff [256]int
+	for i := 0; i < len(a); i++ {
+		diff[a[i]]++
+	}
+	for i := 0; i < len(b); i++ {
+		diff[b[i]]--
+	}
+	addresses := strings.Count(a, "x")
+	if n := strings.Count(b, "x"); n != addresses {
+		return false
+	}
+	var more, fewer int
+	for c, d := range diff {
+		if d == 0 {
+			continue
+		}
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+		if d > 0 {
+			more += d
+		} else {
+			fewer -= d
+		}
+	}
+	return more <= 16*addresses && fewer <= 16*addresses
 }
 
 // hasAddress reports output carrying an object's address.
@@ -256,5 +295,23 @@ func requireClassifiable(t *testing.T, stage, src string, err error) {
 	// the first thing this target found, and the engine was right.
 	if e.Msg == "" && e.Kind != errs.TemplateNotFound {
 		t.Fatalf("%s of %q failed with an empty %v message", stage, src, e.Kind)
+	}
+}
+
+func TestDiffersOnlyByAddress(t *testing.T) {
+	for _, c := range []struct {
+		name, a, b string
+		want       bool
+	}{
+		{"address digits", "<bound method at 0x7f12ab>", "<bound method at 0x55d0c9>", true},
+		{"sorted scatter", "0000123xabcdef", "00001x23abcdfe", true},
+		{"different letter", "<bound method at 0x7f12ab>", "<bound method at 0x7f12az>", false},
+		{"different count of text", "<bound method at 0x7f12ab>", "<bound method at 0x7f12ab>!", false},
+		{"digits with no address", "7f12ab", "55d0c9", false},
+		{"too many digits for the address", "0x" + strings.Repeat("0", 40), "0x" + strings.Repeat("1", 40), false},
+	} {
+		if got := differsOnlyByAddress(c.a, c.b); got != c.want {
+			t.Errorf("%s: differsOnlyByAddress(%q, %q) = %v, want %v", c.name, c.a, c.b, got, c.want)
+		}
 	}
 }
