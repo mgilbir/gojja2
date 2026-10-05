@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_empty_list_never_calls.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

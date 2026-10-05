@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/mgilbir/gojja2"
+	"github.com/mgilbir/gojja2/dataflow"
 	"github.com/mgilbir/gojja2/value"
 )
 
@@ -30,8 +31,9 @@ const Separator = "\n---\n"
 type Case struct {
 	// Rel is the case's path relative to the corpus root, and its name.
 	Rel string
-	// Context is the render context.
-	Context map[string]value.Value
+	// contextJSON is the render context, still undecoded. It is not a
+	// decoded map, and that is deliberate: see [Case.Context].
+	contextJSON map[string]json.RawMessage
 	// Templates are extra templates the case can include or extend.
 	Templates map[string]string
 	// Settings are the environment options the case runs under.
@@ -58,10 +60,84 @@ type Settings struct {
 	LstripBlocks        bool   `json:"lstrip_blocks"`
 	NewlineSequence     string `json:"newline_sequence"`
 	KeepTrailingNewline bool   `json:"keep_trailing_newline"`
-	Autoescape          bool   `json:"autoescape"`
-	Undefined           string `json:"undefined"`
+	// Autoescape is true, false, or the name of a *rule*: "select" is
+	// jinja2's select_autoescape over the "html" extension, which decides
+	// by the template's name rather than for the whole environment. A JSON
+	// setting cannot carry the callable jinja2 wants, so both sides build
+	// it from the name.
+	Autoescape Autoescape `json:"autoescape"`
+	Undefined  string     `json:"undefined"`
 	// Extensions names the optional tags the case needs, e.g. "do".
 	Extensions []string `json:"extensions"`
+	// Policies are jinja2's environment policies, which change what a filter
+	// produces for every template in the environment rather than for one
+	// call: `urlize.rel`, `urlize.target` and `truncate.leeway`. A pointer
+	// per field, so that an omitted one keeps jinja2's default and an
+	// explicit empty string or zero is still a setting.
+	Policies *CasePolicies `json:"policies"`
+}
+
+// CasePolicies is the subset of jinja2's env.policies that changes rendering.
+//
+// jinja2 has more -- the i18n ones, and json.dumps_function, which is a
+// callable a JSON header cannot carry. These three are the ones a template can
+// observe without one.
+type CasePolicies struct {
+	URLizeRel      *string `json:"urlize.rel"`
+	URLizeTarget   *string `json:"urlize.target"`
+	TruncateLeeway *int    `json:"truncate.leeway"`
+}
+
+// apply returns the gojja2 policies this case asks for, starting from the
+// defaults so that an omitted field is jinja2's own.
+func (p *CasePolicies) apply(base gojja2.Policies) gojja2.Policies {
+	if p == nil {
+		return base
+	}
+	if p.URLizeRel != nil {
+		base.URLizeRel = *p.URLizeRel
+	}
+	if p.URLizeTarget != nil {
+		base.URLizeTarget = *p.URLizeTarget
+	}
+	if p.TruncateLeeway != nil {
+		base.TruncateLeeway = *p.TruncateLeeway
+	}
+	return base
+}
+
+// Autoescape is a case's escaping setting: a bool, or the name of a rule.
+type Autoescape struct {
+	On   bool
+	Rule string
+}
+
+// UnmarshalJSON accepts `true`, `false` and `"select"`.
+func (a *Autoescape) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var name string
+		if err := json.Unmarshal(b, &name); err != nil {
+			return err
+		}
+		if name != "select" {
+			return fmt.Errorf("unknown autoescape rule %q", name)
+		}
+		a.Rule = name
+		return nil
+	}
+	return json.Unmarshal(b, &a.On)
+}
+
+func (a Autoescape) option() gojja2.Option {
+	if a.Rule == "select" {
+		// Spelled out rather than defaulted: gojja2's default set adds
+		// xhtml, which is a documented divergence and not what
+		// select_autoescape(enabled_extensions=("html",)) asks for.
+		return gojja2.WithAutoescapeSelection(gojja2.SelectAutoescapeConfig{
+			Enabled: []string{"html"},
+		})
+	}
+	return gojja2.WithAutoescape(a.On)
 }
 
 // Golden is the oracle's recorded answer for a case.
@@ -133,15 +209,44 @@ func LoadCase(root, path string) (*Case, error) {
 		delete(fields, "__templates__")
 	}
 
-	c.Context = make(map[string]value.Value, len(fields))
-	for name, raw := range fields {
+	c.contextJSON = fields
+	// Decoded once here so a malformed case fails at load rather than at
+	// the first render. The values are discarded; Context decodes its own.
+	if _, err := c.Context(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// Context decodes the case's render context, fresh on every call.
+//
+// Returning a new map of new values each time is the whole point, and costs a
+// small JSON decode to get. A render can *mutate* what it is given --
+// `{% set _ = lst.append(9) %}`, `{% set _ = d.update(x) %}` and
+// `{% set d.v %}...{% endset %}` all write through, and
+// [gojja2.Template.RenderValues] skips the conversion that would otherwise
+// protect the caller -- so a context shared between two renders carries
+// whatever the first one did to it into the second.
+//
+// That has gone wrong three times in this package, in three different shapes:
+// a field decoded once in a constructor, and twice a shallow copy of such a
+// field, which copies the map and shares the values it holds. None of the
+// three looks wrong at the call site, and all three fail the same way: not by
+// erroring, but by quietly comparing against a context an earlier template had
+// already edited. Handing out a decoded map at all is what made them writable,
+// so this does not.
+//
+// TestRenderingACaseTwiceGivesTheSameAnswer is the guard.
+func (c *Case) Context() (map[string]value.Value, error) {
+	out := make(map[string]value.Value, len(c.contextJSON))
+	for name, raw := range c.contextJSON {
 		v, err := fromJSON(raw)
 		if err != nil {
 			return nil, fmt.Errorf("%s: context %q: %w", c.Rel, name, err)
 		}
-		c.Context[name] = v
+		out[name] = v
 	}
-	return c, nil
+	return out, nil
 }
 
 // fromJSON decodes a context value.
@@ -270,6 +375,19 @@ func (c *Case) Environment() (*gojja2.Environment, error) {
 	return c.EnvironmentFor(gojja2.DefaultPythonVersion)
 }
 
+// DataflowOptions are the analysis options this case's environment implies.
+//
+// StrictUndefined is one: it widens what can stop a render, so the analysis has
+// to be told. A case that renders under it and is analysed without it gets an
+// answer for a different environment -- which is the same trap as a setting that
+// reaches one engine and not the other.
+func (c *Case) DataflowOptions() []dataflow.Option {
+	if c.Settings.Undefined == "strict" {
+		return []dataflow.Option{dataflow.WithStrictUndefined()}
+	}
+	return nil
+}
+
 // EnvironmentFor is Environment for one interpreter version, which is what
 // grading the whole matrix needs: a case whose answer moved between CPython
 // releases has a golden per version, and the engine has to be told which one
@@ -305,11 +423,14 @@ func (c *Case) EnvironmentFor(py gojja2.PythonVersion) (*gojja2.Environment, err
 		gojja2.WithTrimBlocks(s.TrimBlocks),
 		gojja2.WithLstripBlocks(s.LstripBlocks),
 		gojja2.WithKeepTrailingNewline(s.KeepTrailingNewline),
-		gojja2.WithAutoescape(s.Autoescape),
+		s.Autoescape.option(),
 		gojja2.WithUndefined(undefinedBehavior(s.Undefined)),
 	)
 	if len(s.Extensions) > 0 {
 		opts = append(opts, gojja2.WithExtensions(s.Extensions...))
+	}
+	if s.Policies != nil {
+		opts = append(opts, gojja2.WithPolicies(s.Policies.apply(gojja2.DefaultPolicies())))
 	}
 	opts = append(opts, gojja2.WithPythonVersion(py))
 	env, err := gojja2.New(opts...)
@@ -348,8 +469,12 @@ func (c *Case) RenderFor(py gojja2.PythonVersion) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	vars, err := c.Context()
+	if err != nil {
+		return "", err
+	}
 	var out strings.Builder
-	if err := tmpl.RenderValues(context.Background(), &out, c.Context); err != nil {
+	if err := tmpl.RenderValues(context.Background(), &out, vars); err != nil {
 		return "", err
 	}
 	return out.String(), nil
@@ -376,7 +501,11 @@ func (c *Case) RenderFor(py gojja2.PythonVersion) (string, error) {
 // the committed cases. One key cannot be out of order, so the question is only
 // about two or more.
 func (c *Case) HasOrderedDict() bool {
-	for _, v := range c.Context {
+	vars, err := c.Context()
+	if err != nil {
+		return false
+	}
+	for _, v := range vars {
 		if holdsOrderedDict(v, 0) {
 			return true
 		}
@@ -427,8 +556,12 @@ func (c *Case) RenderViaGo() (string, error) {
 	// Go-to-value conversion beneath it -- which is where the worst defect
 	// in this engine lived, and where a corpus of 869 cases was looking at
 	// nothing at all.
-	vars := make(map[string]any, len(c.Context))
-	for k, v := range c.Context {
+	values, err := c.Context()
+	if err != nil {
+		return "", err
+	}
+	vars := make(map[string]any, len(values))
+	for k, v := range values {
 		vars[k] = value.ToGo(v)
 	}
 	var out strings.Builder

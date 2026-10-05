@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_empty_float.jj2",
+  "variables": {
+    "f": "or"
+  }
+}

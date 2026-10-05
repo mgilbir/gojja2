@@ -1,0 +1,14 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "lst": [
+    1,
+    2
+  ],
+  "d": {
+    "a": 1
+  }
+}
+---
+{% macro mm(a=0) %}[{{ a }}]{% endmacro %}{{ mm(**nope) }}

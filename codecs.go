@@ -74,16 +74,15 @@ func encodeString(s, codec, handler string) ([]byte, error) {
 		limit = 0x100
 	}
 	var out []byte
-	for pos, r := range []rune(s) {
+	runes := []rune(s)
+	for pos, r := range runes {
 		if int(r) < limit {
 			out = append(out, byte(r))
 			continue
 		}
 		switch handler {
 		case "strict":
-			return nil, errs.New(errs.UnicodeEncodeError,
-				"'%s' codec can't encode character '%s' in position %d: ordinal not in range(%d)",
-				codec, charEscape(r), pos, limit)
+			return nil, encodeRunError(runes, pos, codec, limit)
 		case "ignore":
 		case "replace":
 			out = append(out, '?')
@@ -96,15 +95,39 @@ func encodeString(s, codec, handler string) ([]byte, error) {
 			// fall back on strict for anything else. A Go string
 			// holds no surrogates, so "anything else" is every
 			// character that can reach here.
-			return nil, errs.New(errs.UnicodeEncodeError,
-				"'%s' codec can't encode character '%s' in position %d: ordinal not in range(%d)",
-				codec, charEscape(r), pos, limit)
+			return nil, encodeRunError(runes, pos, codec, limit)
 		default:
 			return nil, errs.New(errs.LookupError,
 				"unknown error handler name '%s'", handler)
 		}
 	}
 	return out, nil
+}
+
+// encodeRunError words what a strict handler says about the characters starting
+// at pos that the codec cannot represent.
+//
+// CPython hands the handler the *maximal run* of them, not the first one, and
+// the message is different for a run of one: "can't encode character '\u019b'
+// in position 0" against "can't encode characters in position 0-1", where the
+// plural form carries no character at all and the end is inclusive. Reporting
+// only the first character made every run read as a single character.
+//
+// A run stops at the first encodable character, so `'\u019ba\u0264'` is
+// position 0 alone and not 0-2.
+func encodeRunError(runes []rune, pos int, codec string, limit int) error {
+	end := pos
+	for end+1 < len(runes) && int(runes[end+1]) >= limit {
+		end++
+	}
+	if end == pos {
+		return errs.New(errs.UnicodeEncodeError,
+			"'%s' codec can't encode character '%s' in position %d: ordinal not in range(%d)",
+			codec, charEscape(runes[pos]), pos, limit)
+	}
+	return errs.New(errs.UnicodeEncodeError,
+		"'%s' codec can't encode characters in position %d-%d: ordinal not in range(%d)",
+		codec, pos, end, limit)
 }
 
 // decodeBytes is bytes.decode.
@@ -318,6 +341,17 @@ func decodeError(out *strings.Builder, handler string, bad []byte, strict func()
 
 // codecArgs reads the (encoding, errors) pair both encode and decode take.
 func codecArgs(args *value.CallArgs, method string) (codec, handler string, err error) {
+	return codecArgsFor(args, method, true)
+}
+
+// codecArgsFor is codecArgs with the name lookup made optional.
+//
+// lookUp is false for the one caller that must not do it: an empty bytes
+// decodes to "" without consulting the codec registry, so its name is never
+// checked. The *type* checks above still run, because CPython's do --
+// `b”.decode(1)` is a TypeError there and `b”.decode('nope')` is not an error
+// at all.
+func codecArgsFor(args *value.CallArgs, method string, lookUp bool) (codec, handler string, err error) {
 	codec, handler = "utf-8", "strict"
 	// A None is not the default here either: str.encode's arguments are
 	// declared as str, so an explicit None is refused rather than falling
@@ -337,7 +371,7 @@ func codecArgs(args *value.CallArgs, method string) (codec, handler string, err 
 		}
 		handler = value.Str(v)
 	}
-	if hasEncoding {
+	if hasEncoding && lookUp {
 		name, known := codecName(value.Str(encoding))
 		if !known {
 			return "", "", errs.New(errs.LookupError,
@@ -400,11 +434,24 @@ func methodEncode(s *State, r value.Value, args *value.CallArgs) (value.Value, e
 }
 
 func methodDecode(s *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	codec, handler, err := codecArgs(args, "decode")
+	raw := []byte(r.AsString())
+	codec, handler, err := codecArgsFor(args, "decode", len(raw) != 0)
 	if err != nil {
 		return value.Undefined, err
 	}
-	raw := []byte(r.AsString())
+	if len(raw) == 0 {
+		// CPython answers an empty bytes without consulting the codec
+		// registry at all, so `b''.decode('nope')` is "" where
+		// `b'x'.decode('nope')` is a LookupError -- and so is
+		// `''.encode('nope')`, because the fast path is on the decode
+		// side only. That asymmetry is CPython's, not a simplification.
+		//
+		// It matters here beyond the unknown-codec case: it is also the
+		// answer for every codec gojja2 does not implement, so
+		// `b''.decode('utf-16')` agrees exactly rather than falling under
+		// the divergence docs/divergences.md records for the rest.
+		return value.String(""), nil
+	}
 	if err := s.ChargeBytes(int64(len(raw)) * decodeExpansion(codec, handler)); err != nil {
 		return value.Undefined, err
 	}

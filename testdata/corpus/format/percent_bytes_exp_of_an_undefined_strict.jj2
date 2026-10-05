@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{{ ('[%e]'.encode()) % nope }}|{{ ('[%G]'.encode()) % nope }}

@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{% macro m(x) %}[{{ x|default('d') }}]{% endmacro %}{{ m() }}

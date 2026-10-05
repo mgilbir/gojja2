@@ -1,0 +1,7 @@
+{
+  "case": "classes/construct_str_of_float.jj2",
+  "variables": {
+    "f": "or",
+    "s": "or"
+  }
+}

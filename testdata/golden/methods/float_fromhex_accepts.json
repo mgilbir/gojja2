@@ -1,0 +1,11 @@
+{
+  "case": "methods/float_fromhex_accepts.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "1.0|8.0|3.0|0.0|485.0"
+}

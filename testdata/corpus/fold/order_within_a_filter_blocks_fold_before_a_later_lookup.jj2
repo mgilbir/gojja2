@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% filter upper %}{{ (0 ** 0)[7] and 0 }}{% endfilter %}{{ 1|nosuchA }}

@@ -1,0 +1,8 @@
+{
+  "v": "V",
+  "__templates__": {
+    "lib.txt": "{% macro m() %}x{{ v }}y{% filter length %}abc{% endfilter %}{% endmacro %}"
+  }
+}
+---
+{% import 'lib.txt' as l with context %}{{ l.m() }}

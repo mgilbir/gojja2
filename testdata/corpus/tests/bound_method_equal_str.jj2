@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a'.upper == 'a'.upper }}|{{ 'a'.upper == 'b'.upper }}|{{ 'a'.upper == 'a'.lower }}

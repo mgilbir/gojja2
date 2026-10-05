@@ -1,0 +1,5 @@
+{
+  "x": 5
+}
+---
+{% for i in [1, 2] %}{% for j in [1] %}{% block b scoped %}[{{ loop.index }}{{ loop.length }}]{% endblock %}{% endfor %}{% endfor %}

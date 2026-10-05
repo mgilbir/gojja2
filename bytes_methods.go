@@ -138,15 +138,40 @@ func bytesBounds(s string, args *value.CallArgs, first int) (from, to int, ok bo
 
 // fillByte reads the optional fill character of center, ljust and rjust, which
 // must be exactly one byte.
-func fillByte(method string, args *value.CallArgs) (byte, error) {
+func fillByte(method string, args *value.CallArgs, py value.PythonVersion) (byte, error) {
 	v, ok := args.Arg(1)
 	if !ok {
 		return ' ', nil
 	}
-	if v.Kind() != value.KindBytes || len(v.AsString()) != 1 {
-		return 0, errs.New(errs.TypeError,
-			"%s() argument 2 must be a byte string of length 1, not %s",
-			method, v.TypeName())
+	// This message comes from getargs.c's 'c' unit rather than from Argument
+	// Clinic, and converterr there spells None as "None" where every clinic
+	// message spells it "NoneType":
+	//
+	//	arg == Py_None ? "None" : arg->ob_type->tp_name
+	//
+	// So `b.center(6, none)` is "not None" while `'ab'.center(6, none)`,
+	// which is a clinic message, is "not NoneType".
+	named := v.TypeName()
+	if v.IsNone() {
+		named = "None"
+	}
+	wrongType := errs.New(errs.TypeError,
+		"%s() argument 2 must be a byte string of length 1, not %s",
+		method, named)
+	if v.Kind() != value.KindBytes {
+		// 3.14 left this half exactly as it was, colon and all:
+		// `b.rjust(10, 1)` is "rjust() argument 2 must be ... not int"
+		// on every version. Only a bytes of the wrong length moved.
+		return 0, wrongType
+	}
+	if len(v.AsString()) != 1 {
+		if py.FillCharMessageNamesTheLength() {
+			return 0, errs.New(errs.TypeError,
+				"%s(): argument 2 must be a byte string of length 1, "+
+					"not a bytes object of length %d",
+				method, len(v.AsString()))
+		}
+		return 0, wrongType
 	}
 	return v.AsString()[0], nil
 }
@@ -438,24 +463,30 @@ func bytesAffix(name string, match func(string, string) bool) func(*State, value
 			window = s[from:to]
 		}
 
-		var candidates []string
-		switch {
-		case v.Kind() == value.KindBytes:
-			candidates = []string{v.AsString()}
-		case v.Kind() == value.KindTuple:
+		// Each tuple element is converted as it is *reached*, so one
+		// that matches hides a bad one after it:
+		// `b'abc'.startswith((b'a', 1))` is True and
+		// `b''.startswith((b'a', 1))` raises. Collecting them all up
+		// front refused the first of those.
+		if v.Kind() == value.KindTuple {
 			seq, _ := v.Seq()
 			for _, item := range seq.Items() {
 				if item.Kind() != value.KindBytes {
 					return value.Undefined, errs.New(errs.TypeError,
 						"a bytes-like object is required, not '%s'", item.TypeName())
 				}
-				candidates = append(candidates, item.AsString())
+				if inRange && match(window, item.AsString()) {
+					return value.True, nil
+				}
 			}
-		default:
+			return value.False, nil
+		}
+		if v.Kind() != value.KindBytes {
 			return value.Undefined, errs.New(errs.TypeError,
 				"%s first arg must be bytes or a tuple of bytes, not %s",
 				name, v.TypeName())
 		}
+		candidates := []string{v.AsString()}
 		if !inRange {
 			// A start past the end matches nothing, not even the
 			// empty prefix.
@@ -659,13 +690,15 @@ func rsplitN(st *State, s, sep string, n int) ([]string, error) {
 // vertical tab, the form feed and several Unicode separators; bytes does not,
 // because it has no encoding to recognise them in.
 func bytesSplitlines(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
-	keep := false
-	if v, ok := args.Arg(0); ok {
-		n, err := indexOf(v, cInt)
-		if err != nil {
-			return value.Undefined, err
-		}
-		keep = n != 0
+	// keepends is `bool(accept={int})` in Argument Clinic, exactly as
+	// str.splitlines' is, so from 3.12 it is a truth test and before that an
+	// integer conversion. This read it as an integer on every version, so
+	// `b.splitlines(none)` and `b.splitlines('x')` were refused where CPython
+	// splits -- and the str half of the same rule was already right, which is
+	// how the two came to differ.
+	keep, err := clinicBoolArg(args, 0, "keepends", st.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
 	}
 	s := r.AsString()
 	var out []string
@@ -774,7 +807,7 @@ func bytesPad(align padAlign) func(*State, value.Value, *value.CallArgs) (value.
 		if err != nil {
 			return value.Undefined, err
 		}
-		fill, err := fillByte(names[align], args)
+		fill, err := fillByte(names[align], args, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -782,10 +815,15 @@ func bytesPad(align padAlign) func(*State, value.Value, *value.CallArgs) (value.
 		// Counted in bytes, not code points: padding a two-byte
 		// character to a width of ten leaves eight bytes of fill, not
 		// nine. strings.Builder over pad() would have counted runes.
-		gap := width - len(s)
-		if gap <= 0 {
+		//
+		// Compared before it is subtracted, as in pad(): a width of
+		// math.MinInt64 wraps the difference to a large positive gap,
+		// and the make() below then panicked with "makeslice: cap out
+		// of range" where CPython answers the receiver unchanged.
+		if width <= len(s) {
 			return value.Bytes([]byte(s)), nil
 		}
+		gap := width - len(s)
 		if err := st.ChargeBytes(int64(width)); err != nil {
 			return value.Undefined, err
 		}
@@ -898,21 +936,56 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 	if err := st.ChargeBytes(2 * int64(len(s))); err != nil {
 		return value.Undefined, err
 	}
-	sep := ""
-	if v, ok := arg(args, 0, "sep"); ok {
-		if !v.IsString() {
-			return value.Undefined, errs.New(errs.TypeError,
-				"sep must be str or bytes, not %s", v.TypeName())
-		}
-		sep = value.Str(v)
-	}
+	// bytes_per_sep is converted before sep is looked at at all: it is an int
+	// in Argument Clinic and its conversion runs first, so `b.hex(none, none)`
+	// and `b.hex('--', none)` both complain about the *second* argument.
+	// Reading sep first reported the separator in every one of those.
 	perSep := 1
 	if v, ok := arg(args, 1, "bytes_per_sep"); ok {
-		n, err := indexOf(v, cSSizeT)
+		// `int`, not Py_ssize_t, so it gives up at 2**31 and the
+		// OverflowError names a C int.
+		n, err := indexOf(v, cInt)
 		if err != nil {
 			return value.Undefined, err
 		}
 		perSep = n
+	}
+	sep := ""
+	if v, ok := arg(args, 0, "sep"); ok {
+		// CPython asks four questions about the separator, in this
+		// order, and answering them out of order gets the wrong one.
+		// It *measures* before it looks at the type, so an int fails
+		// as something with no length rather than as a wrong type;
+		// only a value that is exactly one long is asked what it is.
+		//
+		// This checked the type alone, which got the wording wrong for
+		// every kind, accepted a separator of any length ("--" grouped
+		// as `61--62` where CPython refuses it, and "" silently meant
+		// no separator at all), and rejected a bytes -- reporting `sep
+		// must be str or bytes, not bytes`, a message that contradicts
+		// itself, which is the same tell that gave away the dict-update
+		// pair bug.
+		n, err := value.LenValue(v)
+		if err != nil {
+			return value.Undefined, err
+		}
+		if b, _ := n.BigInt(); !b.IsInt64() || b.Int64() != 1 {
+			return value.Undefined, errs.New(errs.ValueError,
+				"sep must be length 1.")
+		}
+		if !v.IsString() && v.Kind() != value.KindBytes {
+			return value.Undefined, errs.New(errs.TypeError,
+				"sep must be str or bytes.")
+		}
+		// AsString rather than Str, so a bytes separator is its own
+		// byte and not the `b'-'` its repr would be.
+		sep = v.AsString()
+		for i := 0; i < len(sep); i++ {
+			if sep[i] >= 0x80 {
+				return value.Undefined, errs.New(errs.ValueError,
+					"sep must be ASCII.")
+			}
+		}
 	}
 	if sep == "" {
 		return value.String(hex.EncodeToString([]byte(s))), nil
@@ -941,13 +1014,24 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 	return value.String(strings.Join(parts, sep)), nil
 }
 
-func bytesFromhex(_ *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
+func bytesFromhex(s *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
+	py := s.PythonVersion()
 	v, _ := args.Arg(0)
-	if !v.IsString() {
+	// 3.14 widened the argument to anything bytes-like, and reworded the
+	// refusal -- including spelling None as NoneType again.
+	if py.FromhexTakesBytesLike() {
+		if !v.IsString() && v.Kind() != value.KindBytes {
+			return value.Undefined, errs.New(errs.TypeError,
+				"fromhex() argument must be str or bytes-like, not %s",
+				value.QualifiedTypeName(v))
+		}
+	} else if !v.IsString() {
+		// clinicTypeName: before 3.14 this message spells None as None,
+		// where every other spelling of the same type is NoneType.
 		return value.Undefined, errs.New(errs.TypeError,
-			"fromhex() argument must be str, not %s", v.TypeName())
+			"fromhex() argument must be str, not %s", clinicTypeName(v))
 	}
-	out, err := decodeHexIgnoringSpaces(value.Str(v))
+	out, err := decodeHexIgnoringSpaces(v.AsString(), py)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -956,17 +1040,52 @@ func bytesFromhex(_ *State, _ value.Value, args *value.CallArgs) (value.Value, e
 
 // decodeHexIgnoringSpaces is bytes.fromhex, which skips ASCII spaces between
 // pairs and names the position of the first character it cannot read.
-func decodeHexIgnoringSpaces(s string) ([]byte, error) {
+// decodeHexIgnoringSpaces is bytes.fromhex(), which is fussier than it looks.
+//
+// Whitespace separates byte pairs and may not sit inside one, so `"61 62"` is
+// two bytes and `"6 1"` is an error. CPython skips every ASCII space -- tab,
+// newline, vertical tab, form feed and carriage return as well as " " -- and
+// this skipped only " ", so `"\t61"` was refused where CPython decodes it.
+//
+// The reported position is the offending character's, and a pair cut short by
+// the end of the string is reported at the end: `"a"` is position 1, not 0.
+// This reported the start of the pair for every failure, which is right only
+// when the *first* digit is the bad one.
+//
+// CPython counts the position in code points, because the argument is a str --
+// `"61é"` is position 2 -- and the byte offset is the same number here: every
+// character this loop walks past is a hex digit or an ASCII space, and a
+// multi-byte character is neither, so it fails at the offset it starts on.
+// Carrying a separate code-point counter looked necessary and was not; the
+// plant that perturbed it changed no answer, which is what said so.
+func decodeHexIgnoringSpaces(s string, py value.PythonVersion) ([]byte, error) {
+	fail := func(at int) error {
+		return errs.New(errs.ValueError,
+			"non-hexadecimal number found in fromhex() arg at position %d", at)
+	}
 	var out []byte
-	i := 0
-	for i < len(s) {
-		if s[i] == ' ' {
+	for i := 0; i < len(s); {
+		if asciiIsSpace(s[i]) {
 			i++
 			continue
 		}
-		if i+1 >= len(s) || !isHexDigit(s[i]) || !isHexDigit(s[i+1]) {
-			return nil, errs.New(errs.ValueError,
-				"non-hexadecimal number found in fromhex() arg at position %d", i)
+		if !isHexDigit(s[i]) {
+			return nil, fail(i)
+		}
+		// A pair cut short by the end of the string is a different
+		// complaint from one spoiled by a character, and 3.14 made
+		// them different messages: the first counts the digits, the
+		// second still points at the character. Before 3.14 both
+		// pointed at the second position.
+		if i+1 >= len(s) {
+			if py.FromhexCountsTheDigits() {
+				return nil, errs.New(errs.ValueError, "fromhex() arg "+
+					"must contain an even number of hexadecimal digits")
+			}
+			return nil, fail(i + 1)
+		}
+		if !isHexDigit(s[i+1]) {
+			return nil, fail(i + 1)
 		}
 		b, _ := hex.DecodeString(s[i : i+2])
 		out = append(out, b[0])
@@ -1021,7 +1140,12 @@ func bytesTranslate(st *State, r value.Value, args *value.CallArgs) (value.Value
 		table = t
 	}
 	del := ""
-	if v, ok := arg(args, 1, "delete"); ok && !v.IsNone() {
+	// `delete` is `y*` in Argument Clinic, which takes no None: only an
+	// *omitted* argument is no deletion, and an explicit one is refused.
+	// `table` is `O` and does take it, which is why the two are not alike --
+	// treating a None delete as absent made `b.translate(none, none)` answer
+	// the receiver where CPython asks for a bytes-like object.
+	if v, ok := arg(args, 1, "delete"); ok {
 		d, err := bytesLike(v)
 		if err != nil {
 			return value.Undefined, err
@@ -1046,17 +1170,48 @@ func bytesTranslate(st *State, r value.Value, args *value.CallArgs) (value.Value
 	return value.Bytes(out), nil
 }
 
-// bigFromBytes is int.from_bytes, reached through an integer receiver because
-// a template has no way to name the class.
-func bigFromBytes(_ *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
-	v, _ := args.Arg(0)
-	if v.Kind() != value.KindBytes {
+// fromBytesSource converts int.from_bytes's first argument the way CPython's
+// PyBytes_FromObject does: a bytes is taken as it is, any other iterable is
+// walked and its elements must be integers in range(0, 256), and a str or an
+// int -- both of which bytes() itself accepts, one with an encoding and one as
+// a count -- are refused outright.
+//
+// This only ever read a bytes, so `int.from_bytes([1, 2])` said it could not
+// convert a list where CPython answers 258.
+func fromBytesSource(st *State, v value.Value) (string, error) {
+	if v.Kind() == value.KindBytes {
+		return v.AsString(), nil
+	}
+	notBytes := errs.New(errs.TypeError,
 		// int.from_bytes words this as a conversion rather than as a
 		// bytes-like requirement, unlike every bytes method.
-		return value.Undefined, errs.New(errs.TypeError,
-			"cannot convert '%s' object to bytes", v.TypeName())
+		"cannot convert '%s' object to bytes", v.TypeName())
+	if v.IsString() || v.IsInteger() {
+		return "", notBytes
 	}
-	raw := v.AsString()
+	// The walk is charged, because its length is the template's to choose.
+	items, err := materializeOr(st, v, notBytes)
+	if err != nil {
+		return "", err
+	}
+	b, err := value.BytesFromItems(items)
+	if err != nil {
+		return "", err
+	}
+	return b.AsString(), nil
+}
+
+// bigFromBytes is int.from_bytes, reached through an integer receiver because
+// a template has no way to name the class.
+func bigFromBytes(st *State, _ value.Value, args *value.CallArgs) (value.Value, error) {
+	v, ok := arg(args, 0, "bytes")
+	if !ok {
+		return value.Undefined, errs.New(errs.TypeError,
+			"from_bytes() missing required argument 'bytes' (pos 1)")
+	}
+	// byteorder is bound and checked, type then value, before the first
+	// argument is converted at all: `from_bytes(lst, 1)` complains about
+	// the 1 and `from_bytes(1.5, 'nope')` about the 'nope'.
 	order := "big"
 	if o, ok := arg(args, 1, "byteorder"); ok {
 		if !o.IsString() {
@@ -1070,6 +1225,10 @@ func bigFromBytes(_ *State, _ value.Value, args *value.CallArgs) (value.Value, e
 	default:
 		return value.Undefined, errs.New(errs.ValueError,
 			"byteorder must be either 'little' or 'big'")
+	}
+	raw, err := fromBytesSource(st, v)
+	if err != nil {
+		return value.Undefined, err
 	}
 	signed := false
 	if s, ok := arg(args, 2, "signed"); ok {

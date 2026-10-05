@@ -1,0 +1,3 @@
+{}
+---
+{% set s = 'a' %}{{ s|replace(new='b') }}

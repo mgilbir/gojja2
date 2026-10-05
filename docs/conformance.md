@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**4576 of 4590 gradable cases (99.7%)** match CPython jinja2, across eight
+**8073 of 8152 gradable cases (99.0%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The five that do not are listed with reasons
 in `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["4576 / 4590 gradable  (99.7%)"]
+    TC --> RATE["7146 / 7191 gradable  (99.4%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 2270 | 2260 |
+| gojja2's own (committed, with goldens) | 5832 | 5757 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **4590** | **4576 (99.7%)** |
+| **total** | **8152** | **8073 (99.0%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -193,6 +193,31 @@ passed as an argument to every function whose answer can depend on it rather
 than read from a package variable, so a signature carrying it declares "this
 differs by interpreter", and one that does not cannot quietly start differing.
 
+That rule has to be followed all the way out, and was not. `str()` of a
+container is its repr, and a repr escapes by printability, which moves between
+releases -- but `value.Str` reached `Repr`, which is the pin's. So `{{ [c] }}`
+under `WithPythonVersion(3.14)` printed 3.13's answer while
+`{{ c.isprintable() }}` beside it printed 3.14's. `StrFor` carries the version
+the rest of the way.
+
+### The tables are gojja2's own
+
+CPython's Unicode and Go's are different releases, and gojja2 used to store only
+the *difference* between them: `isalpha` was a correction to
+`unicode.IsLetter`, `isprintable` to `unicode.IsGraphic`, and the case mappings
+to `unicode.ToUpper` and its neighbours. That is smaller -- 192 ranges against
+1,560 -- and it was guarded, by a sha256 over every code point that a Go upgrade
+breaks loudly.
+
+It is still the wrong shape. A difference is only true against the tables it was
+measured from, so the answer a template got depended on which compiler built the
+binary, and a Go upgrade rewrote two tracked files under whoever ran `make
+oracle` first. The tables are now CPython's answers whole: 1,560 ranges for the
+predicates, and 1,347 runs plus about 450 exceptions for the mappings, in the
+shape Go's own `unicode.CaseRanges` takes. The digest stayed: it is the only
+check that covers every code point rather than the ones a case happens to
+mention, and it is what proves a regeneration changed nothing it should not.
+
 Only the differences are stored. `testdata/golden` is the pinned version's full
 set; `testdata/golden-3.11`, `-3.12` and `-3.14` hold the cases that answer
 differently -- 36, 9 and 33 files, 78 in all -- laid over it. `make golden-matrix`
@@ -240,6 +265,54 @@ Generation is structured rather than byte-level: random bytes are read as
 error, and a mutation changes one choice rather than corrupting a tag. A
 divergence is shrunk against the same check before it is reported, so findings
 arrive minimal.
+
+A case is an *environment* as well as a template, and **eleven settings are
+drawn alongside it**. Every one of them was fixed at jinja2's default once, and each
+turned out to hide something.
+
+*What the engine does with a value:* **autoescaping**, and the **Undefined
+class** -- all four, `StrictUndefined` included, which was excluded for as long
+as a folded constant disagreed about *when* it raises.
+
+*What the template means:* the lexer's **`trim_blocks`**, **`lstrip_blocks`**
+and **`keep_trailing_newline`**. Sixty thousand templates a run all lexed under
+jinja2's defaults while the generator wrote `{%- ... -%}` constantly, and the
+interaction between an explicit marker and an implicit setting is exactly where a
+whitespace rule goes wrong. **`newline_sequence`** is the fourth: it had no
+corpus case at all, and it changes what a string *literal is*, because jinja2
+normalises the newlines it finds in the template before the parser sees them.
+
+*What counts as a tag:* the six **delimiters**, the **line-statement prefix**
+and the **line-comment prefix**, which is the lexer's whole job -- a custom set
+changes what is data, where whitespace control attaches, and which of three
+openings a `{` starts; the prefixes turn every tag into `# if x` on a line of its
+own and every comment into `## c`. Both are applied by
+rewriting the finished template rather than threading the strings through every
+arm of the generator: both engines are handed the identical bytes, which is all
+the comparison needs. Two details make that work -- the *auxiliary* templates are
+rewritten with the delimiters, because an environment's apply to every template
+it loads and an `{% extends %}` would not otherwise parse; and `{% raw %}` keeps
+its braces, because jinja2 handles raw in its block scanner and `# raw` is an
+unknown tag.
+
+*What tags exist at all:* the optional **extensions**, `do` and `loopcontrols`.
+The parser knows `{% break %}`, `{% continue %}` and `{% do %}`, all three need
+an extension, and for as long as the run enabled none of them those statements
+were graded by two hand-written corpus cases and nothing else.
+
+`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as an eleventh axis,
+configuring both sides to match.
+
+Both engines are handed the same settings from one function, because there were
+two built by hand and they had drifted: the syntax soak sent autoescaping and
+not the Undefined class, so an axis reached one engine and not the other. **A
+setting applied to one side only is a comparison between two environments rather
+than between two engines, and it looks exactly like a divergence.** Every run
+prints a count per axis, because a dimension that silently stopped varying would
+otherwise look exactly like a clean run. For the extensions the count is of the
+tag actually *written* as well as the setting drawn, and a run of any size that
+writes none of them fails: enabling `loopcontrols` costs a run nothing if no
+template ever writes a break.
 
 The oracle runs as a warm subprocess. That is what makes a soak practical at
 all: starting an interpreter and importing jinja2 per case costs tens of

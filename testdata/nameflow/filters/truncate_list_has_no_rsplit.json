@@ -1,0 +1,6 @@
+{
+  "case": "filters/truncate_list_has_no_rsplit.jj2",
+  "variables": {
+    "longlist": "or"
+  }
+}

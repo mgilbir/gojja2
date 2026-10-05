@@ -5,6 +5,7 @@ package gojja2_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/mgilbir/gojja2"
@@ -38,6 +39,74 @@ func renderFinalized(t *testing.T, src string, opts ...gojja2.Option) string {
 		t.Fatalf("render(%q): %v", src, err)
 	}
 	return out
+}
+
+// TestFinalizeOrderAgainstEscaping pins the asymmetry in jinja2's own compiler.
+//
+// _output_child_to_const escapes the constant and *then* finalizes it:
+//
+//	const = node.as_const(frame.eval_ctx)
+//	if frame.eval_ctx.autoescape: const = escape(const)
+//	return str(environment.finalize(const))
+//
+// while the code it generates for a value it could not fold is the other way
+// round, `escape(environment.finalize(x))`. So the same finalize sees escaped
+// text for a constant print and raw text for a runtime one, and a finalize that
+// changes the text tells them apart.
+//
+// gojja2 used to decline to fold a print at all when a finalize was set, on the
+// grounds that it might not be pure -- which reproduced neither the order nor
+// the number of calls. Checked against CPython over 200 shapes, five settings
+// times two escaping settings; these are the five that moved.
+func TestFinalizeOrderAgainstEscaping(t *testing.T) {
+	upper := func(v value.Value) value.Value {
+		return value.String(strings.ToUpper(value.Str(v)))
+	}
+	wrap := func(v value.Value) value.Value {
+		return value.Safe("<" + value.Str(v) + ">")
+	}
+	blank := func(v value.Value) value.Value {
+		if v.IsNone() {
+			return value.String("")
+		}
+		return v
+	}
+	for _, tc := range []struct {
+		name string
+		fn   func(value.Value) value.Value
+		src  string
+		want string
+	}{
+		// Constant: escaped first, so the finalize sees "&lt;i&gt;".
+		{"upper const", upper, `{{ '<i>' }}`, "&LT;I&GT;"},
+		// Not constant: finalized first, so it sees "<i>" and the
+		// result is escaped after.
+		{"upper runtime", upper, `{% set v = '<i>' %}{{ v }}`, "&lt;I&gt;"},
+		// A safe constant is not escaped, so the finalize sees the
+		// Markup and what it returns is written as it stands.
+		{"upper safe const", upper, `{{ '<i>'|safe }}`, "<I>"},
+		{"wrap const", wrap, `{{ '<i>' }}`, "<&lt;i&gt;>"},
+		{"wrap runtime", wrap, `{% set v = '<i>' %}{{ v }}`, "<<i>>"},
+		// escape(None) is "None", so a finalize looking for None never
+		// sees one on the constant path.
+		{"none const", blank, `{{ none }}`, "None"},
+		{"none runtime", blank, `{% set v = none %}{{ v }}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpl, err := mustEnv(gojja2.WithFinalize(tc.fn),
+				gojja2.WithAutoescape(true)).FromString(tc.src)
+			if err != nil {
+				t.Fatalf("FromString(%q): %v", tc.src, err)
+			}
+			out, err := tmpl.RenderString(context.Background(), nil)
+			if err != nil {
+				t.Fatalf("render(%q): %v", tc.src, err)
+			}
+			if out != tc.want {
+				t.Errorf("%s: got %q, want %q", tc.src, out, tc.want)
+			}
+		})
+	}
 }
 
 func TestFinalizeRunsOnPrintsOnly(t *testing.T) {

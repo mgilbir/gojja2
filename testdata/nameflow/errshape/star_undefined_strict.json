@@ -1,0 +1,6 @@
+{
+  "case": "errshape/star_undefined_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

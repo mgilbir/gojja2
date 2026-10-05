@@ -1,0 +1,6 @@
+{
+  "s": "a b c d",
+  "n": 1
+}
+---
+{{ s|wordwrap(3, wrapstring=n.__class__) }}

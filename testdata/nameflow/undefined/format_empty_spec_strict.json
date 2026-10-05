@@ -1,0 +1,6 @@
+{
+  "case": "undefined/format_empty_spec_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

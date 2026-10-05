@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set s = d.keys() - ['b'] %}{{ s.__class__()|list }}|{{ s.__class__([1, 2, 2])|sort }}|{{ s.__class__('abca')|sort }}|{{ s.__class__(range(3))|sort }}|{{ s.__class__(d)|sort }}|{{ s.__class__(d.items())|sort }}

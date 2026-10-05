@@ -147,7 +147,12 @@ func unicodeEscapeDecode(s string) (string, error) {
 			// readHexEscape returns a rune, which is int32: eight hex
 			// digits overflow it, so `\Uffffffff` arrived as -1 and
 			// passed a check written for values above 0x10FFFF.
-			if r < 0 || r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF) {
+			//
+			// A surrogate is not refused: CPython takes `\U0000d800`
+			// as readily as `\ud800`, and both become U+FFFD here,
+			// the one character a Go string has in place of a lone
+			// surrogate. See docs/divergences.md.
+			if r < 0 || r > 0x10FFFF {
 				return "", errs.New(errs.TemplateSyntaxError, "illegal Unicode character")
 			}
 			b.WriteRune(r)

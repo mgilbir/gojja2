@@ -1,0 +1,6 @@
+{
+  "case": "methods/mappingproxy_contains_through_values_view.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

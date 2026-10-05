@@ -1,0 +1,3 @@
+{}
+---
+{% set S = ''.__class__ %}{% set B = 'a'.encode().__class__ %}{% set b = 'aé'.encode('latin-1') %}{{ B(encoding=5) }}

@@ -1,0 +1,7 @@
+{
+  "case": "dataflow/guard_over_getattr.jj2",
+  "variables": {
+    "c": "fr",
+    "nope": "or"
+  }
+}

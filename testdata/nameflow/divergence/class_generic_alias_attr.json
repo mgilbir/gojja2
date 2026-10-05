@@ -1,0 +1,6 @@
+{
+  "case": "divergence/class_generic_alias_attr.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

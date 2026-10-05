@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  },
+  "n3": 3
+}
+---
+{{ (none.missing)[1] }}

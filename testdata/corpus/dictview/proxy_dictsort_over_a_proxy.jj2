@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}{{ C({'q': 2, 'a': 1})|dictsort }}|{{ C(C({'q': 2, 'a': 1}))|dictsort(by='value') }}

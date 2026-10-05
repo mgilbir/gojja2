@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 'ab'.encode() %}{% set e = ''.encode() %}{{ b.rsplit(e) }}

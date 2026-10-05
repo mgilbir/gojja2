@@ -37,7 +37,14 @@ SETTING_KEYS = {
     "optimized",
     "undefined",
     "extensions",
+    "policies",
 }
+
+# The environment policies a case may set. jinja2 has more -- the i18n ones, and
+# json.dumps_function, which is a callable a JSON header cannot carry -- so only
+# the three a template can observe without one are allowed, spelled exactly as
+# env.policies spells them.
+POLICY_KEYS = {"urlize.rel", "urlize.target", "truncate.leeway"}
 
 UNDEFINED_KINDS = {
     "default": jinja2.Undefined,
@@ -165,9 +172,28 @@ def build_environment(
             raise CaseError(f"{where}: unknown __profile__ {profile!r}")
         opts.update(profiles.settings_for(profile))
     opts.update(settings)
+    # `"autoescape": "select"` is jinja2's select_autoescape over the html
+    # extension, which a JSON setting cannot carry as the callable it is. The
+    # conformance harness draws it so that a case's own template (.html) and
+    # the ones it pulls in (.txt) fall on opposite sides of the rule.
+    if isinstance(opts.get("autoescape"), str):
+        rule = opts["autoescape"]
+        if rule != "select":
+            raise CaseError(f"{where}: unknown autoescape rule {rule!r}")
+        opts["autoescape"] = jinja2.select_autoescape(
+            enabled_extensions=("html",), default_for_string=True, default=False
+        )
     undefined = opts.pop("undefined", "default")
     if undefined not in UNDEFINED_KINDS:
         raise CaseError(f"{where}: unknown undefined kind {undefined!r}")
+
+    # Applied after the environment is built, because policies is a dict on the
+    # environment rather than a constructor argument. Validated here so a typo
+    # is a refused case and not a setting that silently does nothing.
+    policies = opts.pop("policies", None) or {}
+    for key in policies:
+        if key not in POLICY_KEYS:
+            raise CaseError(f"{where}: unknown policy {key!r}")
 
     extensions = []
     for name in opts.pop("extensions", []):
@@ -182,6 +208,7 @@ def build_environment(
         extensions=extensions,
         **opts,
     )
+    env.policies.update(policies)
     if profile is not None:
         profiles.apply(env, profile)
     return env

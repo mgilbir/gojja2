@@ -1,0 +1,7 @@
+{
+  "case": "classes/unbound_wrong_self_type.jj2",
+  "variables": {
+    "d": "or",
+    "lst": "or"
+  }
+}

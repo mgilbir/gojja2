@@ -1,0 +1,6 @@
+{
+  "case": "format/precision_too_big_boundary.jj2",
+  "variables": {
+    "x": "or"
+  }
+}

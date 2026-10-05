@@ -6,6 +6,7 @@ package gojja2
 import (
 	"fmt"
 	"iter"
+	"reflect"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -46,6 +47,89 @@ func (s sliceSource) at(i int) value.Value { return s[i] }
 func (s sliceSource) length() int          { return len(s) }
 func (s sliceSource) err() error           { return nil }
 
+// sizeGuard reports a function that fails once v has changed size, or nil for
+// a container that may be resized while it is walked.
+//
+// Python raises RuntimeError when a dict changes size during iteration, and it
+// raises it on every step including the one that would have ended the loop --
+// so a single-key dict mutated in the body raises too. Lists are deliberately
+// not guarded: CPython does not guard them either, and `{% for i in l %}` with
+// an append in the body is an infinite loop there. Here the iteration budget
+// stops it, which is the documented bound rather than this error.
+func sizeGuard(v value.Value) func() error {
+	size, what := func() int { return 0 }, ""
+	switch o := v.Interface().(type) {
+	case *dictView:
+		size, what = o.Len, "dictionary"
+	default:
+		if d, ok := v.Dict(); ok {
+			size, what = d.Len, "dictionary"
+		}
+	}
+	if what == "" {
+		return nil
+	}
+	start := size()
+	return func() error {
+		if size() != start {
+			return errs.New(errs.RuntimeError, "%s changed size during iteration", what)
+		}
+		return nil
+	}
+}
+
+// guardedSource is a snapshot of a container that must not be resized while the
+// loop walks it. See sizeGuard.
+type guardedSource struct {
+	items []value.Value
+	guard func() error
+	bad   error
+}
+
+func (s *guardedSource) has(i int) bool {
+	if s.bad != nil {
+		return false
+	}
+	if s.bad = s.guard(); s.bad != nil {
+		return false
+	}
+	return i >= 0 && i < len(s.items)
+}
+
+func (s *guardedSource) at(i int) value.Value { return s.items[i] }
+func (s *guardedSource) length() int          { return len(s.items) }
+func (s *guardedSource) err() error           { return s.bad }
+
+// liveValues walks v the way a `{% for %}` must, which for a list means by
+// index against whatever it holds now rather than over a snapshot of it.
+//
+// value.Iterate takes the slice as it is when the walk starts, which is right
+// for a filter consuming a sequence in one go and wrong for a loop: the body,
+// or the loop's own test, runs between two steps and can shorten the list. See
+// liveSeqSource, which is the same rule for a loop without a test.
+func liveValues(v value.Value) (iter.Seq[value.Value], error) {
+	if v.Kind() != value.KindList {
+		return value.Iterate(v)
+	}
+	seq, _ := v.Seq()
+	return func(yield func(value.Value) bool) {
+		for i := 0; i < seq.Len(); i++ {
+			if !yield(seq.At(i)) {
+				return
+			}
+		}
+	}, nil
+}
+
+// liveSeqSource walks a list as Python's list iterator does: by index, against
+// whatever the list holds now. See makeLoopSource.
+type liveSeqSource struct{ seq *value.Seq }
+
+func (s liveSeqSource) has(i int) bool       { return i >= 0 && i < s.seq.Len() }
+func (s liveSeqSource) at(i int) value.Value { return s.seq.At(i) }
+func (s liveSeqSource) length() int          { return s.seq.Len() }
+func (s liveSeqSource) err() error           { return nil }
+
 // filteredSource applies a loop's `if` as the loop walks it.
 //
 // Filtering up front is the same answer whenever the test is pure, and a
@@ -57,6 +141,11 @@ type filteredSource struct {
 	items []value.Value
 	done  bool
 	fail  error
+	// report tells the render that a pull failed, so that a *body* which
+	// consumed the loop object -- `{{ loop|length }}`, `dict(loop)`,
+	// `{% for a, b in loop %}` -- cannot leave the failure sitting here for
+	// a `{% break %}` to discard. See runLoop.
+	report func(error)
 }
 
 func (s *filteredSource) pull() bool {
@@ -67,6 +156,9 @@ func (s *filteredSource) pull() bool {
 	switch {
 	case err != nil:
 		s.fail, s.done = err, true
+		if s.report != nil {
+			s.report(err)
+		}
 		return false
 	case !ok:
 		s.done = true
@@ -117,16 +209,45 @@ func (s objectSource) at(i int) value.Value {
 // charge in runLoop would never be reached.
 func makeLoopSource(st *State, v value.Value) (loopSource, error) {
 	switch v.Kind() {
-	case value.KindList, value.KindTuple:
+	case value.KindList:
+		// Live, not a snapshot: Python's list iterator holds an index and
+		// asks the list its length each time, so a body that shortens the
+		// list ends the loop early --
+		// `{% for i in lst %}{{ i }}{% set _ = lst.pop() %}{% endfor %}`
+		// on [1,2,3,4] prints "12" there and printed "1234" here. One that
+		// lengthens it runs forever in CPython and runs into the iteration
+		// budget here, which is the bound docs/limits.md records.
+		seq, _ := v.Seq()
+		return liveSeqSource{seq}, nil
+	case value.KindTuple:
+		// A tuple cannot be mutated, so a snapshot and the live sequence
+		// are the same thing.
 		s, _ := v.Seq()
 		return sliceSource(s.Items()), nil
 	case value.KindDict:
 		d, _ := v.Dict()
-		return sliceSource(d.Keys()), nil
+		return &guardedSource{items: d.Keys(), guard: sizeGuard(v)}, nil
 	case value.KindObject:
+		if _, ok := v.Interface().(*dictView); ok {
+			break // a view is guarded too; fall through to Iterate
+		}
 		if seq, ok := v.Interface().(value.Sequence); ok {
 			return objectSource{seq}, nil
 		}
+	}
+	if g := sizeGuard(v); g != nil {
+		seq, err := value.Iterate(v)
+		if err != nil {
+			return nil, err
+		}
+		var items []value.Value
+		for item := range seq {
+			if err := st.Step(1); err != nil {
+				return nil, err
+			}
+			items = append(items, item)
+		}
+		return &guardedSource{items: items, guard: g}, nil
 	}
 	seq, err := value.Iterate(v)
 	if err != nil {
@@ -153,6 +274,12 @@ type loopObject struct {
 	// cycleState tracks loop.cycle across iterations.
 	lastChanged  value.Value
 	hasLastValue bool
+	// undefined is the environment's Undefined class, which previtem and
+	// nextitem have to build their answer under: those two are the only
+	// undefineds a loop hands out, and without this they were always the
+	// default one. Under DebugUndefined `{{ loop.previtem }}` prints the
+	// hint, and under StrictUndefined it raises; both rendered as nothing.
+	undefined value.UndefinedBehavior
 }
 
 func (l *loopObject) GetAttr(name string) (value.Value, bool) {
@@ -173,7 +300,14 @@ func (l *loopObject) GetAttr(name string) (value.Value, bool) {
 	case "first":
 		return value.Bool(l.index == 0), true
 	case "last":
-		return value.Bool(l.index == n()-1), true
+		// jinja2's `last` is `_peek_next() is missing`: it pulls one more
+		// item and no further. Asking for the *length* instead ran a
+		// filtered loop's test over the whole of the rest of the input,
+		// so `{% for i in xs if d.popitem() %}{{ loop.last }}` emptied
+		// the dict where CPython pops exactly once more -- visible
+		// whenever the loop does not run to the end, which is what a
+		// `{% break %}` in the body arranges.
+		return value.Bool(!l.src.has(l.index + 1)), true
 	case "length":
 		return value.Int(int64(n())), true
 	case "depth":
@@ -182,18 +316,22 @@ func (l *loopObject) GetAttr(name string) (value.Value, bool) {
 		return value.Int(int64(l.depth - 1)), true
 	case "previtem":
 		if l.index == 0 {
-			return value.UndefinedHint("there is no previous item"), true
+			return value.UndefinedHint("there is no previous item").
+				WithBehavior(l.undefined), true
 		}
 		return l.src.at(l.index - 1), true
 	case "nextitem":
 		if !l.src.has(l.index + 1) {
-			return value.UndefinedHint("there is no next item"), true
+			return value.UndefinedHint("there is no next item").
+				WithBehavior(l.undefined), true
 		}
 		return l.src.at(l.index + 1), true
 	case "cycle":
-		return value.FromObject(&builtinFunc{name: "cycle", fn: stateless(l.cycle)}), true
+		return Method("cycle", "LoopContext", "jinja2.runtime.LoopContext",
+			value.FromObject(l), stateless(l.cycle)), true
 	case "changed":
-		return value.FromObject(&builtinFunc{name: "changed", fn: stateless(l.changed)}), true
+		return Method("changed", "LoopContext", "jinja2.runtime.LoopContext",
+			value.FromObject(l), l.changed), true
 	}
 	return value.Undefined, false
 }
@@ -212,13 +350,29 @@ func (l *loopObject) cycle(args *value.CallArgs) (value.Value, error) {
 
 // changed reports whether its arguments differ from the previous call's, which
 // is how templates group consecutive rows.
-func (l *loopObject) changed(args *value.CallArgs) (value.Value, error) {
+//
+// jinja2 writes it as `self._last_checked_value != value`, a real `!=` on two
+// tuples -- so a StrictUndefined among the arguments raises instead of
+// answering, and it raises from the *second* call rather than the first: the
+// first has only the `missing` sentinel to compare against, which is not a
+// tuple, so Python falls back to identity and never looks at the elements. This
+// compared without consulting the refusal, so `{% for a in [1, 2] %}{{
+// loop.changed(nope) }}` answered "TrueTrue" where jinja2 refuses the second
+// iteration. Found by a soak seed, which noticed only that the two engines
+// failed in different places.
+func (l *loopObject) changed(s *State, args *value.CallArgs) (value.Value, error) {
 	if err := bindArgs(runtimeSignatures["LoopContext.changed"], args, 1); err != nil {
 		return value.Undefined, err
 	}
 	current := value.NewTuple(args.Pos...)
-	if l.hasLastValue && value.Equal(l.lastChanged, current) {
-		return value.False, nil
+	if l.hasLastValue {
+		same, err := value.EqualErr(l.lastChanged, current, s.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		if same {
+			return value.False, nil
+		}
 	}
 	l.lastChanged, l.hasLastValue = current, true
 	return value.True, nil
@@ -297,7 +451,39 @@ type builtinFunc struct {
 	// iteration and length error says 'type' where this said 'function',
 	// and `{{ range }}` is `<class 'range'>`.
 	class string
-	fn    func(s *State, args *value.CallArgs) (value.Value, error)
+	// recv is the receiver's type when this callable is a *bound method*
+	// rather than a free function or a class, and pyClass is that type's
+	// qualified name when the class is written in Python rather than C.
+	//
+	// Python spells the three differently and a template can see all of it:
+	// `d.get` is a builtin_function_or_method whose repr is
+	// `<built-in method get of dict object at 0x...>`, `cycler('a').next` is
+	// a method whose repr is `<bound method Cycler.next of <...>>`, and
+	// lipsum is a plain function. Every one of them answered "function"
+	// here, which is also what `{{ d.get.__class__() }}` refused as.
+	recv    string
+	pyClass string
+	// self is the receiver, for the repr's address and for the equality two
+	// bound methods have.
+	self value.Value
+	// pyName is what __name__ reports when it is not the name the attribute
+	// was reached by: lipsum is jinja2.utils.generate_lorem_ipsum.
+	pyName   string
+	pyModule string
+	fn       func(s *State, args *value.CallArgs) (value.Value, error)
+}
+
+// Method is [Func] for a callable reached as an attribute of a value.
+//
+// recv is the receiver's type name as an error message spells it, and pyClass
+// is the class's qualified name when it is written in Python -- which is what
+// tells a `method` from a `builtin_function_or_method`. self is the receiver,
+// which the repr takes an address from and which two bound methods compare by.
+func Method(name, recv, pyClass string, self value.Value,
+	fn func(s *State, args *value.CallArgs) (value.Value, error)) value.Value {
+	return value.FromObject(&builtinFunc{
+		name: name, recv: recv, pyClass: pyClass, self: self, fn: fn,
+	})
 }
 
 // className is the bare name, which is what __name__ reports: "range" for
@@ -310,30 +496,62 @@ func (f *builtinFunc) className() string {
 }
 
 func (f *builtinFunc) GetAttr(name string) (value.Value, bool) {
-	if name == "name" {
-		return value.String(f.name), true
-	}
-	if f.class == "" {
+	if f.class != "" {
+		// A type object answers the attributes classObject answers,
+		// because that is what it is.
+		switch name {
+		case "__name__", "__qualname__":
+			return value.String(f.className()), true
+		case "__module__":
+			if i := strings.LastIndexByte(f.class, '.'); i >= 0 {
+				return value.String(f.class[:i]), true
+			}
+			return value.String("builtins"), true
+		}
 		return value.Undefined, false
 	}
-	// A type object answers the attributes classObject answers, because
-	// that is what it is.
+	// A function and a bound method carry the same three, and each spells
+	// them for what it is: `dict.get` is the qualified name of `d.get`,
+	// `Cycler.next` of a method, and a C method's module is None rather
+	// than a name.
 	switch name {
-	case "__name__", "__qualname__":
-		return value.String(f.className()), true
-	case "__module__":
-		if i := strings.LastIndexByte(f.class, '.'); i >= 0 {
-			return value.String(f.class[:i]), true
+	case "__name__":
+		return value.String(f.pythonName()), true
+	case "__qualname__":
+		switch {
+		case f.pyClass != "":
+			return value.String(f.className2() + "." + f.name), true
+		case f.recv != "":
+			return value.String(f.recv + "." + f.name), true
 		}
-		return value.String("builtins"), true
+		return value.String(f.pythonName()), true
+	case "__module__":
+		switch {
+		case f.pyClass != "":
+			if i := strings.LastIndexByte(f.pyClass, '.'); i >= 0 {
+				return value.String(f.pyClass[:i]), true
+			}
+			return value.None, true
+		case f.recv != "":
+			return value.None, true
+		}
+		if f.pyModule != "" {
+			return value.String(f.pyModule), true
+		}
+		return value.None, true
 	}
 	return value.Undefined, false
 }
 
-// Call satisfies value.Caller for a caller that has no render to offer, which
-// is what constant folding is. The budget on a nil State is nil, and State.Step
-// treats that as "nothing to charge".
-func (f *builtinFunc) Call(args *value.CallArgs) (value.Value, error) { return f.fn(nil, args) }
+// No Call here, so *builtinFunc is not a value.Caller. There used to be one,
+// "for a caller that has no render to offer, which is what constant folding is",
+// and it was dead twice over: the evaluator goes through callWith so a global is
+// handed the render it runs inside, the folder does not fold a call to a global
+// at all -- folding `{{ lipsum() }}` would bake one random paragraph into the
+// template -- and `is callable` answers through statefulCaller, which callWith
+// satisfies, one check before value.Caller. Replacing the body with a panic left
+// the whole suite green and so did deleting the method; tests/callable_globals
+// grades the half that matters.
 
 // callWith is the path the evaluator uses, so a global is handed the render it
 // is running inside.
@@ -341,28 +559,91 @@ func (f *builtinFunc) callWith(s *State, args *value.CallArgs) (value.Value, err
 	return f.fn(s, args)
 }
 
-// TypeName is what an error message calls this value. type(range) is type,
-// not function.
+// TypeName is what an error message calls this value. type(range) is type, not
+// function, and a bound method is not a function either.
 func (f *builtinFunc) TypeName() string {
-	if f.class != "" {
+	switch {
+	case f.class != "":
 		return "type"
+	case f.pyClass != "":
+		return "method"
+	case f.recv != "":
+		return "builtin_function_or_method"
 	}
 	return "function"
 }
 
 // QualifiedName is what __class__ reports, and the type of a type is type.
-func (f *builtinFunc) QualifiedName() string {
-	if f.class != "" {
-		return "type"
-	}
-	return "function"
-}
+func (f *builtinFunc) QualifiedName() string { return f.TypeName() }
 
 func (f *builtinFunc) Repr() string {
-	if f.class != "" {
+	switch {
+	case f.class != "":
 		return "<class '" + f.class + "'>"
+	case f.pyClass != "":
+		// `<bound method Cycler.next of <jinja2.utils.Cycler object at
+		// 0x...>>`: the class's *bare* name in the method, its
+		// qualified one in the receiver's own repr.
+		return "<bound method " + f.className2() + "." + f.name + " of " +
+			value.ReprFor(f.self, value.DefaultPythonVersion) + ">"
+	case f.recv != "":
+		return fmt.Sprintf("<built-in method %s of %s object at 0x%x>",
+			f.name, f.recv, reflect.ValueOf(f).Pointer())
 	}
-	return "<function " + f.name + ">"
+	return fmt.Sprintf("<function %s at 0x%x>", f.pythonName(), reflect.ValueOf(f).Pointer())
+}
+
+// className2 is the bare name of the Python class a bound method belongs to.
+func (f *builtinFunc) className2() string {
+	if i := strings.LastIndexByte(f.pyClass, '.'); i >= 0 {
+		return f.pyClass[i+1:]
+	}
+	return f.pyClass
+}
+
+// pythonName is what __name__ reports: the name the attribute was reached by,
+// unless the underlying function has one of its own.
+func (f *builtinFunc) pythonName() string {
+	if f.pyName != "" {
+		return f.pyName
+	}
+	return f.name
+}
+
+// Equals is the equality two bound methods have: CPython compares the receiver
+// and the function slot, so `d.get == d.get` is True although the two objects
+// are built one at a time. A free function has no such rule and compares by
+// identity.
+//
+// The receiver is compared by identity where it has one and by value where it
+// does not, which is a str's or an int's case. CPython compares the object
+// there too, and two equal strings in one template are usually the same
+// interned object -- `{% set a = 'ab' %}{% set b = 'a' + 'b' %}{{ a.upper ==
+// b.upper }}` is where the two answers part, and it is the only one.
+func (f *builtinFunc) Equals(other value.Value) (bool, bool) {
+	o, ok := other.Interface().(*builtinFunc)
+	if !ok {
+		return false, true
+	}
+	if f.recv == "" && f.pyClass == "" {
+		return f == o, true
+	}
+	if f.name != o.name || f.recv != o.recv || f.pyClass != o.pyClass {
+		return false, true
+	}
+	if value.SameObject(f.self, o.self) {
+		return true, true
+	}
+	// A receiver that has an identity settles it: two dicts that are not the
+	// same dict give two bound methods that are not equal, however equal the
+	// dicts look. Only a scalar falls through, and there CPython is
+	// comparing an object gojja2 does not have: two literal 300s are two
+	// objects there. Equality of value is what a variable receiver answers
+	// on both; see "`is sameas` on two literals" in docs/divergences.md.
+	if value.HasIdentity(f.self) || value.HasIdentity(o.self) {
+		return false, true
+	}
+	return value.EqualBool(f.self, o.self), true
 }
 
 // stateless adapts a closure that has no use for the render state to the
@@ -391,6 +672,16 @@ type statefulCaller interface {
 // nil during constant folding, which State.Step handles.
 func Func(name string, fn func(s *State, args *value.CallArgs) (value.Value, error)) value.Value {
 	return value.FromObject(&builtinFunc{name: name, fn: fn})
+}
+
+// pyFunc is [Func] for a global whose underlying Python function has a name of
+// its own: what the attribute is reached by and what __name__ answers are two
+// different things for lipsum.
+func pyFunc(name, pyName, pyModule string,
+	fn func(s *State, args *value.CallArgs) (value.Value, error)) value.Value {
+	return value.FromObject(&builtinFunc{
+		name: name, pyName: pyName, pyModule: pyModule, fn: fn,
+	})
 }
 
 // Class is [Func] for a global that is a class in jinja2 rather than a
@@ -432,6 +723,7 @@ type macroObject struct {
 	// called. Lexical, like defScope and volatileEscape.
 	blockName  string
 	blockIndex int
+	blockScope *scope
 	// catchKwargs, catchVarargs and caller record whether the body reads
 	// `kwargs`, `varargs` or `caller`. jinja2 decides this when the macro
 	// is compiled and refuses the corresponding arguments otherwise, so a
@@ -485,12 +777,18 @@ func (m *macroObject) Repr() string {
 // survives the scope a loop body would otherwise discard.
 type namespaceObject struct {
 	d *value.Dict
+	// py is the interpreter being reproduced. Repr comes from the Reprer
+	// interface, which takes no arguments, so the version is carried here
+	// -- as dictView carries it for the same reason. repr escapes by
+	// isprintable, and which characters are printable is the
+	// interpreter's answer.
+	py value.PythonVersion
 }
 
-func newNamespace() *namespaceObject {
+func newNamespace(py value.PythonVersion) *namespaceObject {
 	v := value.NewDict()
 	d, _ := v.Dict()
-	return &namespaceObject{d: d}
+	return &namespaceObject{d: d, py: py}
 }
 
 func (n *namespaceObject) GetAttr(name string) (value.Value, bool) {
@@ -512,7 +810,7 @@ func (n *namespaceObject) QualifiedName() string { return "jinja2.utils.Namespac
 func (n *namespaceObject) AttributeError(name string) string { return name }
 
 func (n *namespaceObject) Repr() string {
-	return "<Namespace " + value.Repr(value.Value(dictValue(n.d))) + ">"
+	return "<Namespace " + value.ReprFor(value.Value(dictValue(n.d)), n.py) + ">"
 }
 
 // dictValue re-wraps a Dict so it can be rendered.
@@ -567,6 +865,9 @@ type blockReference struct {
 	// sc is the scope the block should render in; nil means the template
 	// context, which is the unscoped default.
 	sc *scope
+	// chunks is the piece count of the stream a {% block %} tag renders into;
+	// nil for a reference that joins the pieces into a value first.
+	chunks *int
 }
 
 // GetAttr answers `super`, which is the next definition of the same block --
@@ -650,6 +951,14 @@ func (b *blockReference) render() (value.Value, error) {
 		autoescape: b.st.escapeDefault,
 		blockName:  b.name,
 		blockIndex: b.index,
+		blockScope: b.sc,
+	}
+	// A block body is a buffer of its own, and counts its pieces when the
+	// template it was written in has a filter block to number them for.
+	if b.chunks != nil {
+		ex.chunks = b.chunks
+	} else if entry.tmpl.countsChunks {
+		ex.chunks = new(int)
 	}
 	prev := b.st.tmpl
 	b.st.tmpl = entry.tmpl

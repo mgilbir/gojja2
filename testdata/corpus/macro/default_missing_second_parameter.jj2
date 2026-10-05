@@ -1,0 +1,5 @@
+{
+  "__settings__": {}
+}
+---
+{% macro m(x, y) %}[{{ y }}]{% endmacro %}{{ m(1) }}

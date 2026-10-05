@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_bad_keyword_beats_the_key.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

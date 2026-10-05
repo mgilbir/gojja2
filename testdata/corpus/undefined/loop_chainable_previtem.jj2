@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{% for i in [1,2] %}[{{ loop.previtem }}]{% endfor %}

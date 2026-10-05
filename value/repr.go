@@ -8,7 +8,6 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -17,6 +16,29 @@ import (
 // It differs from Repr only for strings, which print bare, and for the
 // undefined value, which prints as nothing. Containers print their elements
 // with Repr, which is why `{{ ["a"] }}` renders `['a']` and not `[a]`.
+// StrFor is [Str] reproducing one interpreter.
+//
+// It matters for a *container*: str() of a list is its repr, and a repr escapes
+// by printability, which moves between releases. Str alone reaches Repr, which
+// is the pinned interpreter's -- so `{{ [c] }}` under WithPythonVersion(3.14)
+// printed 3.13's answer while `{{ c.isprintable() }}` beside it printed 3.14's.
+func StrFor(v Value, py PythonVersion) string {
+	switch v.kind {
+	case KindString:
+		return v.str
+	case KindUndefined:
+		if v.undef().behavior == UndefinedDebug {
+			return v.DebugText()
+		}
+		return ""
+	case KindObject:
+		if s, ok := v.obj.(Strer); ok {
+			return s.Str()
+		}
+	}
+	return ReprFor(v, py)
+}
+
 func Str(v Value) string {
 	switch v.kind {
 	case KindString:
@@ -38,10 +60,39 @@ func Str(v Value) string {
 // ok is false when it has none, which is every value but an Object that
 // implements HTMLer. A Markup string answers through IsSafe instead, because
 // markupsafe returns it unchanged rather than asking it for anything.
+// HTMLRefuser is an Object that carries __html__ but cannot answer it.
+//
+// There is exactly one: the Markup *class*. markupsafe defines __html__ as an
+// ordinary method, so the class object holds it unbound -- hasattr says yes,
+// which is what `is escaped` asks, and calling it with no self raises. Every
+// place that would escape the value therefore fails rather than escaping it.
+type HTMLRefuser interface {
+	HTMLRefusal() error
+}
+
+// HTMLRefusal returns that error, and nil for every other value. It is asked
+// before HTML at each of the five places escaping happens, because the answer
+// is an error rather than a string.
+func HTMLRefusal(v Value) error {
+	if v.kind == KindObject {
+		if r, ok := v.obj.(HTMLRefuser); ok {
+			return r.HTMLRefusal()
+		}
+	}
+	return nil
+}
+
 func HTML(v Value) (string, bool) {
 	if v.kind == KindObject {
 		if h, ok := v.obj.(HTMLer); ok {
 			return h.HTML(), true
+		}
+		// It has one; it just cannot be called. `is escaped` asks only
+		// whether the attribute is there, so it must say yes -- and
+		// every caller that would *use* the answer asks HTMLRefusal
+		// first and stops there.
+		if r, ok := v.obj.(HTMLRefuser); ok && r.HTMLRefusal() != nil {
+			return "", true
 		}
 	}
 	// ChainableUndefined is the one Undefined class that defines __html__,
@@ -60,6 +111,25 @@ func HTML(v Value) (string, bool) {
 // version is in reach -- which is everywhere the result can be seen by a
 // template, rather than only by a Go caller.
 func Repr(v Value) string { return ReprFor(v, DefaultPythonVersion) }
+
+// TruncatedRepr is CPython's `%.200R`: the repr cut to 200 *characters*.
+//
+// int()'s complaint about a literal is formatted that way, so a long one loses
+// its tail -- and its closing quote with it, since the cut is of the rendered
+// repr and not of the string inside it. float()'s is not truncated, which is
+// why this is a helper rather than a rule about reprs.
+func TruncatedRepr(v Value, py PythonVersion) string {
+	const max = 200
+	s := ReprFor(v, py)
+	n := 0
+	for i := range s {
+		if n == max {
+			return s[:i]
+		}
+		n++
+	}
+	return s
+}
 
 // ReprFor is [Repr] reproducing one interpreter.
 //
@@ -546,13 +616,6 @@ func AsciiFor(v Value, py PythonVersion) string {
 // printable implements Python's str.isprintable for a single rune: graphic
 // characters plus ASCII space, but no other whitespace separator -- a
 // non-breaking space is escaped by repr, unlike in Go's notion of printable.
-func printable(r rune) bool {
-	if r == ' ' {
-		return true
-	}
-	return unicode.IsGraphic(r) && !unicode.Is(unicode.Zs, r)
-}
-
 // htmlEscaper matches markupsafe's escape(), which uses numeric references for
 // the quotes rather than the named entities.
 var htmlEscaper = strings.NewReplacer(

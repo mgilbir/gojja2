@@ -1,0 +1,5 @@
+{
+  "big": 1e+308
+}
+---
+{% set inf = big * 10 %}{% set nan = inf - inf %}{{ '{:z#015,}'.format(inf) }}|{{ '{:015,}'.format(inf) }}|{{ '{:015_}'.format(nan) }}|{{ '{:=015,f}'.format(-inf) }}|{{ '{:015,%}'.format(inf) }}|{{ '{:015,}'.format(1) }}|{{ '{:06,}'.format(1) }}|{{ '{:#015_x}'.format(255) }}

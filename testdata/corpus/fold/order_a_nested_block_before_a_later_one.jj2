@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "__templates__": {
+    "base.txt": "B"
+  }
+}
+---
+{% block a %}{% block b %}{{ (0 ** 0)[8] and 0 }}{% endblock %}{% endblock %}{% block c %}{{ (0 ** 0)[7] and 0 }}{% endblock %}

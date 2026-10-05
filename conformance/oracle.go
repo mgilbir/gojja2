@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/mgilbir/gojja2/value"
 )
 
 // Oracle is a live CPython jinja2, kept warm behind a pipe.
@@ -127,6 +129,30 @@ func ExpectedOracle(root string) (*OracleIdentity, error) {
 	}, nil
 }
 
+// PythonVersionFor turns the minor version a sweep asked for into the setting
+// gojja2 reproduces it with. "" is the pin.
+//
+// The two have to move together, which is why this lives beside the oracle
+// rather than in the test: an oracle running 3.11 compared against a gojja2
+// reproducing 3.13 would report every version-specific rule as a divergence,
+// and every one of those reports would be about the harness.
+func PythonVersionFor(version string) (value.PythonVersion, error) {
+	switch version {
+	case "":
+		return value.DefaultPythonVersion, nil
+	case "3.11":
+		return value.Python311, nil
+	case "3.12":
+		return value.Python312, nil
+	case "3.13":
+		return value.Python313, nil
+	case "3.14":
+		return value.Python314, nil
+	}
+	return 0, fmt.Errorf("conformance: %q is not an interpreter gojja2 "+
+		"reproduces; it knows 3.11, 3.12, 3.13 and 3.14", version)
+}
+
 // ErrMismatchedOracle reports that the live interpreter is not the one the
 // committed goldens were recorded under. It is deliberately not ErrNoOracle:
 // a missing oracle is a reason to skip, and a wrong one is a reason to stop.
@@ -157,7 +183,50 @@ func RepoRoot() (string, error) {
 //
 // It returns ErrNoOracle when the virtualenv is missing, so a test can skip
 // rather than fail on a checkout that has not run `make venv`.
-func StartOracle() (*Oracle, error) {
+// StartOracle starts the pinned oracle: the interpreter the committed goldens
+// were recorded under.
+func StartOracle() (*Oracle, error) { return StartOracleFor("") }
+
+// StartOracleFor starts the oracle under one of the interpreters gojja2
+// reproduces, for a sweep that wants a version other than the pin. "" is the
+// pin, and is what every ordinary caller wants.
+//
+// The version axis exists because the version-specific rules in
+// value/pyversion.go were, until this, graded only by the corpus: a matrix of
+// two-and-a-half thousand hand-written cases compared against pre-recorded
+// goldens. The render differential generates sixty thousand templates and asked
+// exactly one interpreter, so a rule that is wrong on 3.11 and right on 3.13
+// could not be found at that scale. Three such rules were found by hand in one
+// session; this is the sweep that would have found them.
+//
+// The identity check is not relaxed for this. It is pointed at the version that
+// was asked for, so starting an oracle that is not the interpreter it claims to
+// be is refused exactly as before.
+func StartOracleFor(version string) (*Oracle, error) {
+	return startOracle(version, "")
+}
+
+// StartOracleWithHashSeed is StartOracleFor with PYTHONHASHSEED pinned.
+//
+// CPython randomises string hashing per process, so a set's iteration order is
+// fixed within one oracle and differs between two. That is not something either
+// side can be graded on -- gojja2 sorts -- and Comparable screens the answers
+// where the order *shows*, which misses the ones where it merely decided:
+// `{{ (d.keys() - [])|urlencode }}` unpacks the first key it reaches, and three
+// runs of the same interpreter disagree about which that is.
+//
+// Two oracles with two *pinned* seeds turn that from a coin flip into a fixed
+// property: the differential compares their answers and discards the case when
+// they differ, and the result is the same on every run. Sampling two random
+// seeds instead left one case in sixty still failing.
+//
+// Only the differential uses this. The goldens come from tools/oracle, which is
+// unaffected, and a case whose answer depends on a hash seed cannot become one.
+func StartOracleWithHashSeed(version, hashSeed string) (*Oracle, error) {
+	return startOracle(version, hashSeed)
+}
+
+func startOracle(version, hashSeed string) (*Oracle, error) {
 	root, err := RepoRoot()
 	if err != nil {
 		return nil, err
@@ -183,8 +252,28 @@ func StartOracle() (*Oracle, error) {
 		}
 	}
 
+	// uv builds the environment for a non-pinned interpreter per call, with
+	// the pinned libraries, exactly as tools/oracle/pyversions.py does for
+	// the golden matrix -- so a sweep reaches four interpreters without four
+	// checked-in virtualenvs that could drift from the pin.
 	cmd := exec.Command(python, script)
+	if version != "" {
+		want, err := ExpectedOracle(root)
+		if err != nil {
+			return nil, err
+		}
+		if version != want.Python {
+			cmd = exec.Command("uv", "run", "--quiet",
+				"--python", version, "--no-project",
+				"--with", "jinja2=="+want.Jinja2,
+				"--with", "markupsafe=="+want.MarkupSafe,
+				"python", script)
+		}
+	}
 	cmd.Dir = filepath.Join(root, "tools", "oracle")
+	if hashSeed != "" {
+		cmd.Env = append(os.Environ(), "PYTHONHASHSEED="+hashSeed)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -214,7 +303,7 @@ func StartOracle() (*Oracle, error) {
 	// interpreter, and a .venv built by hand rather than by `make venv` can
 	// hold anything too -- so "it answered" is not enough. Answering
 	// *differently* is exactly what the other versions do.
-	if err := o.verifyIdentity(root); err != nil {
+	if err := o.verifyIdentity(root, version); err != nil {
 		_ = o.Close()
 		return nil, err
 	}
@@ -242,10 +331,15 @@ func (o *Oracle) exchange(req any) ([]byte, error) {
 }
 
 // verifyIdentity refuses an oracle that is not the one the goldens came from.
-func (o *Oracle) verifyIdentity(root string) error {
+func (o *Oracle) verifyIdentity(root, version string) error {
 	want, err := ExpectedOracle(root)
 	if err != nil {
 		return err
+	}
+	if version != "" {
+		// A sweep asked for this one; the libraries are still the pin's,
+		// because what a version sweep varies is the interpreter.
+		want.Python, want.PythonFull = version, version
 	}
 	got, err := o.Hello()
 	if err != nil {

@@ -1,0 +1,3 @@
+{}
+---
+{% autoescape true %}{{ ('<a>'|safe).translate({97: 'b'}) }}|{{ ('a'|safe).translate({97: '<'}) }}{% endautoescape %}

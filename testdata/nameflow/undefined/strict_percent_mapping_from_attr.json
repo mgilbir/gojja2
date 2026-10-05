@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_percent_mapping_from_attr.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

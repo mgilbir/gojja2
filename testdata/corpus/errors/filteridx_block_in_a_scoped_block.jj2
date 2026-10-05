@@ -1,0 +1,5 @@
+{
+  "v": "V"
+}
+---
+{% for i in [1] %}{% block b scoped %}q{{ i }}{% filter length %}abc{% endfilter %}{% endblock %}{% endfor %}

@@ -65,6 +65,16 @@ func Parse(syn lexer.Syntax, opts Options, source, name string) (tmpl *ast.Templ
 	}()
 	body := p.subparse(nil)
 	p.expect(kindRule(lexer.EOF))
+	// Held until the parse has finished, because jinja2's parser runs to
+	// completion before CPython ever sees the module it generates: a
+	// template that is both `{% break %}` outside a loop *and* malformed
+	// later reports the malformed part, which is the parser's error.
+	// Raising at the tag made `{% break %}{% else %}` a refusal about the
+	// break where jinja2 says "Encountered unknown tag 'else'", which the
+	// generated differential found.
+	if p.unbound != nil {
+		panic(parseError{err: p.unbound})
+	}
 	return &ast.Template{Body: body}, nil
 }
 
@@ -89,6 +99,13 @@ type parser struct {
 	lexErr error
 	// depth is the current nesting of the recursive descent.
 	depth int
+	// unbound is the first break or continue that no loop in its generated
+	// function would bind, held until the parse finishes. See Parse.
+	unbound error
+	// loops is how many `for` loops enclose the statement being parsed
+	// *within the function jinja2 would generate* for it, which is what a
+	// break or a continue can bind to. See loopScope.
+	loops int
 }
 
 // enter opens one level of the tree being built, failing cleanly instead of
@@ -97,6 +114,32 @@ type parser struct {
 // an expression along adds no level and must not charge for one, or the bound
 // would depend on how many layers of grammar a shape happens to traverse
 // rather than on how deep the result is.
+// loopScope sets the loop nesting for one body and restores it after, so a
+// break or a continue can be refused where jinja2's Python would not compile.
+//
+// jinja2 emits Python's own `break` and `continue`, so what binds one is a `for`
+// in the *generated function*, and the boundaries are not the ones a reader of
+// the template would draw:
+//
+//   - a macro, a block and a `{% call %}` body each compile to a function of
+//     their own, so a loop outside them does not reach in. A filter block, a
+//     `{% set %}` block, `{% with %}`, `{% autoescape %}` and `{% if %}` are
+//     emitted inline and do.
+//   - a loop's `{% else %}` body is emitted *after* the loop, not inside it, so
+//     a break there binds to whatever encloses the loop -- and to nothing at
+//     all when the loop is outermost.
+//   - a `recursive` loop puts its own `for` in a new function, and its
+//     `{% else %}` with it, so that else body encloses nothing.
+//
+// Each of those is measured by a case in the loopcontrols corpus rather than
+// reasoned about, and TestUnboundLoopControlIsRefused names the shapes.
+func (p *parser) loopScope(n int, parse func()) {
+	saved := p.loops
+	p.loops = n
+	parse()
+	p.loops = saved
+}
+
 func (p *parser) enter() {
 	p.depth++
 	if p.depth > MaxNestingDepth {
@@ -390,10 +433,20 @@ func (p *parser) parseFor() *ast.For {
 	}
 	recursive := p.skipIf(nameRule("recursive"))
 
-	body := p.parseStatements(nameRules("endfor", "else"), false)
-	var orElse []ast.Stmt
+	// A recursive loop's body and else both live in a function of its own,
+	// so the loops enclosing this one do not reach either.
+	outer := p.loops
+	if recursive {
+		outer = 0
+	}
+	var body, orElse []ast.Stmt
+	p.loopScope(outer+1, func() {
+		body = p.parseStatements(nameRules("endfor", "else"), false)
+	})
 	if p.next().Value != "endfor" {
-		orElse = p.parseStatements(nameRules("endfor"), true)
+		p.loopScope(outer, func() {
+			orElse = p.parseStatements(nameRules("endfor"), true)
+		})
 	}
 	return &ast.For{
 		Pos: ast.At(line), Target: target, Iter: iter,
@@ -467,7 +520,9 @@ func (p *parser) parseBlock() *ast.Block {
 			" contain hyphens, use an underscore instead.")
 	}
 
-	node.Body = p.parseStatements(nameRules("endblock"), true)
+	p.loopScope(0, func() {
+		node.Body = p.parseStatements(nameRules("endblock"), true)
+	})
 
 	if node.Required {
 		for _, stmt := range node.Body {
@@ -602,7 +657,13 @@ func (p *parser) parseSignature() (args []*ast.Name, defaults []ast.Expr) {
 		}
 		arg := p.parseAssignTarget(assignOpts{nameOnly: true}).(*ast.Name)
 		if seen[arg.Name] {
-			p.failAt(arg.Line(), "duplicate argument %s in function definition",
+			// CPython's, not jinja2's: a macro is a Python function
+			// and the duplicate reaches the Python compiler. Its
+			// message names the identifier jinja2 *generated* and a
+			// line of the generated module; gojja2 names what the
+			// template wrote. See docs/divergences.md.
+			p.failKindAt(errs.SyntaxError, arg.Line(),
+				"duplicate argument %s in function definition",
 				pyQuote(arg.Name))
 		}
 		seen[arg.Name] = true
@@ -627,7 +688,9 @@ func (p *parser) parseCallBlock() *ast.CallBlock {
 		p.failAt(node.Line(), "expected call")
 	}
 	node.Call = call
-	node.Body = p.parseStatements(nameRules("endcall"), true)
+	p.loopScope(0, func() {
+		node.Body = p.parseStatements(nameRules("endcall"), true)
+	})
 	return node
 }
 
@@ -642,7 +705,9 @@ func (p *parser) parseMacro() *ast.Macro {
 	node := &ast.Macro{Pos: ast.At(p.next().Line)}
 	node.Name = p.parseAssignTarget(assignOpts{nameOnly: true}).(*ast.Name).Name
 	node.Args, node.Defaults = p.parseSignature()
-	node.Body = p.parseStatements(nameRules("endmacro"), true)
+	p.loopScope(0, func() {
+		node.Body = p.parseStatements(nameRules("endmacro"), true)
+	})
 	return node
 }
 
@@ -663,11 +728,32 @@ func (p *parser) parseDo() *ast.ExprStmt {
 }
 
 func (p *parser) parseBreak() *ast.Break {
-	return &ast.Break{Pos: ast.At(p.next().Line)}
+	line := p.next().Line
+	p.requireLoop("'break' outside loop", line)
+	return &ast.Break{Pos: ast.At(line)}
 }
 
 func (p *parser) parseContinue() *ast.Continue {
-	return &ast.Continue{Pos: ast.At(p.next().Line)}
+	line := p.next().Line
+	p.requireLoop("'continue' not properly in loop", line)
+	return &ast.Continue{Pos: ast.At(line)}
+}
+
+// requireLoop refuses a break or a continue that no `for` in the generated
+// function would bind, which is what CPython refuses when jinja2 compiles it --
+// with this message, and a line number in that generated source rather than in
+// the template. See docs/divergences.md.
+func (p *parser) requireLoop(msg string, line int) {
+	if p.loops > 0 || p.unbound != nil {
+		return
+	}
+	// Built here, where the line is known, and raised in Parse. The first
+	// one wins, as CPython reports the first its compiler reaches.
+	e := errs.New(errs.SyntaxError, "%s", msg)
+	e.Line = line
+	e.Name = p.name
+	e.Source = p.source
+	p.unbound = e
 }
 
 // --- failure messages --------------------------------------------------------

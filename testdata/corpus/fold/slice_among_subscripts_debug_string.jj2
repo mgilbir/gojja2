@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{{ 'abc'[:, 'x', 3.5] }}

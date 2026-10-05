@@ -1,0 +1,3 @@
+{}
+---
+{{ ''.isidentifier() }}|{{ '_'.isidentifier() }}|{{ '_a1'.isidentifier() }}|{{ '1a'.isidentifier() }}|{{ 'class'.isidentifier() }}|{{ 'a b'.isidentifier() }}

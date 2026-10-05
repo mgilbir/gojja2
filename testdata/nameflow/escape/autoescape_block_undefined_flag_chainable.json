@@ -1,0 +1,6 @@
+{
+  "case": "escape/autoescape_block_undefined_flag_chainable.jj2",
+  "variables": {
+    "nope": "fr"
+  }
+}

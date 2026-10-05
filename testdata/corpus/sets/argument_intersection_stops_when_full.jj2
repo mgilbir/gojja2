@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2, 'c': 3} %}{% set s = d.keys() - ['a'] %}{{ s.intersection(['b', 'c', [1]])|list|sort }}|{{ s.intersection(['c', 'b', 'b', [1]])|list|sort }}|{{ s.intersection(['z', 'c', 'b', [2]])|list|sort }}

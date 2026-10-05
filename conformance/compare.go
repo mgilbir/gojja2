@@ -125,6 +125,102 @@ func ResourceError(err error) bool {
 // addressRe matches the repr of a Python object that embeds its address.
 var addressRe = regexp.MustCompile(`(?i)0x[0-9a-f]{6,}`)
 
+// recursionRe matches pprint's mark for a container it has already entered:
+// `<Recursion on list with id=130853217871040>`.
+//
+// The id is an address, so this is as ungradable as the reprs addressRe screens
+// out -- but it is written in *decimal*, which addressRe cannot match however
+// many digits it has. Nothing generated one until the generator learned to call
+// append, and then a self-referential subject would have reported a divergence
+// per template with none of them real. See docs/divergences.md.
+var recursionRe = regexp.MustCompile(`<Recursion on \w+ with id=\d+>`)
+
+// holdsAMultiElementSet reports a set repr with more than one element in it.
+//
+// CPython's set has no order and prints in hash order, which is randomised per
+// process -- three runs of `{{ d.keys() - [] }}` on the same four keys gave
+// `{'b', 'delta', 'a', 'c'}`, `{'c', 'delta', 'a', 'b'}` and
+// `{'a', 'b', 'delta', 'c'}`. gojja2 sorts, so its answer is stable and neither
+// can be graded against the other. One element, and the empty `set()`, have only
+// one spelling and are graded as usual.
+//
+// A brace group is a set rather than a dict when nothing in it carries a colon
+// at the top level, and it has more than one element when something in it
+// carries a comma there. "At the top level" is the whole reason this counts
+// depth rather than matching a pattern: `{('b', 2)}` is one element and its
+// comma is inside the tuple, so a regexp that cannot count would screen a case
+// that grades perfectly well.
+func holdsAMultiElementSet(text string) bool {
+	for i := 0; i < len(text); i++ {
+		if text[i] != '{' {
+			continue
+		}
+		depth, comma, colon := 0, false, false
+		for j := i; j < len(text); j++ {
+			// A repr quotes its strings, and their contents are not
+			// structure: `{']', '[', '1'}` closes on its own final
+			// brace and not on the bracket inside the first element.
+			// Under autoescape the quote itself is written `&#39;`,
+			// which is why both spellings are skipped here -- the
+			// first version of this counted the `]` in that set as a
+			// closing bracket and let the whole thing through.
+			if n := quoteRun(text[j:]); n > 0 {
+				j += n - 1
+				continue
+			}
+			switch text[j] {
+			case '{', '[', '(':
+				depth++
+			case '}', ']', ')':
+				depth--
+				if depth == 0 {
+					if comma && !colon {
+						return true
+					}
+					i = j
+					goto next
+				}
+			case ',':
+				if depth == 1 {
+					comma = true
+				}
+			case ':':
+				if depth == 1 {
+					colon = true
+				}
+			}
+		}
+	next:
+	}
+	return false
+}
+
+// quoteRun reports the length of a quoted string starting at the front of s,
+// or 0 when there is not one. Both the raw quote and the HTML-escaped one an
+// autoescaping render produces are recognised, since the output is compared as
+// text and that is what the text holds.
+func quoteRun(s string) int {
+	for _, q := range []string{"'", `"`, "&#39;", "&#34;"} {
+		if !strings.HasPrefix(s, q) {
+			continue
+		}
+		for at := len(q); at < len(s); {
+			if s[at] == '\\' {
+				at += 2
+				continue
+			}
+			if strings.HasPrefix(s[at:], q) {
+				return at + len(q)
+			}
+			at++
+		}
+		// Unterminated: not a quoted run, so the caller scans it as
+		// ordinary text rather than swallowing the rest of the output.
+		return 0
+	}
+	return 0
+}
+
 // Comparable reports whether a result can be graded at all.
 //
 // Some renders are not reproducible by anything, CPython included: a repr that
@@ -141,6 +237,8 @@ func Comparable(r *OracleResult) bool {
 	}
 	lower := strings.ToLower(text)
 	return !addressRe.MatchString(text) &&
+		!recursionRe.MatchString(text) &&
+		!holdsAMultiElementSet(text) &&
 		!strings.Contains(lower, "<generator object") &&
 		!strings.Contains(lower, " object at ")
 }

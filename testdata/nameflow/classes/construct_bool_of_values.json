@@ -1,0 +1,8 @@
+{
+  "case": "classes/construct_bool_of_values.jj2",
+  "variables": {
+    "lst": "or",
+    "nil": "or",
+    "yes": "or"
+  }
+}

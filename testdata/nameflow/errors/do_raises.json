@@ -1,0 +1,6 @@
+{
+  "case": "errors/do_raises.jj2",
+  "variables": {
+    "nope": "r"
+  }
+}

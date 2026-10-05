@@ -1,0 +1,6 @@
+{
+  "case": "errors/infinity_unknown_code.jj2",
+  "variables": {
+    "big": "or"
+  }
+}

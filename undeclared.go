@@ -98,7 +98,18 @@ func (v *undeclaredVisitor) stmt(stmt ast.Stmt) {
 		v.exprs(n.Defaults)
 		v.stmts(n.Body)
 	case *ast.CallBlock:
+		// In jinja2's field order -- call, args, defaults, body -- and
+		// the *signature* matters as much as the body: a block that
+		// declares `kwargs` takes the name out of the search, so the
+		// macro around it does not catch one, while a default that
+		// *reads* it puts it in. `{% call(kwargs) takes() %}{{ kwargs }}
+		// {% endcall %}` inside a macro had the enclosing macro
+		// swallowing keywords jinja2 refuses.
 		v.expr(n.Call)
+		for _, arg := range n.Args {
+			v.name(arg)
+		}
+		v.exprs(n.Defaults)
 		v.stmts(n.Body)
 	case *ast.FilterBlock:
 		v.stmts(n.Body)
@@ -116,8 +127,6 @@ func (v *undeclaredVisitor) stmt(stmt ast.Stmt) {
 		v.expr(n.Template)
 	case *ast.Extends:
 		v.expr(n.Template)
-	case *ast.Scope:
-		v.stmts(n.Body)
 	case *ast.AutoescapeBlock:
 		v.expr(n.Value)
 		v.stmts(n.Body)

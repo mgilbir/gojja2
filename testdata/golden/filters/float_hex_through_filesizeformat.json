@@ -1,0 +1,14 @@
+{
+  "case": "filters/float_hex_through_filesizeformat.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "could not convert string to float: '0x0.0p+0'"
+  }
+}

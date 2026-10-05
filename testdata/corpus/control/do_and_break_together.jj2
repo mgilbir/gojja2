@@ -1,0 +1,17 @@
+{
+  "__settings__": {
+    "extensions": [
+      "loopcontrols",
+      "do"
+    ]
+  },
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{% set l = [] %}{% for x in seq %}{% do l.append(x) %}{% if x == 2 %}{% break %}{% endif %}{% endfor %}{{ l }}

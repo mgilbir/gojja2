@@ -1,0 +1,6 @@
+{
+  "case": "policies/both.jj2",
+  "variables": {
+    "u": "or"
+  }
+}

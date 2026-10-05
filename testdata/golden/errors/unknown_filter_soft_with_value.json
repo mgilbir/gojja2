@@ -1,0 +1,14 @@
+{
+  "case": "errors/unknown_filter_soft_with_value.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateRuntimeError",
+    "message": "No filter named 'nosuch' found."
+  }
+}

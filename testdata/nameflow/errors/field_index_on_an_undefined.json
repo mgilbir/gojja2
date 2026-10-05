@@ -1,0 +1,6 @@
+{
+  "case": "errors/field_index_on_an_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

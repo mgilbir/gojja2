@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{{ nope.__class__(name=none) + 1 }}

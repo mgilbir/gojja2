@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% for i in [1] %}{{ 1|nosuchC }}{% else %}{{ 1|nosuchD }}{% endfor %}

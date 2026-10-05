@@ -1,0 +1,8 @@
+{
+  "__templates__": {
+    "inc.txt": "<{{ n|default('?') }}>"
+  },
+  "n": 3
+}
+---
+{% autoescape true %}{% filter wordwrap(4) %}{% include 'inc.txt' %}{% endfilter %}{% endautoescape %}

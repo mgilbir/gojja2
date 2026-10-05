@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "policies": {
+      "truncate.leeway": 0
+    }
+  },
+  "u": "see http://x.com now"
+}
+---
+{{ 'abcdefghij'|truncate(5) }}

@@ -1,0 +1,6 @@
+{
+  "case": "filters/min_max_by_attribute.jj2",
+  "variables": {
+    "users": "or"
+  }
+}

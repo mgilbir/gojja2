@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "newline_sequence": "\r\n"
+  },
+  "v": "a\r\nb"
+}
+---
+{% raw %}a
+b{% endraw %}

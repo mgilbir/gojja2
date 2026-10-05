@@ -21,13 +21,28 @@ type analyzer struct {
 	// capture is the stack of block-set bodies being collected: while one is
 	// open, output becomes a value instead of a document.
 	capture []symset
+	// steered is the same stack again, holding what *decides* how much of
+	// each body is emitted rather than what the text is made of. A branch
+	// inside a captured body changes the captured string without putting
+	// anything of its own in it, and whatever consumes that string --
+	// `{% set v | last %}`, or a `{{ v|last }}` much later -- can fail for
+	// one value of the branch and not the other. See steerBind.
+	steered []symset
 
 	// scopes is the chain of enclosing scope nodes, which is how a macro's
 	// name is looked up -- it is an attribute of the macro node rather than
 	// a name node, so it has no entry in Defs.
 	scopes []*syntax.Node
 
+	// steers records, per symbol, what steered the value it holds. Only
+	// Steers and Required travel back along these edges, because a name
+	// that decides what a value *is* does not put itself in the document:
+	// `{% set v %}{% if t %}secret{% endif %}{% endset %}{{ v }}` prints
+	// the secret or nothing, and t is in neither.
+	steers map[*syntax.Symbol]symset
+
 	macroOut    map[*syntax.Symbol]symset
+	macroSteers map[*syntax.Symbol]symset
 	macroParams map[*syntax.Symbol][]*syntax.Symbol
 	inMacro     map[*syntax.Symbol]bool
 
@@ -51,15 +66,21 @@ type analyzer struct {
 	// and aliased marks the ones that got away. See namespace.go.
 	namespaces map[*syntax.Symbol]map[string]*syntax.Symbol
 	aliased    map[*syntax.Symbol]bool
+
+	// strict is WithStrictUndefined: reading a name that was not passed
+	// raises, so an arm that reads one can fail. See canFailIn.
+	strict bool
 }
 
-func newAnalyzer(t *syntax.Tree, resolve Resolver, visiting map[string]bool,
-	cache map[string]map[string]Effect) *analyzer {
+func newAnalyzer(t *syntax.Tree, resolve Resolver, strict bool,
+	visiting map[string]bool, cache map[string]map[string]Effect) *analyzer {
 	return &analyzer{
 		tree:        t,
 		derives:     map[*syntax.Symbol]symset{},
+		steers:      map[*syntax.Symbol]symset{},
 		effects:     map[*syntax.Symbol]Effect{},
 		macroOut:    map[*syntax.Symbol]symset{},
+		macroSteers: map[*syntax.Symbol]symset{},
 		macroParams: map[*syntax.Symbol][]*syntax.Symbol{},
 		inMacro:     map[*syntax.Symbol]bool{},
 		resolve:     resolve,
@@ -68,6 +89,7 @@ func newAnalyzer(t *syntax.Tree, resolve Resolver, visiting map[string]bool,
 		external:    map[string]*syntax.Symbol{},
 		namespaces:  map[*syntax.Symbol]map[string]*syntax.Symbol{},
 		aliased:     map[*syntax.Symbol]bool{},
+		strict:      strict,
 	}
 }
 
@@ -80,7 +102,8 @@ func Analyze(t *syntax.Tree, opts ...Option) *Flow {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	a := newAnalyzer(t, o.resolve, map[string]bool{}, map[string]map[string]Effect{})
+	a := newAnalyzer(t, o.resolve, o.strict, map[string]bool{},
+		map[string]map[string]Effect{})
 	a.seedAliases()
 	a.stmt(t.Root)
 	a.sealNamespaces()
@@ -168,6 +191,61 @@ func (a *analyzer) emit(srcs symset) {
 	a.apply(srcs, Printed)
 }
 
+// steerBind records that these symbols decide what the target holds, without
+// being part of it.
+func (a *analyzer) steerBind(target *syntax.Symbol, srcs symset) {
+	if target == nil || len(srcs) == 0 {
+		return
+	}
+	if a.steers[target] == nil {
+		a.steers[target] = symset{}
+	}
+	a.steers[target].add(srcs)
+}
+
+// steerTarget is steerBind through an assignment target node, which may be a
+// namespace field or a tuple rather than a plain name.
+func (a *analyzer) steerTarget(target *syntax.Node, srcs symset) {
+	if target == nil || len(srcs) == 0 {
+		return
+	}
+	switch target.Kind {
+	case syntax.KindName, syntax.KindNSRef:
+		if s := a.tree.Info.Symbol(target); s != nil {
+			a.steerBind(s, srcs)
+		}
+	default:
+		// A tuple target, or anything else: steer every name in it.
+		syntax.Walk(target, func(nd *syntax.Node, _ syntax.Role) bool {
+			if nd.Kind == syntax.KindName {
+				a.steerBind(a.tree.Info.Symbol(nd), srcs)
+			}
+			return true
+		})
+	}
+}
+
+// steerEmit records that these symbols decide how much of the surrounding body
+// is emitted, into the capture that is collecting it.
+//
+// Nothing to do when there is no capture: every caller applies Steers to these
+// symbols itself, one or two lines earlier, because a name that decides how
+// much of a body runs steers whether or not anything is collecting it. That is
+// true of all five -- the two in ifStmt and forStmt apply it directly, and the
+// other three hand on a set captureBody collected, whose members were applied
+// where they were recorded. The arm that applied it a second time here was
+// carried until `make mutate` reported it as a survivor: removing it changes no
+// effect in any shape, which is what a survivor means when the answer is not a
+// missing test.
+func (a *analyzer) steerEmit(srcs symset) {
+	if len(srcs) == 0 {
+		return
+	}
+	if n := len(a.steered); n > 0 {
+		a.steered[n-1].add(srcs)
+	}
+}
+
 func (a *analyzer) depend(target *syntax.Symbol, srcs symset) {
 	if target == nil || len(srcs) == 0 {
 		return
@@ -206,6 +284,15 @@ func (a *analyzer) bind(target *syntax.Node, srcs symset) {
 	case syntax.KindTuple, syntax.KindList:
 		// Unpacking: which element lands where is not tracked, so every
 		// target derives from the whole right-hand side.
+		//
+		// The unpacking itself can stop the render, whatever is done
+		// with the names afterwards: `{% set a, b = x %}` fails for an
+		// x that is not iterable and for one of the wrong length, so
+		// the value decides whether the render finishes even when
+		// nothing reads a or b. That is what Required claims, and
+		// without it `{% set a, b = x %}` reported no effect at all --
+		// which this package promises never to do.
+		a.apply(srcs, Required)
 		for _, item := range target.Children(syntax.RoleItem) {
 			a.bind(item, srcs)
 		}
@@ -235,5 +322,31 @@ func (a *analyzer) propagate() {
 				}
 			}
 		}
+		for s, deps := range a.steers {
+			e := steeredEffect(a.effects[s])
+			if e == 0 {
+				continue
+			}
+			for d := range deps {
+				if a.effects[d]|e != a.effects[d] {
+					a.effects[d] |= e
+					changed = true
+				}
+			}
+		}
 	}
+}
+
+// steeredEffect is what a value's effects mean for a name that decided what it
+// held. Printed becomes Steers -- the name changed the document without
+// appearing in it -- Steers and Required carry over as they are, and Opaque
+// does too, because a route that was not followed is not followed for the name
+// that steered it either.
+func steeredEffect(e Effect) Effect {
+	var out Effect
+	if e&(Printed|Steers) != 0 {
+		out |= Steers
+	}
+	out |= e & (Required | Opaque)
+	return out
 }

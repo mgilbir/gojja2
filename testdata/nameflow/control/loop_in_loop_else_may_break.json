@@ -1,0 +1,7 @@
+{
+  "case": "control/loop_in_loop_else_may_break.jj2",
+  "variables": {
+    "e": "fr",
+    "seq": "fr"
+  }
+}

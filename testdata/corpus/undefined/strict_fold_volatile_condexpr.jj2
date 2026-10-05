@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% autoescape nil %}{{ 1 if (0.0).a else 2 }}{% endautoescape %}

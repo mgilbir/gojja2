@@ -1,0 +1,6 @@
+{
+  "case": "tests/kinds_float.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

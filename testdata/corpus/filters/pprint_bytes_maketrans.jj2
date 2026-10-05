@@ -1,0 +1,3 @@
+{}
+---
+{{ 'ab'.encode().maketrans('a'.encode(), 'z'.encode())|pprint }}

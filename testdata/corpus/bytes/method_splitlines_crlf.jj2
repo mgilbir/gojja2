@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a\r\nb\rc\nd\r\n'.encode().splitlines() }}|{{ 'a\r\nb\rc\nd\r\n'.encode().splitlines(true) }}

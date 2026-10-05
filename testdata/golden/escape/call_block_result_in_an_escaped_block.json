@@ -1,0 +1,11 @@
+{
+  "case": "escape/call_block_result_in_an_escaped_block.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "[<c>>]|<B>|"
+}

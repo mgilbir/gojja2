@@ -1,0 +1,6 @@
+{
+  "case": "divergence/class_unbound_dunder_len_is_a_value.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

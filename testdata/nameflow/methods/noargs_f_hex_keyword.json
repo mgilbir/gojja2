@@ -1,0 +1,6 @@
+{
+  "case": "methods/noargs_f_hex_keyword.jj2",
+  "variables": {
+    "f": "or"
+  }
+}

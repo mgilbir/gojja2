@@ -1,0 +1,14 @@
+{
+  "case": "methods/from_bytes_element_not_an_integer.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "'float' object cannot be interpreted as an integer"
+  }
+}

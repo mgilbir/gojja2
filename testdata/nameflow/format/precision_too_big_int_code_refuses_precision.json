@@ -1,0 +1,6 @@
+{
+  "case": "format/precision_too_big_int_code_refuses_precision.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

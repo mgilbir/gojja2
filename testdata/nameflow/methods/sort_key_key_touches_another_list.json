@@ -1,0 +1,7 @@
+{
+  "case": "methods/sort_key_key_touches_another_list.jj2",
+  "variables": {
+    "e": "or",
+    "lst": "or"
+  }
+}

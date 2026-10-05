@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_macro_key_wrong_arity.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

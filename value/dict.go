@@ -76,17 +76,40 @@ func (d *Dict) lookupIdx(key Value, py PythonVersion, use HashUse) (int, bool, e
 	if key.kind == KindString {
 		if d.strIdx == nil {
 			i, ok := d.scanString(key.str)
+			if !ok && d.index != nil {
+				i, ok = d.index[hashKey{kind: KindString, str: key.str}]
+			}
 			return i, ok, nil
 		}
 		i, ok := d.strIdx[key.str]
+		if !ok && d.index != nil {
+			i, ok = d.index[hashKey{kind: KindString, str: key.str}]
+		}
 		return i, ok, nil
 	}
 	h, err := hash(key, py, use)
 	if err != nil {
 		return 0, false, err
 	}
+	// A wrapper that stands for a str -- a mappingproxy over one -- hashes
+	// to the str's key and is equal to it, so a plain str entry answers for
+	// it although that entry lives in the other index.
+	if h.kind == KindString {
+		if i, ok := d.lookupStr(h.str); ok {
+			return i, true, nil
+		}
+	}
 	i, ok := d.index[h]
 	return i, ok, nil
+}
+
+// lookupStr finds a plain str key.
+func (d *Dict) lookupStr(s string) (int, bool) {
+	if d.strIdx == nil {
+		return d.scanString(s)
+	}
+	i, ok := d.strIdx[s]
+	return i, ok
 }
 
 // lookupKnown and storeKnown are lookupIdx and storeIdx for a key that cannot
@@ -325,12 +348,14 @@ func (d *Dict) Delete(key Value, py PythonVersion) (bool, error) {
 	if err != nil || !ok {
 		return false, err
 	}
+	stored := d.entries[i].Key
 	d.entries = append(d.entries[:i], d.entries[i+1:]...)
-	if key.kind == KindString {
+	if stored.kind == KindString {
 		if d.strIdx != nil {
-			delete(d.strIdx, key.str)
+			delete(d.strIdx, stored.str)
 		}
 	} else {
+		key = stored
 		// The key is already in the dict, so it hashed once and cannot
 		// fail now.
 		delete(d.index, hashKnown(key))
@@ -403,6 +428,11 @@ const (
 	// AsSetElement covers set membership, which is what |unique and the
 	// `in` of a set reach.
 	AsSetElement HashUse = "a set element"
+	// AsPlainHash is hash() called on its own, which words nothing about what
+	// the value was for: set_intersection hashes the elements it walks with
+	// PyObject_Hash directly, so 3.14 says "unhashable type: 'list'" there and
+	// "cannot use 'list' as a set element" for the same element in a union.
+	AsPlainHash HashUse = ""
 )
 
 // errUnhashable words the refusal for the chosen interpreter. Before 3.14 it
@@ -413,7 +443,7 @@ const (
 // known by name rather than as a value -- a template name goes into jinja2's
 // cache key, which is a tuple that never exists here as a Value.
 func ErrUnhashable(outerType string, inner Value, py PythonVersion, use HashUse) error {
-	if py.UnhashableNamesTheUse() {
+	if py.UnhashableNamesTheUse() && use != AsPlainHash {
 		return errs.New(errs.TypeError, "cannot use '%s' as %s (unhashable type: '%s')",
 			outerType, string(use), inner.TypeName())
 	}
@@ -421,7 +451,13 @@ func ErrUnhashable(outerType string, inner Value, py PythonVersion, use HashUse)
 }
 
 func errUnhashable(outer, inner Value, py PythonVersion, use HashUse) error {
-	return ErrUnhashable(outer.TypeName(), inner, py, use)
+	// 3.14 names the *outer* type the way object_type_repr does, qualified:
+	// a groupby group is "jinja2.filters._GroupTuple" and not "_GroupTuple".
+	// The inner one stays bare, which is why only this half is qualified --
+	// `cannot use 'jinja2.filters._GroupTuple' as a set element (unhashable
+	// type: 'list')`. Every builtin's qualified name is its bare one, so the
+	// group tuple is the only place the two differ today.
+	return ErrUnhashable(QualifiedTypeName(outer), inner, py, use)
 }
 
 // hashKnown is hash for a key that cannot fail: a Go string, or one that
@@ -439,17 +475,71 @@ func hashKnown(v Value) hashKey {
 	return h
 }
 
+// CheckHashableAs is CheckHashable for a value hashed as *part* of something
+// else, which is the type 3.14's message names.
+//
+// A slice used as a dict key is hashable from 3.12, but only as far as its three
+// parts are -- and the refusal names the slice, not the part:
+// `{'a':1}[[1,2]:]` is "cannot use 'slice' as a dict key (unhashable type:
+// 'list')". Hashing the part on its own named the part, and named the *tuple*
+// for a part that was one.
+//
+// A StrictUndefined's own refusal is returned unchanged: it is not a hashability
+// message and has nothing to re-word.
+func CheckHashableAs(v Value, outerName string, py PythonVersion, use HashUse) error {
+	err := CheckHashable(v, py, use)
+	if err == nil {
+		return nil
+	}
+	inner := innerUnhashable(v, py, use)
+	if inner.IsUndefined() || errs.KindOf(err) != errs.TypeError {
+		return err
+	}
+	return ErrUnhashable(outerName, inner, py, use)
+}
+
+// innerUnhashable finds the value whose type an unhashable refusal names: v
+// itself, or the first element of a tuple tree that cannot be hashed.
+func innerUnhashable(v Value, py PythonVersion, use HashUse) Value {
+	items, ok := tupleItems(v)
+	if !ok {
+		return v
+	}
+	for _, e := range items {
+		if CheckHashable(e, py, use) != nil {
+			return innerUnhashable(e, py, use)
+		}
+	}
+	return v
+}
+
 func hash(v Value, py PythonVersion, use HashUse) (hashKey, error) {
 	// StrictUndefined defines __hash__ as a failure, so anything that
 	// hashes one -- a dict key, a set member, `value in env.filters`
 	// behind the `filter` test -- raises rather than answering.
-	if err := StrictRefusal(v); err != nil {
-		return hashKey{}, err
+	//
+	// An object that is unhashable answers for itself first: a mappingproxy
+	// before 3.12 had no __hash__, so it is the proxy that is refused and not
+	// the undefined it wraps.
+	if !unhashableObject(v) {
+		if err := StrictRefusal(v); err != nil {
+			return hashKey{}, err
+		}
 	}
 	if items, ok := tupleItems(v); ok {
 		return hashTuple(items, v, py, use)
 	}
 	return hashScalar(v, v, py, use)
+}
+
+// unhashableObject reports whether v is an Object that declares itself
+// unhashable.
+func unhashableObject(v Value) bool {
+	if v.kind != KindObject {
+		return false
+	}
+	o, ok := v.obj.(interface{ Unhashable() bool })
+	return ok && o.Unhashable()
 }
 
 // Hashable reports what Python's hash() would refuse about v, and nil when it
@@ -513,6 +603,17 @@ func hashTuple(items []Value, outer Value, py PythonVersion, use HashUse) (hashK
 		}
 		child := top.items[top.i]
 		top.i++
+		// Python hashes a tuple's elements in turn, so the first one
+		// with something to say decides: `(nope, [1])` is the
+		// undefined's own error under StrictUndefined, where
+		// `([1], nope)` is "unhashable type: 'list'". Only the outer
+		// value's refusal was consulted, so an undefined inside a tuple
+		// hashed by identity and whatever came after it won.
+		if !unhashableObject(child) {
+			if err := StrictRefusal(child); err != nil {
+				return hashKey{}, err
+			}
+		}
 		if sub, ok := tupleItems(child); ok {
 			buf = append(buf, tupleOpen)
 			stack = append(stack, hashFrame{items: sub})
@@ -545,12 +646,43 @@ func hashScalar(v, outer Value, py PythonVersion, use HashUse) (hashKey, error) 
 		}
 		return hashKey{kind: KindInt, num: int64(v.num)}, nil
 	case KindFloat:
+		// A NaN hashes by identity, as CPython has done since 3.10:
+		// float.__hash__ answers object_hash for a value that is equal
+		// to nothing, so two NaNs are two keys and one NaN is one --
+		// `{% set x = b - b %}{{ {x: 1}[x] }}` finds it and
+		// `{% set y = b - b %}{{ {x: 1, y: 2}|length }}` is two. A
+		// float key is not equal to anything else either way, so this
+		// is the whole of the difference.
+		if id, ok := v.obj.(*nanIdentity); ok {
+			return hashKey{kind: KindFloat, str: fmt.Sprintf("%p", id)}, nil
+		}
 		return hashFloat(v.AsFloat()), nil
 	case KindString:
 		return hashKey{kind: KindString, str: v.str}, nil
 	case KindBytes:
 		return hashKey{kind: KindBytes, str: v.str}, nil
 	case KindObject:
+		// A set-like view defines __eq__ without __hash__, which leaves
+		// it unhashable although it has no failure of its own to
+		// report. It has to say so before the identity fallback below,
+		// which would otherwise make `d.keys() in d` a miss.
+		if o, ok := v.obj.(interface{ Unhashable() bool }); ok && o.Unhashable() {
+			// A proxy hashes exactly as badly as what it wraps, and
+			// CPython's message names *that*: hash() of a
+			// mappingproxy is "unhashable type: 'dict'".
+			named := v
+			if n, ok := v.obj.(interface{ UnhashableAs() Value }); ok {
+				named = n.UnhashableAs()
+			}
+			return hashKey{}, errUnhashable(outer, named, py, use)
+		}
+		// A wrapper that hashes as the value it holds is that value as a
+		// key: its hash is the wrapped object's and it compares equal to it.
+		if o, ok := v.obj.(interface{ HashesAs() (Value, bool) }); ok {
+			if w, ok := o.HashesAs(); ok {
+				return hashScalar(w, outer, py, use)
+			}
+		}
 		if o, ok := v.obj.(interface{ HashKey() (string, bool) }); ok {
 			if s, ok := o.HashKey(); ok {
 				return hashKey{kind: KindObject, str: s}, nil

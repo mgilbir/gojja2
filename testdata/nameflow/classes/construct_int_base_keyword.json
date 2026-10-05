@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_int_base_keyword.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

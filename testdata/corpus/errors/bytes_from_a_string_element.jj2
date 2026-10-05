@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 'a'.encode() %}{% set l = ['a'] %}{{ b.__class__(l) }}

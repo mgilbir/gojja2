@@ -1,0 +1,5 @@
+{
+  "src": true
+}
+---
+{% if src %}{% set q = 1 %}{{ q }}{% endif %}

@@ -1,0 +1,5 @@
+{
+  "__settings__": {}
+}
+---
+{{ ('[%e]'.encode()) % nope }}|{{ ('[%G]'.encode()) % nope }}

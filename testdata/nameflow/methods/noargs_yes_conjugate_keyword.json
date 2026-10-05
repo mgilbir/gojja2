@@ -1,0 +1,6 @@
+{
+  "case": "methods/noargs_yes_conjugate_keyword.jj2",
+  "variables": {
+    "yes": "or"
+  }
+}

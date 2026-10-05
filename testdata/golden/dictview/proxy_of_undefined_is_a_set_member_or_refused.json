@@ -1,0 +1,11 @@
+{
+  "case": "dictview/proxy_of_undefined_is_a_set_member_or_refused.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "None|True|3|None|2"
+}

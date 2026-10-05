@@ -1,0 +1,4 @@
+{
+  "case": "divergence/macro_reads_the_loop_variable_after_the_loop.jj2",
+  "variables": {}
+}

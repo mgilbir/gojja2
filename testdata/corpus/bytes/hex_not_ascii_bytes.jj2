@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 'ab'.encode() %}{{ b.hex((255).to_bytes(1, 'big')) }}

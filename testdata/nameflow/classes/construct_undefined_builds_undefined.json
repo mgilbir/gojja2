@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_undefined_builds_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

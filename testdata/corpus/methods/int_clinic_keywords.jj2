@@ -1,0 +1,3 @@
+{}
+---
+{{ (3).to_bytes(length=2, byteorder='big') }}|{{ (3).to_bytes(2, 'big', signed=true) }}|{{ (3).from_bytes(bytes='ab'.encode()) }}|{{ (3).from_bytes('ab'.encode(), byteorder='little') }}|{{ (3).from_bytes('ab'.encode(), 'big', signed=true) }}|{{ (1.5).fromhex('0x1.8p+0') }}

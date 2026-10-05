@@ -1,0 +1,6 @@
+{
+  "case": "format/z_coerces_negative_zero.jj2",
+  "variables": {
+    "nz": "or"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "case": "filters/urlencode_converts_each_half.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "a=1&b=None|a=1&b=%5B1%2C+2%5D|1.5=True"
+}

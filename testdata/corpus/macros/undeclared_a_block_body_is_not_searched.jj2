@@ -1,0 +1,3 @@
+{}
+---
+{% macro takes() %}<{{ caller(1) }}>{% endmacro %}{% macro m(x) %}{% block bb %}{{ kwargs }}{% endblock %}{% endmacro %}[{{ m(1, **{'b': 2}) }}]

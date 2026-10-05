@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_bool_method_takes_a_bool.jj2",
+  "variables": {
+    "yes": "or"
+  }
+}

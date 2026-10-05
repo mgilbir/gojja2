@@ -1,0 +1,4 @@
+{
+  "case": "errors/bytes_from_an_out_of_range_int.jj2",
+  "variables": {}
+}

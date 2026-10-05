@@ -191,7 +191,7 @@ clean-suites: ## Remove downloaded suites
 # --- oracle ------------------------------------------------------------------
 
 .PHONY: oracle
-oracle: venv arity methodarity arity-matrix entities decimal strclass casemap utf8 unicode-matrix ## Regenerate golden files for testdata/corpus from CPython jinja2
+oracle: venv arity methodarity arity-matrix entities decimal strclass casemap utf8 unicode-matrix name-class ## Regenerate golden files for testdata/corpus from CPython jinja2
 	$(PY) tools/oracle/gen_corpus.py
 	$(PY) tools/oracle/oracle.py --corpus testdata/corpus --golden testdata/golden
 	$(PY) tools/oracle/gen_golden_matrix.py
@@ -243,6 +243,15 @@ syntax: venv ## Regenerate testdata/syntax.jsonl: jinja2's parse tree in gojja2'
 .PHONY: unicode-matrix
 unicode-matrix: venv ## Regenerate value/unicode_other.go from every CPython gojja2 reproduces
 	$(PY) tools/oracle/gen_unicode_matrix.py
+
+.PHONY: value-depth
+value-depth: venv ## Regenerate testdata/value_depth.json: how deep a value each CPython walks
+	$(PY) tools/oracle/gen_value_depth.py
+
+.PHONY: name-class
+name-class: venv ## Regenerate value/nameclass.go: the class jinja2's lexer matches a name out of
+	$(PY) tools/oracle/gen_name_class.py
+	gofmt -w value/nameclass.go
 	gofmt -w value/unicode_other.go
 
 .PHONY: decimal
@@ -306,7 +315,11 @@ test: ## Run the Go test suite
 
 .PHONY: mutate
 mutate: venv ## Break the analysis on purpose and report what nothing notices
-	python3 tools/mutate.py
+	python3 tools/mutate.py $(ARGS)
+
+.PHONY: ungraded
+ungraded: venv ## Count the error messages no corpus case has ever produced
+	python3 tools/ungraded.py $(ARGS)
 
 .PHONY: soak-syntax
 soak-syntax: venv ## Differential-test the structure and analyses: make soak-syntax N=200000 SEED=7

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import sys
+
+import jinja2
 from pathlib import Path
 
 import nameflow
@@ -67,7 +69,9 @@ def main() -> int:
                     return None
 
             variables = {k: encode(v) for k, v in
-                         nameflow.analyze(tree, env.globals, resolver).items()}
+                         nameflow.analyze(tree, env.globals, resolver,
+                                          env.undefined is jinja2.StrictUndefined
+                                          ).items()}
             rows.append(json.dumps({
                 "case": f"{corpus}/{case.rel}",
                 "tree": syntax_emit.canonical(tree, env.globals),

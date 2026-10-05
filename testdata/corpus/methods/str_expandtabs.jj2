@@ -1,0 +1,3 @@
+{}
+---
+{{ 'a	b'.expandtabs() }}|{{ 'a	b'.expandtabs(4) }}|{{ 'a	b'.expandtabs(0) }}

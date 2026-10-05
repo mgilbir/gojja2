@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mgilbir/gojja2"
 )
 
 // workload is one filter driven over a sequence of the caller's length.
@@ -185,6 +187,14 @@ const overrunShare = 0.6
 // stops at 13% when it is right, so 30% is more than twice the correct answer
 // and well under the defect.
 //
+// |tojson is the same shape and was found by `make mutate`, which reported
+// writeJSONString's block charge as a site nothing constrained. It is not: this
+// case measures it, and the loose bar could not decide. Taking the charge out
+// stops the render at 57%, 67% and 64% over three runs -- the escaping walk is
+// about half the work and the deadline then lands on the charge that follows it
+// -- against a 60% bar, so the defect was caught two times in three. It stops at
+// 13% with the charge, on every run.
+//
 // Keyed by the workload's own name, passed in rather than read back out of
 // the subtest, which has its spaces rewritten as underscores.
 var tightBar = map[string]float64{
@@ -193,6 +203,7 @@ var tightBar = map[string]float64{
 	"str.split on sep": 0.30,
 	"bytes.split":      0.30,
 	"bytes.rsplit":     0.30,
+	"tojson":           0.30,
 }
 
 // deadlineRuns is how many times the deadline is measured, the best standing
@@ -351,12 +362,51 @@ func TestStringFiltersYieldToTheDeadline(t *testing.T) {
 // failure meant a render that ran out of time while walking a perfectly good
 // sequence reported a type error: the deadline arrived disguised as the
 // template's mistake, and errors.Is found nothing to match on.
+// TestLastIndexesRatherThanWalking pins the fast path |last takes over an
+// indexable sequence.
+//
+// CPython's reversed(range(...)) computes its first element arithmetically and
+// never narrows the range's length to a Py_ssize_t, so `range(2**70)|last`
+// answers 2**70-1 there. gojja2 walked to it instead and spent the whole render
+// budget: the answer was ErrTooManyIterations where CPython prints a number.
+// The walk is also why a cancelled render used to be noticed here, which is
+// what TestRewordedIterationErrorsKeepTheRealFailure no longer asserts.
+func TestLastIndexesRatherThanWalking(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`{{ range(4000000)|last }}`, "3999999"},
+		{`{{ range(2 ** 70)|last }}`, "1180591620717411303423"},
+		{`{{ range(0, 2 ** 70, 3)|last }}`, "1180591620717411303423"},
+		{`{{ range(0)|last }}`, ""},
+	} {
+		// A budget of one step: an indexed answer charges nothing like the
+		// walk, so this is what tells the two apart.
+		tmpl, err := mustEnv(gojja2.WithMaxIterations(1)).FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		out, err := tmpl.RenderString(context.Background(), nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.src, err)
+			continue
+		}
+		if out != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.src, out, tc.want)
+		}
+	}
+}
+
 func TestRewordedIterationErrorsKeepTheRealFailure(t *testing.T) {
+	// `big` is a template the filter must *walk*, so that a cancelled render
+	// produces a refusal for the rewording to swallow. |last no longer has
+	// one: reversed() of a sequence is __len__ and __getitem__, so |last
+	// indexes an indexable value instead of walking to it, and an O(1) filter
+	// has nothing to interrupt -- |first and |length answer under a cancelled
+	// context for the same reason. TestLastIndexesRatherThanWalking below is
+	// what holds that path in place.
 	for _, tc := range []struct{ name, src, big, want string }{
 		{"reverse", `{{ x|reverse|list|length }}`,
 			`{{ range(4000000)|reverse|list|length }}`, "argument must be iterable"},
-		{"last", `{{ x|last }}`,
-			`{{ range(4000000)|last }}`, "is not reversible"},
+		{"last", `{{ x|last }}`, "", "is not reversible"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpl, err := mustEnv().FromString(tc.src)
@@ -378,6 +428,9 @@ func TestRewordedIterationErrorsKeepTheRealFailure(t *testing.T) {
 			// cancelled render is refused there instead -- which
 			// would exercise the conversion rather than this
 			// filter's handling of a refusal.
+			if tc.big == "" {
+				return
+			}
 			big, err := mustEnv().FromString(tc.big)
 			if err != nil {
 				t.Fatalf("compile: %v", err)

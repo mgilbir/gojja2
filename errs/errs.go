@@ -57,6 +57,12 @@ const (
 	AssertionError
 	// RuntimeError is what jinja2's Cycler raises for an empty cycle.
 	RuntimeError
+	// SyntaxError is CPython's, raised when jinja2's *generated Python* will
+	// not compile. A template reaches it only through `{% break %}` or
+	// `{% continue %}` with no loop to bind to: jinja2's own parser accepts
+	// the tag and emits Python's keyword, and the refusal comes from the
+	// interpreter compiling that.
+	SyntaxError
 	Exception
 )
 
@@ -88,6 +94,7 @@ var kindNames = [...]string{
 	ArithmeticError:        "ArithmeticError",
 	AssertionError:         "AssertionError",
 	RuntimeError:           "RuntimeError",
+	SyntaxError:            "SyntaxError",
 	Exception:              "Exception",
 }
 
@@ -117,6 +124,7 @@ var parent = [...]Kind{
 	RecursionError:         Exception,
 	AssertionError:         Exception,
 	RuntimeError:           Exception,
+	SyntaxError:            Exception,
 	UnicodeError:           ValueError,
 	UnicodeEncodeError:     UnicodeError,
 	UnicodeDecodeError:     UnicodeError,

@@ -1,0 +1,11 @@
+{
+  "case": "format/spec_grouped_zero_padding_radix.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "0x000_0000_0000_0000_0000_00ff|0X000_0000_0000_0000_0000_00FF|0b000_0000_0000_0000_1111_1111|0o000_0000_0000_0000_0000_0377|0_0000_0000_0000_0000_0000_00ff"
+}

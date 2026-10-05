@@ -1,0 +1,6 @@
+{
+  "case": "methods/noargs_yes_conjugate_keyword_beats_count.jj2",
+  "variables": {
+    "yes": "or"
+  }
+}

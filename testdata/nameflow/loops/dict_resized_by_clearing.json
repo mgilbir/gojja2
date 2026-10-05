@@ -1,0 +1,6 @@
+{
+  "case": "loops/dict_resized_by_clearing.jj2",
+  "variables": {
+    "d": "fr"
+  }
+}

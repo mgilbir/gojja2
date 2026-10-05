@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_empty_bool.jj2",
+  "variables": {
+    "yes": "or"
+  }
+}

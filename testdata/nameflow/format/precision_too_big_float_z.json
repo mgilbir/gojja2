@@ -1,0 +1,6 @@
+{
+  "case": "format/precision_too_big_float_z.jj2",
+  "variables": {
+    "x": "or"
+  }
+}

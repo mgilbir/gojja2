@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_function_global_key.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

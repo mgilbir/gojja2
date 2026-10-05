@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_fold_volatile_or.jj2",
+  "variables": {
+    "nil": "f"
+  }
+}

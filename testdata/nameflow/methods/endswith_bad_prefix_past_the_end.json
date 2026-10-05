@@ -1,0 +1,4 @@
+{
+  "case": "methods/endswith_bad_prefix_past_the_end.jj2",
+  "variables": {}
+}

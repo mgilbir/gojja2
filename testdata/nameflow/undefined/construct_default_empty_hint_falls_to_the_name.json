@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_default_empty_hint_falls_to_the_name.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

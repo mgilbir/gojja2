@@ -1,0 +1,3 @@
+{}
+---
+{% set n = namespace() %}{% macro m() %}{% endmacro %}{% macro q() %}{% endmacro %}{{ namespace() == namespace() }}|{{ cycler(1) == cycler(1) }}|{{ n == n }}|{{ range == range }}|{{ lipsum == lipsum }}|{{ range == dict }}|{{ range != range }}|{{ m == m }}|{{ m == q }}|{{ m != m }}|{{ n == 1 }}|{{ 1 == n }}|{{ n == 'a' }}|{{ n == none }}|{{ joiner() == joiner() }}|{{ cycler(1) == 1 }}|{{ 1 == cycler(1) }}

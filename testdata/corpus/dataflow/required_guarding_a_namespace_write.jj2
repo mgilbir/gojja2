@@ -1,0 +1,6 @@
+{
+  "src": true,
+  "nothing": null
+}
+---
+{% if src %}{% set nothing.v = 1 %}{% endif %}

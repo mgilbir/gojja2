@@ -1,0 +1,6 @@
+{
+  "s_inf": "inf",
+  "s_nan": "nan"
+}
+---
+{{ range(s_nan|float) }}

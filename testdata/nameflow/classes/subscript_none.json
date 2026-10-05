@@ -1,0 +1,6 @@
+{
+  "case": "classes/subscript_none.jj2",
+  "variables": {
+    "nil": "or"
+  }
+}

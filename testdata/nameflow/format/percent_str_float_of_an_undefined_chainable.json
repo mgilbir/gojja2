@@ -1,0 +1,6 @@
+{
+  "case": "format/percent_str_float_of_an_undefined_chainable.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

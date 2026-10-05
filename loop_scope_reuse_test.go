@@ -50,6 +50,21 @@ func TestAMacroInALoopKeepsItsOwnIteration(t *testing.T) {
 			"NoneNone[1][2]",
 		},
 		{
+			"under an elif",
+			"{% for i in [1,2] %}{% if false %}{% elif true %}{% macro m() %}{{ i }}{% endmacro %}{{ ns.f.append(m) }}{% endif %}{% endfor %}",
+			"NoneNone[1][2]",
+		},
+		{
+			"under a later elif",
+			"{% for i in [1,2] %}{% if false %}{% elif false %}{% elif true %}{% macro m() %}{{ i }}{% endmacro %}{{ ns.f.append(m) }}{% endif %}{% endfor %}",
+			"NoneNone[1][2]",
+		},
+		{
+			"a call block under an elif",
+			"{% macro keep() %}{{ ns.f.append(caller) }}{% endmacro %}{% for i in [1,2] %}{% if false %}{% elif true %}{% call keep() %}{{ i }}{% endcall %}{% endif %}{% endfor %}",
+			"NoneNone[1][2]",
+		},
+		{
 			"inside a with",
 			"{% for i in [1,2] %}{% with %}{% macro m() %}{{ i }}{% endmacro %}{{ ns.f.append(m) }}{% endwith %}{% endfor %}",
 			"NoneNone[1][2]",

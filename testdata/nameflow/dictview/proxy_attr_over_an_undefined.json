@@ -1,0 +1,6 @@
+{
+  "case": "dictview/proxy_attr_over_an_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

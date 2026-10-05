@@ -1,0 +1,6 @@
+{
+  "case": "format/percent_precision_too_big_keyed.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

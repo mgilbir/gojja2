@@ -1,0 +1,6 @@
+{
+  "case": "classes/subscript_bool.jj2",
+  "variables": {
+    "yes": "or"
+  }
+}

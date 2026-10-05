@@ -1,0 +1,6 @@
+{
+  "case": "errors/cycler_dynamic_empty.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

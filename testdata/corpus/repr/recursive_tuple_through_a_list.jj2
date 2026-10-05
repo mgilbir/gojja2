@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "do"
+    ]
+  }
+}
+---
+{% set l = [] %}{% set t = (l,) %}{% do l.append(t) %}{{ t }}|{{ '%r' % [t] }}|{{ '%a' % (t,) }}|{{ l }}

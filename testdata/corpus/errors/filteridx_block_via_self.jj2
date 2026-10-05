@@ -1,0 +1,5 @@
+{
+  "v": "V"
+}
+---
+{{ self.b() }}{% block b %}x{{ v }}y{% filter length %}abc{% endfilter %}{% endblock %}

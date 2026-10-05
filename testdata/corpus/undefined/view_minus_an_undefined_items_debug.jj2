@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{% set q = {'a': 1} %}{{ q.items() - nope }}

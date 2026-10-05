@@ -59,18 +59,27 @@ func TestNegativesSurviveRendering(t *testing.T) {
 			continue
 		}
 		tree := tmpl.Syntax()
-		flow := dataflow.Analyze(tree, dataflow.WithResolver(func(n string) *syntax.Tree {
-			other, err := env.GetTemplate(n)
-			if err != nil {
-				return nil
-			}
-			return other.Syntax()
-		}))
+		// The case's own options as well as its resolver: under
+		// StrictUndefined an arm that reads a name can fail, so the
+		// analysis has to be asked the question the render will answer.
+		opts := append(c.DataflowOptions(),
+			dataflow.WithResolver(func(n string) *syntax.Tree {
+				other, err := env.GetTemplate(n)
+				if err != nil {
+					return nil
+				}
+				return other.Syntax()
+			}))
+		flow := dataflow.Analyze(tree, opts...)
 
 		render := func(name string, probe value.Value) (string, bool) {
-			vars := map[string]value.Value{}
-			for k, v := range c.Context {
-				vars[k] = v
+			// Fresh per render. A shallow copy would share the values
+			// themselves, so a case that mutates one -- a dict written
+			// by `{% set d.v %}...{% endset %}`, say -- would change
+			// what the next probe sees. See [conformance.Case.Context].
+			vars, err := c.Context()
+			if err != nil {
+				return "\x00context: " + err.Error(), false
 			}
 			vars[name] = probe
 			var sb strings.Builder

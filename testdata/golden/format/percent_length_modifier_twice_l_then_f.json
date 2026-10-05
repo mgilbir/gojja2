@@ -1,0 +1,14 @@
+{
+  "case": "format/percent_length_modifier_twice_l_then_f.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "unsupported format character 'l' (0x6c) at index 2"
+  }
+}

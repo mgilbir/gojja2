@@ -1,0 +1,6 @@
+{
+  "case": "divergence/undefined_exc_callable_macro.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

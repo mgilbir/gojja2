@@ -1,0 +1,6 @@
+{
+  "case": "errors/dict_slice_unhashable_in_a_tuple.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

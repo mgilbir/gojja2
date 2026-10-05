@@ -88,10 +88,27 @@ func (b *synBuilder) declareBody(body []ast.Stmt) {
 	for _, name := range names.owns {
 		owns[name] = true
 	}
-	// In first-mention order, which is the order jinja2's own symbol table
-	// records them in. Declaration order is part of the canonical form, so
-	// the two have to agree about it as well as about the symbols.
-	for _, name := range names.order {
+	// In the order the names are first *written*, which is the order
+	// jinja2's symbol table lists a scope's bindings in. Not first-mention
+	// order: a load creates no binding, so a name read before it is written
+	// is recorded when the write is reached, and
+	// `{% set v = a %}{% set a = 2 %}` lists v before a on both sides.
+	// Declaration order is part of the canonical form, so the two have to
+	// agree about it as well as about the symbols -- and every name that
+	// gets one here is written, so this reaches exactly the same set.
+	for _, name := range names.storeOrder {
+		if _, mine := f.owned[name]; mine {
+			// Already this frame's own binding -- a macro parameter,
+			// a loop target, a {% with %} name -- declared before
+			// the body was walked. jinja2's Symbols.store finds that
+			// reference before it asks the enclosing table, so
+			// writing to it copies nothing from outside. Without
+			// this, `{% set x = 0 %}{% macro b(x) %}{% set x = 1 %}`
+			// marked the *parameter* an alias of the outer x, and
+			// the analysis then had it deriving from a value it can
+			// never hold.
+			continue
+		}
 		if names.stores[name] {
 			if outer := b.enclosingSymbol(name); outer != nil {
 				alias := b.declare(name, syntax.SymAlias)
@@ -412,14 +429,6 @@ func (b *synBuilder) stmt(s ast.Stmt) *syntax.Node {
 	case *ast.ExprStmt:
 		out := node(syntax.KindExprStmt, n.Line())
 		b.edge(out, syntax.RoleValue, b.expr(n.Node))
-		return out
-
-	case *ast.Scope:
-		out := node(syntax.KindScope, n.Line())
-		b.pushFrame(out)
-		b.declareBody(n.Body)
-		b.body(out, syntax.RoleBody, n.Body)
-		b.popFrame()
 		return out
 
 	case *ast.AutoescapeBlock:

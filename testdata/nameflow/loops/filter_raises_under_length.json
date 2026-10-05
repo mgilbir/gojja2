@@ -1,0 +1,6 @@
+{
+  "case": "loops/filter_raises_under_length.jj2",
+  "variables": {
+    "d": "fr"
+  }
+}

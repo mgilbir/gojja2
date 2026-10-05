@@ -1,0 +1,3 @@
+{}
+---
+{% set mp = {'a': 1}.keys().mapping %}{{ [] in mp }}

@@ -19,12 +19,24 @@ import (
 // filterURLEncode percent-encodes a string, or builds a query string from a
 // mapping or a sequence of pairs.
 func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	// Each half of a pair goes through str(), so a StrictUndefined in either
+	// position refuses rather than encoding as nothing: jinja2 writes
+	// `f"{quote(k)}={quote(v)}"`. Converting without consulting the refusal
+	// made `{{ [(nope, 'x')]|urlencode }}` render "=x".
 	pair := func(k, val value.Value) (string, error) {
-		key, err := quotePlus(s, value.Str(k))
+		ks, err := strictStrFor(k, s.PythonVersion())
 		if err != nil {
 			return "", err
 		}
-		text, err := quotePlus(s, value.Str(val))
+		key, err := quotePlus(s, ks)
+		if err != nil {
+			return "", err
+		}
+		vs, err := strictStrFor(val, s.PythonVersion())
+		if err != nil {
+			return "", err
+		}
+		text, err := quotePlus(s, vs)
 		if err != nil {
 			return "", err
 		}
@@ -61,7 +73,7 @@ func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 			// jinja2 writes `for k, v in items`, so each element is
 			// unpacked and fails with Python's unpacking errors --
 			// a string of six characters is iterable but too long.
-			k, val, err := unpackPair(item)
+			k, val, err := unpackPair(item, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -74,7 +86,7 @@ func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 		return value.String(strings.Join(parts, "&")), nil
 	}
 	// A bare string keeps "/" unescaped, matching urllib.parse.quote.
-	quoted, err := quoteURL(s, value.Str(v), true)
+	quoted, err := quoteURL(s, value.StrFor(v, s.PythonVersion()), true)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -204,14 +216,13 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, err
 	}
 	if relTrue && !rel.IsString() {
-		return value.Undefined, errs.New(errs.AttributeError,
-			"'%s' object has no attribute 'split'", rel.TypeName())
+		return value.Undefined, noAttribute(rel, "split")
 	}
 	if !relTrue {
 		rel = value.String("")
 	}
 	relParts := map[string]bool{}
-	for _, part := range strings.Fields(attrText(rel)) {
+	for _, part := range strings.Fields(attrText(rel, s.PythonVersion())) {
 		relParts[part] = true
 	}
 	if nofollow {
@@ -254,7 +265,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 				return value.Undefined, errs.New(errs.TypeError,
 					"expected string or bytes-like object, got '%s'", item.TypeName())
 			}
-			text := value.Str(item)
+			text := value.StrFor(item, s.PythonVersion())
 			if !uriSchemeRe.MatchString(text) {
 				return value.Undefined, errs.New(errs.FilterArgumentError,
 					"%s is not a valid URI scheme prefix.", value.ReprFor(item, s.PythonVersion()))
@@ -268,7 +279,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		attrs += ` rel="` + escapeHTML(strings.Join(sortedRel, " ")) + `"`
 	}
 	if targetTrue {
-		attrs += ` target="` + escapeHTML(value.Str(target)) + `"`
+		attrs += ` target="` + escapeHTML(value.StrFor(target, s.PythonVersion())) + `"`
 	}
 
 	// trim_url is jinja2's closure: the comparison happens per link, and the
@@ -294,7 +305,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err := value.StrictRefusal(v); err != nil {
 		return value.Undefined, err
 	}
-	escaped := value.Str(escapeIfNeeded(v))
+	escaped := value.StrFor(escapeIfNeeded(v, s.PythonVersion()), s.PythonVersion())
 	words := splitKeepingSpace(escaped)
 
 	for i, word := range words {
@@ -345,11 +356,17 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	return value.String(out), nil
 }
 
-func attrText(v value.Value) string {
+// attrText is str() of an attribute's value, empty for one that is not there.
+//
+// StrFor, not Str: a container's text is its repr and repr escapes by the
+// interpreter's isprintable. Every stringifying filter here reads the version
+// for that reason; see strictStrFor in filters.go, which nineteen callers got
+// wrong the same way.
+func attrText(v value.Value, py value.PythonVersion) string {
 	if v.IsUndefined() || v.IsNone() {
 		return ""
 	}
-	return value.Str(v)
+	return value.StrFor(v, py)
 }
 
 // splitKeepingSpace splits on whitespace runs but keeps them, so rejoining
@@ -421,13 +438,24 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 	if err != nil {
 		return value.Undefined, err
 	}
-	d, ok := v.Dict()
-	if !ok {
+	var entries []value.DictEntry
+	if d, ok := v.Dict(); ok {
+		entries = d.Entries()
+	} else if m, isProxy := v.Interface().(pairSource); isProxy {
+		// `d.items()` of a proxy is the wrapped object's own items().
+		pairs, err := m.pairs(s, "items")
+		if err != nil {
+			return value.Undefined, err
+		}
+		for _, kv := range pairs {
+			entries = append(entries, value.DictEntry{Key: kv[0], Value: kv[1]})
+		}
+	} else {
 		return value.Undefined, itemsAttributeError(v)
 	}
 
 	var parts []string
-	for _, e := range d.Entries() {
+	for _, e := range entries {
 		if e.Value.IsNone() || e.Value.IsUndefined() {
 			continue
 		}
@@ -440,10 +468,17 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		// and start another, so it is refused rather than escaped.
 		if strings.ContainsAny(key, " \t\n\r\f\v/>=") {
 			return value.Undefined, errs.New(errs.ValueError,
-				"Invalid character %s in attribute name.",
+				"Invalid character in attribute name: %s",
 				value.ReprFor(value.String(key), s.PythonVersion()))
 		}
-		parts = append(parts, fmt.Sprintf(`%s="%s"`, escapeHTML(key), escapeHTML(value.Str(e.Value))))
+		// escape(), not escapeHTML: markupsafe's escape leaves a value
+		// that is already safe alone, so `{'y': '&amp;'|safe}|xmlattr`
+		// is ` y="&amp;"` and not the double-escaped ` y="&amp;amp;"`.
+		// Both halves go through it, as do_xmlattr's two escape() calls
+		// do -- a Markup key is left alone too.
+		parts = append(parts, fmt.Sprintf(`%s="%s"`,
+			value.Str(escapeIfNeeded(e.Key, s.PythonVersion())),
+			value.Str(escapeIfNeeded(e.Value, s.PythonVersion()))))
 	}
 
 	out := strings.Join(parts, " ")
@@ -508,8 +543,10 @@ func (p jsonPath) leave(key any) { delete(p, key) }
 //
 // The nesting of a value graph is chosen at render time, so the walk needs a
 // wall of its own or a deep one takes the stack out. CPython has the same wall
-// and the same message, at about the same depth: json.dumps runs out of
-// interpreter stack at 986 levels of list.
+// and the same message, and had it at about the same depth when this was
+// written: json.dumps ran out of interpreter stack at 986 levels of list on
+// 3.11. 3.12 gave the C recursion limit its own counter and it moved to ~9,993,
+// so this is now the lower wall of the two. See docs/limits.md.
 const maxJSONDepth = 1000
 
 // RecursionMessageJSON is what CPython reports when json.dumps runs out of
@@ -746,14 +783,19 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 		// serialised like the dict it stands for. Everything else --
 		// a range, a cycler, a macro -- is not serialisable, which is
 		// what json.dumps says about jinja2's own types too.
-		if m, ok := v.Interface().(value.Mapping); ok {
-			out := value.NewDict()
-			target, _ := out.Dict()
-			for _, k := range m.Keys() {
-				val, _ := m.GetItem(k)
-				_ = target.Set(k, val, st.PythonVersion())
+		// ...but not one of the engine's own. A mappingproxy is a
+		// Mapping so that a template can index and walk it, and
+		// json.dumps refuses one all the same.
+		if _, ours := v.Interface().(*mappingProxy); !ours {
+			if m, ok := v.Interface().(value.Mapping); ok {
+				out := value.NewDict()
+				target, _ := out.Dict()
+				for _, k := range m.Keys() {
+					val, _ := m.GetItem(k)
+					_ = target.Set(k, val, st.PythonVersion())
+				}
+				return writeJSON(st, b, out, indent, depth, path)
 			}
-			return writeJSON(st, b, out, indent, depth, path)
 		}
 		return errs.New(errs.TypeError,
 			"Object of type %s is not JSON serializable", v.TypeName())
@@ -825,11 +867,21 @@ const jsonChargeBlock = 1 << 12
 // itemsAttributeError reports what `d.items()` does to a value that is not a
 // mapping.
 //
-// Usually the attribute is simply missing. A Cycler is the exception: jinja2's
-// keeps its rotation in an attribute named `items`, so the call finds a tuple
-// and fails trying to call it -- which is the error a template author sees.
+// Usually the attribute is simply missing. Two values carry one anyway, and for
+// those the error comes from the call rather than from the lookup. A Cycler is
+// one: jinja2's keeps its rotation in an attribute named `items`, so the call
+// finds a tuple and fails trying to call it. A type object is the other: the
+// attribute is `dict.items` unbound, and calling it without an instance is what
+// the template author sees.
 func itemsAttributeError(v value.Value) error {
 	if attr, ok := lookupAttr(nil, v, "items"); ok {
+		if m, unbound := attr.Interface().(*unboundMethodObject); unbound {
+			// No positional arguments, so the descriptor refuses
+			// before it would need a state to call through.
+			if _, err := m.callWith(nil, &value.CallArgs{}); err != nil {
+				return err
+			}
+		}
 		if _, callable := attr.Interface().(value.Caller); !callable {
 			return errs.New(errs.TypeError, "'%s' object is not callable", attr.TypeName())
 		}
@@ -837,15 +889,19 @@ func itemsAttributeError(v value.Value) error {
 	if o, ok := v.Interface().(interface{ AttributeError(string) string }); ok {
 		return errs.New(errs.AttributeError, "%s", o.AttributeError("items"))
 	}
-	return errs.New(errs.AttributeError,
-		"'%s' object has no attribute 'items'", v.TypeName())
+	return noAttribute(v, "items")
 }
 
 // unpackPair destructures one element into a key and a value, reporting the
 // failure the way `k, v = item` does in Python.
-func unpackPair(item value.Value) (value.Value, value.Value, error) {
+func unpackPair(item value.Value, py value.PythonVersion) (value.Value, value.Value, error) {
 	seq, err := value.Iterate(item)
 	if err != nil {
+		// As in exec.unpack: a StrictUndefined's own refusal names the
+		// undefined, and that is what `k, v = item` reports.
+		if strict := value.StrictRefusal(item); strict != nil {
+			return value.Undefined, value.Undefined, strict
+		}
 		return value.Undefined, value.Undefined, errs.New(errs.TypeError,
 			"cannot unpack non-iterable %s object", item.TypeName())
 	}
@@ -853,6 +909,14 @@ func unpackPair(item value.Value) (value.Value, value.Value, error) {
 	for v := range seq {
 		items = append(items, v)
 		if len(items) > 2 {
+			// 3.14 names the count, for the kinds that carry one.
+			// The walk stops here either way: the number comes from
+			// the value's own length, never from finishing the walk,
+			// which is what keeps a long iterable cheap to refuse.
+			if n, ok := unpackCount(item); ok && py.UnpackErrorNamesTheCount() {
+				return value.Undefined, value.Undefined, errs.New(errs.ValueError,
+					"too many values to unpack (expected 2, got %d)", n)
+			}
 			return value.Undefined, value.Undefined, errs.New(errs.ValueError,
 				"too many values to unpack (expected 2)")
 		}

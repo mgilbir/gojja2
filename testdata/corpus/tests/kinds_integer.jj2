@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is integer }}|{{ 0 is integer }}|{{ -1 is integer }}|{{ 1.5 is integer }}|{{ true is integer }}|{{ false is integer }}|{{ none is integer }}|{{ 'a' is integer }}|{{ '' is integer }}|{{ 'A' is integer }}|{{ [1] is integer }}|{{ [] is integer }}|{{ ((1,)) is integer }}|{{ {} is integer }}|{{ {'a':1} is integer }}|{{ range(3) is integer }}|{{ nope is integer }}|{{ ('x'|safe) is integer }}|{{ dict is integer }}|{{ d.keys() is integer }}

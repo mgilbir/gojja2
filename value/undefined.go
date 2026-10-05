@@ -50,6 +50,63 @@ type undefinedInfo struct {
 	// and because a slice has no Value here to hold.
 	keyRepr string
 	hasKey  bool
+	// nameRepr overrides how the name is written, and is set only by an
+	// Undefined a *template* constructed through `__class__`. jinja2
+	// formats the name with !r, so one built with no name at all says
+	// "None is undefined" and prints as "{{ None }}" under DebugUndefined.
+	// Every undefined the engine builds for itself has a real name, and
+	// for those the quoting is the same either way -- which is why this
+	// stayed unnoticed until a template could call the class.
+	nameRepr string
+	// excRefusal is the error that replaces this undefined's own, set only
+	// when a template constructed the Undefined with a fourth argument that
+	// cannot be called. jinja2 raises with `exc(message)`, so a non-callable
+	// one fails before the message is ever used.
+	//
+	// It arrives already built, because what counts as callable is a
+	// question about macros and globals that this package cannot answer.
+	excRefusal error
+}
+
+// UndefinedConstructed returns the undefined jinja2's Undefined(hint, obj,
+// name) builds, which is what a template gets from `{{ nope.__class__(...) }}`.
+//
+// It picks between the same three messages every other undefined here uses, so
+// this is a binding rather than a fourth form. jinja2's rule, in order: a
+// *truthy* hint is the whole message; with no obj the name stands alone; with an
+// obj, a string name is an attribute and anything else is an element.
+//
+// What is new is that every argument may be absent, and jinja2 writes the name
+// with !r -- so a nameless one is "None is undefined" rather than the "” is
+// undefined" an empty name would give. Nothing the engine builds for itself is
+// nameless, which is why that only mattered once a template could call the
+// class.
+func UndefinedConstructed(hint Value, obj Value, hasObj bool, name Value,
+	excRefusal error) Value {
+	info := &undefinedInfo{excRefusal: excRefusal}
+	switch {
+	case isTruthyHint(hint):
+		info.hint = Str(hint)
+	case !hasObj:
+		// Two forms of the same name, because jinja2 writes it two
+		// ways: the error quotes it with !r and DebugUndefined's
+		// __str__ prints it raw, so `Undefined(name='zz')` is "'zz' is
+		// undefined" and "{{ zz }}".
+		info.name, info.nameRepr = Str(name), Repr(name)
+	case name.IsString():
+		info.owner, info.name = ObjectTypeRepr(obj), Str(name)
+	default:
+		info.owner, info.keyRepr, info.hasKey = ObjectTypeRepr(obj), Repr(name), true
+	}
+	return Value{kind: KindUndefined, obj: info}
+}
+
+// isTruthyHint reports whether a hint replaces the message. jinja2 tests the
+// hint for truth rather than for presence, so Undefined(hint=None) falls
+// through to the name form and says "None is undefined".
+func isTruthyHint(hint Value) bool {
+	ok, err := IsTrue(hint)
+	return err == nil && ok
 }
 
 // NewUndefined returns the undefined produced by a bare name that resolved to
@@ -77,6 +134,15 @@ func UndefinedIndex(owner Value, i int) Value {
 func UndefinedElement(owner, key Value) Value {
 	return Value{kind: KindUndefined, obj: &undefinedInfo{
 		keyRepr: Repr(key), hasKey: true, owner: ObjectTypeRepr(owner),
+	}}
+}
+
+// UndefinedSubscript is UndefinedElement for a key that has no Value: the tuple
+// `(slice(1, 2, None), 3)` a subscript like `x[1:2, 3]` would hand to
+// getitem. The caller spells the key the way Python's repr does.
+func UndefinedSubscript(owner Value, keyRepr string) Value {
+	return Value{kind: KindUndefined, obj: &undefinedInfo{
+		keyRepr: keyRepr, hasKey: true, owner: ObjectTypeRepr(owner),
 	}}
 }
 
@@ -129,10 +195,26 @@ func (v Value) undef() *undefinedInfo {
 // element form does not.
 func (v Value) UndefinedError() error {
 	info := v.undef()
+	// jinja2 raises with `self._undefined_exception(message)`, and a
+	// template can replace that class through the fourth argument of
+	// Undefined(...). Calling something that is not callable fails before
+	// the message is ever used, so this comes first.
+	//
+	// A *callable* exc is not reproduced: jinja2 calls it at the raise, with
+	// side effects and all, and this has no evaluator here to call it with.
+	// Calling it at construction instead would run it for an undefined that
+	// is never used, which is worse than not calling it. Recorded in
+	// docs/divergences.md.
+	if info.excRefusal != nil {
+		return info.excRefusal
+	}
 	switch {
 	case info.hint != "":
 		return errs.New(errs.UndefinedError, "%s", info.hint)
 	case info.owner == "":
+		if info.nameRepr != "" {
+			return errs.New(errs.UndefinedError, "%s is undefined", info.nameRepr)
+		}
 		return errs.New(errs.UndefinedError, "'%s' is undefined", info.name)
 	case info.hasKey:
 		return errs.New(errs.UndefinedError, "%s has no element %s", info.owner, info.keyRepr)
@@ -152,6 +234,9 @@ func (v Value) DebugText() string {
 	case info.hint != "":
 		return "{{ undefined value printed: " + info.hint + " }}"
 	case info.owner == "":
+		// The name raw, never the repr: jinja2's __str__ interpolates
+		// it while the error message writes it with !r, so the same
+		// undefined is "{{ zz }}" here and "'zz' is undefined" there.
 		return "{{ " + info.name + " }}"
 	case info.hasKey:
 		return "{{ no such element: " + info.owner + "[" + info.keyRepr + "] }}"
@@ -230,9 +315,26 @@ func ObjectTypeRepr(v Value) string {
 // already refuses whatever the class, and fails at its own site. So this is
 // the whole of the difference, and the operations above are the only ones that
 // have to ask.
+//
+// An object that wraps another value and forwards all five to it says so
+// through [StrictWrapper]: `mappingproxy(nope)` prints, iterates, measures and
+// compares by asking the StrictUndefined inside, and that raises.
 func StrictRefusal(v Value) error {
-	if v.kind == KindUndefined && v.undef().behavior == UndefinedStrict {
-		return v.UndefinedError()
+	switch v.kind {
+	case KindUndefined:
+		if v.undef().behavior == UndefinedStrict {
+			return v.UndefinedError()
+		}
+	case KindObject:
+		if w, ok := v.Interface().(StrictWrapper); ok {
+			return w.StrictRefusal()
+		}
 	}
 	return nil
+}
+
+// StrictWrapper is an Object whose behaviour is the behaviour of a value it
+// holds, so that the holder refuses whatever that value refuses.
+type StrictWrapper interface {
+	StrictRefusal() error
 }

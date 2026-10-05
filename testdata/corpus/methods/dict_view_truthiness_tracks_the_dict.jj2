@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{% set k = d.keys() %}{% if k %}T{% else %}F{% endif %}{{ d.clear() }}{% if k %}T{% else %}F{% endif %}

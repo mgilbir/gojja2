@@ -5,7 +5,9 @@ package gojja2
 
 import (
 	"math"
+	"math/big"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -19,6 +21,9 @@ func filterLength(_ *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 }
 
 func filterList(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	if err := lengthHint(v); err != nil {
+		return value.Undefined, err
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
@@ -28,17 +33,32 @@ func filterList(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 
 // filterItems yields (key, value) pairs, and tolerates undefined so that
 // `{% for k, v in missing|items %}` renders nothing rather than failing.
-func filterItems(_ *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+func filterItems(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
 	if v.IsUndefined() {
-		if v.UndefinedBehavior() == value.UndefinedStrict {
-			return value.Undefined, v.UndefinedError()
-		}
+		// do_items checks `isinstance(value, Undefined)` and returns
+		// before it yields anything, with no class distinction: the
+		// filter is documented as answering an empty iterable for an
+		// undefined, and a StrictUndefined is one. Raising for strict
+		// alone looked like the rule every other filter follows and is
+		// not this filter's -- `{{ 'x'.a|items|list }}` is `[]` under
+		// all four classes.
 		return value.NewList(), nil
 	}
 	if d, ok := v.Dict(); ok {
 		items := make([]value.Value, 0, d.Len())
 		for _, e := range d.Entries() {
 			items = append(items, value.NewTuple(e.Key, e.Value))
+		}
+		return value.NewList(items...), nil
+	}
+	if m, ok := v.Interface().(pairSource); ok {
+		pairs, err := m.pairs(s, "items")
+		if err != nil {
+			return value.Undefined, err
+		}
+		items := make([]value.Value, 0, len(pairs))
+		for _, kv := range pairs {
+			items = append(items, value.NewTuple(kv[0], kv[1]))
 		}
 		return value.NewList(items...), nil
 	}
@@ -78,6 +98,30 @@ func filterFirst(s *State, v value.Value, _ *value.CallArgs) (value.Value, error
 // reversible reports whether reversed() would accept the value: a sequence or
 // a mapping, which have the indexing reversed() walks backwards through, but
 // not an object that merely knows its length or how to yield its items.
+// proxyReversedRefusal is what reversed() of a mappingproxy raises when the
+// object it wraps has no __reversed__. mappingproxy_reversed calls the wrapped
+// object's, so a dict or a range answers and a string, bytes or Undefined does
+// not -- the last as a bare AttributeError, because Undefined.__getattr__
+// raises for a dunder name with the name alone -- and a proxy of a proxy asks
+// the next one down.
+func proxyReversedRefusal(v value.Value) error {
+	m, ok := v.Interface().(*mappingProxy)
+	if !ok {
+		return nil
+	}
+	if next, nested := m.d.Interface().(*mappingProxy); nested {
+		return proxyReversedRefusal(value.FromObject(next))
+	}
+	switch m.d.Kind() {
+	case value.KindUndefined:
+		return errs.New(errs.AttributeError, "__reversed__")
+	case value.KindString, value.KindBytes:
+		return errs.New(errs.AttributeError,
+			"'%s' object has no attribute '__reversed__'", m.d.TypeName())
+	}
+	return nil
+}
+
 func reversible(v value.Value) bool {
 	switch v.Kind() {
 	case value.KindString, value.KindBytes, value.KindList, value.KindTuple,
@@ -87,9 +131,43 @@ func reversible(v value.Value) bool {
 		switch v.Interface().(type) {
 		case value.Sequence, value.Mapping:
 			return true
+		case *dictView:
+			// A view defines __reversed__ -- 3.8 gave dict and its
+			// views a defined order to reverse -- so `{{ d.keys()|last }}`
+			// answers where `{{ loop|last }}` still raises. It is not a
+			// Sequence here on purpose: it has a length and cannot be
+			// indexed, which is what makes it a view rather than a list.
+			return true
 		}
 	}
 	return false
+}
+
+// lastByIndex answers the final element of an indexable Object without walking
+// it. The third result reports whether the value was indexable at all; the
+// second, whether it was empty, which is the undefined jinja2 substitutes for
+// reversed()'s StopIteration.
+func lastByIndex(v value.Value) (item value.Value, empty, ok bool) {
+	if v.Kind() != value.KindObject {
+		return value.Undefined, false, false
+	}
+	switch o := v.Interface().(type) {
+	case value.BigSequence:
+		n := o.BigLen()
+		if n.Sign() <= 0 {
+			return value.Undefined, true, true
+		}
+		it, found := o.BigIndex(new(big.Int).Sub(n, big.NewInt(1)))
+		return it, false, found
+	case value.Sequence:
+		n := o.Len()
+		if n == 0 {
+			return value.Undefined, true, true
+		}
+		it, found := o.GetIndex(n - 1)
+		return it, false, found
+	}
+	return value.Undefined, false, false
 }
 
 func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -114,6 +192,21 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 		return value.Undefined, errs.New(errs.TypeError,
 			"'%s' object is not reversible", v.TypeName())
 	}
+	if err := proxyReversedRefusal(v); err != nil {
+		return value.Undefined, err
+	}
+	// reversed() of a sequence is __len__ and __getitem__, not a walk, so the
+	// last element of something indexable is answered without touching the
+	// ones before it. A range's length can be wider than a Py_ssize_t and
+	// CPython's range_reverse computes the element arithmetically rather than
+	// narrowing that length -- `range(2**70)|last` answers 2**70-1 there,
+	// where walking to it cost the whole render budget and then failed.
+	if item, empty, ok := lastByIndex(v); ok {
+		if empty {
+			return s.Undefined(value.UndefinedHint("No last item, sequence was empty.")), nil
+		}
+		return item, nil
+	}
 	// jinja2 takes the last item with reversed(), so a value that cannot be
 	// walked names reversibility rather than iterability. A render that ran
 	// out of time or budget still reports that.
@@ -136,6 +229,11 @@ func filterLast(s *State, v value.Value, _ *value.CallArgs) (value.Value, error)
 // mapping is subscripted by the *index*, which is a key lookup that finds
 // nothing unless that integer happens to be one of its keys.
 func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
+	// LenValue rather than Len: random.choice() asks for len(), which narrows
+	// to a Py_ssize_t, so a range longer than that refuses here.
+	if _, err := value.LenValue(v); err != nil {
+		return value.Undefined, err
+	}
 	n, err := value.Len(v)
 	if err != nil {
 		return value.Undefined, err
@@ -144,31 +242,11 @@ func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 		return s.Undefined(value.UndefinedHint("No random item, sequence was empty.")), nil
 	}
 	i := rand.IntN(n)
-	switch v.Kind() {
-	case value.KindDict:
-		d, _ := v.Dict()
-		item, ok, err := d.Get(value.Int(int64(i)), s.PythonVersion())
-		if err != nil {
-			return value.Undefined, err
-		}
-		if !ok {
-			return value.Undefined, errs.New(errs.KeyError, "%d", i)
-		}
-		return item, nil
-	case value.KindObject:
-		if m, ok := v.Interface().(value.Mapping); ok {
-			item, found := m.GetItem(value.Int(int64(i)))
-			if !found {
-				return value.Undefined, errs.New(errs.KeyError, "%d", i)
-			}
-			return item, nil
-		}
-	}
-	items, err := materialize(s, v)
-	if err != nil {
-		return value.Undefined, err
-	}
-	return items[i], nil
+	// random.choice is `seq[i]`, which is the subscript str.format's `{0[1]}`
+	// performs: an item where the value has items, a KeyError for a mapping
+	// that lacks the index, and "not subscriptable" for everything that has a
+	// length without them -- a set, a dict view, `loop`.
+	return fieldSubscript(v, strconv.Itoa(i), s.PythonVersion())
 }
 
 // filterJoin concatenates, escaping items when autoescaping so that a list of
@@ -176,7 +254,7 @@ func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	sep := ""
 	if d, ok := arg(args, 0, "d"); ok {
-		sep = value.Str(d)
+		sep = value.StrFor(d, s.PythonVersion())
 	}
 	attribute, _ := arg(args, 1, "attribute")
 	keyParts := attrParts(attribute)
@@ -214,7 +292,7 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 			// str.join converts each item as it takes it, so an
 			// item that refuses str() fails here rather than
 			// joining as "".
-			text, err := strictStr(mapped)
+			text, err := strictStrFor(mapped, s.PythonVersion())
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -255,16 +333,33 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	}
 	if !markup {
 		for i, item := range items {
-			parts[i] = value.Str(item)
+			// str() again, and it refuses again: the branch above
+			// asks through strictStr and this one did not, so
+			// `{{ 'a'|join(attribute='name') }}` raised without
+			// autoescaping and joined a StrictUndefined as "" with
+			// it. Only the escaping differs between the two
+			// branches; what a value does when asked for its text
+			// does not.
+			text, err := strictStrFor(item, s.PythonVersion())
+			if err != nil {
+				return value.Undefined, err
+			}
+			parts[i] = text
 		}
 		return value.String(strings.Join(parts, sep)), nil
 	}
 	// With markup involved the delimiter is escaped too, and every item
-	// that is not already safe -- which is Markup.join's own rule.
+	// that is not already safe -- which is Markup.join's own rule. The
+	// refusal comes first either way: escaping a value asks it for its
+	// text, so a StrictUndefined raises before anything is escaped.
 	for i, item := range items {
-		parts[i] = value.Str(escapeIfNeeded(item))
+		if _, err := strictStrFor(item, s.PythonVersion()); err != nil {
+			return value.Undefined, err
+		}
+		parts[i] = value.StrFor(escapeIfNeeded(item, s.PythonVersion()), s.PythonVersion())
 	}
-	return value.Safe(strings.Join(parts, value.Str(escapeIfNeeded(sepValue)))), nil
+	return value.Safe(strings.Join(parts,
+		value.StrFor(escapeIfNeeded(sepValue, s.PythonVersion()), s.PythonVersion()))), nil
 }
 
 func filterReverse(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -278,6 +373,9 @@ func filterReverse(s *State, v value.Value, _ *value.CallArgs) (value.Value, err
 			return value.Safe(out), nil
 		}
 		return value.String(out), nil
+	}
+	if err := proxyReversedRefusal(v); err != nil {
+		return value.Undefined, err
 	}
 	items, err := materializeOr(s, v, errs.New(errs.FilterArgumentError,
 		"argument must be iterable"))
@@ -297,6 +395,10 @@ func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	}
 	attribute, _ := arg(args, 2, "attribute")
 
+	// sorted() narrows the length before it allocates; see lengthHint.
+	if err := lengthHint(v); err != nil {
+		return value.Undefined, err
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
@@ -352,6 +454,20 @@ func filterDictsort(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	}
 
 	d, ok := v.Dict()
+	if proxy, isProxy := v.Interface().(pairSource); !ok && isProxy {
+		pairs, err := proxy.pairs(s, "items")
+		if err != nil {
+			return value.Undefined, err
+		}
+		out := value.NewDict()
+		target, _ := out.Dict()
+		for _, kv := range pairs {
+			if err := target.Set(kv[0], kv[1], s.PythonVersion()); err != nil {
+				return value.Undefined, err
+			}
+		}
+		d, ok = out.Dict()
+	}
 	if !ok {
 		if m, isMapping := v.Interface().(value.Mapping); isMapping && v.Kind() == value.KindObject {
 			out := value.NewDict()
@@ -540,7 +656,7 @@ func filterBatch(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 				// multiplies a sequence by a non-int, and one
 				// too wide for an index overflows. Mul charges
 				// the padding before building it.
-				n, err := value.Sub(size, have, s)
+				n, err := value.Sub(size, have, s, s.PythonVersion())
 				if err != nil {
 					return value.Undefined, err
 				}
@@ -578,6 +694,12 @@ func filterSlice(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 		fill = value.None
 	}
 
+	// `seq = list(value)` is do_slice's first statement, so it narrows the
+	// length before it divides by `slices`: `{{ range(2**70)|slice(0) }}` is
+	// the OverflowError and not the ZeroDivisionError. See lengthHint.
+	if err := lengthHint(v); err != nil {
+		return value.Undefined, err
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
@@ -653,11 +775,9 @@ func filterSlice(s *State, v value.Value, args *value.CallArgs) (value.Value, er
 // filterGroupby sorts by the attribute and then runs together adjacent items
 // that share it, yielding (grouper, list) pairs.
 func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
-	attribute, ok := arg(args, 0, "attribute")
-	if !ok {
-		return value.Undefined, errs.New(errs.FilterArgumentError,
-			"groupby() missing required argument 'attribute'")
-	}
+	// Refused by checkArity first, with sync_do_groupby's own signature; see
+	// filterReplace. Corpus: errors/groupby_no_argument.
+	attribute, _ := arg(args, 0, "attribute")
 	// make_attrgetter substitutes the default with `if default is not None`,
 	// so an explicit None is no default at all: the undefined stays, and
 	// what happens next is whatever the undefined does. gojja2 substituted
@@ -670,6 +790,10 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		return value.Undefined, err
 	}
 
+	// sorted(), again before anything is walked; see lengthHint.
+	if err := lengthHint(v); err != nil {
+		return value.Undefined, err
+	}
 	items, err := materialize(s, v)
 	if err != nil {
 		return value.Undefined, err
@@ -833,8 +957,12 @@ func filterSelectReject(keep, byAttribute bool) Filter {
 		var attribute value.Value
 		if byAttribute {
 			if len(pos) == 0 {
+				// jinja2's wording, which names neither the
+				// filter nor the position -- the same message
+				// for selectattr and rejectattr, because both
+				// reach it through prepare_attribute_parts.
 				return value.Undefined, errs.New(errs.FilterArgumentError,
-					"selectattr requires an attribute name")
+					"Missing parameter for attribute name")
 			}
 			attribute, pos = pos[0], pos[1:]
 		}

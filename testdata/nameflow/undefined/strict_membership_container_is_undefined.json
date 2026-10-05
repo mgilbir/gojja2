@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_membership_container_is_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

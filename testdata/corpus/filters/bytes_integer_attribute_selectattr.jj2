@@ -1,0 +1,3 @@
+{}
+---
+{% set l = ['a'.encode(), 'b,c'.encode()] %}{{ l|selectattr(1)|list }}

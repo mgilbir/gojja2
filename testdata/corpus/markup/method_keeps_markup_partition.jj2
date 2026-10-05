@@ -1,0 +1,3 @@
+{}
+---
+{% autoescape true %}{{ ('<a>-x'|safe).partition('-') }}|{{ ('<a>-x'|safe).rpartition('-')[0] }}|{{ ('ab'|safe).partition('z') }}|{{ ('ab'|safe).rpartition('z') }}{% endautoescape %}

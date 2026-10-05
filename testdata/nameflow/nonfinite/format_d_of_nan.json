@@ -1,0 +1,6 @@
+{
+  "case": "nonfinite/format_d_of_nan.jj2",
+  "variables": {
+    "s_nan": "or"
+  }
+}

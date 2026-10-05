@@ -1,0 +1,6 @@
+{
+  "case": "methods/sort_key_key_sorts_the_same_list.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "case": "globals/range_wide_slice_of_a_narrow_range.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "range(0, 5, 1180591620717411303424)|range(4, -1, -1180591620717411303424)|range(5, 5)|range(0, 0)|[0]"
+}

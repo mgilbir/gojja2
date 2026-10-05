@@ -1,0 +1,7 @@
+{
+  "case": "classes/construct_int_of_float.jj2",
+  "variables": {
+    "f": "or",
+    "n": "or"
+  }
+}

@@ -5,6 +5,7 @@ package gojja2
 
 import (
 	"context"
+	"math"
 	"math/big"
 	"strings"
 	"testing"
@@ -330,5 +331,54 @@ func TestRepeatCountIndexOverflow(t *testing.T) {
 	}
 	if got := mustRender(t, `{{ ["-"] * -3 }}`); got != "[]" {
 		t.Errorf(`["-"] * -3 = %s`, got)
+	}
+}
+
+// TestNaNKeepsItsIdentityWithinARender: a NaN is the only value whose identity
+// a template can observe, because it is the only one that is not equal to
+// itself -- everywhere else `is` implies `==` and nothing can tell the two
+// questions apart. gojja2 gives every NaN an identity where it is made, so
+// everything a template computes answers as CPython does.
+//
+// A Go context is the one place that cannot. `map[string]any{"n": n, "ns":
+// []any{n}}` hands the same float64 over twice and a float64 has no identity to
+// hand over with it, so what was one object in Python arrives as two. Python
+// says `n in ns` is True; here it is False. Nothing in the corpus can show it --
+// the corpus context is JSON, which has no NaN at all -- so it is asserted here.
+func TestNaNKeepsItsIdentityWithinARender(t *testing.T) {
+	nan := math.NaN()
+	for _, tc := range []struct{ src, want, why string }{
+		// Computed in the template: one object, and every container
+		// question about it answers on identity.
+		{`{% set a = 1e308 %}{% set b = a * 10 %}{% set x = b - b %}` +
+			`{{ [x] == [x] }}|{{ x in [x] }}|{{ {x: 1}[x] }}|{{ x is sameas x }}`,
+			"True|True|1|True", "one NaN, read four times"},
+		// ...and the operator itself still has no identity shortcut.
+		{`{% set a = 1e308 %}{% set b = a * 10 %}{% set x = b - b %}{{ x == x }}`,
+			"False", "`==` is float.__eq__, which answers about the value"},
+		// Two computed separately are two objects.
+		{`{% set a = 1e308 %}{% set b = a * 10 %}{% set x = b - b %}{% set y = b - b %}` +
+			`{{ [x] == [y] }}|{{ y in [x] }}|{{ x is sameas y }}`,
+			"False|False|False", "two NaNs"},
+		// One context value is one object however often it is read.
+		{`{{ n in [n] }}|{{ [n] == [n] }}|{{ n is sameas n }}`,
+			"True|True|True", "one context NaN"},
+		// Two Go values Python would have called one object. CPython
+		// answers True to all three.
+		{`{{ n in ns }}|{{ [n] == ns }}|{{ n is sameas ns[0] }}`,
+			"False|False|False", "the Go boundary loses the sharing"},
+	} {
+		tmpl, err := mustNew().FromString(tc.src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", tc.src, err)
+		}
+		got, err := tmpl.RenderString(context.Background(),
+			map[string]any{"n": nan, "ns": []any{nan}})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.why, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: %s = %q, want %q", tc.why, tc.src, got, tc.want)
+		}
 	}
 }

@@ -1,0 +1,4 @@
+{
+  "case": "errors/empty_str_encode_unknown.jj2",
+  "variables": {}
+}

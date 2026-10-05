@@ -1,0 +1,6 @@
+{
+  "case": "divergence/class_unbound_bool_arity_names_int.jj2",
+  "variables": {
+    "yes": "or"
+  }
+}

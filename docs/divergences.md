@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the twenty-four divergences below, **one** is worth going looking for:
+Of the twenty-eight divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -35,18 +35,26 @@ are safety controls rather than behavioural choices, and they live in
 |---|---|---|
 | [Lazy sequence filters](#lazy-sequence-filters) | sequence filters return lists, not generators | **Yes** -- and toward what the author meant |
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
+| [A folded infinity jinja2 writes out](#a-folded-infinity-jinja2-writes-out) | renders the number; jinja2 raises `NameError: name 'inf' is not defined` | No -- it renders where CPython cannot |
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
+| [A keyword written twice in one call](#a-keyword-written-twice-in-one-call) | both refuse it; the wording differs | No -- only the message differs |
+| [A break or a continue that binds to no loop](#a-break-or-a-continue-that-binds-to-no-loop) | both refuse it; the wording differs | No -- only the message differs |
+| [A slice among several subscripts](#a-slice-among-several-subscripts) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
 | [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | Only `self is iterable`, which answers differently |
 | [`\N{...}` escapes](#n-escapes-in-string-literals) | refused; needs the Unicode name database | Only if you write `\N{...}` |
+| [A lone surrogate in a string literal](#a-lone-surrogate-in-a-string-literal) | `'\ud800'` is U+FFFD here | Only if you write a surrogate escape that is not half of a pair |
 | [Which codecs and handlers are known](#which-codecs-and-error-handlers-encode-and-decode-know) | utf-8, ascii, latin-1; jinja2 has ~100. Three error handlers are missing too | Only outside those three, or with `namereplace` or a surrogate handler on a decode |
 | [Objects whose repr carries an address](#objects-whose-repr-carries-an-address) | a different address | No -- unreproducible in CPython too |
 | [`\|pprint` of a value that contains itself](#pprint-of-a-value-that-contains-itself) | a different address | No -- likewise |
+| [A comparison that runs out of stack under 3.14](#a-comparison-that-runs-out-of-stack-under-314) | the sentence is CPython's through 3.13; 3.14 names the stack it used | No -- only under 3.14, and only the wording |
+| [The order a set prints in](#the-order-a-set-prints-in) | sorted, where CPython's is its hash order | No -- CPython's own order differs between runs |
 | [lipsum() and random](#lipsum-and-random) | a different random draw | No -- likewise |
-| [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there | Only for a literal-vs-literal `sameas`, which is a tautology |
+| [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there; so is `==` on two bound methods of literals | Only for a literal-vs-literal `sameas` or method comparison, which is a tautology |
 | [Comparison order inside a long sort](#comparison-order-inside-a-long-sort) | which pair a failing sort names | Only inside an error message, above 64 elements |
-| [Identifier characters](#identifier-characters) | exotic code points in names | No |
+| [An `{% autoescape %}` flag that is a StrictUndefined](#an--autoescape--flag-that-is-a-strictundefined) | raises at the tag; jinja2 raises at the first output that escapes | Only a body whose output is empty or folded at compile time |
+| [A macro's view of the loop it was defined in](#a-macros-view-of-the-loop-it-was-defined-in) | a macro keeps the values its loop had when it was defined; jinja2's reads them live, and `missing` after the loop | Only a macro that is called after its iteration has passed |
 | [A `{% set %}` block writing to a name that was never set](#a--set--block-writing-to-a-name-that-was-never-set) | both raise `TypeError`; jinja2 names a sentinel of its own | No -- only the type in the message |
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
@@ -69,7 +77,8 @@ are safety controls rather than behavioural choices, and they live in
 ```
 
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
-`items` return generators. gojja2's return lists. Anything that *walks* the
+`items` return generators, and `reverse` returns Python's `reversed()` iterator
+for anything but a string. gojja2's return lists. Anything that *walks* the
 result forwards -- iterating it, `|list`, `|join`, `|first`, `|sort` -- behaves
 identically. Five things do not:
 
@@ -100,9 +109,27 @@ llama.cpp, writes `{{ tools | map(attribute='function') | tojson(indent=2) }}`,
 which raises under CPython jinja2 and renders under gojja2. Both cases are in
 the chat-templates corpus, listed in testdata/known_failures.txt.
 
+A list is also built in full, which a lazy iterator is not: jinja2 answers
+`{{ range(2**70)|reverse|first }}` by stepping `reversed()` once, and gojja2's
+`|reverse` walks the whole range into a list and is stopped by the render
+budget. `{{ range(2**70)|last }}` answers exactly on both.
+
 A knock-on: a filter that raises does so at the point gojja2 applies it, where
 jinja2 defers until the generator is consumed. The exception is the same; where
 it surfaces can differ by a tag or two.
+
+A second knock-on, visible only on CPython 3.14: that version names the count in
+`too many values to unpack`, and only for a list, a tuple or a dict -- everything
+else goes through the iterator path, which does not count. So a lazy filter's
+result carries no count there and gojja2's list does:
+
+```jinja
+{% for a, b in [[1,2,3]|reverse] %}{% endfor %}
+```
+
+is `(expected 2)` on CPython 3.14 and `(expected 2, got 3)` here. `|sort` agrees,
+because jinja2's sort returns a real list too. Faking it would mean pretending
+the value is something other than what gojja2 holds.
 
 ## Where jinja2 raises and gojja2 renders
 
@@ -163,6 +190,130 @@ jinja2's rule: `{% for a, a in ... %}`, `{% set a, a = 1, 2 %}` and
 `{% with a = 1, a = 2 %}` all let the later binding win, and a macro may be
 redefined.
 
+### A keyword written twice in one call
+
+```jinja
+{% macro m(a=1) %}{{ a }}{% endmacro %}{{ m(a=2, a=3) }}
+```
+
+CPython raises `SyntaxError: keyword argument repeated: a (<template>, line
+23)`. jinja2 writes a call's keywords out as `name=value` pairs, so the
+duplicate reaches the Python compiler -- and line 23 is a line of the module
+jinja2 generated, not of the template.
+
+gojja2 refuses the template too, with CPython's wording and the line the
+template actually wrote:
+
+```
+SyntaxError: keyword argument repeated: a
+```
+
+As with [a repeated parameter name](#a-macro-with-a-repeated-parameter-name),
+this was a *behavioural* divergence first: gojja2 bound the first keyword and
+swept the second into `kwargs`, so `{{ m(a=2, a=3) }}` rendered `2` here and
+failed to compile under CPython.
+
+The refusal is placed where jinja2's is, which is not the parser. A node that
+folds never reaches the generator, and jinja2's `as_const` collects keywords
+through a dict comprehension -- where a repeated name quietly keeps the last. So
+
+```jinja
+{{ [1]|join(d='-', d='+') }}   renders 1 on both sides
+{{ lst|join(d='-', d='+') }}   compiles on neither
+```
+
+and `{% extends %}` above a print tag takes it out of the generator's hands
+entirely, so the repeated keyword below one is never seen. `fold/keyword_
+repeated_*` grades all three.
+
+### A break or a continue that binds to no loop
+
+```jinja
+{% for x in seq %}x{% else %}{% break %}{% endfor %}
+```
+
+With the `loopcontrols` extension enabled, CPython raises
+`SyntaxError: 'break' outside loop (<template>, line 21)`.
+
+jinja2 implements `{% break %}` and `{% continue %}` by emitting Python's own
+keywords, so what binds one is a `for` in the function jinja2 *generated*, and
+CPython refuses the module when nothing does. Line 21 is a line of that module.
+gojja2 has none, so -- as with [a repeated parameter
+name](#a-macro-with-a-repeated-parameter-name) -- it refuses the same templates
+at the same point, with CPython's class and CPython's words, and stops there:
+
+```
+SyntaxError: 'break' outside loop
+SyntaxError: 'continue' not properly in loop
+```
+
+The error carries the line *of the template*, which is where gojja2 reports every
+compile error.
+
+Which shapes bind nothing is jinja2's rule, and it is not the one a reader of the
+template would draw. Measured against CPython jinja2:
+
+| where the break sits | binds to the loop? | why |
+|---|---|---|
+| `{% if %}`, `{% filter %}`, `{% set v %}...{% endset %}`, `{% with %}`, `{% autoescape %}` | **yes** | emitted inline, so the `for` is still there |
+| a loop's own `{% else %}` body | no | emitted *after* the loop |
+| a `recursive` loop's `{% else %}` body | no | that loop and its else are a function of their own |
+| `{% macro %}`, `{% block %}`, `{% call %}` | no | each compiles to a function |
+| an inner loop's `{% else %}`, inside an outer loop | **yes, to the outer one** | the inner else body sits in the outer loop's body |
+
+The inline half is graded by the corpus and passes. The refusals are admitted in
+`testdata/known_failures.txt`, because only the message differs, and
+`TestUnboundLoopControlIsRefused` pins each shape.
+
+This was a *behavioural* divergence until the refusal was added, and in the
+direction that costs a template author something. `{% break %}` outside a loop
+rendered an error whose entire message was `break` -- the sentinel gojja2 passes
+a break along as, reaching the caller. Worse, a break inside a macro body
+propagated out of the call and broke the loop the macro was *called* from, so
+
+```jinja
+{% for x in seq %}{% macro m() %}{% break %}{% endmacro %}{{ m() }}{% endfor %}
+```
+
+rendered nothing here and would not compile under CPython.
+
+### A slice among several subscripts
+
+```jinja
+{% set l = [1, 2, 3] %}{{ l[1:2, 3] }}
+```
+
+CPython raises `SyntaxError: invalid syntax (<template>, line 15)`. jinja2 writes
+a slice out as `start:stop:step`, and only a subscript that holds one alone puts
+that inside brackets; among several it comes out as `(1:2, 3)`, which Python's
+parser refuses. As with [a repeated parameter
+name](#a-macro-with-a-repeated-parameter-name), the line is a line of the
+generated module and there is no module here to name one of.
+
+gojja2 refuses the template too, with CPython's class and words and the line of
+the template, and stops there:
+
+```
+SyntaxError: invalid syntax
+```
+
+Where the refusal sits is jinja2's. It is a *parse* error, so it beats a compile
+error such as [a repeated keyword](#a-keyword-written-twice-in-one-call) whichever
+was written first, and it comes after the generator's own refusals, so a missing
+filter is named before it. A dead `{% if %}` branch and a macro body are
+generated too, so they are refused. A subscript of constants never reaches the
+generator: the print folds, `Environment.getitem` swallows the `TypeError`, and
+the answer is an undefined -- which prints as nothing, or as
+`{{ no such element: list object[(slice(1, 2, None), 3)] }}` under
+`DebugUndefined`. `fold/slice_among_subscripts_*` grades that half and it is an
+exact match; the refusals are admitted in `testdata/known_failures.txt`, and
+`TestSliceAmongSubscriptsIsRefused` pins their class and words.
+
+This was a *behavioural* divergence until the refusal was added: the template
+compiled and failed at render time with `a slice is only valid inside a
+subscript`, a message that exists nowhere in CPython, and the constant forms
+failed too where CPython renders them.
+
 ### Complex numbers
 
 ```jinja
@@ -205,7 +356,8 @@ which is a block name lookup, and raises `KeyError: 0`. gojja2 answers
 Reproducing the KeyError would mean a way for an Object to say "iterable, but
 the first step fails", which nothing else here needs. Every template that
 *iterates* `self` fails either way -- `|list`, `|join`, `|sort`, `{% for %}`
-and `in` all raise, and only the wording differs.
+and `in` all raise, and only the wording differs. The same holds through a
+`mappingproxy` over `self`, whose iteration is the wrapped object's.
 
 One case answers rather than failing, though, so it is not only wording:
 
@@ -256,6 +408,30 @@ Every other escape -- `\xNN`, `\uNNNN`, `\UNNNNNNNN`, octal, and the
 single-character escapes -- is exact, including CPython's quirk that `"\é"`
 decodes to the four characters `\xe9`.
 
+
+### A lone surrogate in a string literal
+
+```jinja
+{{ '\ud800' == '\ufffd' }}     False on CPython, True here
+```
+
+A `\u` or `\U` escape can name a UTF-16 surrogate, U+D800 to U+DFFF, and in
+Python that is a one-character string like any other. Two of them written side
+by side are two such characters, not the one they would encode in UTF-16:
+`'\ud83d\ude00'` has length 2 and is not the emoji. A Go string is UTF-8,
+which has no encoding for a surrogate at all, so the lexer writes U+FFFD for
+each. The length agrees, and so does everything that only counts or compares
+lengths. What differs is everything that looks at the character: equality,
+`|tojson` (`"\ud800"` there, `"\ufffd"` here), `|pprint`, and every encoder --
+`'\ud800'.encode()` and `|urlencode` are "surrogates not allowed" on CPython
+and three bytes of U+FFFD here.
+
+Carrying one would mean a string representation that is not a Go string, for a
+value no text source can contain: nothing read from a file, a context or a
+decode is a lone surrogate, only an escape written for the purpose. The codec
+entry above is the same limit reached from the other side. It is pinned by
+`TestLoneSurrogateLiteral` rather than by corpus cases, because the corpus's
+reference files are UTF-8 too and cannot hold CPython's answer.
 ### Which codecs and error handlers `.encode()` and `.decode()` know
 
 ```jinja
@@ -370,6 +546,26 @@ not, so the conformance suite treats it as ungradable.
 Only a *call* renders a block. Printing the reference prints the object, which
 is why `{% block x %}{{ self.x }}{% endblock %}` terminates.
 
+### A comparison that runs out of stack under 3.14
+
+```jinja
+{% set l = [] %}{% set m = [] %}{% do l.append(m) %}{% do m.append(l) %}{{ l == m }}
+```
+
+A comparison names itself when the stack runs out, unlike the *call* path, whose
+suffix 3.12 dropped:
+
+```
+3.11, 3.12, 3.13:  maximum recursion depth exceeded in comparison
+3.14:              Stack overflow (used 8156 kB) in comparison
+```
+
+gojja2 says the first on every version. The number in 3.14's is the stack *this
+machine* had -- it differs between two runs of CPython on two machines, and
+there is nothing for gojja2 to compute it from. The corpus cannot hold the case
+for the same reason a `|pprint` id cannot;
+`conformance/recursion_compare_test.go` pins the sentence instead.
+
 ### `|pprint` of a value that contains itself
 
 ```jinja
@@ -380,10 +576,76 @@ CPython's `pprint` marks a container it has already entered as
 `<Recursion on dict with id=131095544303808>`. The id is the object's address,
 which differs between two runs of CPython itself, so this case is no more
 gradable than `lipsum()` is. gojja2 prints the same form, with the address of
-its own container.
+its own container -- everything but the number is identical:
+
+```
+jinja2: [<Recursion on list with id=135154434729280>,
+         'a string long enough that pprint will not fit this on one line']
+gojja2: [<Recursion on list with id=18132333323128>,
+         'a string long enough that pprint will not fit this on one line']
+```
 
 A cyclic value reaches `pprint` at all only when its `repr` is too wide to
 print on one line; a small one collapses to `{...}` first, which is exact.
+
+This sentence was untrue for a while, and nothing noticed, because the corpus
+cannot hold a case whose answer carries an id that changes between two runs of
+CPython. `conformance/recursion_repr_test.go` asserts it outside the corpus
+instead: it blanks the id and compares the rest against CPython's own output,
+so the form is pinned exactly and only the number is allowed to differ.
+
+### The order a set prints in
+
+```jinja
+{{ d.keys() - [] }}
+```
+
+`d.keys() - xs` is the only set arithmetic a template can write as an operator
+-- jinja2's grammar has no `&` or `^` and `|` is the filter operator -- though
+the result can be the left operand of another difference, and a set's seventeen
+methods reach the rest: union, intersection, the three ..._update, add, remove,
+pop and the others. The operations themselves match: the same elements, the
+same refusals, the same messages.
+
+The *order* it prints in does not, and cannot. A set is unordered and CPython's
+repr follows its hash table, which string hashing randomises per process. Three
+runs of the same expression on the same four keys:
+
+```
+{'b', 'delta', 'a', 'c'}
+{'c', 'delta', 'a', 'b'}
+{'a', 'b', 'delta', 'c'}
+```
+
+gojja2 sorts by each element's repr, so it prints `{'a', 'b', 'c', 'delta'}`
+every time. Sorting by repr rather than by value is what makes it total: a set
+may hold numbers and strings together, which Python cannot order and a repr can.
+
+A set of one element, and the empty `set()`, have only one spelling either way
+and are graded against CPython as usual -- as are the length, the membership
+test, the truthiness, the equality, and `|list|sort`. Only the multi-element
+repr is unreproducible, and `conformance.Comparable` screens it out of the
+generated differential for the same reason it screens an address.
+
+Two things follow the order rather than the repr, and both are it again rather
+than a second divergence. `s.pop()` takes the first element in the set's own
+order, so it takes a different one from CPython unless the set holds one thing;
+the cases here pop until it is empty and compare the sorted result. And a
+`|sort` that fails names the pair it happened to reach first, so
+`{{ s.add(1) }}{{ s|list|sort }}` reports "'int' and 'str'" where CPython
+reports "'str' and 'int'".
+
+`|pprint` is the exception, and it is graded. pprint does not use the repr's
+order: it sorts with `pprint._safe_key`, which is the elements' own ordering
+wherever they have one, so a set of integers pretty-prints as `0, 1, 2` and a
+set of strings in string order -- both reproducible, and both matched here
+exactly. A set holding *mixed* types is not: `_safe_key` falls back to
+`(type name, id(obj))`, and an address is an address. gojja2 keeps its repr
+order for that case, which is at least the same one twice.
+
+Of the two answers gojja2's is the reproducible one, which is a reason to prefer
+it rather than a claim that CPython is wrong: an unordered collection has no
+order to be right about.
 
 ### lipsum() and random
 
@@ -424,6 +686,64 @@ tautology.
 The singletons CPython really guarantees are matched: None, True, False, and
 the empty tuple.
 
+The same question is asked, less visibly, by `==` on two bound methods: CPython
+says they are equal when their functions are the same and their receivers are
+the same *object*. gojja2 compares a scalar receiver by value, which agrees for
+a variable, for a small int CPython caches, and for everything a template writes
+on purpose:
+
+```jinja
+{% set x = 'hello' %}{{ x.upper == x.upper }}   True in both
+{{ (1).bit_length == (1).bit_length }}          True in both -- 1 is cached
+{{ (300).bit_length == (300).bit_length }}      True here, False on CPython
+{% set n = 300 %}{% set m = 300 %}{{ n.bit_length == m.bit_length }}  True in both
+```
+
+The third is two objects because jinja2 folds each literal into one of its own;
+the fourth is one because CPython's compiler shares the constant between the two
+assignments. Following it would mean modelling the small-int cache, the fold and
+the compiler's constant table together.
+
+### A NaN handed in from Go twice
+
+A NaN is the only value whose identity a template can observe. Everywhere else
+`is` implies `==`, so nothing that asks "the same object, or an equal one" --
+which is what every container comparison asks -- can tell the two apart. A NaN
+is equal to nothing, itself included, so for a NaN the two questions come apart:
+
+```jinja
+{% set a = 1e308 %}{% set b = a * 10 %}{% set x = b - b %}
+{{ x == x }}        False -- the operator is float.__eq__
+{{ [x] == [x] }}    True  -- the list compares its elements by identity first
+{{ x in [x] }}      True
+{{ {x: 1}[x] }}     1     -- a NaN hashes by identity, as CPython has since 3.10
+```
+
+gojja2 gives every NaN an identity where the value is made, so all of that, and
+`|unique`, `list.index`, `list.count`, `loop.changed` and the dict views, answer
+as CPython does -- including the other side of the rule, that two NaNs computed
+separately are two objects and equal to neither each other nor themselves inside
+a container.
+
+What it cannot reproduce is sharing that happened before the values arrived. A
+Go context is not a Python object graph:
+
+```go
+map[string]any{"n": math.NaN(), "ns": []any{math.NaN()}}
+```
+
+is two NaNs however it was written, because a `float64` carries no identity to
+share -- and even `n := math.NaN(); map[string]any{"n": n, "ns": []any{n}}` is
+two, for the same reason. Python would have had one object in both places, and
+`{{ n in ns }}` is True there and False here. Within a render nothing is lost:
+one context value is one object however often the template reads it, which is
+what the four other cases in `TestNaNKeepsItsIdentityWithinARender` hold.
+
+The corpus cannot show any of this either way -- its contexts are JSON, which
+has no NaN -- so the Go test is where it is asserted, and
+`numbers/nan_identity_*` grades the twenty-seven shapes a template can build for
+itself.
+
 ### Comparison order inside a long sort
 
 Sorting values that cannot be compared raises, and the message names the two
@@ -434,6 +754,57 @@ as a single run.
 Above that, CPython splits the list into runs and merges them, and gojja2 uses
 a stable sort of its own. The result is identical; only which pair a failing
 comparison names can differ.
+
+### An `{% autoescape %}` flag that is a StrictUndefined
+
+`{% autoescape nope %}` stores what it is given and jinja2 asks for its truth
+only where a run-time output has to decide whether to escape. Under
+`StrictUndefined` the truth of an undefined raises, so the error comes from the
+first such output inside the body, not from the tag:
+
+```jinja
+{% autoescape nope %}{{ '<' }}{% endautoescape %}     "<" on CPython, UndefinedError here
+{% autoescape nope %}{% endautoescape %}              "" on CPython, UndefinedError here
+{% autoescape nope %}{{ 1 }}{% endautoescape %}       "1" on CPython, UndefinedError here
+{% set x = '<' %}{% autoescape nope %}{{ x }}{% endautoescape %}   UndefinedError in both
+```
+
+Anything in the body that escapes at run time raises in both, including raw
+template text, so the difference is confined to a body whose output is empty or
+was folded to a constant before the render. The flag's truth is asked once, at
+the tag, because everything downstream reads a boolean; deferring it would mean
+carrying a "raises when asked" flag through every one of the sites that read the
+escaping setting. `testdata/corpus/divergence/autoescape_flag_strict_folded_output.jj2`
+and its two siblings are listed in `testdata/known_failures.txt`.
+
+### A macro's view of the loop it was defined in
+
+jinja2 compiles a loop body into the function around it, so a macro written
+inside a loop reads the loop's variables the way a Python closure reads a cell:
+whatever they hold at the moment the macro is *called*. gojja2 builds a fresh
+frame for every iteration, and a macro keeps the one it was defined in.
+
+```jinja
+{% set ns = namespace(f=[]) %}
+{% for i in [1, 2] %}{% macro m() %}{{ i }}{% endmacro %}{% set _ = ns.f.append(m) %}{% endfor %}
+{{ ns.f[0]() }}|{{ ns.f[1]() }}     "missing|missing" on CPython, "1|2" here
+```
+
+Called while the loop is still running, the same macro reads the *current*
+iteration: `[{{ ns.f[0]() }}]` written after the append prints `[1][2]` on
+CPython, where the macro from the first pass reads the second pass's value, and
+`[1][1]` here. A name assigned in the body with `{% set %}` behaves the same way,
+except that after the loop it is unbound and prints as nothing. A macro that is
+called within the iteration that defined it, which is what a macro in a loop is
+for, agrees.
+
+The cause is jinja2's code generator, not the language: matching it means giving
+a loop one shared frame, resetting the loop's names to jinja2's `missing`
+sentinel when it ends, and letting that sentinel print. Nothing else in a
+template can tell the two apart, so gojja2 keeps the frame per iteration, which
+is the one that agrees whenever the macro is used where it was defined.
+`testdata/corpus/divergence/macro_reads_the_loop_variable_after_the_loop.jj2` and
+its two siblings are listed in `testdata/known_failures.txt`.
 
 ### A `{% set %}` block writing to a name that was never set
 
@@ -478,15 +849,6 @@ counterpart here, so gojja2 names what it actually holds.
 `testdata/corpus/errors/nsref_block_undefined.jj2` is listed in
 `testdata/known_failures.txt` to keep it that way.
 
-### Identifier characters
-
-jinja2 matches names against a table generated from Python's `str.isidentifier`.
-gojja2 approximates it with Unicode categories: a name starts with `_`, a letter
-or `Nl`, and continues with those plus `Nd`, `Mn`, `Mc` and `Pc`. The two agree
-on every identifier anyone writes; they could differ on exotic code points, in
-which case gojja2 reports `unexpected char` where jinja2 reports
-`Invalid character in identifier`.
-
 ### Python object introspection
 
 `__class__` is implemented. Every value answers it with a type object that has
@@ -516,6 +878,103 @@ Carrying those strings would mean carrying a copy of CPython's documentation
 and keeping it in step with the version being compared against, to answer an
 attribute that says nothing about the value. A 352-case sweep of attribute and
 item lookup across every kind found this and nothing else.
+
+`__mro__` is not implemented either, and that sweep did not find it because it
+asked values rather than the class objects behind them:
+
+```jinja
+{{ (1).__class__.__mro__ }}     "(<class 'int'>, <class 'object'>)" on CPython, "" here
+```
+
+It belongs with `__subclasses__` rather than with `__class__`: the method
+resolution order is the first step of the walk from a value to the interpreter's
+builtins, which is the escape route the two sandbox tests above document. A class
+object here has a name, a repr and equality, and nothing that leads anywhere.
+
+Calling one is *not* the same decision, and is implemented: `{{ n.__class__() }}`
+is `0` and `{{ s.__class__(lst) }}` is the list's repr, exactly as in Python.
+Construction is the one thing a type object does that leads nowhere further into
+the interpreter -- an int, a str or a list is an ordinary value -- so refusing it
+bought no safety and cost conformance.
+
+A type object also carries its class's methods, unbound, and that is implemented
+too, for the same reason: a method descriptor leads back to the value it is
+called on and no further.
+
+```jinja
+{{ d.__class__.items }}        "<method 'items' of 'dict' objects>"
+{{ d.__class__.items(d) }}     "dict_items([('a', 1)])"
+{{ s.__class__.upper('a') }}   "A"
+{{ d.__class__.items() }}      TypeError: unbound method dict.items() needs an argument
+{{ s.__class__.upper(1) }}     TypeError: descriptor 'upper' for 'str' objects doesn't
+                               apply to a 'int' object
+{{ s.__class__.upper('a','b') }}  TypeError: str.upper() takes no arguments (1 given)
+```
+
+The first argument is the instance and everything after it is the method's own,
+so an arity error is reported by the method rather than by the descriptor -- and
+a descriptor from the wrong class refuses before the method runs. A name the
+class does not have is undefined rather than an error, which is what makes
+`{{ n.__class__|dictsort }}` say `type object 'int' has no attribute 'items'`
+while `{{ d.__class__|dictsort }}` reaches the descriptor and reports the
+unbound-method call, matching CPython in both directions.
+
+The same holds for the type objects of gojja2's own objects that stand for
+built-in types -- `range`, `set`, the three dict views and `mappingproxy`:
+
+```jinja
+{{ range(3).__class__.index(range(3), 2) }}    "2"
+{{ d.keys().__class__.isdisjoint(d.keys(), 'z') }}  "True"
+{{ d.items().__class__.mapping }}  "<attribute 'mapping' of 'dict_items' objects>"
+```
+
+Five corners of it are not implemented, and each is in
+`testdata/known_failures.txt`:
+
+```jinja
+{{ s.__class__.__len__ }}          a slot wrapper on CPython, undefined here
+{{ n.__class__.__abs__(lst) }}     a slot wrapper words its refusal differently:
+                                   "requires a 'int' object but received a 'list'"
+{{ lst.__class__.nope }}           the generic alias list['nope'] on CPython
+{{ yes.__class__.conjugate(yes, 1) }}  "int.conjugate()" there, "bool" here
+{{ c.__class__.next(c) }}          Cycler.next on CPython, undefined here
+```
+
+The first two are dunders, which gojja2 does not expose on a value either, so
+the type object has none to hand out. The third is the generic-alias divergence
+recorded above for `list[...]`, reached through jinja2's attribute fallback
+instead of through a subscript -- and the reason a name a class does not have is
+undefined here. The fourth is an arity message: bool defines no methods of its
+own, so CPython's descriptor is int's and says so, where gojja2's delegates to
+the receiver's own bound method and words it after the receiver.
+
+The fifth is the classes jinja2 writes in Python -- `Cycler`, `LoopContext`,
+`Joiner` and `Macro`. Their methods are plain Python functions, which is a
+different object from a built-in's method descriptor: its repr is `<function
+Cycler.next at 0x...>`, and it accepts any `self` at all and fails *inside the
+body* -- `Cycler.next(1)` is "'int' object has no attribute 'current'", because
+that is the first thing the body asks of its receiver. Reproducing that means
+reproducing each method's body line by line against an arbitrary receiver, for
+a spelling (`loop.__class__.cycle(loop, 'a')`) nothing writes in place of
+`loop.cycle('a')`. The type objects for these classes carry no methods, and the
+name is undefined.
+
+A markupsafe `Markup` is left out of the same feature for a different reason:
+the methods it inherits from str are str's descriptors, but the ones it
+overrides are plain Python functions whose repr carries a memory address, which
+no corpus and no differential can grade.
+
+Of the methods Markup adds to str, `striptags()` and `unescape()` are
+implemented and graded. The class method `Markup.escape` and the `__html__`
+protocol method are not: `{{ ('a'|safe).escape('<') }}` and
+`{{ ('a'|safe).__html__() }}` answer an undefined attribute where jinja2 answers
+`Markup('&lt;')` and `Markup('a')`.
+
+Everything else a type object answers matches: `__name__`, `__qualname__`,
+`__module__`, its repr, equality with another type object *and with the class
+global it is* (`{{ d.__class__ == dict }}` is true), calling it, and its
+behaviour as a dict key or in `unique`. Ordering two of them is a `TypeError` on
+both sides.
 
 Two of Jinja's sandbox-escape tests go further, and those are not implemented:
 
@@ -556,11 +1015,36 @@ including the wording and the exact boundary: a length of `2**63-1` is returned
 and `2**63` raises.
 
 Internally the length is still computed exactly, in arbitrary precision, and
-only clamped where a Go `int` is required -- iterating or indexing such a range.
-That clamp is unobservable: a loop over a range that long is stopped by the
-render budget long before the count could matter. Asserted by
-`TestRangeLengthDoesNotOverflow` and graded against CPython over 1,452
-start/stop/step combinations.
+only clamped where a Go `int` is required -- iterating or ordinary indexing.
+Asserted by `TestRangeLengthDoesNotOverflow` and graded against CPython over
+1,452 start/stop/step combinations.
+
+That clamp was once described here as unobservable, on the grounds that a loop
+over a range that long is stopped by the render budget long before the count
+matters. It is not, and probing found two ways to see it:
+
+- CPython's `reversed()` of a sequence is `__len__` and `__getitem__`, and
+  `range_reverse` computes the first element arithmetically *without* narrowing
+  the length -- so `{{ range(2 ** 70)|last }}` answers `1180591620717411303423`
+  where `|length` on the same range raises. gojja2 walked to it and spent the
+  whole iteration budget. It now indexes in arbitrary precision, through
+  `value.BigSequence`; graded by `globals/range_wide_last` and
+  `TestLastIndexesRatherThanWalking`.
+- every filter whose jinja2 implementation builds a list narrows the length
+  first -- `PyObject_LengthHint` for `list()` and `sorted()`, `len()` for
+  `random.choice()` -- so `|list`, `|sort`, `|slice`, `|groupby` and `|random`
+  over such a range raise the `OverflowError` above and never walk. gojja2 asks
+  the same question before it materialises; graded by the `errors/wide_range_*`
+  cases. The ordering is CPython's too: `seq = list(value)` is `do_slice`'s
+  first statement, so `{{ range(2 ** 70)|slice(0) }}` is the OverflowError and
+  not the ZeroDivisionError.
+
+What remains observable is the lazy-filter fork below: jinja2's `|reverse`
+answers an iterator, which `|first` reads in constant time, while gojja2's
+answers a list -- and a list of 2**70 elements cannot exist, so
+`{{ range(2 ** 70)|reverse|first }}` runs out of budget here where CPython
+prints the last element. That is the same choice as everything else in
+[Lazy sequence filters](#lazy-sequence-filters), reached from the other end.
 
 ## Differences in how the host is treated
 
@@ -664,6 +1148,60 @@ which is what the global is for -- is identical in both.
 
 The other class globals are unaffected: `range['k']` raises in CPython too,
 because only a handful of builtins accept the annotation form.
+
+`__class__` reaches the same two classes a second way, and diverges the same
+way. `lst` is `[1]` and `d` is `{'a': 1}` here, from the context rather than
+written as literals, because both engines fold a constant expression and a fold
+hides the difference:
+
+```jinja
+{{ lst.__class__['a'] }}   {{ lst.__class__[1:] }}   {{ d.__class__.a }}
+```
+
+CPython renders `list['a']`, `list[slice(1, None, None)]` and `dict['a']` --
+the third because jinja2 retries a missing attribute as an item. gojja2 renders
+the first and third empty and raises `type 'list' is not subscriptable` on the
+slice.
+
+Every other class reachable from a value agrees exactly, including two wordings
+CPython reserves for a type object:
+
+| expression | CPython |
+| --- | --- |
+| `{{ f[1:] }}` | `'float' object is not subscriptable` |
+| `{{ f.__class__[1:] }}` | `type 'float' is not subscriptable` |
+| `{{ f\|dictsort }}` | `'float' object has no attribute 'items'` |
+| `{{ n.__class__\|dictsort }}` | `type object 'int' has no attribute 'items'` |
+
+Five filters reach the second of those -- `dictsort`, `xmlattr`, `wordwrap`,
+`wordwrap(wrapstring=...)` and `urlize(rel=...)`. A 161-shape sweep over every
+subject the template generator writes and every accessor it can follow one with
+found the generic alias above and nothing else.
+
+### A folded infinity jinja2 writes out
+
+jinja2's optimizer folds a constant and its code generator writes the result
+into the generated Python **as its repr**. A float infinity reprs as `inf`,
+which is not a Python name, so the module raises as soon as that line runs:
+
+```jinja
+{% set v = 'inf'|float %}{{ v }}
+{{ x|default('inf'|float) }}
+```
+
+Both raise `NameError: name 'inf' is not defined` on CPython at render. gojja2
+answers `inf`.
+
+It depends on where the constant lands, not on the value: `{{ 'inf'|float }}`,
+`{{ ('inf'|float) + 1 }}` and `{{ 1e400 }}` all print `inf` on both sides,
+because a print puts the value in the module's constant table rather than
+writing it as source. A `{% set %}` and a filter's default argument are written
+out. `nan` does the same thing for the same reason.
+
+This is one of the few places gojja2 renders where CPython cannot, so it is
+listed in `testdata/known_failures.txt` rather than fixed: reproducing it would
+mean refusing a number a template legitimately computed, to match a limitation
+of the other implementation's code generator.
 
 ### Which line an error inside a multi-line tag names
 

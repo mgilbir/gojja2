@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_strict_falsy_hint_is_ignored.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

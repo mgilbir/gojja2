@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_markup_autoescape.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

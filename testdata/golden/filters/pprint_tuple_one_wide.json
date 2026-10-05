@@ -1,0 +1,11 @@
+{
+  "case": "filters/pprint_tuple_one_wide.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "(['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',\n  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',\n  'cccccccccccccccccccccccccccccc'],)"
+}

@@ -1,0 +1,5 @@
+{
+  "c": 0
+}
+---
+{% if c %}{{ nope.attr }}{% endif %}ok

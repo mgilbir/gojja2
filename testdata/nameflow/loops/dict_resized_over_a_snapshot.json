@@ -1,0 +1,6 @@
+{
+  "case": "loops/dict_resized_over_a_snapshot.jj2",
+  "variables": {
+    "d": "ofr"
+  }
+}

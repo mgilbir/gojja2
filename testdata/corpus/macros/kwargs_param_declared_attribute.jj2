@@ -1,0 +1,3 @@
+{}
+---
+{% macro m(kwargs) %}{{ kwargs }}{% endmacro %}[{{ m.catch_kwargs }}]

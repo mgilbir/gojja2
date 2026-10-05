@@ -67,7 +67,16 @@ class Case:
     def __init__(self, path: Path, root: Path):
         self.path = path
         self.rel = path.relative_to(root).as_posix()
-        raw = path.read_text(encoding="utf-8")
+        # newline="" so that nothing is translated: Python's default opens a
+        # text file in universal-newline mode, which turns every CR in the
+        # template into an LF. Go reads the bytes. So the two engines were
+        # handed *different templates* for any case holding a CR -- four of
+        # them, one named filters/indent_carriage_return, whose whole point is
+        # the character the oracle never saw.
+        # (open(), not read_text(newline=...): that keyword is 3.13 and this
+        # script runs under 3.11 too.)
+        with path.open(encoding="utf-8", newline="") as fh:
+            raw = fh.read()
         header, _, source = raw.partition(SEPARATOR)
         if not _:
             header, source = "{}", raw

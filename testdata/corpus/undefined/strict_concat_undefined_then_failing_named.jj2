@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% set n = 1 %}{{ nope ~ (n|reject('none')|list) }}

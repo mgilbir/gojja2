@@ -59,7 +59,10 @@ func (t *Template) frameLocalsOf(key any, body []ast.Stmt) frameNames {
 func frameLocals(body []ast.Stmt) frameNames {
 	v := &frameVisitor{seen: map[string]bool{}, stores: map[string]bool{}}
 	v.stmts(body)
-	return frameNames{owns: v.locals, refs: v.seen, stores: v.stores, order: v.order}
+	return frameNames{
+		owns: v.locals, refs: v.seen, stores: v.stores,
+		order: v.order, storeOrder: v.storeOrder,
+	}
 }
 
 // frameNames is what one frame does with names at its own level: owns are the
@@ -79,11 +82,15 @@ type frameNames struct {
 	// but an analysis does, because jinja2 gives the frame its own copy and
 	// the write does not escape it. See syntax_build.go.
 	stores map[string]bool
-	// order is every name in the order it is first mentioned, which is the
-	// order jinja2's own symbol table records them in. Nothing at render
-	// time depends on it; an analysis that has to agree with jinja2 about
-	// its symbol table does.
+	// order is every name in the order it is first mentioned. Nothing at
+	// render time depends on it; an analysis does.
 	order []string
+	// storeOrder is every name this frame writes, in the order it first
+	// writes each one -- which is the order jinja2's symbol table lists a
+	// scope's bindings in, and not first-mention order. A load creates no
+	// binding, so a name read before it is written is recorded where the
+	// write is. See syntax_build.go's declareBody.
+	storeOrder []string
 }
 
 type frameVisitor struct {
@@ -95,6 +102,9 @@ type frameVisitor struct {
 	stores map[string]bool
 	// order is every name in first-mention order.
 	order []string
+	// storeOrder is every name written here, in first-write order. See
+	// frameNames.storeOrder.
+	storeOrder []string
 }
 
 func (v *frameVisitor) load(name string) {
@@ -105,6 +115,9 @@ func (v *frameVisitor) load(name string) {
 }
 
 func (v *frameVisitor) store(name string) {
+	if !v.stores[name] {
+		v.storeOrder = append(v.storeOrder, name)
+	}
 	v.stores[name] = true
 	if !v.seen[name] {
 		v.seen[name] = true
@@ -152,7 +165,7 @@ func (v *frameVisitor) stmt(stmt ast.Stmt) {
 		v.expr(n.Call)
 	case *ast.FilterBlock:
 		v.expr(n.Filter)
-	case *ast.Block, *ast.Scope:
+	case *ast.Block:
 		// Compiled as separate functions; nothing binds here.
 	case *ast.If:
 		v.ifStmt(n)
@@ -184,26 +197,27 @@ func (v *frameVisitor) stmt(stmt ast.Stmt) {
 // Two things happen. A name merely *mentioned* in a branch settles at this
 // level, so a later assignment no longer claims it -- which is why
 // `{% if m %}{{ m }}{% endif %}{% from "x" import m %}` still sees the
-// argument m. And a name *assigned* in a branch only counts as bound here when
-// every branch binds it; jinja2 always counts three -- body, elifs and else --
-// so an if/else pair alone is not enough.
+// argument m. And a name *assigned* in any branch is written at this level
+// too, which is what gives it a binding of its own: an alias to the enclosing
+// one when there is one, a resolve from the context when there is not.
+//
+// jinja2 3.1's `Symbols.branch_update` takes the union of what the branches
+// wrote and does not care how many of them wrote it. jinja2 2.x did count, and
+// skipped the binding for a name *every* branch bound; this carried that rule
+// until it was measured, and the count it asked for turned out to be one no
+// template can reach. An `{% elif %}` is a nested If, and a nested If records
+// what it writes through the second loop below rather than through store(), so
+// the elif arm never reports a name as bound -- which leaves two arms out of
+// the three, every time. `control/branch_binding_*` grades the rule that is
+// actually in force; planting the arithmetic the old rule wanted
+// (`counts[name] >= 2`) fails four of them.
 func (v *frameVisitor) ifStmt(n *ast.If) {
 	v.expr(n.Test)
 
-	branch := func(body []ast.Stmt) (mentioned, stored map[string]bool) {
+	branch := func(body []ast.Stmt) (mentioned, written map[string]bool) {
 		sub := &frameVisitor{seen: map[string]bool{}, stores: map[string]bool{}}
 		sub.stmts(body)
-		stored = make(map[string]bool, len(sub.locals))
-		for _, name := range sub.locals {
-			stored[name] = true
-		}
-		// A write inside a branch is still a write at this level, whether
-		// or not every branch makes it, which is what decides whether a
-		// nested frame gets its own copy.
-		for name := range sub.stores {
-			v.stores[name] = true
-		}
-		return sub.seen, stored
+		return sub.seen, sub.stores
 	}
 
 	var elifBody []ast.Stmt
@@ -213,14 +227,20 @@ func (v *frameVisitor) ifStmt(n *ast.If) {
 	bodies := [][]ast.Stmt{n.Body, elifBody, n.Else}
 
 	mentioned := map[string]bool{}
-	counts := map[string]int{}
+	written := map[string]bool{}
 	for _, body := range bodies {
-		seen, stored := branch(body)
+		seen, stores := branch(body)
 		for name := range seen {
 			mentioned[name] = true
 		}
-		for name := range stored {
-			counts[name]++
+		// A write inside a branch is still a write at this level, whether
+		// or not every branch makes it, which is what decides whether a
+		// nested frame gets its own copy. Collected rather than applied:
+		// the loop that records them takes v.stores to mean "already has
+		// a place in this frame's write order", so setting it here would
+		// make every one of these names skip that loop and never get one.
+		for name := range stores {
+			written[name] = true
 		}
 	}
 	// Sorted, because a map's order is not one: the names a branch mentions
@@ -232,11 +252,15 @@ func (v *frameVisitor) ifStmt(n *ast.If) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if counts[name] == len(bodies) {
-			v.store(name)
-			continue
-		}
 		v.settle(name)
+	}
+	// ...and now the writes a branch made without every branch making them.
+	// In the same sorted order, for the same reason.
+	for _, name := range names {
+		if written[name] && !v.stores[name] {
+			v.stores[name] = true
+			v.storeOrder = append(v.storeOrder, name)
+		}
 	}
 }
 

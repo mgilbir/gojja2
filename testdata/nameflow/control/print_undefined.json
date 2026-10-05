@@ -1,0 +1,6 @@
+{
+  "case": "control/print_undefined.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

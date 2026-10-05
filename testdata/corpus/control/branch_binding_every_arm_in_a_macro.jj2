@@ -1,0 +1,3 @@
+{}
+---
+{% macro m(i) %}{% if i == 1 %}{% set x = 'a' %}{% elif i == 2 %}{% set x = 'b' %}{% else %}{% set x = 'c' %}{% endif %}[{{ x }}]{% endmacro %}{{ m(1) }}{{ m(9) }}

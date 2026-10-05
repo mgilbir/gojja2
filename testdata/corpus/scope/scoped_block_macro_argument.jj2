@@ -1,0 +1,5 @@
+{
+  "x": 5
+}
+---
+{% macro m(p) %}{% for i in [1] %}{% block b scoped %}[{{ p }}{{ i }}]{% endblock %}{% endfor %}{% endmacro %}{{ m(3) }}

@@ -27,6 +27,32 @@ import (
 
 // pyUpperRune, pyLowerRune, pyTitleRune and pyFoldRune are the per-character
 // full mappings. Where Python's answer is a single rune, Go's table already
+// caseMapped is the single-rune mapping for r, from gojja2's own runs.
+//
+// which selects the column: 0 upper, 1 lower, 2 title. A code point in no run
+// maps to itself, which is most of them.
+func caseMapped(r rune, which int) rune {
+	i, j := 0, len(caseRuns)
+	for i < j {
+		h := (i + j) / 2
+		switch {
+		case r < caseRuns[h].lo:
+			j = h
+		case r > caseRuns[h].hi:
+			i = h + 1
+		default:
+			switch which {
+			case 0:
+				return r + rune(caseRuns[h].upper)
+			case 1:
+				return r + rune(caseRuns[h].lower)
+			}
+			return r + rune(caseRuns[h].title)
+		}
+	}
+	return r
+}
+
 // holds it.
 func pyUpperRune(r rune, u *value.UnicodeOverrides) string {
 	if u != nil {
@@ -37,7 +63,7 @@ func pyUpperRune(r rune, u *value.UnicodeOverrides) string {
 	if m, ok := upperSpecial[r]; ok {
 		return m
 	}
-	return string(unicode.ToUpper(r))
+	return string(caseMapped(r, 0))
 }
 
 func pyLowerRune(r rune, u *value.UnicodeOverrides) string {
@@ -49,7 +75,7 @@ func pyLowerRune(r rune, u *value.UnicodeOverrides) string {
 	if m, ok := lowerSpecial[r]; ok {
 		return m
 	}
-	return string(unicode.ToLower(r))
+	return string(caseMapped(r, 1))
 }
 
 func pyTitleRune(r rune, u *value.UnicodeOverrides) string {
@@ -61,7 +87,7 @@ func pyTitleRune(r rune, u *value.UnicodeOverrides) string {
 	if m, ok := titleSpecial[r]; ok {
 		return m
 	}
-	return string(unicode.ToTitle(r))
+	return string(caseMapped(r, 2))
 }
 
 // pyFoldRune is casefold, which is not lowercase: it folds for caseless
@@ -87,7 +113,23 @@ func pyIsLower(r rune, u *value.UnicodeOverrides) bool {
 func pyIsUpper(r rune, u *value.UnicodeOverrides) bool {
 	return u.IsUpper(r, unicode.Is(upperCased, r))
 }
-func pyIsCased(r rune) bool { return unicode.Is(anyCased, r) }
+
+// pyIsCased is the Cased derived property, which is Lowercase, Uppercase and
+// the titlecase category together -- and the first two move between
+// interpreters, so it cannot be one fixed table. `anyCased` was exactly that,
+// and it disagreed with 3.11 about 73 code points and with 3.14 about 52: the
+// one that mattered was a *new* uppercase letter not counting as cased, which
+// ended a word in str.title and left the character after it titlecased instead
+// of lowered -- `'\ua7cb\ua7cc'.title()` was unchanged where 3.14 lowers the
+// second.
+//
+// Composing the two version-aware predicates with Go's Lt category is exact on
+// all 1,112,064 code points for every interpreter. Lt is the one part read off
+// Go, and it is 31 characters that have not moved across the four releases
+// modelled here; if one ever does, the corpus is what says so.
+func pyIsCased(r rune, u *value.UnicodeOverrides) bool {
+	return pyIsLower(r, u) || pyIsUpper(r, u) || unicode.IsTitle(r)
+}
 
 // mapRunes applies a per-character full mapping across a string.
 func mapRunes(s string, f func(rune) string) string {
@@ -137,7 +179,7 @@ func pyTitleString(st *State, s string) (string, error) {
 		} else {
 			b.WriteString(pyTitleRune(r, u))
 		}
-		prevCased = pyIsCased(r)
+		prevCased = pyIsCased(r, u)
 	}
 	return b.String(), nil
 }

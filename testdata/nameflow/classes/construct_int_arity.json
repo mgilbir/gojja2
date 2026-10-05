@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_int_arity.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

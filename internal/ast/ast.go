@@ -182,12 +182,6 @@ type ExprStmt struct {
 	Node Expr
 }
 
-// Scope isolates the variables its body assigns.
-type Scope struct {
-	Pos
-	Body []Stmt
-}
-
 // AutoescapeBlock is `{% autoescape true %}`, which switches escaping for the
 // span of its body.
 type AutoescapeBlock struct {
@@ -220,7 +214,6 @@ func (*Include) stmtNode()         {}
 func (*Import) stmtNode()          {}
 func (*FromImport) stmtNode()      {}
 func (*ExprStmt) stmtNode()        {}
-func (*Scope) stmtNode()           {}
 func (*AutoescapeBlock) stmtNode() {}
 func (*Break) stmtNode()           {}
 func (*Continue) stmtNode()        {}
@@ -241,7 +234,6 @@ func (*Include) TypeName() string         { return "include" }
 func (*Import) TypeName() string          { return "import" }
 func (*FromImport) TypeName() string      { return "fromimport" }
 func (*ExprStmt) TypeName() string        { return "exprstmt" }
-func (*Scope) TypeName() string           { return "scope" }
 func (*AutoescapeBlock) TypeName() string { return "scope" }
 func (*Break) TypeName() string           { return "break" }
 func (*Continue) TypeName() string        { return "continue" }

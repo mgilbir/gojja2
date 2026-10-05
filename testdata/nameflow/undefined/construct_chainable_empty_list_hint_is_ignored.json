@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_chainable_empty_list_hint_is_ignored.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

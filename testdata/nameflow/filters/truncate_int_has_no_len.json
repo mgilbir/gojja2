@@ -1,0 +1,6 @@
+{
+  "case": "filters/truncate_int_has_no_len.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

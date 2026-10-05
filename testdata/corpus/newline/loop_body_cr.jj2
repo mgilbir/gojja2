@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "newline_sequence": "\r"
+  },
+  "v": "a\r\nb"
+}
+---
+{% for i in [1,2] %}
+{{ i }}{% endfor %}

@@ -1,0 +1,6 @@
+{
+  "case": "dataflow/capture_guard_nested.jj2",
+  "variables": {
+    "c": "fr"
+  }
+}

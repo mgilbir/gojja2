@@ -1,0 +1,5 @@
+{
+  "n3": 3
+}
+---
+{{ true.__class__.real }}|{{ true.__class__.numerator }}

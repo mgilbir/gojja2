@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_default_unexpected_keyword.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

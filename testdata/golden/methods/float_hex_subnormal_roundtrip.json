@@ -1,0 +1,11 @@
+{
+  "case": "methods/float_hex_subnormal_roundtrip.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "1e-320|True|0.0"
+}

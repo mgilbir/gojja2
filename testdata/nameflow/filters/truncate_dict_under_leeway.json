@@ -1,0 +1,6 @@
+{
+  "case": "filters/truncate_dict_under_leeway.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

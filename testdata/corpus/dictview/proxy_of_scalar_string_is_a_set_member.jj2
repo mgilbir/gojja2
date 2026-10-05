@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}{% set s = d.keys() - [] %}{% set k = C('ab') %}{{ s.add(k) }}|{{ k in s }}|{{ s|length }}|{{ s.discard(k) }}|{{ s|length }}

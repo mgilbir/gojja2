@@ -1,0 +1,6 @@
+{
+  "case": "dictview/proxy_orders_chained.jj2",
+  "variables": {
+    "ed": "or"
+  }
+}

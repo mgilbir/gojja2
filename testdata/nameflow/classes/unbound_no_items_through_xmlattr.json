@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_no_items_through_xmlattr.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

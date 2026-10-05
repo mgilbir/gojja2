@@ -1,0 +1,6 @@
+{
+  "case": "tests/operator_eq_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

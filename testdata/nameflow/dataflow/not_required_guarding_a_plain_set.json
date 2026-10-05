@@ -1,0 +1,7 @@
+{
+  "case": "dataflow/not_required_guarding_a_plain_set.jj2",
+  "variables": {
+    "q": "o",
+    "src": "f"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "__settings__": {}
+}
+---
+{{ {'a': 1}|groupby('city')|list|unique|list }}

@@ -1,0 +1,6 @@
+{
+  "case": "policies/all_three.jj2",
+  "variables": {
+    "u": "or"
+  }
+}

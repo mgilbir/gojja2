@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{{ d.setdefault('a') }}|{{ d.setdefault('a', 5) }}|{{ d.setdefault('z') }}|{{ d.setdefault('y', 7) }}|{{ d }}

@@ -1,0 +1,6 @@
+{
+  "case": "filters/seqarg_select_unknown_test.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}

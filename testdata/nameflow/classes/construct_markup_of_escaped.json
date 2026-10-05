@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_markup_of_escaped.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

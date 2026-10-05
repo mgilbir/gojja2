@@ -1,0 +1,5 @@
+{
+  "c": 1
+}
+---
+{% macro m() %}{% if c %}xx{% endif %}{% endmacro %}[{{ m()|last }}]

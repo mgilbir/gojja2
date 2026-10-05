@@ -1,0 +1,6 @@
+{
+  "case": "unicode/isprintable_agrees_with_repr_kannada_0cdc.jj2",
+  "variables": {
+    "c": "or"
+  }
+}

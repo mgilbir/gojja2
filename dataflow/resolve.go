@@ -28,10 +28,30 @@ type Resolver func(name string) *syntax.Tree
 // Option configures Analyze.
 type Option func(*options)
 
-type options struct{ resolve Resolver }
+type options struct {
+	resolve Resolver
+	strict  bool
+}
 
 // WithResolver lets the analysis follow references to other templates.
 func WithResolver(r Resolver) Option { return func(o *options) { o.resolve = r } }
+
+// WithStrictUndefined says the render uses jinja2's StrictUndefined, where
+// *reading* a name that was not passed raises instead of rendering empty.
+//
+// It widens [Required], and it has to: with it the arm of
+// `{% if c %}{{ nope }}{% endif %}` can stop the render, so c decides whether
+// the render fails and the analysis cannot say it does not. Without the option
+// the same template's c is Steers alone, which is the right answer for every
+// other Undefined class -- ChainableUndefined and DebugUndefined both render an
+// unknown name rather than refusing it.
+//
+// The effect is coarse, because a syntactic walk cannot tell a name the caller
+// passes from one it does not: under strict, an arm that reads *any* name is an
+// arm that can fail. That is the honest shape of the setting -- it is what
+// StrictUndefined is for -- and it is why this is an option rather than the
+// default.
+func WithStrictUndefined() Option { return func(o *options) { o.strict = true } }
 
 // constTemplateName is the name a reference gives, when it gives one at all.
 //
@@ -86,7 +106,7 @@ func (a *analyzer) contextEffectsOf(name string) map[string]Effect {
 	}
 
 	a.visiting[name] = true
-	sub := newAnalyzer(tree, a.resolve, a.visiting, a.cache)
+	sub := newAnalyzer(tree, a.resolve, a.strict, a.visiting, a.cache)
 	sub.seedAliases()
 	sub.stmt(tree.Root)
 	sub.sealNamespaces()

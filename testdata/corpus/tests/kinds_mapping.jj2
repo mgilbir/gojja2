@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is mapping }}|{{ 0 is mapping }}|{{ -1 is mapping }}|{{ 1.5 is mapping }}|{{ true is mapping }}|{{ false is mapping }}|{{ none is mapping }}|{{ 'a' is mapping }}|{{ '' is mapping }}|{{ 'A' is mapping }}|{{ [1] is mapping }}|{{ [] is mapping }}|{{ ((1,)) is mapping }}|{{ {} is mapping }}|{{ {'a':1} is mapping }}|{{ range(3) is mapping }}|{{ nope is mapping }}|{{ ('x'|safe) is mapping }}|{{ dict is mapping }}|{{ d.keys() is mapping }}

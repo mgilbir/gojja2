@@ -1,0 +1,6 @@
+{
+  "case": "inherit/a_scoped_block_sees_the_loop_variable.jj2",
+  "variables": {
+    "i": "o"
+  }
+}

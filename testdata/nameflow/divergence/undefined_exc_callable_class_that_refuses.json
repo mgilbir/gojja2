@@ -1,0 +1,6 @@
+{
+  "case": "divergence/undefined_exc_callable_class_that_refuses.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

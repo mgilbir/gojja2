@@ -1,0 +1,7 @@
+{
+  "case": "slice/const_base_argument_bound_string.jj2",
+  "variables": {
+    "m": "ofr",
+    "n": "ofr"
+  }
+}

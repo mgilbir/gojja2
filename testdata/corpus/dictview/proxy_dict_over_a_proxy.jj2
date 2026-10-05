@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}{{ dict(C({'q': 2}), r=3) }}|{{ dict(C(C({'q': 2}))) }}

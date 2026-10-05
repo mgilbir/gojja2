@@ -1,0 +1,6 @@
+{
+  "case": "control/loop_else_after_break.jj2",
+  "variables": {
+    "seq": "ofr"
+  }
+}

@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set C = d.keys().mapping.__class__ %}[{{ C(nope) }}]|{{ C(nope)|pprint }}|{{ C(nope)|length }}|{{ C(nope)|list }}

@@ -1,0 +1,6 @@
+{
+  "case": "inherit/super_twice_through_a_scoped_block.jj2",
+  "variables": {
+    "super": "or"
+  }
+}

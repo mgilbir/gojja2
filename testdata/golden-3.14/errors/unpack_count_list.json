@@ -1,0 +1,14 @@
+{
+  "case": "errors/unpack_count_list.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.14"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "too many values to unpack (expected 2, got 3)"
+  }
+}

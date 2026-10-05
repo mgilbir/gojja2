@@ -44,6 +44,7 @@ func TestSyntaxDifferential(t *testing.T) {
 	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
 
 	var checked, skipped, failures, claims int
+	lexRuns := map[string]int{}
 	for range count {
 		input := make([]byte, 1+rng.IntN(96))
 		for i := range input {
@@ -54,6 +55,7 @@ func TestSyntaxDifferential(t *testing.T) {
 			skipped++
 			continue
 		}
+		countLexSettings(c, lexRuns)
 		if d := h.compareSyntax(t, c, &claims); d != "" {
 			failures++
 			t.Errorf("%s\n  template: %q", d, c.Source)
@@ -67,23 +69,29 @@ func TestSyntaxDifferential(t *testing.T) {
 	}
 	t.Logf("syntax differential: %d generated templates compared against "+
 		"CPython jinja2 (seed %d), %d empty; %d of the analysis's negatives "+
-		"checked by rendering", checked, seed, skipped, claims)
+		"checked by rendering; lexer %d trim, %d lstrip, %d keep-newline, "+
+		"%d crlf, %d cr, %d custom delimiters, %d line statements, "+
+		"%d line comments",
+		checked, seed, skipped, claims,
+		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
+		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"], lexRuns["lineprefix"],
+		lexRuns["linecomment"])
 }
 
 // compareSyntax returns a description of the first divergence, or "".
 func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claims *int) string {
 	t.Helper()
 
-	sources := make(map[string]string, len(h.templates)+1)
-	for name, text := range h.templates {
-		sources[name] = text
-	}
-	sources[fuzzTemplateName] = c.Source
+	sources := h.sourcesFor(c)
 
-	opts := []gojja2.Option{
+	// The version goes on both sides or the run compares two
+	// configurations rather than two engines. The tree and the scope facts
+	// do not move between interpreters -- jinja2 brings its own parser --
+	// but the *rendering* half below does, and it rendered at the default
+	// whatever the oracle was told to be.
+	opts := append(caseOptions(c),
 		gojja2.WithLoader(gojja2.DictLoader(sources)),
-		gojja2.WithAutoescape(c.Autoescape),
-	}
+		gojja2.WithPythonVersion(h.py))
 	env, err := gojja2.New(opts...)
 	if err != nil {
 		return ""
@@ -95,15 +103,11 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claim
 		return ""
 	}
 
-	settings := map[string]any{}
-	if c.Autoescape {
-		settings["autoescape"] = true
-	}
 	ref, err := h.oracle.Analyze(conformance.AnalyzeRequest{
 		Name:      fuzzTemplateName,
 		Source:    c.Source,
-		Settings:  settings,
-		Templates: h.templates,
+		Settings:  caseSettings(c),
+		Templates: h.templatesFor(c),
 	})
 	if err != nil {
 		t.Fatalf("oracle: %v", err)
@@ -134,13 +138,19 @@ func (h *harness) compareSyntax(t testing.TB, c conformance.GeneratedCase, claim
 			firstDifference(ref.Info, string(gotInfo))
 	}
 
-	flow := dataflow.Analyze(tree, dataflow.WithResolver(func(name string) *syntax.Tree {
+	// The generated case's Undefined class is part of the question: under
+	// strict an arm that reads a name can stop the render.
+	flowOpts := []dataflow.Option{dataflow.WithResolver(func(name string) *syntax.Tree {
 		other, err := env.GetTemplate(name)
 		if err != nil {
 			return nil
 		}
 		return other.Syntax()
-	}))
+	})}
+	if c.Undefined == "strict" {
+		flowOpts = append(flowOpts, dataflow.WithStrictUndefined())
+	}
+	flow := dataflow.Analyze(tree, flowOpts...)
 	gotVars := map[string]string{}
 	for name, e := range flow.Context(tree) {
 		gotVars[name] = encodeEffect(e)
@@ -257,7 +267,11 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 		for i := range input {
 			input[i] = byte(rng.UintN(256))
 		}
-		c := conformance.GenerateCase(input)
+		// The default environment, because this asks about the
+		// *template*: two that encode alike must render alike, and a
+		// difference in settings is not a missing distinction in the
+		// vocabulary. See GenerateDefaultCase.
+		c := conformance.GenerateDefaultCase(input)
 		if strings.TrimSpace(c.Source) == "" {
 			continue
 		}
@@ -269,14 +283,10 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 			out = "\x00error: " + err.Error()
 		}
 
-		sources := make(map[string]string, len(h.templates)+1)
-		for name, text := range h.templates {
-			sources[name] = text
-		}
-		sources[fuzzTemplateName] = c.Source
-		env, err := gojja2.New(
+		sources := h.sourcesFor(c)
+		env, err := gojja2.New(append(caseOptions(c),
 			gojja2.WithLoader(gojja2.DictLoader(sources)),
-			gojja2.WithAutoescape(c.Autoescape))
+			gojja2.WithPythonVersion(h.py))...)
 		if err != nil {
 			continue
 		}
@@ -288,13 +298,19 @@ func TestEncodingTheSameMeansRenderingTheSame(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		// Autoescaping is the environment's, not the template's, so two
-		// templates that encode the same under different settings are not a
-		// collision.
+		// The *environment* goes in the key beside the tree, because two
+		// templates that encode the same under different settings are
+		// not a collision. It comes from caseSettings rather than from a
+		// list written here: the Undefined class was missed when it
+		// became a generated setting, and the pair it invented looked
+		// exactly like a missing distinction in the vocabulary --
+		// `{{+ (n)[0] -}}` printed nothing and `{{ (n)[0] -}}` printed a
+		// debug hint, for no reason in the syntax at all. The lexer
+		// settings were missed the same way when the delimiters became
+		// one: an auxiliary template rewritten for `<<`/`>>` does not
+		// lex where the default one loads, so an `{% include %}` that
+		// encodes identically renders an error.
 		key := string(raw)
-		if c.Autoescape {
-			key = "escaped\x00" + key
-		}
 
 		prev, ok := byTree[key]
 		if !ok {

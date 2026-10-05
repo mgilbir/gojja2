@@ -9,41 +9,27 @@ import (
 	"github.com/mgilbir/gojja2/value"
 )
 
-// checkDependencies rejects, at compile time, a filter or test the environment
-// does not have.
+// depChecker rejects, at compile time, a filter or test the environment does
+// not have.
 //
 // jinja2 does the same from its compiler, with one exception it documents in
 // passing: inside an `{% if %}` or a conditional expression the lookup is
 // deferred to runtime, because the branch may never execute. The error differs
 // too -- "No test named 'x'." when compiled, "No test named 'x' found." when
 // it finally runs -- so the distinction is visible and worth keeping.
-func (e *Environment) checkDependencies(body []ast.Stmt, name, source string) error {
-	c := &depChecker{env: e, name: name, source: source, topLevel: true}
-	c.stmts(body, false)
-	return c.err
-}
-
+//
+// It has no walk of its own. jinja2 looks a name up as its code generator
+// writes the node out, in the same pass that folds it, so the fold drives this
+// one expression at a time: see constFolder.check. Which of two faults a
+// template is refused for depends on that order.
+//
+// `soft` is jinja2's soft_frame, and topLevel and the rest are the generator's
+// frame flags; constFolder carries them all and hands them over here.
 type depChecker struct {
 	env    *Environment
 	name   string
 	source string
 	err    error
-	// topLevel tracks whether the statements being walked are compiled
-	// into the template's own function. Only `{% extends %}` reads it; see
-	// inner for what clears it.
-	topLevel bool
-}
-
-// inner walks a body that jinja2 compiles into a frame of its own.
-//
-// Every block-opening construct does that except `{% if %}`, which compiles
-// inline and so leaves the template's top level intact -- that is what makes
-// the conditional-extends idiom legal at any depth of conditions.
-func (c *depChecker) inner(body []ast.Stmt, soft bool) {
-	saved := c.topLevel
-	c.topLevel = false
-	c.stmts(body, soft)
-	c.topLevel = saved
 }
 
 func (c *depChecker) fail(kind string, filterName string, line int) {
@@ -58,86 +44,6 @@ func (c *depChecker) fail(kind string, filterName string, line int) {
 	c.err = e
 }
 
-func (c *depChecker) stmts(body []ast.Stmt, soft bool) {
-	for _, stmt := range body {
-		c.stmt(stmt, soft)
-	}
-}
-
-func (c *depChecker) stmt(stmt ast.Stmt, soft bool) {
-	if c.err != nil {
-		return
-	}
-	switch n := stmt.(type) {
-	case *ast.Output:
-		c.exprs(n.Nodes, soft)
-	case *ast.For:
-		// `loop` is bound by the loop itself, so assigning it anywhere
-		// inside would leave the two fighting over one name.
-		if line, found := findLoopStore(n); found {
-			c.failAt(line, "Can't assign to special loop variable in for-loop target")
-		}
-		c.expr(n.Iter, soft)
-		c.expr(n.Test, soft)
-		c.inner(n.Body, soft)
-		c.inner(n.Else, soft)
-	case *ast.If:
-		// An if softens its whole subtree, condition and body alike.
-		c.expr(n.Test, true)
-		c.stmts(n.Body, true)
-		for _, elif := range n.Elif {
-			c.expr(elif.Test, true)
-			c.stmts(elif.Body, true)
-		}
-		c.stmts(n.Else, true)
-	case *ast.Assign:
-		c.expr(n.Node, soft)
-	case *ast.AssignBlock:
-		c.expr(n.Filter, soft)
-		c.inner(n.Body, soft)
-	case *ast.With:
-		c.exprs(n.Values, soft)
-		c.inner(n.Body, soft)
-	case *ast.Macro:
-		c.checkCallerDefault(n.Args, n.Defaults, n.Line())
-		c.exprs(n.Defaults, soft)
-		c.inner(n.Body, soft)
-	case *ast.CallBlock:
-		c.checkCallerDefault(n.Args, n.Defaults, n.Line())
-		c.expr(n.Call, soft)
-		c.exprs(n.Defaults, soft)
-		c.inner(n.Body, soft)
-	case *ast.FilterBlock:
-		c.expr(n.Filter, soft)
-		c.inner(n.Body, soft)
-	case *ast.Block:
-		c.inner(n.Body, soft)
-	case *ast.ExprStmt:
-		c.expr(n.Node, soft)
-	case *ast.Include:
-		c.expr(n.Template, soft)
-	case *ast.Import:
-		c.expr(n.Template, soft)
-	case *ast.FromImport:
-		c.expr(n.Template, soft)
-	case *ast.Extends:
-		// Which template a render extends has to be settled once, for
-		// the whole render. Reached from a frame, it would depend on
-		// control flow: gojja2 let `{% for i in [] %}{% extends %}`
-		// through, so an empty sequence silently skipped the
-		// inheritance and a non-empty one applied it.
-		if !c.topLevel {
-			c.failAt(n.Line(), "cannot use extend from a non top-level scope")
-		}
-		c.expr(n.Template, soft)
-	case *ast.Scope:
-		c.inner(n.Body, soft)
-	case *ast.AutoescapeBlock:
-		c.expr(n.Value, soft)
-		c.inner(n.Body, soft)
-	}
-}
-
 func (c *depChecker) failAt(line int, format string, args ...any) {
 	if c.err != nil {
 		return
@@ -150,7 +56,16 @@ func (c *depChecker) failAt(line int, format string, args ...any) {
 // checkCallerDefault enforces that a declared `caller` parameter has a
 // default. Without one, a macro invoked outside a {% call %} block would leave
 // it unbound, and jinja2 refuses the definition rather than the call.
-func (c *depChecker) checkCallerDefault(params []*ast.Name, defaults []ast.Expr, line int) {
+func (c *depChecker) checkCallerDefault(body []ast.Stmt, params []*ast.Name,
+	defaults []ast.Expr, line int) {
+	// Only when the body actually reads `caller`. The whole check sits
+	// under jinja2's `if "caller" in undeclared`, so a macro that merely
+	// names a parameter `caller` and never uses it is an ordinary macro:
+	// `{% macro m(caller) %}x{% endmacro %}{{ m(1) }}` renders "x" there
+	// and did not compile here.
+	if !findUndeclared(body, "caller")["caller"] {
+		return
+	}
 	// Defaults align with the tail of the parameter list, so a parameter
 	// before that tail has none.
 	firstDefault := len(params) - len(defaults)

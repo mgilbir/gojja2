@@ -1,0 +1,6 @@
+{
+  "case": "fold/debug_undefined_by_constant.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

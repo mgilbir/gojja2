@@ -1,0 +1,11 @@
+{
+  "case": "filters/pprint_mixed_line_ends.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "('ab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'cab\\n'\n '\\r\\n'\n '\\r'\n 'c')"
+}

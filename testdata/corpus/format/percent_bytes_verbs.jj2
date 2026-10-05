@@ -1,0 +1,3 @@
+{}
+---
+{% set n = 42 %}{% set w = 2 ** 70 %}{% set b = 10 ** 400 %}{{ ('[%f]'.encode()) % n }}|{{ ('[%f]'.encode()) % w }}|{{ ('[%d]'.encode()) % b }}|{{ ('[%b]'.encode()) % 'ab'.encode() }}|{{ ('[%c]'.encode()) % 65 }}|{{ ('[%(k)b]'.encode()) % {'k': 'v'.encode()} }}

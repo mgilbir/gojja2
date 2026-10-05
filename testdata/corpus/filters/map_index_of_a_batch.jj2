@@ -1,0 +1,3 @@
+{}
+---
+{{ ['ab'|batch(1)|list]|map(attribute=0)|list }}

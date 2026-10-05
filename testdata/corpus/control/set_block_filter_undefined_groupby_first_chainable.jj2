@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+{% autoescape false %}{% set v | groupby('x')|first %}{% endset %}{% endautoescape %}

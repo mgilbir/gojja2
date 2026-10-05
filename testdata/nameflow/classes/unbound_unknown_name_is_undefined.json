@@ -1,0 +1,6 @@
+{
+  "case": "classes/unbound_unknown_name_is_undefined.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

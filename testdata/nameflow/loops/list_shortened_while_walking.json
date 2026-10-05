@@ -1,0 +1,6 @@
+{
+  "case": "loops/list_shortened_while_walking.jj2",
+  "variables": {
+    "lst": "ofr"
+  }
+}

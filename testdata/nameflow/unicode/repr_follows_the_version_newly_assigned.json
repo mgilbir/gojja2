@@ -1,0 +1,6 @@
+{
+  "case": "unicode/repr_follows_the_version_newly_assigned.jj2",
+  "variables": {
+    "c": "or"
+  }
+}

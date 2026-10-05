@@ -1,0 +1,3 @@
+{}
+---
+{% macro m(varargs) %}{{ varargs }}{% endmacro %}[{{ m.catch_varargs }}]

@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_bool_arity.jj2",
+  "variables": {
+    "yes": "or"
+  }
+}

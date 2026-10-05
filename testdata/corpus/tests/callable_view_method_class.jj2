@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{{ d.keys().isdisjoint.__class__ }}|{{ d.keys().isdisjoint.__qualname__ }}

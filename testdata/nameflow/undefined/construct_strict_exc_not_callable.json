@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_strict_exc_not_callable.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "case": "tests/operator_eq_mismatched.jj2",
+  "variables": {}
+}

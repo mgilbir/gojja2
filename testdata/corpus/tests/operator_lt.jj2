@@ -1,0 +1,3 @@
+{}
+---
+{{ 1 is lt 1 }}|{{ 1 is lt 2 }}|{{ 2 is lt 1 }}|{{ 'a' is lt 'b' }}|{{ 1.0 is lt 1 }}|{{ [1] is lt [1] }}|{{ none is lt none }}|{{ 1 is lt(1) }}

@@ -1,0 +1,10 @@
+{
+  "__templates__": {
+    "loopbase.txt": "[{% for i in [1, 2] %}{% block a scoped %}{{ i }}{% endblock %}{% endfor %}|{% block b %}B{% endblock %}]",
+    "plainbase.txt": "[{% for i in [1, 2] %}{% block a %}x{% endblock %}{% endfor %}]",
+    "grand.txt": "G[{% for i in [1, 2] %}{% block a scoped %}{{ i }}{% endblock %}{% endfor %}]",
+    "mid.txt": "{% extends 'grand.txt' %}{% block a %}M{{ super() }}{% endblock %}"
+  }
+}
+---
+{% extends 'loopbase.txt' %}{% block a %}{% if super() %}T{% else %}F{% endif %}{% endblock %}

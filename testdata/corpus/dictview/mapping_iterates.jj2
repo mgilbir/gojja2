@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% for k in d.keys().mapping %}[{{ k }}]{% endfor %}

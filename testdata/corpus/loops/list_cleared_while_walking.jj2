@@ -1,0 +1,10 @@
+{
+  "lst": [
+    1,
+    2,
+    3,
+    4
+  ]
+}
+---
+{% for i in lst %}{{ i }}{% set _ = lst.clear() %}{% endfor %}

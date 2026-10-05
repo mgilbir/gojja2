@@ -56,6 +56,12 @@ func WithPythonVersion(v PythonVersion) Option {
 				int(v), value.Python311, value.Python314)
 		}
 		e.pyVersion = v
+		// The lexer needs it too: the class it matches a name out of is
+		// `\w` plus jinja2's frozen extras, and `\w` is CPython's. Set
+		// here rather than read at parse time so there is one field per
+		// question and no second copy to drift; TestLexerFollowsThe
+		// PythonVersion is what watches that they agree.
+		e.syntax.PythonVersion = v
 		return nil
 	}
 }

@@ -1,0 +1,6 @@
+{
+  "case": "errshape/star_undefined_chainable.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

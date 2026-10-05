@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "loopcontrols"
+    ]
+  }
+}
+---
+{% break %}{% else %}

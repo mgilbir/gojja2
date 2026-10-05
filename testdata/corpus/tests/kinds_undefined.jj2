@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is undefined }}|{{ 0 is undefined }}|{{ -1 is undefined }}|{{ 1.5 is undefined }}|{{ true is undefined }}|{{ false is undefined }}|{{ none is undefined }}|{{ 'a' is undefined }}|{{ '' is undefined }}|{{ 'A' is undefined }}|{{ [1] is undefined }}|{{ [] is undefined }}|{{ ((1,)) is undefined }}|{{ {} is undefined }}|{{ {'a':1} is undefined }}|{{ range(3) is undefined }}|{{ nope is undefined }}|{{ ('x'|safe) is undefined }}|{{ dict is undefined }}|{{ d.keys() is undefined }}

@@ -1,0 +1,12 @@
+{
+  "__templates__": {
+    "inner.txt": "{% set q = 9 %}{% macro im() %}IM{% endmacro %}",
+    "imp.txt": "{% import 'inner.txt' as sub %}{% set a = 1 %}",
+    "fromimp.txt": "{% from 'inner.txt' import q %}{% set a = 1 %}",
+    "reset.txt": "{% set sub = 'first' %}{% import 'inner.txt' as sub %}",
+    "reimp.txt": "{% import 'inner.txt' as sub %}{% set sub = 'after' %}",
+    "under.txt": "{% import 'inner.txt' as _sub %}{% set a = 1 %}"
+  }
+}
+---
+{% import 'fromimp.txt' as m %}[{{ m.q is defined }}][{{ m.a }}]

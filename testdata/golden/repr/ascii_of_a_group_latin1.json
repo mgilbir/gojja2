@@ -1,0 +1,11 @@
+{
+  "case": "repr/ascii_of_a_group_latin1.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "[('\\xe9', [{'k': '\\xe9'}])]|('\\xe9', [{'k': '\\xe9'}])|[('é', [{'k': 'é'}])]"
+}

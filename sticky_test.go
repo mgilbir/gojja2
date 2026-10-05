@@ -118,7 +118,7 @@ func TestARefusedFoldDoesNotPoisonLaterFolds(t *testing.T) {
 	// Trivially foldable, and its value says so.
 	cheap := foldExpr(t, `2 + 3`)
 
-	c := newConstEvaluator(mustNew(), "t", true)
+	c := newConstEvaluator(mustNew(), "t", "", true)
 	if _, ok := c.tryConstEval(heavy); ok {
 		t.Fatal("the heavy expression folded, so it never exhausts the " +
 			"allowance and this test cannot detect poisoning")

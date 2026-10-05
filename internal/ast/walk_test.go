@@ -122,7 +122,7 @@ func allNodes() []Node {
 		&Template{}, &Output{}, &For{}, &If{}, &Assign{}, &AssignBlock{},
 		&Macro{}, &CallBlock{}, &FilterBlock{}, &With{}, &Block{},
 		&Extends{}, &Include{}, &Import{}, &FromImport{}, &ExprStmt{},
-		&Scope{}, &AutoescapeBlock{}, &Break{}, &Continue{},
+		&AutoescapeBlock{}, &Break{}, &Continue{},
 		// expressions
 		&Const{}, &TemplateData{}, &Name{}, &NSRef{}, &Tuple{}, &List{},
 		&Dict{}, &Pair{}, &Keyword{}, &CondExpr{}, &BinOp{}, &UnaryOp{},

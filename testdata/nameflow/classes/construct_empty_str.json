@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_empty_str.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

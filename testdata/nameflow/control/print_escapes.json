@@ -1,0 +1,6 @@
+{
+  "case": "control/print_escapes.jj2",
+  "variables": {
+    "v": "o"
+  }
+}

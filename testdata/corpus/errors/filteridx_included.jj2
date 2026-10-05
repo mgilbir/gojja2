@@ -1,0 +1,8 @@
+{
+  "v": "V",
+  "__templates__": {
+    "lib.txt": "x{{ v }}y{% filter length %}abc{% endfilter %}"
+  }
+}
+---
+{% include 'lib.txt' %}

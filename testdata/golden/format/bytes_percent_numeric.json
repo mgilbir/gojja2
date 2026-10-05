@@ -1,0 +1,11 @@
+{
+  "case": "format/bytes_percent_numeric.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "b'5'|b'ff'|b' 1.50'|b'1.500000e+00'"
+}

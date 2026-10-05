@@ -196,9 +196,8 @@ func forGenerated(t *testing.T, count, seed int, check func(*testing.T, *gojja2.
 			sources[name] = text
 		}
 		sources[fuzzTemplateName] = c.Source
-		env, err := gojja2.New(
-			gojja2.WithLoader(gojja2.DictLoader(sources)),
-			gojja2.WithAutoescape(c.Autoescape))
+		env, err := gojja2.New(append(caseOptions(c),
+			gojja2.WithLoader(gojja2.DictLoader(sources)))...)
 		if err != nil {
 			continue
 		}

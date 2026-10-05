@@ -67,10 +67,16 @@ func TestAnalyze(t *testing.T) {
 		{`{% macro m() %}{{ caller() }}{% endmacro %}`, ""},
 
 		// A computed lookup reads out of the container whatever the key
-		// turns out to be, so the container is printed and the key steers
-		// -- it chooses among the values rather than being one of them.
-		{`{{ data[key] }}`, "data:or key:fr"},
-		{`{{ o|attr(n) }}`, "n:fr o:or"},
+		// turns out to be, so the container is printed and the key
+		// steers -- it chooses among the values rather than being one
+		// of them. It is printed too, because a lookup that misses
+		// answers an undefined carrying the key, and a DebugUndefined
+		// prints that: `{{ data[key] }}` renders
+		// "{{ no such element: dict object['<key>'] }}".
+		{`{{ data[key] }}`, "data:or key:ofr"},
+		{`{{ o|attr(n) }}`, "n:ofr o:or"},
+		// Nothing prints there, so the key only steers.
+		{`{% if data[key] %}x{% endif %}`, "data:fr key:fr"},
 
 		// Where it cannot see, it says so.
 		{`{% set ns = namespace(v=0) %}{% for i in xs %}{% set ns.v = i %}{% endfor %}{{ ns.v }}`, "xs:ofr"},
@@ -268,6 +274,44 @@ func TestAnalyzeToleratesATargetItDoesNotKnow(t *testing.T) {
 	}
 }
 
+// A statement kind the walk was never taught must not read as "nothing happens".
+//
+// This is the other half of the case above, and the same argument: gojja2's own
+// parser cannot produce a statement kind the walk has no arm for, and
+// syntax.Node is public, so a caller's tree can. The default taints everything
+// the unknown statement reaches, because a statement nobody modelled might do
+// anything with what it touches -- including print it.
+//
+// Mutation testing found this line untested only after the tool learned to make
+// the mutation at all. Commenting the line out left the loop variable declared
+// and not used, so the build failed, and a mutation that does not compile was
+// reported as "uncompilable" and counted with the ones nothing survived. The
+// site had never been exercised; the headline said otherwise.
+func TestAnalyzeToleratesAStatementItDoesNotKnow(t *testing.T) {
+	secret := &syntax.Node{Kind: syntax.KindName, Attrs: map[string]any{"name": "secret"}}
+	// A kind no arm of the walk matches, holding a name in an edge.
+	odd := &syntax.Node{Kind: syntax.Kind("nothing-models-this"), Edges: []syntax.Edge{
+		{Role: syntax.RoleValue, Node: secret},
+	}}
+	root := &syntax.Node{Kind: syntax.KindTemplate, Edges: []syntax.Edge{
+		{Role: syntax.RoleBody, Node: odd},
+	}}
+	sym := &syntax.Symbol{Name: "secret", Kind: syntax.SymContext}
+	tree := &syntax.Tree{Root: root, Info: &syntax.Info{
+		Defs:    map[*syntax.Node]*syntax.Symbol{},
+		Uses:    map[*syntax.Node]*syntax.Symbol{secret: sym},
+		Scopes:  map[*syntax.Node][]*syntax.Symbol{root: nil},
+		Context: map[string]*syntax.Symbol{"secret": sym},
+	}}
+
+	got := dataflow.Analyze(tree).Context(tree)["secret"]
+	if got&dataflow.Opaque == 0 {
+		t.Errorf("a statement the walk does not know left %q as %v; it has to be "+
+			"opaque, because a statement nobody modelled might do anything with "+
+			"what it reaches", "secret", got)
+	}
+}
+
 // The accessors are part of the surface and were reachable by no test, which
 // coverage said plainly: a caller holding a symbol rather than a name asks
 // Flow.Of, and nothing did.
@@ -302,4 +346,99 @@ func TestFlowOf(t *testing.T) {
 	if got := flow.Of(&syntax.Symbol{Name: "stranger"}); got != 0 {
 		t.Errorf("a symbol from nowhere has effects %v, want none", got)
 	}
+}
+
+// TestSteeringAndFailureAreRecorded pins the analysis claims an audit with
+// `make mutate` found nothing was checking.
+//
+// A survivor is a line no test constrains, and it is not automatically a bug.
+// Of the four here, one was a *false* survivor -- the tool's needle for
+// canFailIn had gone stale when it became a method, so the file was never
+// edited and "nothing noticed" was really "nothing happened"; mutate.py now
+// refuses a needle it cannot find. One was redundant, steerEmit's document-level
+// apply, and is gone. The loop test's steering was the real one, and removing
+// that redundancy is what made it measurable: planting it now fails five tests
+// rather than none, because steerEmit was quietly applying Steers a second time.
+//
+// The cases below are the shapes that tell each claim apart from its neighbours,
+// which is the part a corpus case cannot be relied on to hit by accident.
+func TestSteeringAndFailureAreRecorded(t *testing.T) {
+	analyse := func(t *testing.T, src string) (*syntax.Tree, *dataflow.Flow) {
+		t.Helper()
+		env, err := gojja2.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl, err := env.FromString(src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", src, err)
+		}
+		tree := tmpl.Syntax()
+		return tree, dataflow.Analyze(tree)
+	}
+	effect := func(t *testing.T, tree *syntax.Tree, flow *dataflow.Flow, name string) dataflow.Effect {
+		t.Helper()
+		sym := tree.Info.Context[name]
+		if sym == nil {
+			t.Fatalf("%q is not one of the caller's variables", name)
+		}
+		return flow.Of(sym)
+	}
+
+	// walk.go, the loop's `if`: how many times the body runs decides how
+	// much of the output there is, so the test steers exactly as a branch
+	// condition does. `xs` is the iterable and only derives.
+	t.Run("a loop test steers", func(t *testing.T) {
+		tree, flow := analyse(t, `{% for i in xs if keep %}{{ i }}{% endfor %}`)
+		if got := effect(t, tree, flow, "keep"); got&dataflow.Steers == 0 {
+			t.Errorf("keep = %v, want it to steer", got)
+		}
+	})
+	// And inside a capture nothing consumes, where steerEmit routes the test
+	// into the capture rather than recording an effect: the apply beside it
+	// is then the only thing saying the test steers at all.
+	t.Run("a loop test steers inside an unused capture", func(t *testing.T) {
+		tree, flow := analyse(t,
+			`{% set v %}{% for i in xs if keep %}{{ i }}{% endfor %}{% endset %}`)
+		if got := effect(t, tree, flow, "keep"); got&dataflow.Steers == 0 {
+			t.Errorf("keep = %v, want it to steer even though nothing prints v", got)
+		}
+	})
+
+	// With no capture in force the steering reaches the document, which is
+	// what makes a condition around a print show up at all. It is the
+	// branch's own apply that records it, not steerEmit; these two pin the
+	// answer on both sides of that seam.
+	t.Run("steering reaches the document", func(t *testing.T) {
+		tree, flow := analyse(t, `{% if admin %}text{% endif %}`)
+		if got := effect(t, tree, flow, "admin"); got&dataflow.Steers == 0 {
+			t.Errorf("admin = %v, want it to steer", got)
+		}
+	})
+	// The nested arm: a branch inside a capture steers what the capture
+	// becomes, so the condition still reaches the document through it.
+	t.Run("steering inside a capture reaches what prints it", func(t *testing.T) {
+		tree, flow := analyse(t,
+			`{% set v %}{% if admin %}text{% endif %}{% endset %}{{ v }}`)
+		if got := effect(t, tree, flow, "admin"); got&dataflow.Steers == 0 {
+			t.Errorf("admin = %v, want it to steer: it decides what v holds", got)
+		}
+	})
+
+	// walk.go, canFailIn: an `{% if %}` whose arms cannot fail leaves the
+	// condition steering and nothing more, while one whose arm *can* fail
+	// makes the condition Required -- the render's success depends on it.
+	t.Run("a branch that cannot fail leaves its test steering only", func(t *testing.T) {
+		tree, flow := analyse(t, `{% if admin %}text{% endif %}`)
+		if got := effect(t, tree, flow, "admin"); got&dataflow.Required != 0 {
+			t.Errorf("admin = %v, want it not to be required: "+
+				"neither arm can fail", got)
+		}
+	})
+	t.Run("a branch that can fail makes its test required", func(t *testing.T) {
+		tree, flow := analyse(t, `{% if admin %}{{ 1 / zero }}{% endif %}`)
+		if got := effect(t, tree, flow, "admin"); got&dataflow.Required == 0 {
+			t.Errorf("admin = %v, want it to be required: the arm can fail", got)
+		}
+	})
 }

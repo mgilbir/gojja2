@@ -1,0 +1,37 @@
+{
+  "_comment": "The last value nesting depth each walk survives, measured by tools/oracle/gen_value_depth.py. Regenerate with `make value-depth`.",
+  "walks": {
+    "3.11": {
+      "equal": 992,
+      "less": 992,
+      "pprint": 326,
+      "print": 990,
+      "sort": 990,
+      "tojson": 986
+    },
+    "3.12": {
+      "equal": 9994,
+      "less": 9994,
+      "pprint": 328,
+      "print": 9993,
+      "sort": 9993,
+      "tojson": 9993
+    },
+    "3.13": {
+      "equal": 9995,
+      "less": 9995,
+      "pprint": 328,
+      "print": 9994,
+      "sort": 9993,
+      "tojson": 9994
+    },
+    "3.14": {
+      "equal": 43439,
+      "less": 43439,
+      "pprint": 328,
+      "print": 65159,
+      "sort": 43414,
+      "tojson": 52126
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "divergence/self_loop_through_a_proxy.jj2",
+  "variables": {
+    "self": "ofr"
+  }
+}

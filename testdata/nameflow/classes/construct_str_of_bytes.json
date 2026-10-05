@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_str_of_bytes.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

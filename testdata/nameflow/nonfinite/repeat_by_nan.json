@@ -1,0 +1,6 @@
+{
+  "case": "nonfinite/repeat_by_nan.jj2",
+  "variables": {
+    "s_nan": "or"
+  }
+}

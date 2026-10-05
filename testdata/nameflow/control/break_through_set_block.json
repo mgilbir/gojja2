@@ -1,0 +1,6 @@
+{
+  "case": "control/break_through_set_block.jj2",
+  "variables": {
+    "seq": "fr"
+  }
+}

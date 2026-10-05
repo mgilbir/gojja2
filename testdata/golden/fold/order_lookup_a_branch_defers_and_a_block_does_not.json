@@ -1,0 +1,16 @@
+{
+  "case": "fold/order_lookup_a_branch_defers_and_a_block_does_not.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TemplateAssertionError",
+    "message": "No filter named 'nosuchB'.",
+    "lineno": 1,
+    "name": "fold/order_lookup_a_branch_defers_and_a_block_does_not.jj2"
+  }
+}

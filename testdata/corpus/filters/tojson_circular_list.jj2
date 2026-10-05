@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "extensions": [
+      "do"
+    ]
+  }
+}
+---
+{% set l = [] %}{% do l.append(l) %}{{ l|tojson }}

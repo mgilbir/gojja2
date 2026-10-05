@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': 1, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': 2} %}{{ (d.keys() - [])|pprint }}

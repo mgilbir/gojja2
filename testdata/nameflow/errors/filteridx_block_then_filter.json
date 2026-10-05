@@ -1,0 +1,6 @@
+{
+  "case": "errors/filteridx_block_then_filter.jj2",
+  "variables": {
+    "v": "o"
+  }
+}

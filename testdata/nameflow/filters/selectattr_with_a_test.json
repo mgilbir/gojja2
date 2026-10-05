@@ -1,0 +1,6 @@
+{
+  "case": "filters/selectattr_with_a_test.jj2",
+  "variables": {
+    "users": "or"
+  }
+}

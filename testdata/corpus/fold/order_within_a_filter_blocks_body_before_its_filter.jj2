@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% filter nosuchA %}{{ 1|nosuchC }}{% endfilter %}

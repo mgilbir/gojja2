@@ -1,0 +1,3 @@
+{}
+---
+{% if []|reverse %}t{% else %}f{% endif %}

@@ -1,0 +1,6 @@
+{
+  "case": "methods/noargs_n_bit_length_keyword_beats_count.jj2",
+  "variables": {
+    "n": "or"
+  }
+}

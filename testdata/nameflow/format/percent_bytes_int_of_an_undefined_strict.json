@@ -1,0 +1,6 @@
+{
+  "case": "format/percent_bytes_int_of_an_undefined_strict.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

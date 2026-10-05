@@ -4,8 +4,10 @@
 package gojja2
 
 import (
+	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -53,18 +55,28 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 
 	// Methods.
 	case "conjugate":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.BigInt(asBig(base)), nil
 		}), true
+	case "is_integer":
+		// An int always is one. 3.12 added the method so that a caller
+		// can ask without knowing which kind of number it holds; before
+		// that the name is simply absent from an int.
+		if !s.PythonVersion().IntHasIsInteger() {
+			return value.Undefined, false
+		}
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
+			return value.True, nil
+		}), true
 	case "bit_length":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.Int(int64(asBig(base).BitLen())), nil
 		}), true
 	case "bit_count":
 		// The number of ones in the absolute value, which is what
 		// Python counts -- it is defined on the magnitude, so -4 has
 		// one bit set just as 4 does.
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			n := 0
 			for _, w := range new(big.Int).Abs(asBig(base)).Bits() {
 				for ; w != 0; w &= w - 1 {
@@ -74,17 +86,25 @@ func intAttr(s *State, base value.Value, name string) (value.Value, bool) {
 			return value.Int(int64(n)), nil
 		}), true
 	case "as_integer_ratio":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.NewTuple(value.BigInt(asBig(base)), value.Int(1)), nil
 		}), true
 	case "to_bytes":
-		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+		return boundNumeric(s, base, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+			if err := clinicCall(st.PythonVersion(), "to_bytes", args,
+				[]string{"length", "byteorder", "signed"}, 2, 3); err != nil {
+				return value.Undefined, err
+			}
 			return intToBytes(st, asBig(base), args)
 		}), true
 	case "from_bytes":
 		// A classmethod, so the receiver contributes nothing but the
 		// route to it: a template cannot name int, only an int.
-		return boundNumeric(s, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+		return boundNumeric(s, base, name, func(st *State, args *value.CallArgs) (value.Value, error) {
+			if err := clinicCall(st.PythonVersion(), "from_bytes", args,
+				[]string{"bytes", "byteorder", "signed"}, 2, 3); err != nil {
+				return value.Undefined, err
+			}
 			return bigFromBytes(st, value.Undefined, args)
 		}), true
 	}
@@ -100,15 +120,15 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 		return value.Float(0), true
 
 	case "conjugate":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.Float(x), nil
 		}), true
 	case "is_integer":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return value.Bool(!math.IsInf(x, 0) && !math.IsNaN(x) && x == math.Trunc(x)), nil
 		}), true
 	case "hex":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			h, err := floatHex(x)
 			if err != nil {
 				return value.Undefined, err
@@ -116,13 +136,21 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 			return value.String(h), nil
 		}), true
 	case "as_integer_ratio":
-		return boundNumeric(s, name, func(*State, *value.CallArgs) (value.Value, error) {
+		return boundNoArgs(s, base, name, func() (value.Value, error) {
 			return floatRatio(x)
 		}), true
 	case "fromhex":
 		// A classmethod, reached through a float for the same reason
 		// from_bytes is reached through an int.
-		return boundNumeric(s, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+		return boundNumeric(s, base, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+			if len(args.Kwargs) > 0 {
+				return value.Undefined, errs.New(errs.TypeError,
+					"float.fromhex() takes no keyword arguments")
+			}
+			if n := len(args.Pos); n != 1 {
+				return value.Undefined, errs.New(errs.TypeError,
+					"float.fromhex() takes exactly one argument (%d given)", n)
+			}
 			v, _ := args.Arg(0)
 			if !v.IsString() {
 				return value.Undefined, errs.New(errs.TypeError,
@@ -136,8 +164,69 @@ func floatAttr(s *State, base value.Value, name string) (value.Value, bool) {
 
 // boundNumeric wraps a numeric method as the callable an attribute lookup hands
 // back, the way builtinMethod does for the container types.
-func boundNumeric(s *State, name string, fn func(*State, *value.CallArgs) (value.Value, error)) value.Value {
-	return Func(name, func(callState *State, args *value.CallArgs) (value.Value, error) {
+// boundNoArgs is boundNumeric for a method that takes nothing at all, which is
+// most of them.
+//
+// CPython refuses an argument rather than ignoring it, and names the receiver's
+// own type rather than where the method was defined: `true.bit_length(1)` is
+// "bool.bit_length() takes no arguments (1 given)", not "int.". A keyword beats
+// a count, as it does everywhere else in CPython's binding.
+//
+// None of these had an arity check at all, so `{{ (1).bit_length(1) }}` answered
+// 1 where CPython refuses. Found by auditing the error sites no corpus case
+// reaches: the *absence* of a message is invisible to that audit, but the
+// methods showed up when their neighbours were probed.
+func boundNoArgs(s *State, base value.Value, name string,
+	fn func() (value.Value, error)) value.Value {
+	return boundNumeric(s, base, name, func(_ *State, args *value.CallArgs) (value.Value, error) {
+		if len(args.Kwargs) > 0 {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s.%s() takes no keyword arguments", base.TypeName(), name)
+		}
+		if len(args.Pos) > 0 {
+			return value.Undefined, errs.New(errs.TypeError,
+				"%s.%s() takes no arguments (%d given)",
+				base.TypeName(), name, len(args.Pos))
+		}
+		return fn()
+	})
+}
+
+// clinicCall is the call shape int.to_bytes and int.from_bytes share: two
+// parameters that may be given positionally or by name, a third that is
+// keyword-only, and two counts to complain about. Neither was checked at all,
+// so `n.to_bytes(1, 2, 3)` reported the type of the argument that landed on
+// `byteorder` and `n.from_bytes(b, 'big', true)` simply ignored the third.
+//
+// CPython checks the total first -- `n.to_bytes(2, 'big', true, nope=1)` is
+// "takes at most 3 arguments (4 given)" and not a word about the keyword --
+// then the keyword names, then the positional count.
+//
+// These are written out rather than generated because tools/oracle/gen_methods.py
+// probes str, list, dict, tuple and bytes only; the numeric methods have always
+// carried their own wordings, as boundNoArgs does just above.
+func clinicCall(py value.PythonVersion, name string, args *value.CallArgs,
+	kwNames []string, maxPos, maxTotal int,
+) error {
+	if n := len(args.Pos) + len(args.Kwargs); n > maxTotal {
+		return errs.New(errs.TypeError,
+			"%s() takes at most %d arguments (%d given)", name, maxTotal, n)
+	}
+	for _, kw := range args.Kwargs {
+		if !slices.Contains(kwNames, kw.Name) {
+			// 3.13 reworded this one; clinicKeyword carries the split.
+			return clinicKeyword(py, name, kw.Name)
+		}
+	}
+	if n := len(args.Pos); n > maxPos {
+		return errs.New(errs.TypeError,
+			"%s() takes at most %d positional arguments (%d given)", name, maxPos, n)
+	}
+	return nil
+}
+
+func boundNumeric(s *State, recv value.Value, name string, fn func(*State, *value.CallArgs) (value.Value, error)) value.Value {
+	return Method(name, recv.TypeName(), "", recv, func(callState *State, args *value.CallArgs) (value.Value, error) {
 		if callState == nil {
 			callState = s
 		}
@@ -146,8 +235,11 @@ func boundNumeric(s *State, name string, fn func(*State, *value.CallArgs) (value
 }
 
 // floatHex is float.hex(): a leading hex digit, thirteen after the point, and a
-// binary exponent with no leading zeros. Go writes the same form but trims the
-// mantissa and pads the exponent, so both are adjusted.
+// binary exponent with a sign and no leading zeros. The fifty-two fraction bits
+// are exactly those thirteen digits, so this is written from the bits rather
+// than through Go -- Go's %x normalises a subnormal to a leading 1 and an
+// exponent below -1022, where CPython's frexp/ldexp pair stops at DBL_MIN_EXP
+// and writes the leading digit as 0.
 func floatHex(x float64) (string, error) {
 	switch {
 	case math.IsNaN(x):
@@ -164,17 +256,13 @@ func floatHex(x float64) (string, error) {
 	if x == 0 {
 		return sign + "0x0.0p+0", nil
 	}
-	s := strconv.FormatFloat(x, 'x', 13, 64)
-	mant, exp, found := strings.Cut(s, "p")
-	if !found {
-		return sign + s, nil
+	bits := math.Float64bits(x)
+	frac := bits & (1<<52 - 1)
+	lead, exp := 1, int(bits>>52&0x7ff)-1023
+	if exp == -1023 {
+		lead, exp = 0, -1022
 	}
-	// Go writes the exponent with a sign and at least two digits.
-	signCh, digits := exp[:1], strings.TrimLeft(exp[1:], "0")
-	if digits == "" {
-		digits = "0"
-	}
-	return sign + mant + "p" + signCh + digits, nil
+	return fmt.Sprintf("%s0x%d.%013xp%+d", sign, lead, frac, exp), nil
 }
 
 // floatRatio is float.as_integer_ratio(): the exact ratio, since every finite
@@ -229,15 +317,30 @@ func intToBytes(st *State, b *big.Int, args *value.CallArgs) (value.Value, error
 	}
 	out := make([]byte, length)
 	mag := new(big.Int).Abs(b)
-	if signed && b.Sign() < 0 {
-		// Two's complement in `length` bytes.
-		mod := new(big.Int).Lsh(big.NewInt(1), uint(length)*8)
-		mag = new(big.Int).Add(b, mod)
-		if mag.Sign() < 0 {
+	if signed {
+		// The signed range is [-2**(8L-1), 2**(8L-1)-1], and nothing
+		// wider: (-200).to_bytes(1) does not fit although its two's
+		// complement in one byte does, and 200 does not fit either.
+		// This checked the *complement* instead, so both rendered.
+		// Zero bytes hold zero and nothing else -- and the shift would
+		// be by -1, which is a very large uint.
+		fits := b.Sign() == 0
+		if length == 0 && st.PythonVersion().MinusOneFitsInZeroBytes() {
+			// Zero bytes held -1 as well as 0 until 3.13.
+			fits = fits || b.Cmp(big.NewInt(-1)) == 0
+		}
+		if length > 0 {
+			limit := new(big.Int).Lsh(big.NewInt(1), uint(length)*8-1)
+			fits = b.Cmp(limit) < 0 && b.Cmp(new(big.Int).Neg(limit)) >= 0
+		}
+		if !fits {
 			return value.Undefined, errs.New(errs.OverflowError, "int too big to convert")
 		}
-	}
-	if mag.BitLen() > length*8 {
+		if b.Sign() < 0 {
+			// Two's complement in `length` bytes.
+			mag = new(big.Int).Add(b, new(big.Int).Lsh(big.NewInt(1), uint(length)*8))
+		}
+	} else if mag.BitLen() > length*8 {
 		return value.Undefined, errs.New(errs.OverflowError, "int too big to convert")
 	}
 	mag.FillBytes(out)
@@ -247,6 +350,24 @@ func intToBytes(st *State, b *big.Int, args *value.CallArgs) (value.Value, error
 		}
 	}
 	return value.Bytes(out), nil
+}
+
+// validHexExponent reports whether s is an optional sign and then decimal
+// digits, all of them ASCII. Go's parser would also take an underscore between
+// the digits, which float.fromhex does not.
+func validHexExponent(s string) bool {
+	if s != "" && (s[0] == '+' || s[0] == '-') {
+		s = s[1:]
+	}
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // floatFromHex is float.fromhex, which is not strconv.ParseFloat with a
@@ -287,7 +408,7 @@ func floatFromHex(s string) (value.Value, error) {
 	mantissa, exponent := t, "p0"
 	if i := strings.IndexAny(t, "pP"); i >= 0 {
 		mantissa, exponent = t[:i], "p"+t[i+1:]
-		if exponent == "p" {
+		if !validHexExponent(exponent[1:]) {
 			return bad()
 		}
 	}

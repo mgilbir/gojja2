@@ -1,0 +1,6 @@
+{
+  "case": "errshape/star_kwargs_undefined_attribute_chainable.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

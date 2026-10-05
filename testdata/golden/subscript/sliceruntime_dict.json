@@ -8,7 +8,7 @@
   },
   "ok": false,
   "error": {
-    "type": "TypeError",
-    "message": "'int' object is not subscriptable"
+    "type": "KeyError",
+    "message": "slice(1, 2, None)"
   }
 }

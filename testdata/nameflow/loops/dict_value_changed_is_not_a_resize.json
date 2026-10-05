@@ -1,0 +1,6 @@
+{
+  "case": "loops/dict_value_changed_is_not_a_resize.jj2",
+  "variables": {
+    "d": "ofr"
+  }
+}

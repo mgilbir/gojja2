@@ -1,0 +1,7 @@
+{
+  "case": "dataflow/macro_without_a_binding.jj2",
+  "variables": {
+    "m": "or",
+    "src": "o"
+  }
+}

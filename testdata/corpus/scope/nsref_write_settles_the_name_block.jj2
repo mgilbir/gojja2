@@ -1,0 +1,6 @@
+{
+  "xs": [],
+  "ns": null
+}
+---
+{% for i in xs %}{% set ns.v %}q{% endset %}{% set ns = namespace() %}{{ ns }}{% endfor %}

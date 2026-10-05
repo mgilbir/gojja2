@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is defined }}|{{ 0 is defined }}|{{ -1 is defined }}|{{ 1.5 is defined }}|{{ true is defined }}|{{ false is defined }}|{{ none is defined }}|{{ 'a' is defined }}|{{ '' is defined }}|{{ 'A' is defined }}|{{ [1] is defined }}|{{ [] is defined }}|{{ ((1,)) is defined }}|{{ {} is defined }}|{{ {'a':1} is defined }}|{{ range(3) is defined }}|{{ nope is defined }}|{{ ('x'|safe) is defined }}|{{ dict is defined }}|{{ d.keys() is defined }}

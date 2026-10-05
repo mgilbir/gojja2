@@ -1,0 +1,6 @@
+{
+  "case": "format/precision_too_big_unknown_type_first.jj2",
+  "variables": {
+    "x": "or"
+  }
+}

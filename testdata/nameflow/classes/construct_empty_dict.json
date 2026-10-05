@@ -1,0 +1,6 @@
+{
+  "case": "classes/construct_empty_dict.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

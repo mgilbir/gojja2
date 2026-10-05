@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{% autoescape false %}{% set v | first %}{% endset %}[{{ v }}]{% endautoescape %}

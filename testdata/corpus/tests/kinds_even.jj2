@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'k': 1} %}{{ 1 is even }}|{{ 0 is even }}|{{ -1 is even }}|{{ 1.5 is even }}|{{ true is even }}|{{ false is even }}|{{ none is even }}|{{ 'a' is even }}|{{ '' is even }}|{{ 'A' is even }}|{{ [1] is even }}|{{ [] is even }}|{{ ((1,)) is even }}|{{ {} is even }}|{{ {'a':1} is even }}|{{ range(3) is even }}|{{ nope is even }}|{{ ('x'|safe) is even }}|{{ dict is even }}|{{ d.keys() is even }}

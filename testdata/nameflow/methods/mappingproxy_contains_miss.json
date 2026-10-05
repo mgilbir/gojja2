@@ -1,0 +1,6 @@
+{
+  "case": "methods/mappingproxy_contains_miss.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "errors/template_name_include_an_undefined.jj2",
+  "variables": {
+    "nope": "fr?"
+  }
+}

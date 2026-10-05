@@ -1,0 +1,11 @@
+{
+  "case": "filters/tojson_writes_non_finite_keys.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "{\"Infinity\": 1}|{\"-Infinity\": 2}|{\"NaN\": 3}"
+}

@@ -1,0 +1,4 @@
+{
+  "case": "errors/unpack_non_iterable_int.jj2",
+  "variables": {}
+}

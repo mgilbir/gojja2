@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% set d = {'a': 1} %}{{ nope in d.values() }}

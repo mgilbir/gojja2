@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set s = d.keys() - ['b'] %}{% set e = d.keys() - ['a', 'b'] %}{{ e.clear() }}|{{ e|list }}|{% set t = d.keys() - ['a'] %}{{ t.clear() }}{{ t|list }}

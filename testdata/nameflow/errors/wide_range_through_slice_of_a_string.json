@@ -1,0 +1,4 @@
+{
+  "case": "errors/wide_range_through_slice_of_a_string.jj2",
+  "variables": {}
+}

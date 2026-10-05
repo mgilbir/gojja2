@@ -1,0 +1,3 @@
+{}
+---
+{{ {'y': '&amp;'|safe, 'z': '&amp;'}|xmlattr }}

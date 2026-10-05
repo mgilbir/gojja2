@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1} %}{{ (1).to_bytes.__class__ }}|{{ (1).to_bytes.__qualname__ }}

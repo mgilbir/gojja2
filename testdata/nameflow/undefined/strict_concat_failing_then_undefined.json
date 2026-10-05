@@ -1,0 +1,6 @@
+{
+  "case": "undefined/strict_concat_failing_then_undefined.jj2",
+  "variables": {
+    "nope": "o"
+  }
+}

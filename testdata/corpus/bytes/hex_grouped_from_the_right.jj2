@@ -1,0 +1,3 @@
+{}
+---
+{% set b = 'ab'.encode() %}{{ 'abcdef'.encode().hex('_', 2) }}

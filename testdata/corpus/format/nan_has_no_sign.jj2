@@ -1,0 +1,5 @@
+{
+  "big": 1e+308
+}
+---
+{% set inf = big * 10 %}{% set nan = inf - inf %}{{ '{:f}'.format(nan) }}|{{ '{:+f}'.format(nan) }}|{{ '{: e}'.format(nan) }}|{{ '{:z}'.format(nan) }}|{{ '{:020g}'.format(nan) }}|{{ '{:%}'.format(nan) }}|{{ '%f' % nan }}|{{ nan }}|{{ nan|string }}

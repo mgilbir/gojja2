@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,10 +38,94 @@ import (
 // reported a divergence because an earlier one had added a key to `d`. The
 // oracle does json.loads per request, so this is also what makes the two sides
 // start from the same place.
+// The two pinned hash seeds the differential runs its oracles under. Any fixed
+// pair makes a set's iteration order a property of the run rather than a coin
+// flip; these two are chosen because they order a three-key set *differently*,
+// which is what lets `{{ (d.keys() - [])|urlencode }}` be discarded on every run
+// instead of one in sixty. Two seeds can still agree about some other set, and
+// then that case diverges deterministically rather than flakily -- which is the
+// point: a fixed failure can be read and handled, a flake cannot.
+const (
+	fuzzHashSeed   = "5"
+	secondHashSeed = "1"
+)
+
 type harness struct {
 	oracle    *conformance.Oracle
 	rawCtx    json.RawMessage
 	templates map[string]string
+	// py is the interpreter both sides reproduce. GOJJA2_FUZZ_PYTHON moves
+	// it, and moves *both* sides together: the oracle runs under that
+	// CPython and gojja2 is configured to reproduce it. Setting one without
+	// the other would compare two specifications and call the difference a
+	// bug.
+	py value.PythonVersion
+	// version is what GOJJA2_FUZZ_PYTHON asked for, kept so that a second
+	// oracle can be started for the reproducibility check below.
+	version string
+	// second is a *separate* oracle process, started lazily and used only to
+	// ask CPython whether it agrees with itself. It has to be another
+	// process rather than another request: string hashing is randomised per
+	// interpreter, so a set's iteration order is fixed within one oracle and
+	// differs between two.
+	second *conformance.Oracle
+}
+
+// reproducible reports whether CPython gives the same answer twice, in two
+// processes.
+//
+// Comparable screens the answers nothing can reproduce by *reading* them -- an
+// address, a generator repr, a multi-element set. That misses the case where
+// the order of a set decided the answer without appearing in it:
+// `{{ (d.keys() - [])|urlencode }}` unpacks the first key it reaches, so on the
+// awkward context it is "not enough values to unpack (expected 2, got 0)" or
+// "got 1" depending on which key that is, and three runs of the same
+// interpreter disagree. gojja2 sorts, so its answer is stable and neither can be
+// graded against the other.
+//
+// Only asked once a divergence has already been found, so the second process is
+// started at the first one and never at all in a clean run.
+func (h *harness) reproducible(t testing.TB, c conformance.GeneratedCase, first *conformance.OracleResult) bool {
+	t.Helper()
+	// Every failure here is fatal rather than "grade it anyway". The first
+	// oracle already started, so a second one failing is a broken
+	// environment -- and a guard that quietly turns itself off is worse than
+	// no guard, because the divergence it should have discarded is then
+	// reported with nothing saying why.
+	if h.second == nil {
+		o, err := conformance.StartOracleWithHashSeed(h.version, secondHashSeed)
+		if err != nil {
+			t.Fatalf("second oracle: %v", err)
+		}
+		h.second = o
+		// Closed with the case that needed it, and the field cleared so
+		// the next one starts a fresh process. Registering this on the
+		// harness's own T instead is not allowed inside a fuzz target
+		// ("f.Cleanup was called inside the fuzz target"), and leaving it
+		// on the per-case t *without* the reset left a closed handle
+		// behind: every later call then failed with "file already
+		// closed", which the first version of this turned into "grade
+		// it" and reported a case it should have discarded.
+		t.Cleanup(func() {
+			_ = o.Close()
+			h.second = nil
+		})
+	}
+	raw, _, err := h.contextFor(c)
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
+	again, err := h.second.Render(conformance.OracleRequest{
+		Name:      fuzzTemplateName,
+		Source:    c.Source,
+		Context:   raw,
+		Settings:  caseSettings(c),
+		Templates: h.templatesFor(c),
+	})
+	if err != nil {
+		t.Fatalf("second oracle: %v", err)
+	}
+	return first.Expected().Equal(again.Expected())
 }
 
 // context decodes a fresh copy of the shared context. See the type comment.
@@ -48,10 +133,30 @@ func (h *harness) context() (map[string]value.Value, error) {
 	return conformance.DecodeContext(h.rawCtx)
 }
 
+// contextFor is the case's own values when it drew a set, the shared ones
+// otherwise. Fresh each time: a template that mutates a list must not change
+// what the next one sees.
+func (h *harness) contextFor(c conformance.GeneratedCase) (json.RawMessage, map[string]value.Value, error) {
+	raw := c.Context
+	if raw == nil {
+		raw = h.rawCtx
+	}
+	vars, err := conformance.DecodeContext(raw)
+	return raw, vars, err
+}
+
 // newHarness starts the oracle, or skips when there is none to ask.
 func newHarness(t testing.TB) *harness {
 	t.Helper()
-	oracle, err := conformance.StartOracle()
+	version := os.Getenv("GOJJA2_FUZZ_PYTHON")
+	py, err := conformance.PythonVersionFor(version)
+	if err != nil {
+		t.Fatalf("GOJJA2_FUZZ_PYTHON: %v", err)
+	}
+	// A pinned hash seed, so that a set's iteration order is a fixed property
+	// of this run rather than a coin flip; harness.reproducible compares it
+	// against a second oracle pinned to a different one.
+	oracle, err := conformance.StartOracleWithHashSeed(version, fuzzHashSeed)
 	if err != nil {
 		t.Skipf("%v", err)
 	}
@@ -68,19 +173,180 @@ func newHarness(t testing.TB) *harness {
 		oracle:    oracle,
 		rawCtx:    raw,
 		templates: conformance.FuzzTemplates(),
+		py:        py,
+		version:   version,
 	}
 }
 
-const fuzzTemplateName = "fuzz.txt"
+// caseOptions is the environment a generated case renders under, on gojja2's
+// side. The oracle is handed the same settings; they have to be applied to both
+// or the comparison is between two environments rather than two engines.
+func caseOptions(c conformance.GeneratedCase) []gojja2.Option {
+	escaping := gojja2.WithAutoescape(c.Autoescape)
+	if c.AutoescapeSelect {
+		// jinja2's select_autoescape(enabled_extensions=("html",)),
+		// spelled out rather than defaulted: gojja2's default set adds
+		// xhtml, which is a documented divergence and not what the
+		// oracle is being asked for.
+		escaping = gojja2.WithAutoescapeSelection(gojja2.SelectAutoescapeConfig{
+			Enabled: []string{"html"},
+		})
+	}
+	opts := []gojja2.Option{
+		escaping,
+		gojja2.WithTrimBlocks(c.Trim),
+		gojja2.WithLstripBlocks(c.Lstrip),
+		gojja2.WithKeepTrailingNewline(c.KeepTrailingNewline),
+	}
+	if len(c.Extensions) > 0 {
+		opts = append(opts, gojja2.WithExtensions(c.Extensions...))
+	}
+	if c.NewlineSequence != "" {
+		opts = append(opts, gojja2.WithNewlineSequence(c.NewlineSequence))
+	}
+	if c.LineStatementPrefix != "" {
+		opts = append(opts, gojja2.WithLineStatementPrefix(c.LineStatementPrefix))
+	}
+	if c.LineCommentPrefix != "" {
+		opts = append(opts, gojja2.WithLineCommentPrefix(c.LineCommentPrefix))
+	}
+	if len(c.Policies) > 0 {
+		opts = append(opts, gojja2.WithPolicies(casePolicies(c)))
+	}
+	if d := c.Delimiters; d != nil {
+		opts = append(opts,
+			gojja2.WithBlockDelimiters(d.BlockStart, d.BlockEnd),
+			gojja2.WithVariableDelimiters(d.VarStart, d.VarEnd),
+			gojja2.WithCommentDelimiters(d.CommentStart, d.CommentEnd))
+	}
+	switch c.Undefined {
+	case "strict":
+		opts = append(opts, gojja2.WithUndefined(value.UndefinedStrict))
+	case "chainable":
+		opts = append(opts, gojja2.WithUndefined(value.UndefinedChainable))
+	case "debug":
+		opts = append(opts, gojja2.WithUndefined(value.UndefinedDebug))
+	}
+	return opts
+}
+
+// caseSettings is caseOptions for the other side: the same environment, in the
+// oracle's vocabulary.
+//
+// One function rather than one per harness. There were two, built by hand a
+// hundred lines apart, and they had already drifted -- the syntax soak passed
+// autoescape and not the Undefined class, so a whole axis reached one engine
+// and not the other. A setting added to caseOptions and forgotten here is a
+// comparison between two environments rather than between two engines, and it
+// looks exactly like a divergence.
+// casePolicies turns the drawn policy map into gojja2's struct, starting from
+// the defaults so an undrawn field is still jinja2's own. The map is what the
+// oracle is handed verbatim, so the two sides cannot drift by spelling.
+func casePolicies(c conformance.GeneratedCase) gojja2.Policies {
+	p := gojja2.DefaultPolicies()
+	if v, ok := c.Policies["urlize.rel"].(string); ok {
+		p.URLizeRel = v
+	}
+	if v, ok := c.Policies["urlize.target"].(string); ok {
+		p.URLizeTarget = v
+	}
+	if v, ok := c.Policies["truncate.leeway"].(int); ok {
+		p.TruncateLeeway = v
+	}
+	return p
+}
+
+func caseSettings(c conformance.GeneratedCase) map[string]any {
+	settings := map[string]any{}
+	if c.AutoescapeSelect {
+		settings["autoescape"] = "select"
+	} else if c.Autoescape {
+		settings["autoescape"] = true
+	}
+	if c.Undefined != "" {
+		settings["undefined"] = c.Undefined
+	}
+	if c.Trim {
+		settings["trim_blocks"] = true
+	}
+	if c.Lstrip {
+		settings["lstrip_blocks"] = true
+	}
+	if c.KeepTrailingNewline {
+		settings["keep_trailing_newline"] = true
+	}
+	if len(c.Extensions) > 0 {
+		settings["extensions"] = c.Extensions
+	}
+	if c.NewlineSequence != "" {
+		settings["newline_sequence"] = c.NewlineSequence
+	}
+	if c.LineStatementPrefix != "" {
+		settings["line_statement_prefix"] = c.LineStatementPrefix
+	}
+	if c.LineCommentPrefix != "" {
+		settings["line_comment_prefix"] = c.LineCommentPrefix
+	}
+	if len(c.Policies) > 0 {
+		settings["policies"] = c.Policies
+	}
+	if d := c.Delimiters; d != nil {
+		settings["block_start_string"] = d.BlockStart
+		settings["block_end_string"] = d.BlockEnd
+		settings["variable_start_string"] = d.VarStart
+		settings["variable_end_string"] = d.VarEnd
+		settings["comment_start_string"] = d.CommentStart
+		settings["comment_end_string"] = d.CommentEnd
+	}
+	if len(settings) == 0 {
+		return nil
+	}
+	return settings
+}
+
+// The case's own name ends in .html and the auxiliary templates in .txt, so
+// GeneratedCase.AutoescapeSelect puts the two on opposite sides of the rule.
+const fuzzTemplateName = "fuzz.html"
+
+// templatesFor are the auxiliary templates a case can reach, in *its* own
+// delimiters: the environment's delimiters apply to every template it loads, so
+// a case drawn with a custom set needs its base and macro templates rewritten
+// too or an `{% extends %}` would not parse. Shared, and unmodified, for the
+// default set.
+func (h *harness) templatesFor(c conformance.GeneratedCase) map[string]string {
+	// The case's own set when it drew one -- what `{% import 'mac.txt' %}`
+	// finds is part of the case, not a constant of the harness.
+	aux := c.Templates
+	if aux == nil {
+		aux = h.templates
+	}
+	if c.Delimiters == nil {
+		return aux
+	}
+	out := make(map[string]string, len(aux))
+	for name, text := range aux {
+		out[name] = c.Delimiters.Rewrite(text)
+	}
+	return out
+}
+
+// sourcesFor is templatesFor plus the case's own template, which is what a
+// loader is handed. One function rather than four copies: there were four, and
+// a fifth setting would have had to find all of them.
+func (h *harness) sourcesFor(c conformance.GeneratedCase) map[string]string {
+	aux := h.templatesFor(c)
+	out := make(map[string]string, len(aux)+1)
+	for name, text := range aux {
+		out[name] = text
+	}
+	out[fuzzTemplateName] = c.Source
+	return out
+}
 
 // renderGojja2 renders with gojja2, turning a panic into a reportable result
 // rather than taking the test process down mid-run.
 func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicked string, err error) {
-	sources := make(map[string]string, len(h.templates)+1)
-	for name, text := range h.templates {
-		sources[name] = text
-	}
-	sources[fuzzTemplateName] = c.Source
+	sources := h.sourcesFor(c)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -88,10 +354,9 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 		}
 	}()
 
-	env := mustEnv(
+	env := mustEnv(append(caseOptions(c),
 		gojja2.WithLoader(gojja2.DictLoader(sources)),
-		gojja2.WithAutoescape(c.Autoescape),
-	)
+		gojja2.WithPythonVersion(h.py))...)
 	tmpl, err := env.GetTemplate(fuzzTemplateName)
 	if err != nil {
 		return "", "", err
@@ -103,7 +368,7 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var buf strings.Builder
-	vars, err := h.context()
+	_, vars, err := h.contextFor(c)
 	if err != nil {
 		return "", "", err
 	}
@@ -114,35 +379,43 @@ func (h *harness) renderGojja2(c conformance.GeneratedCase) (out string, panicke
 // check compares one template, returning nil when the two agree or when the
 // case cannot be graded.
 func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.Divergence {
-	var settings map[string]any
-	if c.Autoescape {
-		settings = map[string]any{"autoescape": true}
+	d, _ := h.checkWithOracle(t, c)
+	return d
+}
+
+// checkWithOracle is check, also handing back what the oracle said, so that a
+// caller about to report can ask a second process whether CPython agrees with
+// itself. The shrinker uses check and never pays for that.
+func (h *harness) checkWithOracle(t testing.TB, c conformance.GeneratedCase) (*conformance.Divergence, *conformance.OracleResult) {
+	raw, _, err := h.contextFor(c)
+	if err != nil {
+		t.Fatalf("context: %v", err)
 	}
 	want, err := h.oracle.Render(conformance.OracleRequest{
 		Name:      fuzzTemplateName,
 		Source:    c.Source,
-		Context:   h.rawCtx,
-		Settings:  settings,
-		Templates: h.templates,
+		Context:   raw,
+		Settings:  caseSettings(c),
+		Templates: h.templatesFor(c),
 	})
 	if err != nil {
 		t.Fatalf("oracle: %v", err)
 	}
 	if !conformance.Comparable(want) {
-		return nil
+		return nil, want
 	}
 
 	out, panicked, renderErr := h.renderGojja2(c)
 	if panicked != "" {
-		return &conformance.Divergence{Kind: conformance.KindPanic, Detail: panicked}
+		return &conformance.Divergence{Kind: conformance.KindPanic, Detail: panicked}, want
 	}
 	if conformance.ResourceError(renderErr) {
 		// The generator is free to ask for a billion iterations. The
 		// oracle's side of that is already discarded by Comparable;
 		// this is the same discard for ours.
-		return nil
+		return nil, want
 	}
-	return conformance.Compare(want.Expected(), out, renderErr)
+	return conformance.Compare(want.Expected(), out, renderErr), want
 }
 
 // minimize shrinks a diverging template and re-reads the divergence from the
@@ -155,8 +428,17 @@ func (h *harness) check(t testing.TB, c conformance.GeneratedCase) *conformance.
 func (h *harness) minimize(t testing.TB, c conformance.GeneratedCase, budget int) (conformance.GeneratedCase, *conformance.Divergence) {
 	// Only the source shrinks: the environment is part of what diverged,
 	// so changing it would reduce a different case.
+	//
+	// Copied rather than rebuilt field by field. It was rebuilt, from a
+	// list written when autoescape was the only setting, so every reduction
+	// silently dropped the Undefined class and the three whitespace
+	// settings: a case that diverged *because* of one was shrunk without it,
+	// the reduction lost the divergence, and the fallback reported the
+	// unreduced template. The shrinker looked weak rather than wrong.
 	with := func(source string) conformance.GeneratedCase {
-		return conformance.GeneratedCase{Source: source, Autoescape: c.Autoescape}
+		reduced := c
+		reduced.Source = source
+		return reduced
 	}
 	minimal := with(conformance.Shrink(c.Source, budget, func(candidate string) *conformance.Divergence {
 		return h.check(t, with(candidate))
@@ -177,9 +459,34 @@ func report(t testing.TB, c conformance.GeneratedCase, d *conformance.Divergence
 	if d == nil {
 		return
 	}
+	// Every setting the case renders under has to be in the report, or the
+	// template alone does not reproduce it -- so it comes from caseSettings,
+	// the same function the render was configured from. It was built by hand
+	// here and named two of the eight: a divergence found under trim_blocks,
+	// a custom delimiter or an extension was reported as if it had been found
+	// under the defaults, where it does not reproduce at all.
 	env := ""
-	if c.Autoescape {
-		env = ", autoescape"
+	if s := caseSettings(c); len(s) > 0 {
+		keys := make([]string, 0, len(s))
+		for k := range s {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%v", k, s[k]))
+		}
+		env = ", settings: " + strings.Join(parts, " ")
+	}
+	// The auxiliary templates are part of the case, so a divergence that
+	// needs a particular set is not reproducible without its name.
+	if c.TemplateSet != "" && c.TemplateSet != "flat" {
+		env += ", templates: " + c.TemplateSet
+	}
+	// The values are part of the case too: a divergence on the empty set is
+	// not reproducible against the default one.
+	if c.ContextSet != "" && c.ContextSet != "default" {
+		env += ", context: " + c.ContextSet
 	}
 	t.Errorf("[%s] %s\n%s\n  (context: conformance.FuzzContextJSON%s)",
 		d.Kind, strconv.Quote(c.Source), indent(d.Detail), env)
@@ -207,8 +514,13 @@ func FuzzTemplate(f *testing.F) {
 			input = input[:512]
 		}
 		c := conformance.GenerateCase(input)
-		d := h.check(t, c)
+		d, want := h.checkWithOracle(t, c)
 		if d == nil {
+			return
+		}
+		// CPython has to agree with itself before its answer is used to
+		// fail anything; see reproducible.
+		if !h.reproducible(t, c, want) {
 			return
 		}
 		min, minD := h.minimize(t, c, 300)
@@ -229,8 +541,19 @@ func TestDifferential(t *testing.T) {
 	seed := uint64(envInt(t, "GOJJA2_FUZZ_SEED", 20260916))
 	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
 
-	var checked, skipped, escaping int
+	var checked, skipped, escaping, selecting int
+	setRuns := map[string]int{}
+	ctxRuns := map[string]int{}
+	polRuns := map[string]int{}
 	var failures int
+	// unstable counts the cases whose CPython answer was not reproducible in
+	// a second process; see harness.reproducible. Reported rather than
+	// swallowed: a run that started discarding everything would otherwise
+	// look clean.
+	var unstable int
+	undefinedRuns := map[string]int{}
+	lexRuns := map[string]int{}
+	tagRuns := map[string]int{}
 	for range count {
 		input := make([]byte, 1+rng.IntN(96))
 		for i := range input {
@@ -245,9 +568,24 @@ func TestDifferential(t *testing.T) {
 		if c.Autoescape {
 			escaping++
 		}
+		if c.AutoescapeSelect {
+			selecting++
+		}
+		setRuns[c.TemplateSet]++
+		ctxRuns[c.ContextSet]++
+		polRuns[c.PolicySet]++
+		if c.Undefined != "" {
+			undefinedRuns[c.Undefined]++
+		}
+		countLexSettings(c, lexRuns)
+		countTags(c, tagRuns)
 
-		d := h.check(t, c)
+		d, want := h.checkWithOracle(t, c)
 		if d == nil {
+			continue
+		}
+		if !h.reproducible(t, c, want) {
+			unstable++
 			continue
 		}
 		failures++
@@ -258,8 +596,132 @@ func TestDifferential(t *testing.T) {
 		min, minD := h.minimize(t, c, 200)
 		report(t, min, minD)
 	}
+	// The per-setting counts are reported because a run that silently stopped
+	// varying them would otherwise look exactly like a clean one: the axis
+	// was added after sixty thousand templates a run had all used the
+	// default Undefined without anything saying so.
+	if unstable > 0 {
+		t.Logf("differential: %d case(s) discarded -- CPython did not "+
+			"reproduce its own answer in a second process", unstable)
+	}
 	t.Logf("differential: %d templates checked against CPython jinja2 (seed %d), "+
-		"%d autoescaping, %d empty", checked, seed, escaping, skipped)
+		"%d autoescaping, %d by name, %d empty; undefined %d strict, %d chainable, %d debug; "+
+		"lexer %d trim, %d lstrip, %d keep-newline, %d crlf, %d cr, "+
+		"%d custom delimiters, %d line statements, %d line comments; "+
+		"extensions %d do, %d loopcontrols, writing %d print, %d do, %d break, %d continue; "+
+		"templates %s; context %s; policies %s",
+		checked, seed, escaping, selecting, skipped,
+		undefinedRuns["strict"], undefinedRuns["chainable"], undefinedRuns["debug"],
+		lexRuns["trim"], lexRuns["lstrip"], lexRuns["keep"],
+		lexRuns["crlf"], lexRuns["cr"], lexRuns["delims"], lexRuns["lineprefix"], lexRuns["linecomment"],
+		tagRuns["ext-do"], tagRuns["ext-loopcontrols"],
+		tagRuns["print"], tagRuns["do"], tagRuns["break"], tagRuns["continue"],
+		templateSetCounts(setRuns), contextSetCounts(ctxRuns),
+		namedCounts(conformance.FuzzPolicySets(), polRuns))
+	// An extension that is enabled and never written is an axis that costs a
+	// run and asks nothing, which is what `break` was for as long as the
+	// generator could not emit it. Asserted rather than printed, because a
+	// zero in a log line is exactly what nobody reads.
+	for _, tag := range []string{"print", "do", "break", "continue"} {
+		if checked > 1000 && tagRuns[tag] == 0 {
+			t.Errorf("%d templates and not one wrote {%% %s %%}; the arm is unreachable",
+				checked, tag)
+		}
+	}
+	// The same question of the auxiliary templates: a set nothing drew is a
+	// family of rules nothing asked about.
+	for _, name := range conformance.FuzzTemplateSets() {
+		if checked > 1000 && setRuns[name] == 0 {
+			t.Errorf("%d templates and not one drew the %q template set", checked, name)
+		}
+	}
+	for _, name := range conformance.FuzzContextSets() {
+		if checked > 1000 && ctxRuns[name] == 0 {
+			t.Errorf("%d templates and not one drew the %q context", checked, name)
+		}
+	}
+	for _, name := range conformance.FuzzPolicySets() {
+		if checked > 1000 && polRuns[name] == 0 {
+			t.Errorf("%d templates and not one drew the %q policies", checked, name)
+		}
+	}
+	if checked > 1000 && selecting == 0 {
+		t.Errorf("%d templates and not one drew select_autoescape", checked)
+	}
+}
+
+// namedCounts renders a per-draw tally for the summary line, in the order the
+// names were declared so that a zero keeps its place.
+func namedCounts(names []string, runs map[string]int) string {
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, fmt.Sprintf("%d %s", runs[name], name))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// contextSetCounts renders the per-context tally for the summary line.
+func contextSetCounts(runs map[string]int) string {
+	parts := make([]string, 0, len(runs))
+	for _, name := range conformance.FuzzContextSets() {
+		parts = append(parts, fmt.Sprintf("%d %s", runs[name], name))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// templateSetCounts renders the per-set tally for the summary line.
+func templateSetCounts(runs map[string]int) string {
+	parts := make([]string, 0, len(runs))
+	for _, name := range conformance.FuzzTemplateSets() {
+		parts = append(parts, fmt.Sprintf("%d %s", runs[name], name))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// countLexSettings tallies the lexer axis for the summary line, which is the
+// only thing that would say an axis had stopped varying.
+func countLexSettings(c conformance.GeneratedCase, into map[string]int) {
+	if c.Trim {
+		into["trim"]++
+	}
+	if c.Lstrip {
+		into["lstrip"]++
+	}
+	if c.KeepTrailingNewline {
+		into["keep"]++
+	}
+	switch c.NewlineSequence {
+	case "\r\n":
+		into["crlf"]++
+	case "\r":
+		into["cr"]++
+	}
+	if c.Delimiters != nil {
+		into["delims"]++
+	}
+	if c.LineStatementPrefix != "" {
+		into["lineprefix"]++
+	}
+	if c.LineCommentPrefix != "" {
+		into["linecomment"]++
+	}
+}
+
+// countTags tallies the extensions axis and the tags it gates. The drawn
+// setting and the tag actually written are counted apart on purpose: enabling
+// `loopcontrols` costs a run nothing if no template ever writes a break, and
+// that is the state the soak was in until the generator learned the arm.
+func countTags(c conformance.GeneratedCase, into map[string]int) {
+	for _, name := range c.Extensions {
+		into["ext-"+name]++
+	}
+	for _, tag := range []string{"print", "do", "break", "continue"} {
+		if strings.Contains(c.Source, "% "+tag) ||
+			strings.Contains(c.Source, "%- "+tag) ||
+			strings.Contains(c.Source, "%+ "+tag) {
+			into[tag]++
+		}
+	}
 }
 
 func envInt(t testing.TB, name string, def int) int {

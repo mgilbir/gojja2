@@ -1,0 +1,3 @@
+{}
+---
+{{ 'ab'.encode().find(97) }}|{{ 'ab'.encode().count(98) }}

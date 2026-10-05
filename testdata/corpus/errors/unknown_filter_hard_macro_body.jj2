@@ -1,0 +1,11 @@
+{
+  "seq": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
+---
+{% if false %}{% macro m() %}{{ 1|nosuch }}{% endmacro %}{% endif %}

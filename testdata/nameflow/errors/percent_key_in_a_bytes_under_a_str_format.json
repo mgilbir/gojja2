@@ -1,0 +1,4 @@
+{
+  "case": "errors/percent_key_in_a_bytes_under_a_str_format.jj2",
+  "variables": {}
+}

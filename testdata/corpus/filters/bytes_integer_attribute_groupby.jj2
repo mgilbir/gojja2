@@ -1,0 +1,3 @@
+{}
+---
+{% set l = ['a'.encode(), 'b,c'.encode()] %}{{ l|groupby(1, 2)|list }}

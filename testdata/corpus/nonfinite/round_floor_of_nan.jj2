@@ -1,0 +1,6 @@
+{
+  "s_inf": "inf",
+  "s_nan": "nan"
+}
+---
+{{ (s_nan|float)|round(0,'floor') }}

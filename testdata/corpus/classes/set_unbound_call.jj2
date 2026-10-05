@@ -1,0 +1,3 @@
+{}
+---
+{% set d = {'a': 1, 'b': 2} %}{% set s = d.keys() - ['b'] %}{{ s.__class__.union(s, ['z'])|sort }}|{% set _ = s.__class__.add(s, 'q') %}{{ s|sort }}

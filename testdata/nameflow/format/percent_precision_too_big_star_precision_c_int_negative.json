@@ -1,0 +1,6 @@
+{
+  "case": "format/percent_precision_too_big_star_precision_c_int_negative.jj2",
+  "variables": {
+    "x": "or"
+  }
+}

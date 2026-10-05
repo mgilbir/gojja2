@@ -1,0 +1,14 @@
+{
+  "case": "undefined/construct_debug_empty_hint_falls_to_the_name.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "UndefinedError",
+    "message": "'zz' is undefined"
+  }
+}

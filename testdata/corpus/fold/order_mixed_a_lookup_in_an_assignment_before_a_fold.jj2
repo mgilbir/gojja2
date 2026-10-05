@@ -1,0 +1,10 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  },
+  "__templates__": {
+    "base.txt": "B"
+  }
+}
+---
+{% set q = 1|nosuchA %}{{ (0 ** 0)[7] and 0 }}

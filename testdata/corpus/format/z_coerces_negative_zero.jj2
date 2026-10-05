@@ -1,0 +1,5 @@
+{
+  "nz": -0.0
+}
+---
+{{ '{:z}'.format(nz) }}|{{ '{:z}'.format(0.0) }}|{{ '{:z.2f}'.format(nz) }}|{{ '{:zf}'.format(nz) }}

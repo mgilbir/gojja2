@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "newline_sequence": "\r",
+    "lstrip_blocks": true
+  },
+  "v": ""
+}
+---
+  {% if 1 %}a{% endif %}

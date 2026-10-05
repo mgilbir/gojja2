@@ -1,0 +1,5 @@
+{
+  "seq": []
+}
+---
+{{ (1|nosuch) if seq else 2 }}

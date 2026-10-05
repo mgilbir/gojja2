@@ -1,0 +1,6 @@
+{
+  "case": "methods/dictview_hash_keys_in_list.jj2",
+  "variables": {
+    "d": "or"
+  }
+}

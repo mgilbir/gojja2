@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "strict"
+  }
+}
+---
+{% set q | nosuchA %}{{ 1|nosuchC }}{% endset %}

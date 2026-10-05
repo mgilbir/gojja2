@@ -1,0 +1,6 @@
+{
+  "case": "undefined/construct_chainable_zero_hint_falls_to_the_attribute.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

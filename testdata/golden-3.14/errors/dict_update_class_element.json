@@ -1,0 +1,14 @@
+{
+  "case": "errors/dict_update_class_element.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.14"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "object is not iterable"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "case": "unicode/repr_follows_the_version_arabic_088f.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "['\\u088f']|{1: '\\u088f'}|['\\u088f']|࢏"
+}

@@ -1,0 +1,6 @@
+{
+  "case": "control/branch_binding_every_arm_read_first.jj2",
+  "variables": {
+    "x": "o"
+  }
+}

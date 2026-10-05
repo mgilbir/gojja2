@@ -1,0 +1,6 @@
+{
+  "case": "value/nan_in_sequence_ordering.jj2",
+  "variables": {
+    "x": "or"
+  }
+}

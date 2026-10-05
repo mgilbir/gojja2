@@ -1,0 +1,7 @@
+{
+  "case": "dataflow/required_guarding_a_namespace_block.jj2",
+  "variables": {
+    "nothing": "r?",
+    "src": "fr"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "divergence/class_generic_alias_item.jj2",
+  "variables": {
+    "lst": "or"
+  }
+}
