@@ -64,8 +64,8 @@ def go_answers() -> dict[int, tuple[bool, bool, bool]]:
 
     gojja2 reads those three straight off Go, which is right only while Go and
     the pinned CPython agree about which characters exist -- and they need not.
-    Go 1.26 is Unicode 15.0; a CPython on a later one knows letters Go does not,
-    and one on an earlier release knows fewer.
+    Go 1.26 was Unicode 15.0 and Go 1.27 is 17.0; a CPython on a later one
+    knows letters Go does not, and one on an earlier release knows fewer.
     """
     out = subprocess.run(["go", "run", "./tools/gocase"], cwd=ROOT,
                          capture_output=True, text=True, check=True).stdout

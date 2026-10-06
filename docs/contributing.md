@@ -117,8 +117,9 @@ chosen by accident and two contributors could regenerate different goldens.
 The Unicode tables are the ones with a history worth knowing. Several of them
 recorded *only where CPython differs from Go's own tables*, which is sound only
 while the two agree about everything else — and nobody checked that. They do not
-agree, and how far apart they are depends on the pin: Go 1.26 is Unicode
-15.0.0, CPython 3.13 is 15.1.0 and 3.14 is 16.0.0. On the 3.14 pin that
+agree, and how far apart they are depends on the pin: Go 1.26 was Unicode
+15.0.0 when this was measured (Go 1.27, the pin now, is 17.0.0), CPython 3.13
+is 15.1.0 and 3.14 is 16.0.0. On the 3.14 pin that
 assumption silently produced the wrong answer for 54 case mappings, 4,924
 `isalpha` code points and 5,812 `isprintable` ones before the checks below
 existed; on 3.13 the same gap is 622 and 627, which is smaller and just as
