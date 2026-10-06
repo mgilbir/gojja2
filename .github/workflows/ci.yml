@@ -167,4 +167,4 @@ jobs:
       # rather than "latest" so that what CI runs is what was run locally.
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.14.0
