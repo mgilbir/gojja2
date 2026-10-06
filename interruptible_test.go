@@ -195,6 +195,12 @@ const overrunShare = 0.6
 // -- against a 60% bar, so the defect was caught two times in three. It stops at
 // 13% with the charge, on every run.
 //
+// |indent is the same shape again: splitLines found every line before the
+// loop that polls, and stopped the render at 50-56% under -race locally and at
+// 60% on a CI runner, which failed the loose bar on a slow machine and passed it
+// on a fast one -- the bar deciding by hardware rather than by the defect. With
+// splitLines polling it stops at 13%, on every run.
+//
 // Keyed by the workload's own name, passed in rather than read back out of
 // the subtest, which has its spaces rewritten as underscores.
 var tightBar = map[string]float64{
@@ -204,6 +210,7 @@ var tightBar = map[string]float64{
 	"bytes.split":      0.30,
 	"bytes.rsplit":     0.30,
 	"tojson":           0.30,
+	"indent":           0.30,
 }
 
 // deadlineRuns is how many times the deadline is measured, the best standing

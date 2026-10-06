@@ -905,7 +905,10 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err != nil {
 		return value.Undefined, err
 	}
-	lines := splitLines(subject+"\n", false)
+	lines, err := splitLines(s, subject+"\n", false)
+	if err != nil {
+		return value.Undefined, err
+	}
 	head, rest := lines[0], lines[1:]
 	out := head
 	if len(rest) > 0 {
@@ -934,9 +937,17 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 // return or the pair, keeps no empty last element for a trailing break, and
 // gives an empty string no lines at all -- which is why `{{ ""|wordwrap("z") }}`
 // renders nothing rather than complaining about the width.
-func splitLines(s string, keepEnds bool) []string {
+//
+// It polls the deadline once a line. Finding the lines is a walk over the whole
+// text, and |indent, |wordwrap and str.splitlines all do it before the loop that
+// yields -- so with it unpolled, a deadline at an eighth of an |indent render
+// stopped it past halfway, and a slow runner pushed that over the bar.
+func splitLines(st *State, s string, keepEnds bool) ([]string, error) {
 	var out []string
 	for len(s) > 0 {
+		if err := st.Poll(); err != nil {
+			return nil, err
+		}
 		i := strings.IndexAny(s, "\n\r")
 		if i < 0 {
 			out = append(out, s)
@@ -953,7 +964,7 @@ func splitLines(s string, keepEnds bool) []string {
 		}
 		s = s[end:]
 	}
-	return out
+	return out, nil
 }
 
 func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
@@ -1149,7 +1160,11 @@ func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value,
 		if v.Kind() != value.KindBytes {
 			return value.Undefined, noAttribute(v, "splitlines")
 		}
-		if len(splitLines(v.AsString(), false)) == 0 {
+		lines, err := splitLines(s, v.AsString(), false)
+		if err != nil {
+			return value.Undefined, err
+		}
+		if len(lines) == 0 {
 			return value.String(""), nil
 		}
 		return value.Undefined, errs.New(errs.TypeError,
@@ -1161,7 +1176,11 @@ func filterWordwrap(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	if err != nil {
 		return value.Undefined, err
 	}
-	for _, paragraph := range splitLines(subject, false) {
+	paragraphs, err := splitLines(s, subject, false)
+	if err != nil {
+		return value.Undefined, err
+	}
+	for _, paragraph := range paragraphs {
 		if err := s.Poll(); err != nil {
 			return value.Undefined, err
 		}

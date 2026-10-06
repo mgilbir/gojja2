@@ -1003,7 +1003,10 @@ func methodSplitlines(st *State, r value.Value, args *value.CallArgs) (value.Val
 	if err != nil {
 		return value.Undefined, err
 	}
-	lines := splitLines(r.AsString(), keepEnds)
+	lines, err := splitLines(st, r.AsString(), keepEnds)
+	if err != nil {
+		return value.Undefined, err
+	}
 	items := make([]value.Value, len(lines))
 	for i, line := range lines {
 		items[i] = value.String(line)
