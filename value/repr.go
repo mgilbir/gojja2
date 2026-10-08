@@ -26,6 +26,13 @@ func StrFor(v Value, py PythonVersion) string {
 	switch v.kind {
 	case KindString:
 		return v.str
+	case KindInt:
+		// What Repr writes for an int that fits, without the Builder
+		// it writes into: `{{ i }}` in a loop printed through two
+		// allocations per number.
+		if v.obj == nil {
+			return strconv.FormatInt(int64(v.num), 10)
+		}
 	case KindUndefined:
 		if v.undef().behavior == UndefinedDebug {
 			return v.DebugText()
@@ -43,6 +50,10 @@ func Str(v Value) string {
 	switch v.kind {
 	case KindString:
 		return v.str
+	case KindInt:
+		if v.obj == nil {
+			return strconv.FormatInt(int64(v.num), 10)
+		}
 	case KindUndefined:
 		if v.undef().behavior == UndefinedDebug {
 			return v.DebugText()

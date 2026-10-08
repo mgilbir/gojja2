@@ -536,21 +536,27 @@ func (l *lexer) tryEnd(end Kind) (bool, error) {
 	}
 	rest := l.src[l.pos:]
 	line := l.line
+	start := l.pos
 
-	var text string
+	// The delimiter and whatever it eats after it are adjacent in the
+	// source, so the token's text is sliced out of it once both are
+	// consumed rather than concatenated, which allocated a string for every
+	// tag trim_blocks or a `-` trimmed.
 	switch {
 	// `+%}` and `+#}` suppress trim_blocks. There is no `+}}`: jinja2 does
 	// not trim after a print tag in the first place.
-	case end == BlockEnd && strings.HasPrefix(rest, "+"+closing):
-		text = l.advance(1 + len(closing))
-	case strings.HasPrefix(rest, "-"+closing):
-		text = l.advance(1+len(closing)) + l.consumeAfterEnd('-', end == BlockEnd)
+	case end == BlockEnd && len(rest) > 0 && rest[0] == '+' && strings.HasPrefix(rest[1:], closing):
+		l.advance(1 + len(closing))
+	case len(rest) > 0 && rest[0] == '-' && strings.HasPrefix(rest[1:], closing):
+		l.advance(1 + len(closing))
+		l.consumeAfterEnd('-', end == BlockEnd)
 	case strings.HasPrefix(rest, closing):
-		text = l.advance(len(closing)) + l.consumeAfterEnd(0, end == BlockEnd)
+		l.advance(len(closing))
+		l.consumeAfterEnd(0, end == BlockEnd)
 	default:
 		return false, nil
 	}
-	l.out = append(l.out, Token{Kind: end, Value: text, Line: line})
+	l.out = append(l.out, Token{Kind: end, Value: l.src[start:l.pos], Line: line})
 	return true, nil
 }
 

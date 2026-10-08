@@ -190,6 +190,12 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 		return ex.eval(n.Right)
 	}
 
+	if n.Op == ast.OpAdd {
+		if l, ok := n.Left.(*ast.BinOp); ok && l.Op == ast.OpAdd {
+			return ex.evalAddChain(n)
+		}
+	}
+
 	left, err := ex.eval(n.Left)
 	if err != nil {
 		return value.Undefined, err
@@ -215,6 +221,88 @@ func (ex *exec) evalBinOp(n *ast.BinOp) (value.Value, error) {
 		return value.Pow(left, right, ex.st, ex.pyVersion())
 	}
 	return value.Undefined, errs.New(errs.TemplateRuntimeError, "unknown operator %s", n.Op)
+}
+
+// evalAddChain evaluates `a + b + c + ...`, which parses as a left-leaning
+// spine of additions, joining a run of plain strings once instead of building
+// every intermediate string. Chat templates are written this way --
+// `'<|im_start|>' + message['role'] + '\n' + message['content'] + ...` -- and
+// the copies were about 15% of rendering one.
+//
+// Nothing about it can be observed. The operands are evaluated in the order
+// and at the moments they were before, and every addition that is not of two
+// plain strings is still made where it was, by value.Add, and its error is
+// placed on the line of its own node, as eval would have placed it. Deferring
+// str + str is safe because it can neither fail nor do anything else: a Markup
+// on either side escapes the other, so it is never deferred.
+func (ex *exec) evalAddChain(n *ast.BinOp) (value.Value, error) {
+	var buf [8]*ast.BinOp
+	spine := buf[:0]
+	b := n
+	for {
+		spine = append(spine, b)
+		l, ok := b.Left.(*ast.BinOp)
+		if !ok || l.Op != ast.OpAdd {
+			break
+		}
+		b = l
+	}
+	acc, err := ex.eval(b.Left)
+	if err != nil {
+		return value.Undefined, err
+	}
+	// parts holds the plain strings not yet joined onto acc, which is then
+	// itself a plain string and parts[0].
+	var partsBuf [8]string
+	parts := partsBuf[:0]
+	// size is what joining parts will allocate, and last the node that
+	// added the latest of them, which is where a refusal to join is placed.
+	var size int64
+	var last *ast.BinOp
+	join := func() (value.Value, error) {
+		// Charged once for the string actually built. value.Add
+		// charges each intermediate it builds, which is more; this
+		// builds none.
+		if err := ex.st.ChargeBytes(size); err != nil {
+			return value.Undefined, errs.At(err, ex.st.tmpl.name, last.Line())
+		}
+		return value.String(strings.Join(parts, "")), nil
+	}
+	for i := len(spine) - 1; i >= 0; i-- {
+		right, err := ex.eval(spine[i].Right)
+		if err != nil {
+			return value.Undefined, err
+		}
+		if plainString(acc) && plainString(right) {
+			if len(parts) == 0 {
+				parts = append(parts, acc.AsString())
+				size = int64(len(parts[0]))
+			}
+			parts = append(parts, right.AsString())
+			size += int64(len(parts[len(parts)-1]))
+			last = spine[i]
+			continue
+		}
+		if len(parts) > 0 {
+			if acc, err = join(); err != nil {
+				return value.Undefined, err
+			}
+			parts = parts[:0]
+		}
+		acc, err = value.Add(acc, right, ex.st)
+		if err != nil {
+			return value.Undefined, errs.At(err, ex.st.tmpl.name, spine[i].Line())
+		}
+	}
+	if len(parts) > 0 {
+		return join()
+	}
+	return acc, nil
+}
+
+// plainString reports whether v is a str that is not Markup.
+func plainString(v value.Value) bool {
+	return v.Kind() == value.KindString && !v.IsSafe()
 }
 
 func (ex *exec) evalUnaryOp(n *ast.UnaryOp) (value.Value, error) {

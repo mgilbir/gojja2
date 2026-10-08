@@ -379,7 +379,10 @@ func declareRootLocals(sc *scope, st *State, key any, body []ast.Stmt) {
 // It can be refused: resolving a name against the enclosing chain may be what
 // first converts a render argument, and that conversion is charged.
 func declareFrameLocals(sc *scope, st *State, key any, body []ast.Stmt, enclosing *scope) error {
-	names := st.root.frameLocalsOf(key, body)
+	return declareFrameNames(sc, st, st.root.frameLocalsOf(key, body), enclosing)
+}
+
+func declareFrameNames(sc *scope, st *State, names frameNames, enclosing *scope) error {
 	// Recorded so a frame nested inside this one can ask what this one
 	// mentions, which is what decides whether its own stores alias.
 	sc.refs = names.refs

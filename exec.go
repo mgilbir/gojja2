@@ -479,6 +479,7 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 	if !bodyRetainsScope(n.Body) {
 		reuse = ex.child(newScope(ex.sc))
 	}
+	frameNamesForBody := ex.st.root.frameLocalsOf(n, n.Body)
 	for loop.index = 0; src.has(loop.index); loop.index++ {
 		if err := src.err(); err != nil {
 			return err
@@ -504,7 +505,7 @@ func (ex *exec) runLoop(n *ast.For, iterable value.Value, depth int) error {
 		}
 		body.loop = loopValue
 		body.sc.set("loop", loopValue)
-		if err := declareFrameLocals(body.sc, ex.st, n, n.Body, body.sc.parent); err != nil {
+		if err := declareFrameNames(body.sc, ex.st, frameNamesForBody, body.sc.parent); err != nil {
 			return err
 		}
 
