@@ -756,6 +756,27 @@ func exactNumeric(got reflect.Value, want reflect.Type) reflect.Value {
 	return conv
 }
 
+// ToGoAs converts v to the Go type want, for passing to a Go function that
+// takes one: [ToGo]'s answer when that is assignable to want, or a number
+// converted to want's numeric type when nothing is lost on the way -- a
+// template's integer is an int64, so a parameter of type int or uint8 could not
+// otherwise be filled. ok is false when v cannot be had as a want, which
+// includes None for every type.
+func ToGoAs(v Value, want reflect.Type) (got reflect.Value, ok bool) {
+	got = reflect.ValueOf(ToGo(v))
+	// None and an undefined are nil, which has no type to assign.
+	if !got.IsValid() {
+		return reflect.Value{}, false
+	}
+	if !got.Type().AssignableTo(want) {
+		got = exactNumeric(got, want)
+	}
+	if !got.Type().AssignableTo(want) {
+		return reflect.Value{}, false
+	}
+	return got, true
+}
+
 func (m *methodObject) Call(args *CallArgs) (Value, error) {
 	t := m.fn.Type()
 	if t.NumIn() != len(args.Pos) || len(args.Kwargs) > 0 {
@@ -764,14 +785,10 @@ func (m *methodObject) Call(args *CallArgs) (Value, error) {
 	}
 	in := make([]reflect.Value, len(args.Pos))
 	for i, a := range args.Pos {
-		want := t.In(i)
-		got := reflect.ValueOf(ToGo(a))
-		if got.IsValid() && !got.Type().AssignableTo(want) {
-			got = exactNumeric(got, want)
-		}
-		if !got.IsValid() || !got.Type().AssignableTo(want) {
+		got, ok := ToGoAs(a, t.In(i))
+		if !ok {
 			return Undefined, errs.New(errs.TypeError,
-				"%s(): argument %d is not a %s", m.name, i+1, want)
+				"%s(): argument %d is not a %s", m.name, i+1, t.In(i))
 		}
 		in[i] = got
 	}

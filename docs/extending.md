@@ -137,6 +137,29 @@ args.Kwargs                   // []Kwarg, in source order
 Source order is kept for the keywords because some callables care: `dict(b=1,
 a=2)` renders its keys in the order they were written.
 
+### Or let `FilterFunc` read them
+
+For a filter or test that is an ordinary Go function, `FilterFunc` and
+`TestFunc` do the reading. Name the parameters after the value and a template
+can pass them by keyword; a call of the wrong shape is refused before your
+function runs, with the message CPython gives for a Python filter of the same
+shape:
+
+```
+env.AddFilter("truncate_words",
+	gojja2.FilterFunc("truncate_words", truncateWords, "count", "suffix"))
+
+{{ text|truncate_words(3, suffix="...") }}
+{{ text|truncate_words(3) }}   →  TypeError: truncate_words() missing 1 required positional argument: 'suffix'
+```
+
+Arguments convert to the parameter types as a Go method's do, a number to a
+narrower type only when nothing is lost; a `value.Value` parameter takes the
+template's value as it is. A Go function has no defaults, so every named
+parameter is required, and a final `...T` collects extra positional arguments.
+The rules above still apply inside the function: take a leading `*gojja2.State`
+to charge, poll or check autoescaping.
+
 ## Exposing a Go type directly
 
 Reflection handles ordinary structs, slices and maps — see

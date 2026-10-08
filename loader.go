@@ -6,8 +6,11 @@ package gojja2
 import (
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -26,6 +29,33 @@ import (
 // as "not here" and let the next loader quietly answer instead.
 type Loader interface {
 	Load(name string) (source string, err error)
+}
+
+// Lister is a Loader that can name every template it serves, which is what
+// [Environment.ListTemplates] asks of it -- jinja2's
+// BaseLoader.list_templates.
+//
+// Every loader in this package is one. A loader of your own need not be; asking
+// an environment to list through one that is not is the TypeError jinja2
+// raises for a loader that cannot iterate.
+type Lister interface {
+	Loader
+	// ListTemplates returns every name Load would serve.
+	ListTemplates() ([]string, error)
+}
+
+// cannotList is jinja2's refusal for a loader with no list_templates.
+func cannotList() error {
+	return errs.New(errs.TypeError, "this loader cannot iterate over all templates")
+}
+
+// listFrom lists through l, refusing a loader that cannot.
+func listFrom(l Loader) ([]string, error) {
+	lister, ok := l.(Lister)
+	if !ok {
+		return nil, cannotList()
+	}
+	return lister.ListTemplates()
 }
 
 // ErrNotFound reports a template that does not exist.
@@ -48,6 +78,23 @@ func (d DictLoader) Load(name string) (string, error) {
 	}
 	return src, nil
 }
+
+// ListTemplates implements Lister: the names, sorted.
+func (d DictLoader) ListTemplates() ([]string, error) {
+	return slices.Sorted(maps.Keys(d)), nil
+}
+
+// LoaderFunc adapts a function to a [Loader], which is jinja2's FunctionLoader.
+//
+// Where FunctionLoader's function returns None for a template it does not
+// have, this one returns an error satisfying errors.Is(err, ErrNotFound) --
+// ErrNotFound itself will do -- so that `ignore missing`, ChoiceLoader and
+// SelectTemplate can tell a miss from a failure. It cannot list, as
+// FunctionLoader cannot.
+type LoaderFunc func(name string) (source string, err error)
+
+// Load implements Loader.
+func (f LoaderFunc) Load(name string) (string, error) { return f(name) }
 
 // FSLoader serves templates from an fs.FS, which is the portable way to load
 // from disk, an embed.FS or a zip.
@@ -94,6 +141,54 @@ func (l FSLoader) Load(name string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ListTemplates implements Lister: every regular file under Root, named with
+// "/" whatever the platform, sorted.
+//
+// It is jinja2's FileSystemLoader.list_templates, which walks without
+// following a symlink to a directory, with two differences. A name Load would
+// refuse is left out, because listing a template that cannot then be loaded
+// helps nobody: on Linux jinja2 lists a file called `a\b.html`, which Load
+// here reads as a path. And a failure to read part of the tree is reported,
+// where os.walk skips it silently; a Root that does not exist is still an
+// empty list, as it is there.
+func (l FSLoader) ListTemplates() ([]string, error) {
+	root := "."
+	if l.Root != "" {
+		root = path.Clean(l.Root)
+	}
+	var names []string
+	err := fs.WalkDir(l.FS, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == root && errors.Is(err, fs.ErrNotExist) {
+				return fs.SkipAll
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		name := p
+		if root != "." {
+			name = strings.TrimPrefix(p, root+"/")
+		}
+		// What Load would open for this name must be this file.
+		if joined, ok := safeJoin(l.Root, name); !ok || joined != p {
+			return nil
+		}
+		// Load serves regular files only, following a symlink to one.
+		if info, err := fs.Stat(l.FS, p); err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		names = append(names, name)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // safeJoin resolves a template name under root, refusing any name that would
@@ -155,6 +250,27 @@ func (c ChoiceLoader) Load(name string) (string, error) {
 	return "", notFound(name)
 }
 
+// ListTemplates implements Lister: every loader's names, without duplicates,
+// sorted. A loader that cannot list makes the whole list fail, as in jinja2.
+func (c ChoiceLoader) ListTemplates() ([]string, error) {
+	seen := map[string]bool{}
+	var names []string
+	for _, l := range c {
+		inner, err := listFrom(l)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range inner {
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 // PrefixLoader dispatches on a leading path segment: "admin/index.html" is
 // looked up as "index.html" in the loader registered under "admin".
 type PrefixLoader struct {
@@ -186,4 +302,27 @@ func (p PrefixLoader) Load(name string) (string, error) {
 		return "", notFound(name)
 	}
 	return src, err
+}
+
+// ListTemplates implements Lister: each loader's names under its prefix.
+//
+// jinja2 walks its mapping in insertion order, which a Go map does not have, so
+// the prefixes are taken in sorted order instead; within one, the names come in
+// whatever order that loader lists them.
+func (p PrefixLoader) ListTemplates() ([]string, error) {
+	delim := p.Delimiter
+	if delim == "" {
+		delim = "/"
+	}
+	var names []string
+	for _, prefix := range slices.Sorted(maps.Keys(p.Mapping)) {
+		inner, err := listFrom(p.Mapping[prefix])
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range inner {
+			names = append(names, prefix+delim+name)
+		}
+	}
+	return names, nil
 }

@@ -46,6 +46,29 @@ func Tokenize(syn Syntax, source, name string) ([]Token, error) {
 	return l.out, err
 }
 
+// TokenizeExpression lexes source as if it were already inside a print tag,
+// which is how jinja2's compile_expression lexes: its parser is built with
+// state="variable", so the stream starts with the expression and runs on as an
+// ordinary template if the expression's end delimiter turns up in it.
+func TokenizeExpression(syn Syntax, source, name string) ([]Token, error) {
+	l := &lexer{
+		syn:  syn.withDefaults(),
+		src:  normalizeNewlines(source, syn.KeepTrailingNewline),
+		name: name,
+		line: 1,
+	}
+	err := l.lexTag(VariableEnd)
+	if err == nil {
+		err = l.run()
+	}
+	l.line = 1
+	if n := len(l.out); n > 0 {
+		l.line = l.out[n-1].Line
+	}
+	l.emit(EOF, "")
+	return l.out, err
+}
+
 // normalizeNewlines collapses \r\n and \r to \n so the rest of the lexer only
 // has to think about one line terminator, and drops the template's final
 // newline unless it was asked to keep it.

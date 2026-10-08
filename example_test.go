@@ -250,3 +250,69 @@ func ExampleFunc() {
 	// 5
 	// render stopped: context canceled
 }
+
+func ExampleEnvironment_CompileExpression() {
+	env := mustEnv()
+	adult, err := env.CompileExpression("user.age >= 18 and user.country in allowed")
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, age := range []int{17, 30} {
+		v, err := adult.Eval(context.Background(), map[string]any{
+			"user":    map[string]any{"age": age, "country": "NL"},
+			"allowed": []string{"NL", "BE"},
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(age, v.AsBool())
+	}
+	// Output:
+	// 17 false
+	// 30 true
+}
+
+func ExampleFilterFunc() {
+	env := mustEnv()
+	env.AddFilter("truncate_words", gojja2.FilterFunc("truncate_words",
+		func(s string, count int, suffix string) string {
+			words := strings.Fields(s)
+			if len(words) <= count {
+				return s
+			}
+			return strings.Join(words[:count], " ") + suffix
+		}, "count", "suffix"))
+
+	for _, src := range []string{
+		`{{ text|truncate_words(3, "...") }}`,
+		`{{ text|truncate_words(2, suffix="!") }}`,
+		`{{ text|truncate_words(3) }}`,
+	} {
+		tmpl, err := env.FromString(src)
+		if err != nil {
+			log.Fatal(err)
+		}
+		out, err := tmpl.RenderString(context.Background(), map[string]any{"text": "the quick brown fox"})
+		if err != nil {
+			fmt.Println("error:", err)
+			continue
+		}
+		fmt.Println(out)
+	}
+	// Output:
+	// the quick brown...
+	// the quick!
+	// error: truncate_words() missing 1 required positional argument: 'suffix'
+}
+
+func ExampleEnvironment_ListTemplates() {
+	env := mustEnv(gojja2.WithLoader(gojja2.DictLoader{
+		"base.html": "", "index.html": "", "robots.txt": "",
+	}))
+	names, err := env.ListTemplates(gojja2.HasExtension("html"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(names)
+	// Output: [base.html index.html]
+}
