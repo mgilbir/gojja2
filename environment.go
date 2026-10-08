@@ -7,6 +7,7 @@ package gojja2
 
 import (
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -807,6 +808,34 @@ func (e *Environment) ClearCache() { e.cache.clear() }
 // ForgetTemplate drops one compiled template from the cache.
 func (e *Environment) ForgetTemplate(name string) { e.cache.forget(name) }
 
+// ListTemplates returns the names of the templates the loader serves, keeping
+// those filter accepts; a nil filter keeps all of them. It is jinja2's
+// Environment.list_templates, and [HasExtension] is its extensions argument.
+//
+// The loader has to be a [Lister]. One that is not, or no loader at all, is a
+// TypeError, as it is in jinja2.
+func (e *Environment) ListTemplates(filter func(name string) bool) ([]string, error) {
+	if err := e.requireLoader(); err != nil {
+		return nil, err
+	}
+	names, err := listFrom(e.loader)
+	if err != nil || filter == nil {
+		return names, err
+	}
+	return slices.DeleteFunc(names, func(name string) bool { return !filter(name) }), nil
+}
+
+// HasExtension is a filter for [Environment.ListTemplates] keeping the names
+// whose extension -- what follows their last dot -- is one of exts, which is
+// what jinja2's extensions argument does. Name the extension without its dot:
+// "html", not ".html".
+func HasExtension(exts ...string) func(name string) bool {
+	return func(name string) bool {
+		i := strings.LastIndexByte(name, '.')
+		return i >= 0 && slices.Contains(exts, name[i+1:])
+	}
+}
+
 // SelectTemplate returns the first of names that exists, which is what an
 // `{% extends %}` or `{% include %}` given a list does.
 func (e *Environment) SelectTemplate(names []string) (*Template, error) {
@@ -910,6 +939,13 @@ func (e *Environment) compile(source, name string, fromString bool) (tmpl *Templ
 	if terr != nil {
 		return nil, terr
 	}
+	return e.compileTree(tree, source, name, fromString)
+}
+
+// compileTree is compile once the source has been parsed, which is where
+// CompileExpression joins it with a tree it built itself.
+func (e *Environment) compileTree(tree *ast.Template, source, name string, fromString bool) (tmpl *Template, err error) {
+	defer catchPanic(&err)
 	// The block pre-pass comes first, because jinja2's generator collects
 	// every block -- and refuses a name defined twice -- before it
 	// generates a line: `{% block a %}{% endblock %}{% block a %}{% endblock

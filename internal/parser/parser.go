@@ -78,6 +78,29 @@ func Parse(syn lexer.Syntax, opts Options, source, name string) (tmpl *ast.Templ
 	return &ast.Template{Body: body}, nil
 }
 
+// ParseExpression parses source as one expression, which is jinja2's
+// Environment.compile_expression: lexed from inside a print tag, parsed with
+// parse_expression -- a conditional expression, not a tuple -- and refused if
+// anything follows it.
+func ParseExpression(syn lexer.Syntax, opts Options, source, name string) (expr ast.Expr, err error) {
+	tokens, lexErr := lexer.TokenizeExpression(syn, source, name)
+	p := &parser{tokens: tokens, name: name, source: source, opts: opts, lexErr: lexErr}
+	defer func() {
+		if r := recover(); r != nil {
+			bail, ok := r.(parseError)
+			if !ok {
+				panic(r)
+			}
+			expr, err = nil, bail.err
+		}
+	}()
+	expr = p.parseExpression(true)
+	if p.current().Kind != lexer.EOF {
+		p.fail("chunk after expression")
+	}
+	return expr, nil
+}
+
 // parseError carries a parse failure out through the recursive descent without
 // threading an error return through every production.
 type parseError struct{ err error }

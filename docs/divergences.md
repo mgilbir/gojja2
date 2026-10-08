@@ -67,11 +67,11 @@ are safety controls rather than behavioural choices, and they live in
 | [The default autoescape extension set](#the-default-autoescape-extension-set) | adds `xhtml` to jinja2's three | Only ever escapes *more*, never less |
 | [The debug extension](#the-debug-extension) | `{% debug %}` is refused; `jinja2.ext.debug` is not offered | Only a template that uses `{% debug %}` |
 | [Native-type rendering](#native-type-rendering) | no `NativeEnvironment`; a render is always text | No -- a host API, not template behaviour |
-| [Evaluating a lone expression](#evaluating-a-lone-expression) | no `compile_expression` | No -- a host API |
+| [Evaluating a lone expression](#evaluating-a-lone-expression) | `CompileExpression` returns a `value.Value`, not a Python object | No -- a host API |
 | [Calling a template's macros from the host](#calling-a-templates-macros-from-the-host) | no `Template.module` or `make_module` | No -- a host API; `{% import %}` between templates works |
-| [Listing the templates a loader has](#listing-the-templates-a-loader-has) | no `list_templates` | No -- a host API |
+| [Listing the templates a loader has](#listing-the-templates-a-loader-has) | lists only what it can load; `PrefixLoader` sorts its prefixes | No -- a host API |
 | [Logging undefined access](#logging-undefined-access) | no `make_logging_undefined` | No -- the four Undefined classes are all there |
-| [A loader made from a function](#a-loader-made-from-a-function) | no `FunctionLoader` | No -- `Loader` is one method, so any function is one adapter away |
+| [A loader made from a function](#a-loader-made-from-a-function) | `LoaderFunc` reports a miss with `ErrNotFound`, not `None` | No -- a host API |
 
 ---
 
@@ -1297,11 +1297,13 @@ Asserted by the tests in `autoescape_test.go`.
 ## jinja2 APIs gojja2 does not have
 
 Every entry above is about what a template renders, or what the host sees
-around a render. These are parts of jinja2's *Python* API with no counterpart
-here. One is reachable from a template (`{% debug %}`); the rest change only
-what a host can ask for. Each was checked against jinja2 3.1.6, the version
-the corpus is graded against, and against the API gojja2 actually exports.
-None is ruled out on principle the way async rendering or the sandbox are in
+around a render. These are parts of jinja2's *Python* API: four with no
+counterpart here, and three -- a lone expression, listing, and a loader made
+from a function -- whose counterpart differs in what it hands back. One is
+reachable from a template (`{% debug %}`); the rest change only what a host can
+ask for. Each was checked against jinja2 3.1.6, the version the corpus is graded
+against, and against the API gojja2 actually exports. None of the four is ruled
+out on principle the way async rendering or the sandbox are in
 [scope.md](scope.md); they are absent because nothing has needed them yet.
 
 ### The debug extension
@@ -1335,10 +1337,16 @@ it.
 
 ### Evaluating a lone expression
 
-`Environment.compile_expression("a + b")` returns a callable that evaluates one
-expression against keyword arguments and returns its value, `3` for `a=1, b=2`.
-gojja2 has no expression-only entry point. `FromString("{{ a + b }}")` evaluates
-the same expression, but what comes back is its text.
+`Environment.compile_expression("a + b")` is `Environment.CompileExpression`,
+and the callable it returns is an `Expression`, whose `Eval` takes the keyword
+arguments as a map. It compiles the tree jinja2 compiles -- `result = <expr>`,
+as a template from a string -- so the value, the folding, the escaping and
+every syntax error match: graded against CPython on 34 expressions, from
+`foo == 42` to "chunk after expression" for `a }} b`. `undefined_to_none=False`
+is `KeepUndefined`.
+
+What differs is what comes back: a `value.Value` rather than a Python object.
+`value.ToGo` turns it into an ordinary Go value.
 
 ### Calling a template's macros from the host
 
@@ -1352,11 +1360,24 @@ that imports and calls it.
 
 ### Listing the templates a loader has
 
-`Environment.list_templates()` asks the loader for every name it can load.
-gojja2's `Loader` interface is one method, `Load(name)`, so neither the loaders
-nor the environment can enumerate. A host knows what it put there: a
-`DictLoader` is a map, and an `FSLoader`'s names are what `fs.WalkDir` finds
-under its `Root` in its `FS`.
+`Environment.list_templates()` is `Environment.ListTemplates`, and a loader
+that can enumerate implements `Lister` -- every loader in the package does. Its
+`extensions` argument is `HasExtension`; a `filter_func` is any
+`func(string) bool`. A loader that cannot list is jinja2's `TypeError`, whether
+it is the environment's or one inside a `ChoiceLoader` or `PrefixLoader`.
+
+Three differences, all in what is listed rather than how it is asked for:
+
+- `FSLoader` lists only names it can load. jinja2's `FileSystemLoader` also
+  lists a dangling symlink, which it cannot load either, and on Linux a file
+  whose name holds a backslash, which gojja2's loader reads as a separator and
+  refuses (see `safeJoin` in `loader.go`).
+- A directory that cannot be read is an error. `os.walk` skips it, which would
+  make a failing disk read as fewer templates -- the confusion `Loader`'s own
+  contract exists to prevent. A `Root` that does not exist is still an empty
+  list, as it is there.
+- `PrefixLoader` lists its prefixes in sorted order. jinja2 walks its mapping
+  in insertion order, which a Go map does not have.
 
 ### Logging undefined access
 
@@ -1370,12 +1391,11 @@ template reads from its context, and what each one does there, which answers
 
 ### A loader made from a function
 
-`jinja2.FunctionLoader(fn)` turns a function from a name to source into a
-loader. gojja2 has no adapter of that name, and needs little: `Loader` is the
-single method `Load(name string) (string, error)`, so a function becomes one by
-declaring a function type with that method. What the adapter must get right is
-the miss -- returning an error satisfying `errors.Is(err, gojja2.ErrNotFound)`,
-which is what `ignore missing`, `ChoiceLoader` and `select_template` test for.
+`jinja2.FunctionLoader(fn)` is `LoaderFunc`. jinja2's function returns `None`
+for a template it does not have; a `LoaderFunc` returns an error satisfying
+`errors.Is(err, gojja2.ErrNotFound)`, which is what `ignore missing`,
+`ChoiceLoader` and `SelectTemplate` test for. Like `FunctionLoader`, it cannot
+list.
 
 ## The bounds gojja2 puts on a render
 
