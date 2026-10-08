@@ -1,8 +1,8 @@
 # How correct is it, and how do we know?
 
-**8073 of 8152 gradable cases (99.0%)** match CPython jinja2, across eight
-corpora from ten upstream projects. The five that do not are listed with reasons
-in `testdata/known_failures.txt`, and a case on that list which starts passing
+**8075 of 8154 gradable cases (99.0%)** match CPython jinja2, across eight
+corpora from ten upstream projects. The 79 that do not are listed in
+`testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
 
 This page is the method behind that number. If you only want the number, the
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["7146 / 7191 gradable  (99.4%)"]
+    TC --> RATE["8075 / 8154 gradable  (99.0%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 5832 | 5757 |
+| gojja2's own (committed, with goldens) | 5834 | 5759 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **8152** | **8073 (99.0%)** |
+| **total** | **8154** | **8075 (99.0%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -75,20 +75,25 @@ with what it just measured -- whenever every corpus is present, since `make
 import` is what builds most of them. It does that because the table had drifted,
 twice, after cases were added and the prose was not.
 
-The 5 that differ are listed, with reasons, in `testdata/known_failures.txt`. A
-case on that list which starts passing also fails the test, so the list can only
-shrink deliberately.
+The 79 that differ are listed in `testdata/known_failures.txt`. A case on that
+list which starts passing also fails the test, so the list can only shrink
+deliberately.
 
-They are three kinds. **Two** are Jinja's own sandbox-escape tests, which walk a
-Python object graph out to `__subclasses__` and `__import__`; `__class__` *is*
-implemented, and these two go past it. **Two** are DeepSeek-R1's chat template,
-which writes `{{ tools|map(attribute='function')|tojson }}` -- jinja2's `map`
-returns a generator, which `json.dumps` refuses, so the template raises under
-CPython and renders under gojja2. **The fifth** is `{% if 1e400 %}`: jinja2
-writes a folded constant into its generated Python as that constant's repr, and
-`repr(float("inf"))` is the bare word `inf`, so the template raises a NameError
-there and renders here. All three are explained in
-[divergences.md](divergences.md).
+Nearly half of them are the same refusal in other words: CPython's message names
+a line of the module jinja2 generates, or an identifier inside it -- a keyword
+written twice in one call, a `break` that binds to no loop, a slice among several
+subscripts, a repeated macro parameter. gojja2 refuses each of those too. Most
+of the rest are Python behaviour jinja2 inherits and gojja2 deliberately does
+not reproduce: object introspection
+(`__subclasses__`, `__mro__`, unbound methods, generic aliases such as
+`dict['k']`), the legacy iteration protocol behind `{{ self|list }}`, a folded
+infinity that jinja2 writes into its generated source as the bare word `inf`, a
+lazy `|reverse`, a macro's view of the loop it was defined in, and an
+`{% autoescape %}` flag that is a StrictUndefined. Two are Jinja's own
+sandbox-escape tests, two are DeepSeek-R1's chat template piping `map()` into
+`|tojson` (a generator, which `json.dumps` refuses), and two meet gojja2's bound
+on a computed integer ([limits.md](limits.md)). [divergences.md](divergences.md)
+explains most of the others by kind.
 
 Four further cases are marked *ungradable* and left out of the table: they
 render a generator's memory address, which differs between two runs of CPython

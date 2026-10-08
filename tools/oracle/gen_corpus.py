@@ -7571,6 +7571,22 @@ case("errors/index_not_an_integer", '{{ "ab"|center("x") }}')
 case("limits/integer_width_multiply", "{% set x = 2 ** e %}{{ (x * x) > x }}", e=524288)
 case("limits/integer_width_power", "{{ (2 ** e) > 0 }}", e=2000000)
 
+# A repetition whose length does not fit a Py_ssize_t. CPython refuses it before
+# allocating anything, as an OverflowError in its own words, and so does gojja2
+# -- its ceiling is far lower, but past CPython's they say the same thing. The
+# count is 2**62 and the unit two characters, so the product is 2**63: one past
+# PY_SSIZE_T_MAX. A one-character unit would not do: 2**62 fits, and CPython
+# would try the allocation and answer this machine's MemoryError instead.
+#
+# The string is bound with `set` so that neither engine folds the product: a fold
+# that raises is swallowed and the case would grade nothing.
+#
+# A list, a tuple and a bytes are left out on purpose. CPython answers the first
+# two with a bare MemoryError, which is not recordable, and the bytes with
+# "repeated bytes are too long", where gojja2 says "string".
+case("errors/repeat_str_past_ssize_t", '{% set s = "ab" %}{{ s * 2**62 }}')
+case("errors/repeat_str_past_ssize_t_reflected", '{% set s = "ab" %}{{ 2**62 * s }}')
+
 # --- messages nothing had ever produced: the second audit ----------------------
 # `make ungraded` counts the error sites no corpus case reaches, and 69 of 402
 # were left. Every shape below was measured against CPython before it was written

@@ -1,0 +1,4 @@
+{
+  "case": "errors/repeat_str_past_ssize_t.jj2",
+  "variables": {}
+}

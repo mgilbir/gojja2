@@ -119,18 +119,19 @@ rather than asserted.
 
 ## Conformance
 
-**8073 of 8152 gradable cases (99.0%)** match CPython jinja2 — eight corpora
+**8075 of 8154 gradable cases (99.0%)** match CPython jinja2 — eight corpora
 drawn from ten upstream projects, including Jinja's own test suite, MiniJinja's
 fixtures, minja, llama.cpp, the chat templates real models ship, a documentation
 theme and four project generators. Only their *inputs* are used; every expected
 output is regenerated from the pinned CPython jinja2, because that is the
 specification.
 
-The five that differ are listed with reasons in `testdata/known_failures.txt`,
-and a case on that list which starts passing fails the build. Two are Jinja's own
-sandbox-escape tests, two are DeepSeek-R1's chat template hitting the
-generator/list fork, and the fifth is `{% if 1e400 %}`; all three kinds are
-explained in [docs/divergences.md](docs/divergences.md).
+The 79 that differ are listed in `testdata/known_failures.txt`, and a case on
+that list which starts passing fails the build. Nearly half are the same refusal
+in other words -- CPython's message names a line of the module jinja2 generates
+-- and most of the rest are Python behaviour gojja2 deliberately does not
+reproduce, such as object introspection past `__class__`.
+[docs/divergences.md](docs/divergences.md) explains most of them by kind.
 
 On top of the corpora, roughly a million generated templates have been rendered
 by both implementations and compared, requiring them to agree on output,
