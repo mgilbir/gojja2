@@ -4,6 +4,7 @@
 package gojja2
 
 import (
+	"iter"
 	"strings"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -47,6 +48,23 @@ func (ex *exec) testCallee(name string) string {
 	return name + "()"
 }
 
+// appendStarArgs appends the items of a `*args` iterable to out.
+//
+// It is its own function because a `return` inside a range-over-func loop
+// moves the enclosing function's results to the heap on every call, taken or
+// not -- and evalArgs runs for every call in a template.
+func (ex *exec) appendStarArgs(out *value.CallArgs, seq iter.Seq[value.Value]) error {
+	for item := range seq {
+		// `f(*range(10000000000))` builds the argument list before
+		// the call happens, so the walk is charged as it goes.
+		if err := ex.st.Step(1); err != nil {
+			return err
+		}
+		out.Pos = append(out.Pos, item)
+	}
+	return nil
+}
+
 // evalArgs builds a call's argument list, expanding `*args` and `**kwargs`.
 //
 // callee is the function CPython would name in an unpacking error, which is
@@ -82,13 +100,8 @@ func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 			return nil, errs.New(errs.TypeError,
 				"Value after * must be an iterable, not %s", v.TypeName())
 		}
-		for item := range seq {
-			// `f(*range(10000000000))` builds the argument list before
-			// the call happens, so the walk is charged as it goes.
-			if err := ex.st.Step(1); err != nil {
-				return nil, err
-			}
-			out.Pos = append(out.Pos, item)
+		if err := ex.appendStarArgs(out, seq); err != nil {
+			return nil, err
 		}
 	}
 	for _, kw := range a.Kwargs {
@@ -673,6 +686,15 @@ func unpackCount(v value.Value) (int, bool) {
 }
 
 func (ex *exec) unpack(t *ast.Tuple, v value.Value, mode nsMode) error {
+	// A list or a tuple is already in hand, which is what `for k, v in
+	// d.items()` unpacks on every pass, so it is charged at its length and
+	// read in place rather than walked into a copy.
+	if s, ok := v.Seq(); ok {
+		if err := ex.st.Step(s.Len()); err != nil {
+			return err
+		}
+		return ex.unpackItems(t, v, s.Items(), mode)
+	}
 	seq, err := value.Iterate(v)
 	if err != nil {
 		// A StrictUndefined refuses iteration, and that refusal is what
@@ -684,16 +706,20 @@ func (ex *exec) unpack(t *ast.Tuple, v value.Value, mode nsMode) error {
 		}
 		return errs.New(errs.TypeError, "cannot unpack non-iterable %s object", v.TypeName())
 	}
-	var items []value.Value
-	for item := range seq {
-		// The length check below happens only once the whole iterable is
-		// in hand, so `{% set a, b = range(10000000000) %}` would
-		// allocate its way to the error without this.
-		if err := ex.st.Step(1); err != nil {
-			return err
-		}
-		items = append(items, item)
+	// The length check below happens only once the whole iterable is in
+	// hand, so `{% set a, b = range(10000000000) %}` would allocate its way
+	// to the error if the walk were not charged. collect charges it, and
+	// keeps the range-over-func loop out of this function, whose error
+	// would otherwise move to the heap on every unpack.
+	items, err := collect(ex.st, seq)
+	if err != nil {
+		return err
 	}
+	return ex.unpackItems(t, v, items, mode)
+}
+
+// unpackItems assigns the items v unpacked to, once they are all in hand.
+func (ex *exec) unpackItems(t *ast.Tuple, v value.Value, items []value.Value, mode nsMode) error {
 	switch {
 	case len(items) < len(t.Items):
 		return errs.New(errs.ValueError,

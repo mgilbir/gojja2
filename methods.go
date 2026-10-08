@@ -58,7 +58,12 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 		// signature and the bound method is a `method`.
 		if recv.IsSafe() {
 			if fn, ok := markupMethods[name]; ok {
-				return Method(name, "Markup", "markupsafe.Markup", recv,
+				// Each closure captures a copy made where it is
+				// built, never recv itself: capturing recv moved
+				// it to the heap on every lookup, including the
+				// ones that find no method at all.
+				markupRecv := recv
+				return Method(name, "Markup", "markupsafe.Markup", markupRecv,
 					func(callState *State, args *value.CallArgs) (value.Value, error) {
 						if callState == nil {
 							callState = s
@@ -71,7 +76,7 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 							return value.Undefined, errs.New(errs.TypeError,
 								"Markup.%s() got an unexpected keyword argument '%s'", name, args.Kwargs[0].Name)
 						}
-						return fn(callState, recv)
+						return fn(callState, markupRecv)
 					}), true
 			}
 		}
@@ -115,7 +120,8 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 		return value.Undefined, false
 	}
 	typeName := recv.TypeName()
-	return Method(name, typeName, "", recv, func(callState *State, args *value.CallArgs) (value.Value, error) {
+	bound := recv // see markupRecv above
+	return Method(name, typeName, "", bound, func(callState *State, args *value.CallArgs) (value.Value, error) {
 		// Prefer the state of the call over the state of the lookup:
 		// they are the same render, but a bound method can outlive the
 		// expression that produced it.
@@ -125,7 +131,7 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 		if err := checkMethodArity(typeName, name, args, s.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
-		return fn(callState, recv, args)
+		return fn(callState, bound, args)
 	}), true
 }
 

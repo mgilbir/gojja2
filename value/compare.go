@@ -769,22 +769,31 @@ func Contains(item, container Value, budget Budget, py PythonVersion) (bool, err
 			}
 			return false, nil
 		case Iterable:
-			for v := range o.Iterate() {
-				if err := chargeItems(budget, 1); err != nil {
-					return false, err
-				}
-				eq, err := EqualBoolErr(v, item, py)
-				if err != nil {
-					return false, err
-				}
-				if eq {
-					return true, nil
-				}
-			}
-			return false, nil
+			return containsIterated(o, item, budget, py)
 		}
 	}
 	return false, notAContainer(container, py)
+}
+
+// containsIterated is Contains for a container searched by iterating it.
+//
+// It is its own function because a `return` inside a range-over-func loop
+// moves the enclosing function's results to the heap on every call, taken or
+// not -- and Contains answers every `in` a template asks.
+func containsIterated(o Iterable, item Value, budget Budget, py PythonVersion) (bool, error) {
+	for v := range o.Iterate() {
+		if err := chargeItems(budget, 1); err != nil {
+			return false, err
+		}
+		eq, err := EqualBoolErr(v, item, py)
+		if err != nil {
+			return false, err
+		}
+		if eq {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // notAContainer words `x in y` for a y that cannot be searched.

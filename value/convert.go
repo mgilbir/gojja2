@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mgilbir/gojja2/errs"
@@ -503,7 +505,44 @@ type fieldRef struct {
 // which is what `{{ user|tojson }}` has to mean for the json tags this already
 // honours to be worth anything. It stays *reachable* by its own name, as Go
 // allows, so nothing that worked before stops working.
+//
+// The answer is a property of the type, so it is computed once per type and
+// shared: rebuilding it on every attribute access was 73% of rendering a loop
+// over ten thousand structs. The slice is read-only to every caller.
+//
+// The cache holds at most visibleFieldsCap types and then stops growing; a
+// type past the cap is computed on every access, which is what every type cost
+// before there was a cache. A template cannot make a type, but a host calling
+// reflect.StructOf can make any number, and reflect itself never frees one --
+// so this bounds what gojja2 adds to that rather than leaving it to grow beside
+// it. Nothing is evicted, so the hit path takes no lock and cannot thrash.
 func visibleFields(rt reflect.Type) []fieldRef {
+	if v, ok := visibleFieldsCache.Load(rt); ok {
+		return v.([]fieldRef)
+	}
+	out := computeVisibleFields(rt)
+	// The slot is reserved before the store, so the cap holds exactly when
+	// many goroutines miss at once.
+	if visibleFieldsCount.Add(1) > visibleFieldsCap {
+		visibleFieldsCount.Add(-1)
+		return out
+	}
+	if _, loaded := visibleFieldsCache.LoadOrStore(rt, out); loaded {
+		visibleFieldsCount.Add(-1) // another goroutine stored it first
+	}
+	return out
+}
+
+// visibleFieldsCap is how many struct types visibleFields remembers.
+const visibleFieldsCap = 4096
+
+var (
+	visibleFieldsCache sync.Map // reflect.Type -> []fieldRef
+	visibleFieldsCount atomic.Int64
+)
+
+// computeVisibleFields is visibleFields without the cache.
+func computeVisibleFields(rt reflect.Type) []fieldRef {
 	type queued struct {
 		typ   reflect.Type
 		index []int

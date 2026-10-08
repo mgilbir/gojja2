@@ -240,12 +240,12 @@ func makeLoopSource(st *State, v value.Value) (loopSource, error) {
 		if err != nil {
 			return nil, err
 		}
-		var items []value.Value
-		for item := range seq {
-			if err := st.Step(1); err != nil {
-				return nil, err
-			}
-			items = append(items, item)
+		// collect rather than a loop here: a `return` inside a
+		// range-over-func loop moves this function's results to the
+		// heap on every call, and every {% for %} makes one.
+		items, err := collect(st, seq)
+		if err != nil {
+			return nil, err
 		}
 		return &guardedSource{items: items, guard: g}, nil
 	}
@@ -253,12 +253,9 @@ func makeLoopSource(st *State, v value.Value) (loopSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	var items []value.Value
-	for item := range seq {
-		if err := st.Step(1); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
+	items, err := collect(st, seq)
+	if err != nil {
+		return nil, err
 	}
 	return sliceSource(items), nil
 }

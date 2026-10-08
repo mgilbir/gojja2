@@ -3,7 +3,10 @@
 
 package value
 
-import "unicode"
+import (
+	"unicode"
+	"unicode/utf8"
+)
 
 // UnicodeOverrides is one non-pinned interpreter's Unicode answers, where they
 // differ from the pinned one's.
@@ -202,6 +205,9 @@ func (u *UnicodeOverrides) IsXIDContinue(r rune, def bool) bool {
 // "Invalid character in identifier" for `a²` -- part of the match, not an
 // identifier -- against "unexpected char" for `a࢘`, which is neither.
 func NameClass(r rune, py PythonVersion) bool {
+	if r < utf8.RuneSelf && !asciiOverridden {
+		return asciiName[r]
+	}
 	in := unicode.Is(nameClassDefault, r)
 	if t := nameClassOther[py]; t != nil && unicode.Is(t, r) {
 		return !in
@@ -217,6 +223,24 @@ func IsIdentifier(s string, py PythonVersion) bool {
 	if s == "" {
 		return false
 	}
+	if !asciiOverridden {
+		i := 0
+		for ; i < len(s) && s[i] < utf8.RuneSelf; i++ {
+			ok := asciiXIDContinue[s[i]]
+			if i == 0 {
+				ok = asciiXIDStart[s[i]]
+			}
+			// An ASCII character answers the same here as in the
+			// walk below, so a refusal is final wherever the rest
+			// of the string goes.
+			if !ok {
+				return false
+			}
+		}
+		if i == len(s) {
+			return true
+		}
+	}
 	// One lookup for the whole string, as every other classifier does.
 	u := UnicodeFor(py)
 	for i, r := range s {
@@ -231,4 +255,50 @@ func IsIdentifier(s string, py PythonVersion) bool {
 		}
 	}
 	return true
+}
+
+// asciiName, asciiXIDStart and asciiXIDContinue are NameClass and
+// IsIdentifier's two halves below utf8.RuneSelf, read once from the same tables
+// the slow paths consult. The lexer asks about every character of every name,
+// and walking a range table and a version map for `u` or `_` was about a
+// seventh of compiling a template.
+//
+// They are read from the tables and not written out, because a character
+// class is the interpreter's and not ours to state. And they are only consulted
+// while asciiOverridden is false: should a regenerated table ever give some
+// interpreter a different answer for an ASCII character, the fast path turns
+// itself off rather than answering for the pinned one.
+var (
+	asciiName, asciiXIDStart, asciiXIDContinue = asciiClasses()
+	asciiOverridden                            = asciiHasOverride()
+)
+
+func asciiClasses() (name, start, cont [utf8.RuneSelf]bool) {
+	for r := range rune(utf8.RuneSelf) {
+		name[r] = unicode.Is(nameClassDefault, r)
+		start[r] = XIDStartDefault(r)
+		cont[r] = XIDContinueDefault(r)
+	}
+	return name, start, cont
+}
+
+func asciiHasOverride() bool {
+	for r := range rune(utf8.RuneSelf) {
+		for _, t := range nameClassOther {
+			if t != nil && unicode.Is(t, r) {
+				return true
+			}
+		}
+		for _, u := range unicodeOther {
+			if u == nil {
+				continue
+			}
+			for _, t := range []*unicode.RangeTable{u.xidStart, u.xidContinue} {
+				if t != nil && unicode.Is(t, r) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
