@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -346,7 +348,40 @@ func checkPublishedNumbers(t *testing.T, all []result, known map[string]string, 
 			t.Errorf("%s does not state the measured headline.\n  expected: %s", rel, headline)
 		}
 	}
+
+	// The same rate, drawn as the pipeline diagram's last node. It sat at
+	// "7146 / 7191" for a release after the table above had moved on, because
+	// nothing here read it.
+	rate := fmt.Sprintf(`RATE["%d / %d gradable  (%.1f%%)"]`, totalPassed, totalGradable, pct)
+	if !strings.Contains(table, rate) {
+		t.Errorf("%s diagram does not draw the measured rate.\n  expected node: %s", tablePath, rate)
+	}
+
+	// And the count of cases that differ, which both documents state in
+	// prose. It said "five" -- spelled as a word, so no search for the
+	// number found it -- long after the list had grown past seventy. Every
+	// such sentence is read, whatever it says, and each must say the
+	// number; a document that drops the sentence fails too.
+	failures := strconv.Itoa(totalGradable - totalPassed)
+	for _, rel := range []string{headlinePath, tablePath} {
+		found := publishedFailureCount.FindAllStringSubmatch(read(rel), -1)
+		if len(found) == 0 {
+			t.Errorf("%s does not state how many cases differ.\n  expected: The %s that differ are listed ...",
+				rel, failures)
+		}
+		for _, m := range found {
+			if m[1] != failures {
+				t.Errorf("%s says %q, but %s cases differ", rel, m[0], failures)
+			}
+		}
+	}
 }
+
+// publishedFailureCount matches the sentence that says how many gradable cases
+// differ from CPython: "The 79 that differ are listed", "The five that do not
+// are listed". The count is captured as written, so a word fails as surely as
+// a stale digit.
+var publishedFailureCount = regexp.MustCompile(`\b[Tt]he\s+(\S+)\s+that\s+(?:do\s+not|differ)\s+are\s+listed`)
 
 func runCase(t *testing.T, corpusName, caseRoot, goldenRoot, path string) result {
 	t.Helper()
