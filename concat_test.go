@@ -177,3 +177,47 @@ func TestFoldingAChainStopsAtTheConstantLimit(t *testing.T) {
 			"its size is looked at", 5000*1024, per, limit)
 	}
 }
+
+// `+` is a sized allocation too, and was the next operator along that asked
+// nobody. A namespace doubling a string forty times with `+` OOM-killed the
+// process under default limits, where the same template written with `~` is
+// refused at the output bound.
+//
+// The doubling here stops at 16MiB against a 1MiB bound, so a regression fails
+// this test rather than the machine.
+func TestPlusIsChargedLikeConcat(t *testing.T) {
+	big := strings.Repeat("x", 4<<20)
+	// m is under the bound on its own and over it doubled, so only the
+	// charge for `+` can refuse what is built from it.
+	vars := map[string]any{"b": big, "m": strings.Repeat("x", 600<<10), "l": make([]int, 600)}
+	for name, tc := range map[string]struct {
+		src  string
+		want error
+	}{
+		"str, result discarded": {`{% set x = b + b %}ok`, gojja2.ErrOutputTooLarge},
+		// Three operands take the joined path, which builds one string
+		// and has to charge it itself.
+		"str chain":               {`{% set x = b + b + b %}ok`, gojja2.ErrOutputTooLarge},
+		"str chain, Markup in it": {`{% set x = b + b|safe + b %}ok`, gojja2.ErrOutputTooLarge},
+		"str, printed":            {`{{ (b + b)|length }}`, gojja2.ErrOutputTooLarge},
+		"str, doubled": {`{% set ns = namespace(s='xxxx') %}` +
+			`{% for i in range(22) %}{% set ns.s = ns.s + ns.s %}{% endfor %}ok`, gojja2.ErrOutputTooLarge},
+		"bytes": {`{% set c = m.encode() %}{% set x = c + c %}ok`, gojja2.ErrOutputTooLarge},
+		"list":  {`{% set x = l + l %}ok`, gojja2.ErrTooManyIterations},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := mustEnv(
+				gojja2.WithMaxOutputBytes(1<<20),
+				gojja2.WithMaxIterations(1000),
+			)
+			tmpl, err := env.FromString(tc.src)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			out, err := tmpl.RenderString(context.Background(), vars)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("got %.40q, %v; want %v", out, err, tc.want)
+			}
+		})
+	}
+}

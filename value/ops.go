@@ -255,8 +255,20 @@ func Add(a, b Value, budget Budget) (Value, error) {
 		// Markup, in either order. That is the point of it -- joining
 		// trusted markup to untrusted text must neither untrust the
 		// result nor trust the text.
+		//
+		// Every arm below is charged before it allocates, as `~` and
+		// `*` are. `+` asked nobody, so a namespace doubling a string
+		// forty times OOM-killed the process from a one-line template
+		// that `~` refuses at the output bound.
 		if a.safe || b.safe {
-			return Safe(markupText(a) + markupText(b)), nil
+			left, right := markupText(a), markupText(b)
+			if err := chargeBytes(budget, int64(len(left))+int64(len(right))); err != nil {
+				return Undefined, err
+			}
+			return Safe(left + right), nil
+		}
+		if err := chargeBytes(budget, int64(len(a.str))+int64(len(b.str))); err != nil {
+			return Undefined, err
 		}
 		return String(a.str + b.str), nil
 
@@ -264,6 +276,9 @@ func Add(a, b Value, budget Budget) (Value, error) {
 		if b.kind != KindBytes {
 			return Undefined, errs.New(errs.TypeError,
 				"can't concat %s to bytes", b.TypeName())
+		}
+		if err := chargeBytes(budget, int64(len(a.str))+int64(len(b.str))); err != nil {
+			return Undefined, err
 		}
 		return Bytes([]byte(a.str + b.str)), nil
 
@@ -282,6 +297,9 @@ func Add(a, b Value, budget Budget) (Value, error) {
 		}
 		as, _ := lhs.Seq()
 		bs, _ := rhs.Seq()
+		if err := chargeItems(budget, int64(as.Len())+int64(bs.Len())); err != nil {
+			return Undefined, err
+		}
 		items := make([]Value, 0, as.Len()+bs.Len())
 		items = append(items, as.items...)
 		items = append(items, bs.items...)
