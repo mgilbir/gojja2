@@ -335,6 +335,12 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		// answers arithmetically and a |groupby pair holds two, so only a
 		// host object reaches the scan with any length.
 		"in a host sequence": {`{% set v = -1 in hostSeq %}`, gojja2.ErrTooManyIterations, 0, 0, nil},
+		// dictview.go: a values view is searched element by element, and
+		// was searched by a walk of its own that charged nothing, so `in`
+		// over d.values() in a loop did len(d) comparisons per charged
+		// step. It now takes containsIterated below. Converting wide
+		// costs two thousand steps and the walk two thousand more.
+		"in a values view": {`{% set v = -1 in wide.values() %}`, gojja2.ErrTooManyIterations, 0, 3000, nil},
 		// value/compare.go, containsIterated: an object that can only be
 		// iterated is searched by walking it. A dict view answers `in`
 		// itself, so again only a host object reaches the walk.

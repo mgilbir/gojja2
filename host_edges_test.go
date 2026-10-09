@@ -49,13 +49,13 @@ func TestHostMethodArgumentsAreChecked(t *testing.T) {
 		{`{{ a.Add() }}`, "Add() takes 1 arguments, got 0"},
 		{`{{ a.Add(1, 2) }}`, "Add() takes 1 arguments, got 2"},
 		{`{{ a.Add(n=1) }}`, "Add() takes 1 arguments, got 0"},
-		{`{{ a.Add("x") }}`, "Add(): argument 1 is not a int"},
-		{`{{ a.Add(none) }}`, "Add(): argument 1 is not a int"},
-		{`{{ a.Add(true) }}`, "Add(): argument 1 is not a int"},
-		{`{{ a.Add(1.5) }}`, "Add(): argument 1 is not a int"},
-		{`{{ a.Byte(300) }}`, "Byte(): argument 1 is not a uint8"},
-		{`{{ a.Byte(-1) }}`, "Byte(): argument 1 is not a uint8"},
-		{`{{ a.Add(2 ** 70) }}`, "Add(): argument 1 is not a int"},
+		{`{{ a.Add("x") }}`, "Add(): argument 1 must be int, not str"},
+		{`{{ a.Add(none) }}`, "Add(): argument 1 must be int, not NoneType"},
+		{`{{ a.Add(true) }}`, "Add(): argument 1 must be int, not bool"},
+		{`{{ a.Add(1.5) }}`, "Add(): argument 1 must be int, not float"},
+		{`{{ a.Byte(300) }}`, "Byte(): argument 1 does not fit in uint8"},
+		{`{{ a.Byte(-1) }}`, "Byte(): argument 1 does not fit in uint8"},
+		{`{{ a.Add(2 ** 70) }}`, "Add(): argument 1 does not fit in int"},
 	} {
 		_, err := renderVars(t, env, tc.src, vars)
 		if !errors.Is(err, errs.TypeError) {

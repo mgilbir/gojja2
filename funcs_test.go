@@ -106,11 +106,11 @@ func TestFilterFuncTypes(t *testing.T) {
 	for _, tc := range []struct{ src, want, err string }{
 		// A number converts to a narrower type when nothing is lost.
 		{src: "{{ 41|narrow }}", want: "42"},
-		{src: "{{ 300|narrow }}", err: "narrow(): argument 1 is not a uint8, got int"},
+		{src: "{{ 300|narrow }}", err: "narrow(): argument 1 does not fit in uint8"},
 		// A typed parameter is a check Python would not make: CPython
 		// renders ['1', '2'] for a tw that calls str() on its value.
-		{src: `{{ [1,2]|map("tw", 1, "")|list }}`, err: "tw(): argument 1 is not a string, got int"},
-		{src: "{{ s|tw('x', '') }}", err: "tw(): argument 2 is not a int, got str"},
+		{src: `{{ [1,2]|map("tw", 1, "")|list }}`, err: "tw(): argument 1 must be string, not int"},
+		{src: "{{ s|tw('x', '') }}", err: "tw(): argument 2 must be int, not str"},
 		// value.Value passes through unconverted, either way.
 		{src: "{{ none|raw(nope) }}", want: "NoneType/Undefined"},
 		// A struct result converts as a render argument does.
