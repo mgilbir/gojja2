@@ -152,6 +152,12 @@ string, elements against the iteration bound for a list or tuple. `{% set x = a
 the same as `{% set x = a + b %}` and `{% set x = a * 2 %}` are. A chain of
 string `+` is charged once, for the one string it builds.
 
+So is the copy a render makes of anything that reached it from outside -- an
+environment global, a `value.Value` in its context, what a host function,
+filter or method returned -- before a template can change it: elements against
+the iteration bound, as a list built in the template would be. A dict global is
+copied, and charged, only as far as the render reaches into it.
+
 The ceiling exists because a zero or negative budget means "unbounded", and
 unbounded must still not mean "allocate 2**63 bytes". It is the same ceiling
 `value.repeat` has always applied to `*`, so both halves of the engine refuse

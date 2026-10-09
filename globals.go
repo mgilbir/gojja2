@@ -14,11 +14,11 @@ import (
 )
 
 func registerDefaultGlobals(env *Environment) {
-	env.AddGlobal("range", Class("range", "range", globalRange))
-	env.AddGlobal("dict", Class("dict", "dict", globalDict))
-	env.AddGlobal("namespace", Class("namespace", "jinja2.utils.Namespace", globalNamespace))
-	env.AddGlobal("cycler", Class("cycler", "jinja2.utils.Cycler", globalCycler))
-	env.AddGlobal("joiner", Class("joiner", "jinja2.utils.Joiner", globalJoiner))
+	env.AddGlobal("range", class("range", "range", globalRange))
+	env.AddGlobal("dict", class("dict", "dict", globalDict))
+	env.AddGlobal("namespace", class("namespace", "jinja2.utils.Namespace", globalNamespace))
+	env.AddGlobal("cycler", class("cycler", "jinja2.utils.Cycler", globalCycler))
+	env.AddGlobal("joiner", class("joiner", "jinja2.utils.Joiner", globalJoiner))
 	// lipsum is the one global that is a *function* rather than a class, and
 	// it is jinja2.utils.generate_lorem_ipsum reached under another name:
 	// `{{ lipsum.__name__ }}` is that name and not "lipsum".

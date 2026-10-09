@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"github.com/mgilbir/gojja2/errs"
+	"github.com/mgilbir/gojja2/value"
 )
 
 // Errors a render returns when it runs out of budget. They are wrapped, so a
@@ -70,6 +71,15 @@ type budget struct {
 	// chance that nothing looked again before the render returned success.
 	// Converting a render argument is exactly that shape.
 	failed error
+
+	// isolated is this render's copies of the containers that reached it
+	// from somewhere longer-lived -- environment globals, what host
+	// functions, filters and methods returned -- keyed by the container
+	// copied. It is the budget's because the budget is the one thing every
+	// State of a render shares: include, import and extends each build a
+	// State of their own, and a render must see one copy of a container
+	// wherever it reaches it. See State.isolate.
+	isolated map[any]value.Value
 }
 
 // resetAllowance starts a fresh accounting period on a budget that is reused.
@@ -86,6 +96,7 @@ func (b *budget) resetAllowance() {
 	b.written = 0
 	b.sinceCheck = 0
 	b.failed = nil
+	b.isolated = nil
 }
 
 func newBudget(ctx context.Context, env *Environment) *budget {

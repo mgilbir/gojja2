@@ -26,11 +26,13 @@ func (ex *exec) evalInner(e ast.Expr) (value.Value, error) {
 	case *ast.Const:
 		// A constant holding a container came from folding a literal,
 		// which must produce a fresh one per evaluation.
-		switch n.Value.Kind() {
-		case value.KindList, value.KindDict, value.KindTuple:
-			return value.Copy(n.Value), nil
-		}
-		return n.Value, nil
+		// The tree is shared by every render of the template, and by
+		// every overlay that reuses it, so anything in a constant a
+		// template could change is copied: lists, dicts and sets at any
+		// depth, and what a host filter folded at compile time returned.
+		// Not charged, as the copy never was: a folded constant is
+		// bounded in size when it is compiled.
+		return value.Isolate(n.Value, nil)
 	case *ast.TemplateData:
 		// Literal markup from the template source is trusted.
 		return markup(n.Data, ex.autoescape), nil

@@ -199,8 +199,8 @@ records a Def, a Use, a Scope or a context name. Those are further upstream than
 anything in `dataflow/`: a binding that goes unrecorded is a name the analysis
 cannot see, which is indistinguishable to it from a name that does nothing.
 
-124 mutations, all 124 *exercised*, none surviving: 54 over the analysis and
-the tree it runs on, 70 over the budget below. The count of exercised ones is
+129 mutations, all 129 *exercised*, none surviving: 54 over the analysis and
+the tree it runs on, 75 over the budget below. The count of exercised ones is
 reported separately because it used to be smaller than the total without saying
 so: some sites are the only reader of a loop variable, so commenting the line
 out left something declared and not used, the build failed, and the tool called
@@ -278,7 +278,7 @@ far stronger check than mutating it would be. The budget has no counterpart in
 CPython at all -- it is gojja2's invention -- so nothing outside this repository
 can say whether it holds. That is the line: **mutate what has no oracle.**
 
-Seventy places reserve memory or iterations before taking them. The mutation
+Seventy-five places reserve memory or iterations before taking them. The mutation
 removes the *charge*, not just its refusal, and the difference matters:
 leaving the debit in place lets a later charge refuse instead, so sixteen sites
 read as constrained under the weaker mutation and were not. A bound that only
@@ -293,7 +293,8 @@ constant-folded and never reach the code at all, and a context list is charged
 as it is converted, so a per-item step has to be driven by a lazy `range()`
 rather than by a list a test passes in.
 
-Thirty-nine of the seventy were all the tool could see until 2026-10-09. It
+Thirty-nine of the seventy there were then were all the tool could see until
+2026-10-09. It
 matched a charge written as a method on a State -- `st.ChargeBytes(n)` -- and the
 value package charges through functions, `chargeItems(budget, 1)`, so every
 charge there went unmeasured while the total read as complete. Taught the second
@@ -303,7 +304,8 @@ width, and one site the hot-path change had just moved into unpack. Each now has
 a row in the table above. Two of them can only be reached with any length
 through a host object, which the table builds; two are walks that, uncharged,
 run until something outside the process stops them, which is what the
-mutation's own cap records as caught.
+mutation's own cap records as caught. The five since are the charges for copying what
+reaches a render from outside it (see `value.Isolate`), each with its own row.
 
 **None survive.** Four were closed by giving each site a template that reaches
 it and nothing else. The last two could not be, and were closed by measuring

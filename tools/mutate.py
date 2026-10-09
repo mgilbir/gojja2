@@ -214,13 +214,23 @@ def caught(checks) -> bool:
 
 
 def charge_files():
-    """Every non-test source outside the generator, in a stable order."""
-    return sorted(p for p in ROOT.glob("**/*.go")
-                  if "_test" not in p.name and "/tools/" not in str(p)
+    """Every non-test source the module compiles, in a stable order.
+
+    Asked of `go list` rather than globbed. A glob of **/*.go also found the
+    copies in git worktrees nested inside the checkout -- an agent's worktree
+    under .claude/ -- and mutated those, which no test of this module
+    compiles, so every charge site there read as SURVIVED: one run reported 82
+    survivors that were not. `go list ./...` is exactly what `go test` builds.
+    """
+    out = subprocess.run(
+        ["go", "list", "-f", "{{range .GoFiles}}{{$.Dir}}/{{.}}\n{{end}}", "./..."],
+        cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    return sorted(Path(line) for line in out.splitlines()
+                  if line and "/tools/" not in line
                   # budget.go is the accounting itself; breaking it there is
                   # one mutation standing for all of them and says nothing
                   # about which call sites are measured.
-                  and p.name != "budget.go")
+                  and Path(line).name != "budget.go")
 
 
 def mutations():

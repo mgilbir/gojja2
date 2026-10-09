@@ -29,6 +29,14 @@ Replacing one of jinja2's own filters also gives up the argument checking that
 came with its signature. What the replacement accepts becomes the replacement's
 business.
 
+What a filter, a `Func` or a `Class` you registered returns -- and a global you
+registered -- may be something you keep: a cached list, a shared config. A
+template could change it in place, so a render copies it the first time it
+reaches it and works on the copy; the next render, and every other tenant, sees
+yours unchanged. You do not need to copy defensively, and returning the same
+value on every call costs one copy per render, not one per call. A host object
+exposed by pointer is the exception: its methods run on your object.
+
 `Filters()`, `Tests()` and `Globals()` read the registries back. Each returns a
 copy, so writing to it changes nothing; the `Add` methods are how one is changed.
 

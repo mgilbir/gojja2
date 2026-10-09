@@ -1236,7 +1236,7 @@ const (
 // newConstEvaluator builds an evaluator for a template being compiled.
 func newConstEvaluator(env *Environment, name, source string, fromString bool) *constEvaluator {
 	placeholder := &Template{env: env, name: name, fromString: fromString}
-	globals := &scope{vars: env.globals}
+	globals := &scope{raw: env.globalRefs}
 	st := &State{
 		env:        env,
 		tmpl:       placeholder,
@@ -1256,6 +1256,7 @@ func newConstEvaluator(env *Environment, name, source string, fromString bool) *
 			maxIntBits: env.maxIntBits,
 		},
 	}
+	globals.budget = st
 	return &constEvaluator{env: env, st: st, name: name, source: source}
 }
 

@@ -205,20 +205,26 @@ func TestHostObjectIsShared(t *testing.T) {
 	}
 }
 
-// TestGlobalsPersistAcrossRenders pins the one place mutation is meant to
-// survive, because jinja2 does the same: a global lives on the Environment.
-func TestGlobalsPersistAcrossRenders(t *testing.T) {
+// TestGlobalsDoNotCarryBetweenRenders: a global lives on the Environment, which
+// every render and every overlay shares, so a template's change to one is its
+// render's alone. Within the render the change is visible everywhere, as in
+// jinja2; jinja2 then lets it persist into the next render and the next tenant,
+// and gojja2 does not. See value.Isolate.
+func TestGlobalsDoNotCarryBetweenRenders(t *testing.T) {
 	env := mustEnv(gojja2.WithExtensions("do"))
-	env.AddGlobal("shared", value.FromGo([]any{1, 2}))
+	shared := value.FromGo([]any{1, 2})
+	env.AddGlobal("shared", shared)
 	tmpl, err := env.FromString(`{% do shared.append(9) %}{{ shared }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if got := renderStr(t, tmpl, nil); got != "[1, 2, 9]" {
-		t.Errorf("first render = %q", got)
+	for i := range 2 {
+		if got := renderStr(t, tmpl, nil); got != "[1, 2, 9]" {
+			t.Errorf("render %d = %q, want each render to start from [1, 2]", i+1, got)
+		}
 	}
-	if got := renderStr(t, tmpl, nil); got != "[1, 2, 9, 9]" {
-		t.Errorf("second render = %q, want the append to have persisted", got)
+	if got := value.Repr(shared); got != "[1, 2]" {
+		t.Errorf("the global itself became %s", got)
 	}
 }
 

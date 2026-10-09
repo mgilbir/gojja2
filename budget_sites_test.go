@@ -128,6 +128,14 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		// A host object that behaves as a list of a million items, so
 		// `in` scans it through the Sequence interface with no
 		// conversion charged ahead of the scan.
+		// value.Values in the context, which a render copies before a
+		// template can change them: two thousand elements each, so the
+		// copy is the walk that exhausts the bound. A tuple is copied only
+		// because the one list in it is.
+		"isoList":  value.FromGo(make([]any, 2000)),
+		"isoDict":  isoDict(2000),
+		"isoSet":   isoSet(2000),
+		"isoTuple": value.NewTuple(append([]value.Value{value.NewList()}, make([]value.Value, 1999)...)...),
 		"hostSeq":  value.FromObject(millionInts{}),
 		"hostIter": value.FromObject(millionIter{}),
 		// An exponent from the context, so `2 ** e` is computed at
@@ -328,6 +336,13 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		// call.go, unpack: a list in hand is charged its length.
 		"unpack a list": {`{% set xs = range(600)|list %}{% set a, b = xs %}`,
 			gojja2.ErrTooManyIterations, 0, 0, nil},
+		// value/isolate.go: a container that came from outside the render
+		// is copied before the template can change it, and the copy is
+		// charged -- list, dict, set, and a tuple holding a list.
+		"isolate a list":  {`{% set v = isoList|length %}`, gojja2.ErrTooManyIterations, 0, 0, nil},
+		"isolate a dict":  {`{% set v = isoDict|length %}`, gojja2.ErrTooManyIterations, 0, 0, nil},
+		"isolate a set":   {`{% set v = isoSet|length %}`, gojja2.ErrTooManyIterations, 0, 0, nil},
+		"isolate a tuple": {`{% set v = isoTuple|length %}`, gojja2.ErrTooManyIterations, 0, 0, nil},
 		// value/compare.go, Contains over a list or tuple.
 		"in a list": {`{% set xs = range(600)|list %}{% set v = -1 in xs %}`,
 			gojja2.ErrTooManyIterations, 0, 0, nil},
@@ -465,4 +480,28 @@ func (millionInts) GetAttr(string) (value.Value, bool) { return value.Undefined,
 func (millionInts) Len() int                           { return 1_000_000 }
 func (millionInts) GetIndex(i int) (value.Value, bool) {
 	return value.Int(int64(i)), i >= 0 && i < 1_000_000
+}
+
+// isoDict is a dict of n entries, built as a value so it reaches the render as
+// one rather than as Go data.
+func isoDict(n int) value.Value {
+	d := value.NewDict()
+	dd, _ := d.Dict()
+	for i := range n {
+		dd.SetString(fmt.Sprint(i), value.Int(int64(i)))
+	}
+	return d
+}
+
+// isoSet is a set of n integers.
+func isoSet(n int) value.Value {
+	items := make([]value.Value, n)
+	for i := range items {
+		items[i] = value.Int(int64(i))
+	}
+	s, err := value.NewSet(items, value.DefaultPythonVersion, nil)
+	if err != nil {
+		panic(err)
+	}
+	return value.FromObject(s)
 }
