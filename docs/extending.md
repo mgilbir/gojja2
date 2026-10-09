@@ -29,6 +29,9 @@ Replacing one of jinja2's own filters also gives up the argument checking that
 came with its signature. What the replacement accepts becomes the replacement's
 business.
 
+`Filters()`, `Tests()` and `Globals()` read the registries back. Each returns a
+copy, so writing to it changes nothing; the `Add` methods are how one is changed.
+
 ## The contract
 
 ### 1. Charge before you allocate
@@ -226,6 +229,30 @@ err := tmpl.RenderValues(ctx, &out, map[string]value.Value{
 	"t": value.FromObject(tempC(21.5)),
 })
 ```
+
+## A finalize that can fail
+
+`WithFinalizeFunc` is the fifth shape: a hook every printed value passes through,
+with the render's `State` and an error to return. It is held to the same
+contract -- it runs once per print, so anything sized by the value it is handed
+should be charged with `State.ChargeBytes` first, as a filter's would. This one
+prints `None` as nothing and refuses a value the template never set:
+
+```go
+func missingIsAnError(s *gojja2.State, v value.Value) (value.Value, error) {
+	if v.IsUndefined() {
+		return value.Undefined, fmt.Errorf("%s printed a value nobody set", s.Name())
+	}
+	if v.IsNone() {
+		return value.String(""), nil
+	}
+	return v, nil
+}
+```
+
+The error comes back from `Render` unchanged, so `errors.Is` and `errors.As`
+find it. [guide.md](guide.md#finalizing-what-is-printed) has how it differs from
+`WithFinalize`, which jinja2 also distinguishes.
 
 ## What the built-ins do
 

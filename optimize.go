@@ -37,6 +37,17 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			if _, isData := node.(*ast.TemplateData); isData {
 				continue
 			}
+			// A finalize that sees the render cannot run at compile
+			// time, and jinja2 does not try: visit_Output raises
+			// Impossible for every child but template data when
+			// finalize.const is None, which is what a @pass_context
+			// or @pass_eval_context finalize leaves it. So nothing
+			// here is folded -- not even the undefined below, which
+			// is why `{{ 0[1:] }}` raises under such a finalize and
+			// prints "" without one.
+			if c.env.finalizeFunc != nil {
+				continue
+			}
 			// jinja2's _output_child_to_const says it in its own
 			// docstring: "Any other exception will also be
 			// evaluated at runtime for easier debugging." Only
@@ -96,18 +107,16 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			// declining reproduced neither the order nor the number
 			// of calls.
 			//
-			// jinja2 does decline for *one* kind, and gojja2 has no
-			// way to spell it: _make_finalize builds a compile-time
-			// function only when the finalize takes the value alone
-			// or takes the environment, and leaves it None for
-			// @pass_context and @pass_eval_context -- so calling it
-			// from the const path raises, the child is deferred, and
-			// those two see raw text even for a constant. Measured:
-			// under autoescape an upper() gives "&LT;I&GT;" plain
-			// and with @pass_environment, "&lt;I&gt;" with either of
-			// the other two. WithFinalize takes func(Value) Value,
-			// which is the first of those, so folding always applies
-			// here.
+			// jinja2 does decline for *one* kind: _make_finalize
+			// builds a compile-time function only when the finalize
+			// takes the value alone or takes the environment, and
+			// leaves it None for @pass_context and
+			// @pass_eval_context, so those two see raw text even for
+			// a constant. Measured: under autoescape an upper()
+			// gives "&LT;I&GT;" plain and with @pass_environment,
+			// "&lt;I&gt;" with either of the other two. WithFinalize
+			// is the first kind and is applied here; WithFinalizeFunc
+			// is the second, and the loop above stops before this.
 			if c.env.finalize != nil {
 				v = c.env.finalize(v)
 			}

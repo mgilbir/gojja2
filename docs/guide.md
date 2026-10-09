@@ -51,6 +51,15 @@ Compiled templates live in a bounded LRU of 400, as jinja2's does.
 edit. There is no `auto_reload` — the `Loader` interface returns source and
 nothing else, so there is no freshness to consult.
 
+A name written in a template is the loader's name as it stands. To make it
+relative to the template asking -- jinja2's `join_path` --
+`WithJoinPath(func(name, parent string) string)` rewrites each name an
+`{% extends %}`, `{% include %}`, `{% import %}` or `{% from %}` gives, with
+`parent` the name of the template holding the tag. What it returns is what is
+loaded and cached. See
+[divergences.md](divergences.md#relative-template-names) for the one way it
+differs from jinja2's.
+
 ## Rendering
 
 ```go
@@ -87,6 +96,28 @@ no top-level `{% set %}`, import or macro), and `required` is not checked. Keep
 what a fragment needs inside its block, or pass it in. `RenderBlock` and
 `RenderBlockValues` are the streaming and prepared-values forms; all three
 write nothing when the block fails.
+
+### Finalizing what is printed
+
+A finalize post-processes every value a `{{ ... }}` prints -- not template text,
+and not the output a `{% filter %}`, `{% set %}` block or `{% call %}` captures.
+jinja2 has one `finalize` with three decorations, and they map onto two options:
+
+| jinja2 | gojja2 |
+|---|---|
+| `finalize=f`, or `@pass_environment` | `WithFinalize(func(value.Value) value.Value)` |
+| `@pass_context` or `@pass_eval_context` | `WithFinalizeFunc(func(*State, value.Value) (value.Value, error))` |
+
+The difference is when it runs, and it is jinja2's. A finalize that takes only
+the value is applied while compiling to a print that is a constant, *after* that
+constant has been escaped; one that sees the render cannot run then, so it is
+always called at render time, *before* escaping. Under autoescaping
+`{{ '<i>' }}` reaches the first as `&lt;i&gt;` and the second as `<i>`.
+
+The second is handed the render's `State` -- `Resolve` reads the context as
+`context.resolve` does, `Autoescape` is the eval context's setting -- and an
+error it returns fails the render as it stands, so `errors.Is` finds it. Setting
+either option replaces the other.
 
 ## Go values in the context
 
@@ -393,6 +424,25 @@ field of an `if`, the third of a `for` and the test of a conditional expression.
 It is the template **as written**, not as compiled: the constant folder has run
 over the engine's own tree, and whether `{{ xs[[]] }}` is a constant subscript is
 a fact about the optimizer rather than about the template.
+
+### Which templates it names
+
+`Template.ReferencedTemplates` is jinja2's `meta.find_referenced_templates`: the
+name in every `{% extends %}`, `{% include %}`, `{% import %}` and `{% from %}`,
+in order, wherever the tag sits, with each candidate of a literal list listed
+separately. A name decided at render time -- a variable, a concatenation, a
+conditional -- is listed with `Dynamic` set and no name, so a dependency tracker
+learns that a dependency exists even when it cannot say on what.
+
+```go
+for _, ref := range tmpl.ReferencedTemplates() {
+    if ref.Dynamic {
+        log.Printf("line %d: a template chosen at render time", ref.Line)
+        continue
+    }
+    deps = append(deps, ref.Name)
+}
+```
 
 ### What the names mean
 

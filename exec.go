@@ -245,9 +245,17 @@ func (ex *exec) execOutput(n *ast.Output) error {
 // untouched. Running it there too applied it twice to anything printed inside
 // such a block, and once to a block containing no print at all:
 // `{% filter upper %}plain{% endfilter %}` came back finalized.
+//
+// A FinalizeFunc runs here as well and only here, with the render's State; its
+// error is the print's. See WithFinalizeFunc.
 func (ex *exec) renderPrint(v value.Value) (string, error) {
 	if ex.st.env.finalize != nil {
 		v = ex.st.env.finalize(v)
+	} else if fn := ex.st.env.finalizeFunc; fn != nil {
+		var err error
+		if v, err = fn(ex.st, v); err != nil {
+			return "", err
+		}
 	}
 	return ex.renderValue(v)
 }
@@ -986,7 +994,11 @@ func (ex *exec) loadTemplateName(e ast.Expr) (*Template, error) {
 	case value.KindUndefined:
 		return nil, v.UndefinedError()
 	}
-	return ex.st.env.GetTemplate(value.Str(v))
+	name := value.Str(v)
+	if v.IsString() {
+		name = ex.st.env.joinFrom(name, ex.st.tmpl)
+	}
+	return ex.st.env.GetTemplate(name)
 }
 
 // loadTemplateExpr is jinja2's get_or_select_template, which is what
@@ -1004,7 +1016,7 @@ func (ex *exec) loadTemplateExpr(e ast.Expr) (*Template, error) {
 	}
 	switch {
 	case v.IsString():
-		return ex.st.env.GetTemplate(v.AsString())
+		return ex.st.env.GetTemplate(ex.st.env.joinFrom(v.AsString(), ex.st.tmpl))
 	case v.IsUndefined():
 		// get_or_select_template treats an undefined as a single name,
 		// so this goes through get_template -- and its loader check
@@ -1016,7 +1028,7 @@ func (ex *exec) loadTemplateExpr(e ast.Expr) (*Template, error) {
 		}
 		return nil, v.UndefinedError()
 	}
-	return ex.st.env.selectTemplateValue(v)
+	return ex.st.env.selectTemplateValue(v, ex.st.tmpl)
 }
 
 func (ex *exec) execImport(n *ast.Import) error {

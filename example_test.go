@@ -342,3 +342,91 @@ func ExampleTemplate_RenderBlockString() {
 	// <html><body><ul><li>a</li><li>b</li></ul></body></html>
 	// <ul><li>a</li><li>b</li></ul>
 }
+
+// missingIsAnError is a finalize that sees the render: it prints None as
+// nothing, and refuses to print a value the template never set.
+func missingIsAnError(s *gojja2.State, v value.Value) (value.Value, error) {
+	if v.IsUndefined() {
+		return value.Undefined, fmt.Errorf("%s printed a value nobody set", s.Name())
+	}
+	if v.IsNone() {
+		return value.String(""), nil
+	}
+	return v, nil
+}
+
+func ExampleWithFinalizeFunc() {
+	env := mustEnv(gojja2.WithFinalizeFunc(missingIsAnError))
+	tmpl, err := env.FromNamedString("greeting.txt", "Hello {{ name }}{{ title }}!")
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+	out, err := tmpl.RenderString(ctx, map[string]any{"name": "Ada", "title": nil})
+	fmt.Println(out, err)
+	_, err = tmpl.RenderString(ctx, map[string]any{"title": nil})
+	fmt.Println(err)
+	// Output:
+	// Hello Ada! <nil>
+	// greeting.txt printed a value nobody set
+}
+
+func ExampleWithJoinPath() {
+	// Names relative to the template asking for them, with a leading slash
+	// meaning the loader's root.
+	relative := func(name, parent string) string {
+		if strings.HasPrefix(name, "/") {
+			return name[1:]
+		}
+		return parent[:strings.LastIndex(parent, "/")+1] + name
+	}
+	env := mustEnv(gojja2.WithJoinPath(relative), gojja2.WithLoader(gojja2.DictLoader{
+		"layout.html":      `<main>{% block body %}{% endblock %}</main>`,
+		"blog/post.html":   `{% extends "/layout.html" %}{% block body %}{% include "byline.html" %}{% endblock %}`,
+		"blog/byline.html": `by Ada`,
+	}))
+	tmpl, err := env.GetTemplate("blog/post.html")
+	if err != nil {
+		log.Fatal(err)
+	}
+	out, err := tmpl.RenderString(context.Background(), nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(out)
+	// Output: <main>by Ada</main>
+}
+
+func ExampleTemplate_ReferencedTemplates() {
+	tmpl, err := mustEnv().FromString(`{% extends "base.html" %}
+{% block body %}{% include ["promo.html", page] %}{% endblock %}`)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, ref := range tmpl.ReferencedTemplates() {
+		if ref.Dynamic {
+			fmt.Printf("line %d: decided at render time\n", ref.Line)
+			continue
+		}
+		fmt.Printf("line %d: %s\n", ref.Line, ref.Name)
+	}
+	// Output:
+	// line 1: base.html
+	// line 2: promo.html
+	// line 2: decided at render time
+}
+
+func ExampleEnvironment_Filters() {
+	env := mustEnv()
+	env.AddFilter("shout", gojja2.FilterFunc("shout", strings.ToUpper))
+	filters := env.Filters()
+	_, ok := filters["shout"]
+	fmt.Println(len(filters), ok)
+	// The map is a copy: deleting from it leaves the environment alone.
+	delete(filters, "upper")
+	_, ok = env.Filters()["upper"]
+	fmt.Println(ok, len(env.Tests()))
+	// Output:
+	// 55 true
+	// true 39
+}
