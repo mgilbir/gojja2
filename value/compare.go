@@ -204,7 +204,7 @@ func equalDepth(a, b Value, depth int, py PythonVersion) (bool, error) {
 			return false, nil
 		}
 		// Order is irrelevant to dict equality, only content.
-		for _, e := range ad.entries {
+		for _, e := range ad.Entries() {
 			other, ok := bd.GetKnown(e.Key)
 			if !ok {
 				return false, nil

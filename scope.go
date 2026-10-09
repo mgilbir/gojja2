@@ -127,13 +127,34 @@ func (s *scope) convert(name string) (value.Value, bool, error) {
 	// Memoise into vars and leave raw alone: raw *is* the caller's map, so
 	// deleting from it would empty the caller's context as the first render
 	// walked it, and the second render would find nothing there.
-	v, err := value.FromGoBudget(raw, s.expose, s.budget)
+	//
+	// The records inside it are converted lazily too (value.FromGoLazy): a
+	// record's dict is filled when something needs it filled, not when the
+	// argument is first named. A render's values do not outlive it, which
+	// is what that asks. A caller whose values do -- an expression's result
+	// goes back to the host -- marks its budget eagerConversion.
+	convert := value.FromGoLazy
+	if _, eager := s.budget.(eagerConversion); eager {
+		convert = value.FromGoBudget
+	}
+	v, err := convert(raw, s.expose, s.budget)
 	if err != nil {
 		return value.Undefined, false, err
 	}
 	s.set(name, v)
 	return v, true, nil
 }
+
+// eagerConversion is the budget of a render whose converted arguments are handed
+// back to the host, which scope.convert converts in full rather than lazily.
+//
+// A lazily converted record is filled when it is first needed, and charged and
+// polled then. Filled after the render -- by the host, reading a result --
+// that is a budget whose context the caller may already have cancelled, and a
+// refusal there leaves the record short with nobody told. It is a marker on
+// the budget, rather than a field of scope, because scope is sized to the byte:
+// one more word put every scope in the next size class.
+type eagerConversion struct{ *State }
 
 // realise converts everything still *pending*, for the callers that need the
 // whole context rather than one name of it.

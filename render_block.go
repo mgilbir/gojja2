@@ -85,7 +85,7 @@ func (t *Template) requireBlock(name string) error {
 func (t *Template) renderBlock(st *State, w io.Writer, name string) error {
 	v, err := (&blockReference{st: st, name: name}).render()
 	if err != nil {
-		return err
+		return st.refusedFirst(err)
 	}
 	// As in renderState: a charge refused somewhere that had nowhere to
 	// report it still fails the render.

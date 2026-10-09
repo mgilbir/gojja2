@@ -213,7 +213,7 @@ func (t *Template) renderState(st *State, out writer, chunks *int) error {
 	}
 
 	if err := ex.execBody(t.tree.Body); err != nil {
-		return err
+		return st.refusedFirst(err)
 	}
 	// A template that extends renders nothing itself beyond whatever came
 	// before the extends tag; the parent is rendered afterwards, with the
@@ -226,7 +226,7 @@ func (t *Template) renderState(st *State, out writer, chunks *int) error {
 		err := ex.execBody(parent.tree.Body)
 		st.tmpl = prev
 		if err != nil {
-			return err
+			return st.refusedFirst(err)
 		}
 	}
 	// A render must not succeed after a charge was refused. Every internal

@@ -62,7 +62,11 @@ type Module struct {
 func (t *Template) Module(ctx context.Context, vars map[string]any) (mod *Module, err error) {
 	defer catchPanic(&err)
 	st := t.newState(nil, 0, newBudget(ctx, t.env))
-	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, t.env.methods, st
+	// The exports go back to the host and are read after this render is
+	// over, so the context is converted in full now, while this budget and
+	// ctx are watching -- not lazily, the way a render's own values are.
+	// See eagerConversion.
+	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, t.env.methods, eagerConversion{st}
 	// importModule's path: renderState, not the body alone, so a template
 	// that extends gets the parent's output and the parent's exports too.
 	var body strings.Builder

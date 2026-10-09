@@ -62,7 +62,14 @@ type converter struct {
 	// for it. A cyclic structure therefore converts into a cyclic Value
 	// rather than expanding until memory runs out -- which it did, before
 	// any render budget existed to stop it.
-	seen   map[containerID]Value
+	//
+	// It holds the container's payload -- the *Dict or *Seq -- rather than
+	// the Value around it. Every container met on the walk is recorded here,
+	// so a page of records puts one entry per record in this map, and a
+	// Value is forty-eight bytes where the payload is sixteen: the map's
+	// slots, and the copies left behind each time it grew, were over a third
+	// of the bytes converting ten thousand four-field rows allocated.
+	seen   map[containerID]any
 	expose MethodPolicy
 	// b bounds the walk. A slice or map is converted in full, so a render
 	// argument of the caller's choosing decides how long that takes; with
@@ -76,6 +83,16 @@ type converter struct {
 	// Value it returns is not usable, which is why every entry point that
 	// takes a Budget reports the error rather than the value alone.
 	err error
+	// keys is scratch space for sorting a map[string]any's keys, shared by
+	// every map in the walk. The keys are needed only until the dict is
+	// filled, and a fresh slice per map was one allocation per record.
+	//
+	// A map's keys are a window onto the end of it, which a nested map
+	// extends past and then gives back; see fillStringMap.
+	keys []string
+	// lazy defers filling each map[string]any until something needs its
+	// entries; see FromGoLazy.
+	lazy bool
 }
 
 // charge reserves n elements and reports whether the walk may continue.
@@ -110,9 +127,50 @@ func (c *converter) step() bool {
 
 func (c *converter) memo(id containerID, v Value) {
 	if c.seen == nil {
-		c.seen = make(map[containerID]Value, 4)
+		c.seen = make(map[containerID]any, 4)
 	}
-	c.seen[id] = v
+	c.seen[id] = v.obj
+}
+
+// memoList is memo for a list about to be filled with n elements that are
+// themselves containers, each of which the walk will memoise in turn.
+//
+// A list of records is the shape a render argument most often has, and the
+// memo grew to hold it one doubling at a time: fifty records rehashed it four
+// times, and the copies it left behind were most of what it cost. Sizing it
+// for the list up front, when the list is the first container the walk meets,
+// grows it once. n has already been charged -- the list's own backing array
+// is n Values, which is more than n slots of the memo -- so the sizing is
+// bounded by an allocation the budget allowed.
+func (c *converter) memoList(id containerID, v Value, n int, nested bool) {
+	if c.seen == nil && nested {
+		c.seen = make(map[containerID]any, n+1)
+	}
+	c.memo(id, v)
+}
+
+// nestsContainers reports whether a []any looks like a list of records, by its
+// first element: the memo is sized for it only then, since a list of scalars
+// puts nothing in the memo and sizing for it would be waste.
+func nestsContainers(v []any) bool {
+	switch v[0].(type) {
+	case map[string]any, []any:
+		return true
+	}
+	return false
+}
+
+// recall is the Value memo recorded for id, if it recorded one. The walk only
+// builds lists and dicts, so the payload says which of the two it was.
+func (c *converter) recall(id containerID) (Value, bool) {
+	obj, hit := c.seen[id]
+	if !hit {
+		return Value{}, false
+	}
+	if d, ok := obj.(*Dict); ok {
+		return Value{kind: KindDict, obj: d}, true
+	}
+	return Value{kind: KindList, obj: obj.(*Seq)}, true
 }
 
 // identify returns the memo key for a container, and false for one that cannot
@@ -131,6 +189,20 @@ func identify(rv reflect.Value) (containerID, bool) {
 	}
 	return containerID{}, false
 }
+
+// identifyAnySlice is identify for a []any, without handing the slice to
+// reflect.ValueOf: a slice header does not fit in an interface, so boxing it
+// allocates, and this is called once for every []any in the walk. A pointer
+// fits, so the first element's address is taken through one instead -- which
+// is the data pointer identify would have read.
+func identifyAnySlice(v []any) (containerID, bool) {
+	if len(v) == 0 {
+		return containerID{}, false
+	}
+	return containerID{typ: anySliceType, ptr: reflect.ValueOf(&v[0]).Pointer(), n: len(v)}, true
+}
+
+var anySliceType = reflect.TypeFor[[]any]()
 
 // FromGo converts a Go value into a template value.
 //
@@ -170,44 +242,94 @@ func FromGoBudget(v any, expose MethodPolicy, b Budget) (Value, error) {
 	return out, nil
 }
 
-func (c *converter) fromAny(v any) Value {
+// FromGoLazy is [FromGoBudget] with every map[string]any in v converted
+// lazily: into a dict that is filled from the map only when something needs
+// more of it than its length or a scalar read by str key.
+//
+// A render argument is usually read a field at a time -- `{% for u in users
+// %}{{ u.name }}{% endfor %}` -- and filling every record's dict to answer that
+// was most of what such a render cost: sorting each map's keys, sizing its
+// entries and converting fields nothing reads. A record now costs its dict
+// header until something iterates it, compares it, mutates it or reads a
+// container out of it, at which point it is filled exactly as FromGoBudget
+// would have filled it, from the same walk, so a Go container met twice is
+// still one value.
+//
+// Each map's length is charged when its dict is made, so a walk is charged at
+// least what it was before for every map it reaches. What is inside a map no
+// one fills is never charged, because it is never built.
+//
+// The values it returns belong to the render b bounds, as a struct wrapper
+// does: filling a dict charges b and polls it, and has nowhere to report a
+// refusal except b itself, which remembers it. Use them within that render,
+// from the goroutine running it, and do not hand them out of it -- anything
+// that must outlive the render wants FromGoBudget. The Go maps are read when
+// the dicts are filled, not when FromGoLazy is called, so the caller must not
+// modify them until the render is over.
+func FromGoLazy(v any, expose MethodPolicy, b Budget) (Value, error) {
+	// A scalar needs no walk. The converter escapes -- every dict it makes
+	// keeps it -- so building one for a `title` or an `n` was an
+	// allocation per name for nothing.
+	if s, ok := goScalar(v); ok {
+		return s, nil
+	}
+	c := &converter{expose: expose, b: b, lazy: true}
+	out := c.fromAny(v)
+	if c.err != nil {
+		return Undefined, c.err
+	}
+	return out, nil
+}
+
+// goScalar converts the Go scalars fromAny names -- nil, bool, string and
+// every integer and float width -- and reports false for anything else.
+func goScalar(v any) (Value, bool) {
 	switch v := v.(type) {
 	case nil:
-		return None
+		return None, true
+	case bool:
+		return Bool(v), true
+	case string:
+		return String(v), true
+	case int:
+		return Int(int64(v)), true
+	case int8:
+		return Int(int64(v)), true
+	case int16:
+		return Int(int64(v)), true
+	case int32:
+		return Int(int64(v)), true
+	case int64:
+		return Int(v), true
+	case uint:
+		return Uint(uint64(v)), true
+	case uint8:
+		return Uint(uint64(v)), true
+	case uint16:
+		return Uint(uint64(v)), true
+	case uint32:
+		return Uint(uint64(v)), true
+	case uint64:
+		return Uint(v), true
+	case uintptr:
+		return Uint(uint64(v)), true
+	case float32:
+		return Float(float64(v)), true
+	case float64:
+		return Float(v), true
+	}
+	return Value{}, false
+}
+
+func (c *converter) fromAny(v any) Value {
+	if s, ok := goScalar(v); ok {
+		return s
+	}
+	switch v := v.(type) {
 	case Value:
 		return v
-	case bool:
-		return Bool(v)
-	case string:
-		return String(v)
 	case []byte:
 		return Bytes(v)
-	case int:
-		return Int(int64(v))
-	case int8:
-		return Int(int64(v))
-	case int16:
-		return Int(int64(v))
-	case int32:
-		return Int(int64(v))
-	case int64:
-		return Int(v)
-	case uint:
-		return Uint(uint64(v))
-	case uint8:
-		return Uint(uint64(v))
-	case uint16:
-		return Uint(uint64(v))
-	case uint32:
-		return Uint(uint64(v))
-	case uint64:
-		return Uint(v)
-	case uintptr:
-		return Uint(uint64(v))
-	case float32:
-		return Float(float64(v))
-	case float64:
-		return Float(v)
 	case *big.Int:
 		if v == nil {
 			return None
@@ -223,8 +345,21 @@ func (c *converter) fromAny(v any) Value {
 		// shape that used to expand until the process died.
 		rv := reflect.ValueOf(v)
 		if id, ok := identify(rv); ok {
-			if seen, hit := c.seen[id]; hit {
+			if seen, hit := c.recall(id); hit {
 				return seen
+			}
+			if c.lazy {
+				// Charged now, as fillStringMap would charge it:
+				// the entries are allocated later, but by then
+				// there may be nowhere to report a refusal.
+				if !c.charge(len(v)) {
+					return NewDict()
+				}
+				ld := &lazyDict{p: pendingDict{src: v, c: c}}
+				ld.pending = &ld.p
+				d := Value{kind: KindDict, obj: &ld.Dict}
+				c.memo(id, d)
+				return d
 			}
 			d := NewDict()
 			c.memo(id, d)
@@ -235,16 +370,15 @@ func (c *converter) fromAny(v any) Value {
 		c.fillStringMap(d, v)
 		return d
 	case []any:
-		rv := reflect.ValueOf(v)
-		if id, ok := identify(rv); ok {
-			if seen, hit := c.seen[id]; hit {
+		if id, ok := identifyAnySlice(v); ok {
+			if seen, hit := c.recall(id); hit {
 				return seen
 			}
 			if !c.charge(len(v)) {
 				return NewList()
 			}
 			list := NewList(make([]Value, 0, len(v))...)
-			c.memo(id, list)
+			c.memoList(id, list, len(v), nestsContainers(v))
 			seq, _ := list.Seq()
 			for _, item := range v {
 				if !c.step() {
@@ -269,17 +403,41 @@ func (c *converter) fromAny(v any) Value {
 	return c.fromReflect(reflect.ValueOf(v))
 }
 
+// smallMapKeys is how many keys fillStringMap sorts without the scratch slice.
+const smallMapKeys = 4
+
 func (c *converter) fillStringMap(d Value, m map[string]any) {
 	// Charged before the key slice and the dict behind it are sized.
 	if !c.charge(len(m)) {
 		return
 	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+	dict, _ := d.Dict()
+	c.fillEntries(dict, m)
+}
+
+// fillEntries is fillStringMap once the map has been charged for.
+func (c *converter) fillEntries(dict *Dict, m map[string]any) {
+	// A few keys are sorted in an array on the stack. More go on the end of
+	// the shared scratch slice and are given back when the dict is filled.
+	// A map nested inside this one appends past them while they are still
+	// being read; the three-index slice keeps this window from seeing that,
+	// and if the append reallocates, this window still holds the old array,
+	// which nothing else writes to.
+	var small [smallMapKeys]string
+	start := len(c.keys)
+	var keys []string
+	if len(m) <= len(small) {
+		keys = small[:0]
+		for k := range m {
+			keys = append(keys, k)
+		}
+	} else {
+		for k := range m {
+			c.keys = append(c.keys, k)
+		}
+		keys = c.keys[start:len(c.keys):len(c.keys)]
 	}
 	slices.Sort(keys)
-	dict, _ := d.Dict()
 	dict.Reserve(len(keys))
 	for _, k := range keys {
 		if !c.step() {
@@ -288,6 +446,9 @@ func (c *converter) fillStringMap(d Value, m map[string]any) {
 		// The keys came from a map, so none of them can repeat.
 		_ = dict.setFresh(String(k), c.fromAny(m[k]))
 	}
+	// Given back only on success: a refused walk is abandoned, and its
+	// converter with it.
+	c.keys = c.keys[:start]
 }
 
 func (c *converter) fromReflect(rv reflect.Value) Value {
@@ -309,16 +470,11 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 		}
 		return c.fromReflect(rv.Elem())
 
-	case reflect.Bool:
-		return Bool(rv.Bool())
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return Int(rv.Int())
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return Uint(rv.Uint())
-	case reflect.Float32, reflect.Float64:
-		return Float(rv.Float())
-	case reflect.String:
-		return String(rv.String())
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		return scalarFromReflect(rv)
 
 	case reflect.Slice, reflect.Array:
 		if rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() == reflect.Uint8 {
@@ -326,7 +482,7 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 		}
 		id, cyclable := identify(rv)
 		if cyclable {
-			if seen, hit := c.seen[id]; hit {
+			if seen, hit := c.recall(id); hit {
 				return seen
 			}
 		}
@@ -335,21 +491,23 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 		}
 		list := NewList(make([]Value, 0, rv.Len())...)
 		if cyclable {
-			c.memo(id, list)
+			k := rv.Type().Elem().Kind()
+			c.memoList(id, list, rv.Len(), k == reflect.Map || k == reflect.Slice)
 		}
 		seq, _ := list.Seq()
+		elem := c.elemConverter(rv.Type().Elem())
 		for i := range rv.Len() {
 			if !c.step() {
 				return list
 			}
-			seq.Append(c.fromAny(rv.Index(i).Interface()))
+			seq.Append(elem(rv.Index(i)))
 		}
 		return list
 
 	case reflect.Map:
 		id, cyclable := identify(rv)
 		if cyclable {
-			if seen, hit := c.seen[id]; hit {
+			if seen, hit := c.recall(id); hit {
 				return seen
 			}
 		}
@@ -371,6 +529,7 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 		})
 		dict, _ := d.Dict()
 		dict.Reserve(len(keys))
+		key, val := c.elemConverter(rv.Type().Key()), c.elemConverter(rv.Type().Elem())
 		for _, k := range keys {
 			if !c.step() {
 				return d
@@ -378,7 +537,7 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 			// A Go map key is always comparable, so it always
 			// hashes: SetKnown says that rather than guarding a
 			// branch nothing can take.
-			dict.SetKnown(c.fromAny(k.Interface()), c.fromAny(rv.MapIndex(k).Interface()))
+			dict.SetKnown(key(k), val(rv.MapIndex(k)))
 		}
 		return d
 
@@ -393,8 +552,64 @@ func (c *converter) fromReflect(rv reflect.Value) Value {
 	return FromObject(&opaqueObject{rv: rv})
 }
 
+// elemConverter is how the elements of a container whose element type is t are
+// converted.
+//
+// The general answer is fromAny on the element as an interface, which is what
+// lets a named type implementing Object, a time.Time or a value.Value be
+// recognised. Boxing a string or a number into an interface allocates, though,
+// and a []string or a map[string]string paid that once per element for an
+// answer the element's kind already gives. A type with no methods cannot be an
+// Object, and a basic kind cannot be any of the other special cases, so for
+// those fromReflect's kind switch is the same conversion without the box.
+func (c *converter) elemConverter(t reflect.Type) func(reflect.Value) Value {
+	if plainScalar(t) {
+		return scalarFromReflect
+	}
+	return func(rv reflect.Value) Value { return c.fromAny(rv.Interface()) }
+}
+
+// plainScalar reports whether t is a basic scalar kind with no methods: a type
+// fromAny and fromReflect convert identically.
+func plainScalar(t reflect.Type) bool {
+	if t.NumMethod() != 0 {
+		return false
+	}
+	switch t.Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+// scalarFromReflect is fromReflect's answer for a value of a plainScalar type.
+func scalarFromReflect(rv reflect.Value) Value {
+	switch rv.Kind() {
+	case reflect.Bool:
+		return Bool(rv.Bool())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return Int(rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return Uint(rv.Uint())
+	case reflect.Float32, reflect.Float64:
+		return Float(rv.Float())
+	case reflect.String:
+		return String(rv.String())
+	}
+	panic("value: scalarFromReflect on " + rv.Type().String())
+}
+
 func compareReflectKeys(a, b reflect.Value) int {
-	ka, kb := FromGo(a.Interface()), FromGo(b.Interface())
+	var ka, kb Value
+	if plainScalar(a.Type()) {
+		// Both keys come from one map, so they share a type.
+		ka, kb = scalarFromReflect(a), scalarFromReflect(b)
+	} else {
+		ka, kb = FromGo(a.Interface()), FromGo(b.Interface())
+	}
 	// Only two numbers have a numeric order: compareNumbers reads an integer
 	// out of anything that is not a float, and a string has none.
 	if ka.IsNumber() && kb.IsNumber() {
