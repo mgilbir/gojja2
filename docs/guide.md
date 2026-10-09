@@ -614,11 +614,89 @@ committed case.
 `URLizeRel` (jinja2 defaults it to `"noopener"`), `URLizeTarget`, and
 `TruncateLeeway`.
 
+## Overlays
+
+`Environment.Overlay(opts...)` is jinja2's `Environment.overlay`: a new
+environment made from an existing one, sharing everything except what `opts`
+override. Keep one base -- loader, filters, settings, compiled templates -- and
+derive what varies per tenant or per request:
+
+```go
+base, _ := gojja2.New(gojja2.WithLoader(loader))
+base.AddFilter("money", money)
+
+tenant, err := base.Overlay(gojja2.WithMaxIterations(10_000))
+if err != nil { ... }
+tenant.AddGlobal("brand", value.String("acme"))
+tmpl, _ := tenant.GetTemplate("page.html")
+```
+
+`ExampleEnvironment_Overlay` is the runnable version.
+
+Any `Option` that `New` accepts is accepted here, and the result is checked the
+way `New` checks one, so an overlay whose delimiters collide is refused and the
+base is unchanged. `LinkedTo` returns the environment an overlay came from.
+
+**Every template an overlay returns renders with the overlay's settings** --
+autoescape, finalize, Undefined, limits, method policy, globals -- and so does
+everything it reaches by `{% include %}`, `{% extends %}` or `{% import %}`,
+because those are loaded through the overlay too. That is jinja2's behaviour,
+checked against 3.1.6 for autoescape, finalize, Undefined and globals through an
+include and an extends.
+
+**The template cache is the overlay's own**, of the base's size unless
+`WithCacheSize` is given -- jinja2's overlay starts with an empty copy of the
+cache, too. `ClearCache` on one does not clear the other.
+
+**Compiling is shared where it can be.** jinja2 compiles every template again in
+every overlay. gojja2 reuses the base's compiled template when the overlay's
+options leave alone everything compiling reads: the syntax and delimiters, the
+extensions, the loader, the autoescape policy, finalize, the Undefined, the
+policies, the Python version, `WithMaxIntBits`, and the two unsupported-construct
+options. Constant folding bakes each of those into the tree. What is left -- the
+render limits, the method policy, the globals, the cache size -- is read while
+rendering, from the overlay. So an overlay that changes only those costs about
+as much as the render itself, while one that changes autoescape compiles each
+template it is asked for (`BenchmarkPerRequestEnvironment`, one page with a
+layout and an include):
+
+| per request | time | allocations |
+|---|---|---|
+| one shared environment, no per-request state | 11.7µs | 135 |
+| `Overlay` that reuses compiled templates | 16.1µs | 197 |
+| `Overlay(WithAutoescape(true))`, compiles its own | 42.5µs | 395 |
+| `New` | 56.2µs | 475 |
+
+Two things make an overlay compile a template itself even then: the overlay
+having registered a filter or test of its own, since folding runs them, and the
+template's compile having run a filter or test *you* registered, because such a
+function is handed a `*State` and could read the environment that compiled.
+Folding the base's stock filters reads nothing an overlay can change without
+being caught by the list above. The rule is enforced by
+`TestOverlayCompilesWhatItChanged` (every compile-time option, each with a
+template whose output shows a wrong reuse), and a new field on `Environment` or
+a new `Option` fails a test until it has been classified.
+
+**Filters, tests and globals are copied on the overlay's first write.**
+`AddFilter`, `AddTest` and `AddGlobal` on an overlay never change its base. In
+jinja2 they do: the overlay's three dicts are the base's own objects -- see
+[divergences.md](divergences.md#an-overlays-registrations-stay-in-the-overlay).
+Until an overlay writes to one, a registration on the base is visible through
+it, as in jinja2.
+
 ## Concurrency
 
 An `Environment` is safe for concurrent use **once configured**, and a compiled
 `*Template` is safe to render from many goroutines at once. Registering filters,
 tests or globals after templates are in flight is not.
+
+That includes overlays: any number may be made from one environment
+concurrently, and each may be configured and rendered on its own goroutine while
+the base renders, because an overlay's `AddFilter`, `AddTest` and `AddGlobal`
+copy the registry before writing it. Registering on the *base* while its
+overlays render is the same race as registering on it while it renders, since
+an overlay reads the base's registries until it has written one of its own.
+`TestOverlayConcurrent` runs that under `-race`.
 
 A list written *in the template* is rebuilt per render, because the compiled
 tree is shared by every render of that template. `concurrency_test.go` pins
