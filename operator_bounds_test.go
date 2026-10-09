@@ -25,6 +25,7 @@ func TestOperatorsBoundedWhereCPythonExhaustsTheMachine(t *testing.T) {
 		{"one needs no exponent", `{% set n = 2**70 %}{{ 1 ** n }}`, "1", ""},
 		{"minus one reads the parity", `{% set n = 2**70 + 1 %}{{ (-1) ** n }}`, "-1", ""},
 		{"string repeated past the ceiling", `{% set n = 2**62 %}{{ 'ab' * n }}`, "", "repeated string is too long"},
+		{"bytes repeated past the ceiling", `{% set n = 2**62 %}{{ 'ab'.encode() * n }}`, "", "repeated bytes are too long"},
 		{"sequence repeated past the ceiling", `{% set n = 2**62 %}{{ [1, 2] * n }}`, "", "repeated sequence is too long"},
 		{"empty unit repeats freely", `{% set n = 2**62 %}[{{ '' * n }}][{{ [] * n }}]`, "[][[]]", ""},
 	} {

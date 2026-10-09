@@ -642,6 +642,11 @@ func repeat(v Value, n int64) (Value, error) {
 	case KindString, KindBytes:
 		size := saturatingMul(int64(len(v.str)), n)
 		if size > MaxAllocBytes {
+			// CPython's two refusals, which differ by a word: bytes_repeat
+			// says "bytes are", unicode_repeat "string is".
+			if v.kind == KindBytes {
+				return Undefined, errs.New(errs.OverflowError, "repeated bytes are too long")
+			}
 			return Undefined, errs.New(errs.OverflowError, "repeated string is too long")
 		}
 		out := Value{kind: v.kind, safe: v.safe}

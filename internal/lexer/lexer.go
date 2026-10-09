@@ -50,6 +50,10 @@ func Tokenize(syn Syntax, source, name string) ([]Token, error) {
 // which is how jinja2's compile_expression lexes: its parser is built with
 // state="variable", so the stream starts with the expression and runs on as an
 // ordinary template if the expression's end delimiter turns up in it.
+//
+// lineStarting is left false, unlike Tokenize. It only decides lstrip_blocks
+// for a tag after the expression's end delimiter, and the parser refuses that
+// delimiter itself ("chunk after expression") before it reads any such tag.
 func TokenizeExpression(syn Syntax, source, name string) ([]Token, error) {
 	l := &lexer{
 		syn:  syn.withDefaults(),

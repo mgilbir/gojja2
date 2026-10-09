@@ -7581,11 +7581,13 @@ case("limits/integer_width_power", "{{ (2 ** e) > 0 }}", e=2000000)
 # The string is bound with `set` so that neither engine folds the product: a fold
 # that raises is swallowed and the case would grade nothing.
 #
-# A list, a tuple and a bytes are left out on purpose. CPython answers the first
-# two with a bare MemoryError, which is not recordable, and the bytes with
-# "repeated bytes are too long", where gojja2 says "string".
+# A list and a tuple are left out on purpose: CPython answers them with a bare
+# MemoryError, which is not recordable. bytes has a refusal of its own, a word
+# different from str's.
 case("errors/repeat_str_past_ssize_t", '{% set s = "ab" %}{{ s * 2**62 }}')
 case("errors/repeat_str_past_ssize_t_reflected", '{% set s = "ab" %}{{ 2**62 * s }}')
+case("errors/repeat_bytes_past_ssize_t", '{% set b = "ab".encode() %}{{ b * 2**62 }}')
+case("errors/repeat_bytes_past_ssize_t_reflected", '{% set b = "ab".encode() %}{{ 2**62 * b }}')
 
 # --- messages nothing had ever produced: the second audit ----------------------
 # `make ungraded` counts the error sites no corpus case reaches, and 69 of 402

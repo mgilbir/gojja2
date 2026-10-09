@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"strings"
 	"testing"
 
 	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/errs"
+	"github.com/mgilbir/gojja2/value"
 )
 
 // One charge site, one template that reaches it and nothing else.
@@ -123,6 +125,15 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		"f":  1.5,
 		"x":  "x",
 		"n1": 1,
+		// A host object that behaves as a list of a million items, so
+		// `in` scans it through the Sequence interface with no
+		// conversion charged ahead of the scan.
+		"hostSeq":  value.FromObject(millionInts{}),
+		"hostIter": value.FromObject(millionIter{}),
+		// An exponent from the context, so `2 ** e` is computed at
+		// render time: 20,001 bits, about 2.5KB, under a 4KiB bound
+		// once and over it twice.
+		"e20k": 20000,
 	}
 	for name, tc := range map[string]struct {
 		src      string
@@ -148,7 +159,10 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		// chose, and strconv, fmt and strings.Repeat allocate it. Uncharged,
 		// `{:.99999999999999f}` killed the process with a fatal out of
 		// memory that no recover catches.
-		"format float precision":  {`{% set v = '{:.100000f}'.format(f) %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},
+		"format float precision": {`{% set v = '{:.100000f}'.format(f) %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},
+		// value/strformat.go, pad: a width is a fill of that many runes,
+		// charged before it is built.
+		"format width":            {`{% set v = '{:>100000}'.format(x) %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},
 		"percent float precision": {`{% set v = '%.100000f' % f %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},
 		"percent int precision":   {`{% set v = '%.100000d' % n1 %}`, gojja2.ErrOutputTooLarge, 0, 0, nil},
 		"markup percent int precision": {`{% set v = ('%.100000d'|safe) % n1 %}`,
@@ -304,6 +318,49 @@ func TestEachBudgetChargeRefusesOnItsOwn(t *testing.T) {
 		// out changed nothing.
 		"proxy pairs": {`{% set C = pairs.keys().mapping.__class__ %}{% set v = C(C(wide))|items %}`,
 			gojja2.ErrTooManyIterations, 0, 3000, nil},
+
+		// The value package charges through functions rather than a
+		// State, which make mutate did not see until 2026-10-09; these
+		// are the sites that then survived. Each list is built in the
+		// template from a lazy range(), at a cost of one step an item,
+		// so the bound sits between building it and walking it again.
+
+		// call.go, unpack: a list in hand is charged its length.
+		"unpack a list": {`{% set xs = range(600)|list %}{% set a, b = xs %}`,
+			gojja2.ErrTooManyIterations, 0, 0, nil},
+		// value/compare.go, Contains over a list or tuple.
+		"in a list": {`{% set xs = range(600)|list %}{% set v = -1 in xs %}`,
+			gojja2.ErrTooManyIterations, 0, 0, nil},
+		// value/compare.go, Contains over a Sequence object. A range
+		// answers arithmetically and a |groupby pair holds two, so only a
+		// host object reaches the scan with any length.
+		"in a host sequence": {`{% set v = -1 in hostSeq %}`, gojja2.ErrTooManyIterations, 0, 0, nil},
+		// value/compare.go, containsIterated: an object that can only be
+		// iterated is searched by walking it. A dict view answers `in`
+		// itself, so again only a host object reaches the walk.
+		"in a host iterable": {`{% set v = -1 in hostIter %}`, gojja2.ErrTooManyIterations, 0, 0, nil},
+		// value/ops.go, Add and Sub on integers too wide for int64: the
+		// result is charged its bytes, as `*` and `**` charge theirs.
+		// Measured: `2 ** e20k` costs 5,000 bytes by itself and each
+		// operation on it 2,501 more, so the bound sits between.
+		"wide int add": {`{% set x = 2 ** e20k %}{% set v = x + x %}`, gojja2.ErrOutputTooLarge, 6000, 0, nil},
+		"wide int sub": {`{% set x = 2 ** e20k %}{% set v = x - (0 - x) %}`, gojja2.ErrOutputTooLarge, 6000, 0, nil},
+		// value/set.go, NewSet: a view subtracted from builds a set of it.
+		"set of a view": {`{% set v = wide.keys() - [] %}`, gojja2.ErrTooManyIterations, 0, 3000, nil},
+		// value/ops.go, set - set: the second difference walks the first.
+		// Measured: 10,003 steps with the charge, two thousand fewer
+		// without it.
+		"set minus set": {`{% set a = wide.keys() - [] %}{% set v = a - (pairs.keys() - []) %}`,
+			gojja2.ErrTooManyIterations, 0, 9000, nil},
+		// value/set.go, Set.Add: each new element is an item.
+		"set add": {`{% set s = pairs.keys() - [] %}{% for i in range(600) %}{% set _ = s.add(i) %}{% endfor %}`,
+			gojja2.ErrTooManyIterations, 0, 0, nil},
+		// value/set.go, setReverseDifference and setDifference walk the
+		// other operand into a slice or a set before anything else
+		// refuses. With the charge gone the walk over a billion items is
+		// stopped by nothing, which is what the charge is for.
+		"range minus a view": {`{% set v = range(10 ** 9) - pairs.keys() %}`, gojja2.ErrTooManyIterations, 0, 0, nil},
+		"view minus a range": {`{% set v = pairs.keys() - range(10 ** 9) %}`, gojja2.ErrTooManyIterations, 0, 0, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out, iters := tc.outBytes, tc.iters
@@ -379,4 +436,27 @@ func TestPadChargesTheWholeCentreBeforeBuildingEitherHalf(t *testing.T) {
 		t.Errorf("center(%d) wrote %d bytes; the result is bound to a name, "+
 			"so nothing should reach the output", width, sb.Len())
 	}
+}
+
+// millionIter is a host object that can only be iterated: a million integers.
+type millionIter struct{}
+
+func (millionIter) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
+func (millionIter) Iterate() iter.Seq[value.Value] {
+	return func(yield func(value.Value) bool) {
+		for i := range 1_000_000 {
+			if !yield(value.Int(int64(i))) {
+				return
+			}
+		}
+	}
+}
+
+// millionInts is a host object that is a sequence of a million integers.
+type millionInts struct{}
+
+func (millionInts) GetAttr(string) (value.Value, bool) { return value.Undefined, false }
+func (millionInts) Len() int                           { return 1_000_000 }
+func (millionInts) GetIndex(i int) (value.Value, bool) {
+	return value.Int(int64(i)), i >= 0 && i < 1_000_000
 }
