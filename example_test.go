@@ -430,3 +430,40 @@ func ExampleEnvironment_Filters() {
 	// 55 true
 	// true 39
 }
+
+func ExampleTemplate_Module() {
+	env := mustEnv(gojja2.WithLoader(gojja2.DictLoader{
+		"forms.html": `{% set version = 2 %}` +
+			`{% macro input(name, type="text") %}<input type="{{ type }}" name="{{ name }}">{% endmacro %}`,
+	}))
+	tmpl, err := env.GetTemplate("forms.html")
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+	mod, err := tmpl.Module(ctx, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(mod.Names())
+	version, _ := mod.Get("version")
+	fmt.Println(value.Str(version))
+	html, err := mod.Call(ctx, "input", "q")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(html.AsString())
+	html, err = mod.CallArgs(ctx, "input", &value.CallArgs{
+		Pos:    []value.Value{value.String("pw")},
+		Kwargs: []value.Kwarg{{Name: "type", Value: value.String("password")}},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(html.AsString())
+	// Output:
+	// [input version]
+	// 2
+	// <input type="text" name="q">
+	// <input type="password" name="pw">
+}
