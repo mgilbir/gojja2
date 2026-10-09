@@ -62,6 +62,12 @@ SITES = [
 # were not.
 CHARGES = re.compile(
     r"^(\s*)if err := ([\w.]+)\.(ChargeBytes|ChargeItems|Step)\((.*)\); err != nil \{$")
+# The value package charges through functions rather than a State, and the
+# pattern above never matched one: every charge in value/ -- repetition,
+# concatenation, formatting, sets, repr, integer width -- went unmeasured while
+# the total read as complete. A call split over lines is still not seen.
+FUNC_CHARGES = re.compile(
+    r"^(\s*)if err := ()(chargeBytes|chargeItems|chargeIntBits|chargeRepeat)\((.*)\); err != nil \{$")
 
 # Rules that are a single predicate rather than a call, mutated by inverting
 # them: the walk still runs, it just believes the wrong thing.
@@ -223,15 +229,22 @@ def mutations():
                replacement, analysis)
     for path in charge_files():
         for i, line in enumerate(path.read_text(encoding="utf-8").split("\n")):
+            # The size expression is kept, so nothing it reads goes
+            # declared-and-not-used and the mutation stays a mutation of the
+            # *charge* rather than of the traversal around it. A function
+            # charge has several arguments, and `_ = (a, b)` is not Go.
             if CHARGES.match(line):
-                # The size expression is kept, so nothing it reads goes
-                # declared-and-not-used and the mutation stays a mutation of
-                # the *charge* rather than of the traversal around it.
                 dropped = CHARGES.sub(
                     r"\1if err := func() error { _ = (\4); return nil }(); err != nil {",
                     line)
-                yield (path, f"{path.name}:{i + 1}", line.strip(), i, dropped,
-                       (CHECK_BUDGET,))
+            elif FUNC_CHARGES.match(line):
+                dropped = FUNC_CHARGES.sub(
+                    r"\1if err := func() error { _ = []any{\4}; return nil }(); err != nil {",
+                    line)
+            else:
+                continue
+            yield (path, f"{path.name}:{i + 1}", line.strip(), i, dropped,
+                   (CHECK_BUDGET,))
 
 
 def main(only: str = "") -> int:
