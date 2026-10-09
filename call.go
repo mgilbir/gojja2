@@ -471,7 +471,7 @@ func (ex *exec) applyFilter(n *ast.Filter, input value.Value) (value.Value, erro
 			return value.Undefined, errs.At(err, ex.st.tmpl.name, n.Line())
 		}
 	}
-	out, err := fn(ex.st, input, args)
+	out, err := ex.st.callFilter(n.Name, fn, input, args)
 	if err != nil {
 		return value.Undefined, errs.At(err, ex.st.tmpl.name, n.Line())
 	}

@@ -468,6 +468,11 @@ type builtinFunc struct {
 	pyName   string
 	pyModule string
 	fn       func(s *State, args *value.CallArgs) (value.Value, error)
+	// host marks a callable the host made, with Func or Class. What one
+	// returns may be something the host keeps -- a cached list, a shared
+	// config dict -- so it is isolated before a template can change it.
+	// gojja2's own build their result fresh on every call.
+	host bool
 }
 
 // Method is [Func] for a callable reached as an attribute of a value.
@@ -553,7 +558,11 @@ func (f *builtinFunc) GetAttr(name string) (value.Value, bool) {
 // callWith is the path the evaluator uses, so a global is handed the render it
 // is running inside.
 func (f *builtinFunc) callWith(s *State, args *value.CallArgs) (value.Value, error) {
-	return f.fn(s, args)
+	out, err := f.fn(s, args)
+	if err != nil || !f.host {
+		return out, err
+	}
+	return s.isolate(out)
 }
 
 // TypeName is what an error message calls this value. type(range) is type, not
@@ -667,8 +676,13 @@ type statefulCaller interface {
 // chooses, must charge it with State.Step before doing so -- charging
 // afterwards is useless, because by then the memory is already committed. It is
 // nil during constant folding, which State.Step handles.
+//
+// What fn returns is the render's own: a list, a dict or anything else a
+// template could change is copied before the template sees it, so a function
+// may return a value it keeps -- a cached list -- without one render's changes
+// reaching the next.
 func Func(name string, fn func(s *State, args *value.CallArgs) (value.Value, error)) value.Value {
-	return value.FromObject(&builtinFunc{name: name, fn: fn})
+	return value.FromObject(&builtinFunc{name: name, fn: fn, host: true})
 }
 
 // pyFunc is [Func] for a global whose underlying Python function has a name of
@@ -685,6 +699,11 @@ func pyFunc(name, pyName, pyModule string,
 // function. qualified is the name repr shows, e.g. "range" or
 // "jinja2.utils.Cycler".
 func Class(name, qualified string, fn func(s *State, args *value.CallArgs) (value.Value, error)) value.Value {
+	return value.FromObject(&builtinFunc{name: name, class: qualified, fn: fn, host: true})
+}
+
+// class is Class for gojja2's own globals, whose results are always new.
+func class(name, qualified string, fn func(s *State, args *value.CallArgs) (value.Value, error)) value.Value {
 	return value.FromObject(&builtinFunc{name: name, class: qualified, fn: fn})
 }
 

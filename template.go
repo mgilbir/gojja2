@@ -262,6 +262,12 @@ type blockEntry struct {
 
 // State is the per-render state a filter, test or global may need.
 type State struct {
+	// eager is set on a render whose values go back to the host after it
+	// ends -- an Expression's result, a Module's exports -- so that the
+	// globals it reaches are copied in full while it is running instead
+	// of lazily. See scope.global.
+	eager bool
+
 	env  *Environment
 	tmpl *Template // the template whose body is executing
 	root *Template // the template the render started from
@@ -419,7 +425,9 @@ func (s *State) Undefined(v value.Value) value.Value {
 // while the including one was bounded. Making both arguments is what stops a
 // third construction site from doing it again.
 func (t *Template) newState(vars map[string]value.Value, depth int, b *budget) *State {
-	globals := &scope{vars: t.env.globals}
+	// The globals are read through raw, so that one a template could change
+	// is copied before this render can; see scope.global.
+	globals := &scope{raw: t.env.globalRefs}
 	// The render arguments get a scope of their own, below the one the
 	// template writes into. A top-level `{% set %}` then shadows an
 	// argument of the same name from the start of the render, which is
@@ -447,6 +455,7 @@ func (t *Template) newState(vars map[string]value.Value, depth int, b *budget) *
 		depth:       depth,
 		budget:      b,
 	}
+	globals.budget = st
 	st.escapeDefault = t.env.escapes(t.name, t.fromString)
 	st.autoescape = st.escapeDefault
 	declareRootLocals(ctx, st, t.tree, t.tree.Body)

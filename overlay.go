@@ -261,5 +261,6 @@ func (e *Environment) ownGlobals() {
 		return
 	}
 	e.globals = maps.Clone(e.globals)
+	e.globalRefs = maps.Clone(e.globalRefs)
 	e.overlay.borrowsGlobals = false
 }

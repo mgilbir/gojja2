@@ -58,7 +58,7 @@ are safety controls rather than behavioural choices, and they live in
 | [A `{% set %}` block writing to a name that was never set](#a--set--block-writing-to-a-name-that-was-never-set) | both raise `TypeError`; jinja2 names a sentinel of its own | No -- only the type in the message |
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
-| [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | a template cannot write to your objects | Changes what the *host* sees after the render, not what renders |
+| [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | a template's changes to your data, the environment's globals or what your functions return stay in its render | Changes what the *host*, the next render and other tenants see -- never what this render renders |
 | [Subscripting the `dict` global](#subscripting-the-dict-global) | `dict['k']` is undefined; in Python it is a generic alias | No -- it is a type annotation, not a lookup |
 | [Which line an error inside a multi-line tag names](#which-line-an-error-inside-a-multi-line-tag-names) | the failing token's line, not the tag's | No -- same error, different line number |
 | [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
@@ -1089,13 +1089,31 @@ program, and several filters mutate in place in jinja2 -- `do_indent` extends
 the list it is handed -- so the alternative is a template reaching into the
 host's state by accident.
 
-Two things are still shared, on purpose:
+The same holds for everything a render reaches from somewhere that outlives
+it. jinja2 lets a template change an environment global in place -- append to a
+global list, update a global dict, advance a global `cycler` -- and the change
+is there for the next render, on every thread, and for every overlay sharing
+the global: one tenant's write is the next tenant's data. gojja2 copies what a
+template could change before the render can change it, the first time the
+render reaches it, so the change is the render's alone:
 
-| what | shared? | why |
+| what | shared between renders? | how |
 |---|---|---|
-| a slice, map or nested container | no, converted | a template cannot corrupt the caller |
-| a global registered on the Environment | **yes** | it lives on the Environment, as in jinja2 |
-| a host object exposed by pointer | **yes** | its methods are the point; copying it would break every stateful object |
+| a slice, map or nested container in the context | no | converted for each render |
+| a `value.Value` in the context of `Render` | no | copied the first time the render reaches it |
+| a global registered on the Environment | no | copied the first time the render reaches it; a dict only as far as the render reaches into it |
+| what a host function (`Func`, `Class`), a host filter or a Go method returns | no | copied; a value it returns twice is one copy for the whole render |
+| a constant folded into the compiled template | no | copied each time it is evaluated |
+| a host object exposed by pointer | **yes** | its methods are the point; copying it would break every stateful object, and which methods a template may call is the host's method policy |
+
+Within one render nothing changes: a global or a host value reached twice --
+through an include, an import or a second call -- is one value, so a change
+made through one reference is seen through the other, as in jinja2. A module
+from `Template.Module` keeps its copies for its whole life, as its state does.
+What differs is only that the next render, and every other tenant, starts from
+the environment's own value. `isolation_test.go` pins each row, under the race
+detector; see `value.Isolate` for the mechanism and its cost, which is charged
+to the render like any other walk.
 
 This holds for `Render` and `RenderString`, which convert what they are given.
 It does **not** hold for `RenderValues`, whose whole purpose is to skip that

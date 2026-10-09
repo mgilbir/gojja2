@@ -72,6 +72,7 @@ func (x *Expression) Eval(ctx context.Context, vars map[string]any) (v value.Val
 	// The result goes back to the host, so it is converted in full while
 	// the budget is still watching; see eagerConversion.
 	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, x.tmpl.env.methods, eagerConversion{st}
+	st.eager = true
 	return x.result(st)
 }
 
@@ -80,7 +81,9 @@ func (x *Expression) Eval(ctx context.Context, vars map[string]any) (v value.Val
 // expression that mutates one -- `lst.append(1)` -- mutates the caller's.
 func (x *Expression) EvalValues(ctx context.Context, vars map[string]value.Value) (v value.Value, err error) {
 	defer catchPanic(&err)
-	return x.result(x.tmpl.newState(vars, 0, newBudget(ctx, x.tmpl.env)))
+	st := x.tmpl.newState(vars, 0, newBudget(ctx, x.tmpl.env))
+	st.eager = true // the result goes back to the host; see State.eager
+	return x.result(st)
 }
 
 // result runs the compiled assignment and reads back what it assigned.

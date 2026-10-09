@@ -53,6 +53,11 @@ type Environment struct {
 	filters map[string]Filter
 	tests   map[string]Test
 	globals map[string]value.Value
+	// globalRefs is globals as a render reads them: the same values,
+	// wrapped so that the scope reaching one knows to copy it first if a
+	// template could change it. Written with globals, always. See
+	// scope.global.
+	globalRefs map[string]any
 
 	// stockFilters and stockTests name the ones that are still jinja2's
 	// own. A call is checked against jinja2's signature only while it is:
@@ -151,6 +156,7 @@ func New(opts ...Option) (*Environment, error) {
 		filters:        make(map[string]Filter),
 		tests:          make(map[string]Test),
 		globals:        make(map[string]value.Value),
+		globalRefs:     make(map[string]any),
 		cache:          newTemplateCache(defaultCacheSize),
 	}
 	registerDefaultFilters(env)
@@ -782,6 +788,7 @@ func (e *Environment) AddTest(name string, t Test) {
 func (e *Environment) AddGlobal(name string, v value.Value) {
 	e.ownGlobals()
 	e.globals[name] = v
+	e.globalRefs[name] = globalRef{v}
 }
 
 // Globals returns a copy of the registered globals.

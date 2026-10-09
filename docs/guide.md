@@ -703,10 +703,15 @@ tree is shared by every render of that template. `concurrency_test.go` pins
 this; the version without the rebuild fails there with one goroutine's values
 appearing in another's output.
 
-Two things are deliberately shared: a global registered on the `Environment`,
-which lives there as it does in jinja2, and a host object exposed by pointer,
-whose methods are the point. Everything else a render is handed is converted, so
-a template cannot write to the caller's data —
+Nothing one render changes reaches another render, another tenant or the
+host. A global registered on the `Environment`, a `value.Value` in the context,
+and whatever a host function, filter or method returns are copied the first
+time a render reaches them, if a template could change them -- a dict only as
+far as the render reaches into it -- and the render works on its copy; within
+the render, every reference to one of them is that one copy. jinja2 lets a
+change to a global persist into later renders; gojja2 does not. The one thing
+deliberately shared is a host object exposed by pointer, whose methods are the
+point --
 [divergences.md](divergences.md#a-render-does-not-mutate-the-callers-data).
 
 Conversion is read-only, and several renders may share one `vars` map. It is

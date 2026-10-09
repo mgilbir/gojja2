@@ -52,9 +52,16 @@ type Dict struct {
 	pending *pendingDict
 }
 
-// pendingDict is what a lazily converted dict is filled from.
+// pendingDict is what a lazily converted dict is filled from: a Go map, or a
+// dict the render must not change (see IsolateLazy).
 type pendingDict struct {
 	src map[string]any
+	// from, when set, is the dict this one is a copy of, and iso the
+	// render's isolation that copies what it holds -- a dict the template
+	// reaches inside it becomes a copy too, made when it is reached. src
+	// and c are unused then.
+	from *Dict
+	iso  *isolator
 	// c is the walk the dict came out of. Filling it there, rather than
 	// in a walk of its own, is what keeps one Go container one value: a
 	// map the dict holds that the walk has already met elsewhere is found
@@ -86,6 +93,11 @@ func (d *Dict) load() {
 func (d *Dict) loadPending() {
 	p := d.pending
 	d.pending = nil
+	if from, iso := p.from, p.iso; from != nil {
+		*p = pendingDict{}
+		iso.fillCopy(d, from)
+		return
+	}
 	src, c := p.src, p.c
 	*p = pendingDict{}
 	c.fillEntries(d, src)
@@ -274,8 +286,11 @@ func StringDict(keys []string, vals []Value) Value {
 // A dict still waiting on its Go map has exactly that map's keys, so its
 // length is known without filling it.
 func (d *Dict) Len() int {
-	if d.pending != nil {
-		return len(d.pending.src)
+	if p := d.pending; p != nil {
+		if p.from != nil {
+			return p.from.Len()
+		}
+		return len(p.src)
 	}
 	return len(d.entries)
 }
@@ -311,8 +326,9 @@ func (d *Dict) Values() []Value {
 // miss, because Python raises TypeError for it.
 func (d *Dict) Get(key Value, py PythonVersion) (Value, bool, error) {
 	if d.pending != nil && key.kind == KindString {
-		// Every key of a dict still waiting on its Go map is a plain
-		// str, and a str key finds only a str, so this is GetString.
+		// A str key finds exactly what GetString finds -- a plain str key
+		// or a Markup of the same text -- in a dict waiting on its Go map
+		// or on the dict it copies alike.
 		v, ok := d.GetString(key.str)
 		return v, ok, nil
 	}
@@ -326,6 +342,17 @@ func (d *Dict) Get(key Value, py PythonVersion) (Value, bool, error) {
 // GetString is the common case: lookup by a str key.
 func (d *Dict) GetString(key string) (Value, bool) {
 	if p := d.pending; p != nil {
+		if p.from != nil {
+			// A copy answers from what it copies, without filling:
+			// what nothing can change as it is, and a container as
+			// the render's one copy of it, which the fill will hold
+			// too when it comes.
+			v, ok := p.from.GetString(key)
+			if !ok || !MayBeMutable(v) {
+				return v, ok
+			}
+			return p.iso.lazyOrUndefined(v), true
+		}
 		raw, ok := p.src[key]
 		if !ok {
 			return Undefined, false

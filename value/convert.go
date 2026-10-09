@@ -93,6 +93,15 @@ type converter struct {
 	// lazy defers filling each map[string]any until something needs its
 	// entries; see FromGoLazy.
 	lazy bool
+
+	// iso copies the parts of a Value met in the Go data that a template
+	// could change -- a value.Value a host put inside its context, or
+	// returned from a method -- so the render works on its own copy and not
+	// on the host's. One walk, one memo: a Value met twice is one copy.
+	// Set by FromGoBudget and FromGoLazy, which convert for a render, and
+	// built the first time a Value is met -- Go data seldom holds one.
+	isolates bool
+	iso      *isolator
 }
 
 // charge reserves n elements and reports whether the walk may continue.
@@ -234,7 +243,7 @@ func FromGoWith(v any, expose MethodPolicy) Value {
 // The returned Value is only meaningful when the error is nil; a refused walk
 // hands back what it had built so far.
 func FromGoBudget(v any, expose MethodPolicy, b Budget) (Value, error) {
-	c := &converter{expose: expose, b: b}
+	c := &converter{expose: expose, b: b, isolates: true}
 	out := c.fromAny(v)
 	if c.err != nil {
 		return Undefined, c.err
@@ -273,7 +282,7 @@ func FromGoLazy(v any, expose MethodPolicy, b Budget) (Value, error) {
 	if s, ok := goScalar(v); ok {
 		return s, nil
 	}
-	c := &converter{expose: expose, b: b, lazy: true}
+	c := &converter{expose: expose, b: b, lazy: true, isolates: true}
 	out := c.fromAny(v)
 	if c.err != nil {
 		return Undefined, c.err
@@ -327,7 +336,25 @@ func (c *converter) fromAny(v any) Value {
 	}
 	switch v := v.(type) {
 	case Value:
-		return v
+		if !c.isolates || !MayBeMutable(v) {
+			return v
+		}
+		if c.iso == nil {
+			memo := map[any]Value(nil)
+			if mb, ok := c.b.(MemoBudget); ok {
+				memo = mb.IsolationMemo()
+			}
+			if memo == nil {
+				memo = map[any]Value{}
+			}
+			c.iso = &isolator{b: c.b, memo: memo}
+		}
+		out, err := c.iso.isolate(v)
+		if err != nil {
+			c.err = err
+			return Undefined
+		}
+		return out
 	case []byte:
 		return Bytes(v)
 	case *big.Int:

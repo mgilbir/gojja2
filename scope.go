@@ -92,6 +92,15 @@ func (s *scope) each(yield func(string, value.Value)) {
 	for k, v := range s.vars {
 		yield(k, v)
 	}
+	// The environment's globals that nothing can change are read straight
+	// from its table and never copied into vars; see globalRef.
+	for k, r := range s.raw {
+		if g, global := r.(globalRef); global && !value.MayBeMutable(g.v) {
+			if _, copied := s.vars[k]; !copied {
+				yield(k, g.v)
+			}
+		}
+	}
 }
 
 func (s *scope) lookup(name string) (value.Value, bool, error) {
@@ -123,6 +132,9 @@ func (s *scope) convert(name string) (value.Value, bool, error) {
 	raw, ok := s.raw[name]
 	if !ok {
 		return value.Undefined, false, nil
+	}
+	if g, global := raw.(globalRef); global {
+		return s.global(name, g.v)
 	}
 	// Memoise into vars and leave raw alone: raw *is* the caller's map, so
 	// deleting from it would empty the caller's context as the first render
@@ -261,4 +273,34 @@ func (s *scope) flatten() (map[string]value.Value, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// globalRef is how the environment's globals sit in a render: in the raw table
+// of the outermost scope, so that a render reads them through convert like any
+// argument not yet converted. See scope.global.
+type globalRef struct{ v value.Value }
+
+// global hands a render an environment global.
+//
+// The environment's globals are shared by every render and, through overlays,
+// every tenant -- and a template can change a list, a dict, a namespace or a
+// cycler in place. So a global a template could change is copied the first
+// time a render reaches it, and the render works on its copy: within the
+// render every reference, through every include and import, is that one copy,
+// as in jinja2, but nothing the render does to it reaches the next render or
+// another tenant, where jinja2 lets it persist. A global nothing can change is
+// handed over as it is, and costs nothing. A dict is copied lazily, as far as
+// the render reaches into it, so reading three fields of a large config costs
+// three fields; see value.IsolateLazy.
+func (s *scope) global(name string, v value.Value) (value.Value, bool, error) {
+	if !value.MayBeMutable(v) {
+		return v, true, nil
+	}
+	st, _ := s.budget.(*State)
+	c, err := st.isolateGlobal(v)
+	if err != nil {
+		return value.Undefined, false, err
+	}
+	s.set(name, c)
+	return c, true, nil
 }

@@ -930,8 +930,9 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		return value.Undefined, err
 	}
 
+	filterName := value.Str(name)
 	out, err := walk(func(item value.Value) (value.Value, error) {
-		return fn(s, item, rest)
+		return s.callFilter(filterName, fn, item, rest)
 	})
 	if err != nil {
 		return value.Undefined, err

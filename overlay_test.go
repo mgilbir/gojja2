@@ -741,6 +741,8 @@ func TestOverlayClassifiesEveryEnvironmentField(t *testing.T) {
 		"unsupportedReport": "compile-ref",
 		// Copied on write, and checked per template by sharedTemplate.
 		"filters": "registry", "tests": "registry", "globals": "registry",
+		// globals as a render reads them, written with globals.
+		"globalRefs":   "registry",
 		"stockFilters": "registry", "stockTests": "registry",
 		// Read only while rendering, or only by validate.
 		"methods": "runtime", "maxRecursion": "runtime", "maxIterations": "runtime",

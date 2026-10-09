@@ -67,6 +67,7 @@ func (t *Template) Module(ctx context.Context, vars map[string]any) (mod *Module
 	// ctx are watching -- not lazily, the way a render's own values are.
 	// See eagerConversion.
 	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, t.env.methods, eagerConversion{st}
+	st.eager = true
 	// importModule's path: renderState, not the body alone, so a template
 	// that extends gets the parent's output and the parent's exports too.
 	var body strings.Builder
@@ -167,7 +168,15 @@ func (m *Module) call(ctx context.Context, name string, build func(*State) (*val
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st := m.obj.st
-	st.budget, st.loopFailure = newBudget(ctx, st.env), nil
+	// A budget of the call's own, but the same copies of the globals and
+	// host values the module has reached: its state outlives one call, and
+	// its view of a global it has changed is part of that state. See
+	// State.isolate.
+	b := newBudget(ctx, st.env)
+	if st.budget != nil {
+		b.isolated = st.budget.isolated
+	}
+	st.budget, st.loopFailure = b, nil
 	prevTmpl := st.tmpl
 	defer func() { st.tmpl = prevTmpl }()
 	defer catchPanic(&err)
