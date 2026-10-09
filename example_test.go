@@ -316,3 +316,29 @@ func ExampleEnvironment_ListTemplates() {
 	fmt.Println(names)
 	// Output: [base.html index.html]
 }
+
+func ExampleTemplate_RenderBlockString() {
+	env := mustEnv(gojja2.WithLoader(gojja2.DictLoader{
+		"layout.html": `<html><body>{% block content %}{% endblock %}</body></html>`,
+		"items.html": `{% extends "layout.html" %}` +
+			`{% block content %}<ul>{% for i in items %}<li>{{ i }}</li>{% endfor %}</ul>{% endblock %}`,
+	}))
+	tmpl, err := env.GetTemplate("items.html")
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+	page, err := tmpl.RenderString(ctx, map[string]any{"items": []string{"a", "b"}})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fragment, err := tmpl.RenderBlockString(ctx, "content", map[string]any{"items": []string{"a", "b"}})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(page)
+	fmt.Println(fragment)
+	// Output:
+	// <html><body><ul><li>a</li><li>b</li></ul></body></html>
+	// <ul><li>a</li><li>b</li></ul>
+}
