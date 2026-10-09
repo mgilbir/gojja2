@@ -1180,6 +1180,11 @@ type constEvaluator struct {
 	// raises before its compiler gets to see anything, and so before the
 	// compiler's own. See misplacedSlice.
 	parseRefusal error
+	// foldsHostCode records that a fold called a filter or test the host
+	// registered, which is handed this evaluator's State and so can read
+	// the compiling environment through it. An overlay will not reuse such
+	// a template from its parent; see Environment.sharedTemplate.
+	foldsHostCode bool
 }
 
 // refuse records a refusal that must end the compile, and reports the
@@ -1324,6 +1329,9 @@ func (c *constEvaluator) constFilter(n *ast.Filter) (value.Value, bool) {
 			return value.Undefined, false
 		}
 	}
+	if !c.env.stockFilters[n.Name] {
+		c.foldsHostCode = true
+	}
 	out, err := fn(c.st, input, args)
 	if err != nil {
 		return value.Undefined, false
@@ -1353,6 +1361,9 @@ func (c *constEvaluator) constTest(n *ast.Test) (value.Value, bool) {
 		if checkArity(sig, args) != nil {
 			return value.Undefined, false
 		}
+	}
+	if !c.env.stockTests[n.Name] {
+		c.foldsHostCode = true
 	}
 	out, err := fn(c.st, input, args)
 	if err != nil {

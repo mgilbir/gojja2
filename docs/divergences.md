@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the forty-one divergences below, **one** is worth going looking for:
+Of the forty-two divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -64,6 +64,7 @@ are safety controls rather than behavioural choices, and they live in
 | [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
 | [No automatic template reload](#no-automatic-template-reload) | no `auto_reload`; use `ClearCache` | Changes when an edit is picked up |
 | [The default autoescape extension set](#the-default-autoescape-extension-set) | adds `xhtml` to jinja2's three | Only ever escapes *more*, never less |
+| [An overlay's registrations stay in the overlay](#an-overlays-registrations-stay-in-the-overlay) | `AddFilter`/`AddTest`/`AddGlobal` on an overlay do not reach its base; in jinja2 they do | No -- a host API |
 | [The debug extension](#the-debug-extension) | `{% debug %}` is refused; `jinja2.ext.debug` is not offered | Only a template that uses `{% debug %}` |
 | [Native-type rendering](#native-type-rendering) | no `NativeEnvironment`; a render is always text | No -- a host API, not template behaviour |
 | [Evaluating a lone expression](#evaluating-a-lone-expression) | `CompileExpression` returns a `value.Value`, not a Python object | No -- a host API |
@@ -1267,6 +1268,37 @@ the configured extensions, a leading dot is optional, matching happens on a
 whole extension rather than on any trailing substring, and a template compiled
 from a string is escaped by default (jinja2's `default_for_string=True`).
 Asserted by the tests in `autoescape_test.go`.
+
+### An overlay's registrations stay in the overlay
+
+jinja2's `Environment.overlay` copies the environment's `__dict__`, so the
+overlay's `filters`, `tests`, `globals` and `policies` are the *same dict
+objects* as its parent's. Checked against 3.1.6: after
+`ov.filters["zz"] = f`, `"zz" in env.filters` is `True`, and
+`ov.globals["g"] = 1` changes what `{{ g }}` renders through the parent.
+
+gojja2's overlay holds its parent's registries until it registers something,
+then copies the one it writes to. A per-tenant global or filter therefore stays
+with the tenant, and an overlay can be configured on one goroutine while its
+parent renders on another; reproducing jinja2 would make every per-request
+`AddGlobal` a write to the shared base, which is a data race in Go and a leak
+between tenants either way. In the other direction the two agree: a
+registration on the parent is visible through an overlay that has not written to
+that registry. Once it has, later registrations on the parent are not seen
+there.
+
+Three smaller differences, none observable from a template:
+
+- jinja2's `overlay` has no `globals` or `policies` argument; gojja2's takes
+  every `Option`, `WithPolicies` included, and per-overlay globals are
+  `AddGlobal` on the overlay.
+- `overlay(cache_size=0)` disables caching in jinja2. `WithCacheSize(0)` means
+  the default size here, as it does for `New`.
+- jinja2 compiles every template again in each overlay. gojja2 reuses the
+  parent's compiled tree when nothing compiling reads differs -- see
+  [guide.md](guide.md#overlays) for the rule -- and the parent's cache is
+  filled as a side effect. The template an overlay returns is still its own
+  object, bound to the overlay, as in jinja2.
 
 ## jinja2 APIs gojja2 does not have
 

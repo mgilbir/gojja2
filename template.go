@@ -37,6 +37,9 @@ type Template struct {
 	// unsupported is what compiling found that gojja2 cannot honour the way
 	// jinja2 does; see [Template.Unsupported].
 	unsupported []Unsupported
+	// foldsHostCode records that compiling ran a filter or test the host
+	// registered; see constEvaluator.foldsHostCode.
+	foldsHostCode bool
 
 	// frameLocals caches, per AST node that owns a frame body, the names
 	// that body assigns. See Template.frameLocalsOf.

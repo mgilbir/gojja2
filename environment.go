@@ -101,6 +101,9 @@ type Environment struct {
 
 	// cache holds compiled templates, bounded and least-recently-used.
 	cache *templateCache
+
+	// overlay is set on an environment made by Overlay; see overlay.go.
+	overlay *overlayState
 }
 
 // Policies are the filter defaults jinja2 keeps in Environment.policies.
@@ -763,18 +766,23 @@ func (e *Environment) Policies() Policies { return e.policies }
 // with its signature: what the replacement accepts is the replacement's
 // business.
 func (e *Environment) AddFilter(name string, f Filter) {
+	e.ownFilters()
 	e.filters[name] = f
 	delete(e.stockFilters, name)
 }
 
 // AddTest registers a test, replacing any test of the same name.
 func (e *Environment) AddTest(name string, t Test) {
+	e.ownTests()
 	e.tests[name] = t
 	delete(e.stockTests, name)
 }
 
 // AddGlobal registers a global, replacing any global of the same name.
-func (e *Environment) AddGlobal(name string, v value.Value) { e.globals[name] = v }
+func (e *Environment) AddGlobal(name string, v value.Value) {
+	e.ownGlobals()
+	e.globals[name] = v
+}
 
 // Globals returns a copy of the registered globals.
 //
@@ -844,6 +852,13 @@ func (e *Environment) GetTemplate(name string) (*Template, error) {
 	// where CPython reports the environment.
 	if err := e.requireLoader(); err != nil {
 		return nil, err
+	}
+	if tmpl, err := e.sharedTemplate(name); tmpl != nil || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		e.cache.put(name, tmpl)
+		return tmpl, nil
 	}
 	source, err := e.loader.Load(name)
 	if err != nil {
@@ -1088,6 +1103,8 @@ func (e *Environment) compileTree(tree *ast.Template, source, name string, fromS
 		blocks:       blocks,
 		countsChunks: hasFilterBlock(tree.Body),
 		unsupported:  found,
+
+		foldsHostCode: folder.foldsHostCode,
 	}, nil
 }
 
