@@ -368,6 +368,20 @@ func (s *State) Poll() error {
 	return s.budget.tick()
 }
 
+// PollWork is Poll after n units of work done without charging for them, for
+// value.WorkPoller: the context is read when the render has done as much work
+// since the last read as a poll per unit would have waited for.
+func (s *State) PollWork(n int) error {
+	if s == nil || s.budget == nil {
+		return nil
+	}
+	if s.budget.failed != nil {
+		return s.budget.failed
+	}
+	s.budget.sinceCheck += n - 1
+	return s.budget.tick()
+}
+
 // Env returns the environment the render is running under.
 func (s *State) Env() *Environment { return s.env }
 

@@ -133,6 +133,26 @@ type Poller interface {
 	Poll() error
 }
 
+// WorkPoller is a Poller that can be told how much work a poll stands for.
+//
+// A render reads its context once every few thousand units of work, not on
+// every poll, so a walk that polls once per element is checked often enough --
+// but one that polls once per batch of thousands of elements, as a chunked sort
+// does, would almost never be. PollWork(n) counts the batch as the n units it
+// is. A render's State satisfies it.
+type WorkPoller interface {
+	PollWork(n int) error
+}
+
+// pollWork asks b whether to stop after n units of work. A budget that cannot
+// weigh a poll is polled once.
+func pollWork(b Budget, n int) error {
+	if p, ok := b.(WorkPoller); ok {
+		return p.PollWork(n)
+	}
+	return poll(b)
+}
+
 // poll asks b whether to stop. A nil budget, or one that cannot be polled,
 // never says so.
 func poll(b Budget) error {
