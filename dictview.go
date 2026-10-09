@@ -579,7 +579,11 @@ func (v *dictView) Iterate() iter.Seq[value.Value] {
 //     two-element pair simply is not in it -- `nope in d.items()` is False even
 //     under StrictUndefined -- while the *key* of a pair is hashed, so
 //     `(nope, 1) in d.items()` raises;
-//   - a values view compares element by element, which scan below does.
+//   - a values view compares element by element, which is the generic walk
+//     over an iterable: it answers "not known" and value.Contains walks it,
+//     charging each element. It used to walk itself here, charging nothing,
+//     so `-1 in d.values()` in a loop did len(d) comparisons per step the
+//     budget saw, and a deadline could not reach into it.
 //
 // There is no Contains beside it. There was, because Container is one of the
 // interfaces searchable() accepts -- but Iterate already makes a view an
@@ -591,8 +595,7 @@ func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found,
 		return false, false, nil
 	}
 	if v.kind == viewValues {
-		found, err := v.scan(item, py)
-		return found, true, err
+		return false, false, nil
 	}
 	key := item
 	if v.kind == viewItems {
@@ -620,25 +623,6 @@ func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found,
 	pair, _ := item.Seq()
 	eq, err := value.EqualBoolErr(pair.At(1), got, py)
 	return eq, true, err
-}
-
-// scan is the values view's element-by-element search, which is a real `==` per
-// element -- so a StrictUndefined among the *values* refuses rather than
-// answering False. `{% set q = {'a': nope} %}{{ 1 in q.values() }}` answered
-// False because the scan compared with a form that has nowhere to put an error.
-func (v *dictView) scan(item value.Value, py value.PythonVersion) (bool, error) {
-	for _, have := range v.entries() {
-		// The element on the left, as every containment scan in
-		// CPython has it.
-		eq, err := value.EqualBoolErr(have, item, py)
-		if err != nil {
-			return false, err
-		}
-		if eq {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func (v *dictView) Repr() string {

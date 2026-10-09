@@ -175,8 +175,7 @@ func (g *goFunc) call(s *State, v value.Value, args *value.CallArgs) (out value.
 		}
 		got, ok := value.ToGoAs(a, want)
 		if !ok {
-			return value.Undefined, errs.New(errs.TypeError,
-				"%s(): argument %d is not a %s, got %s", g.name, i+1, want, a.TypeName())
+			return value.Undefined, value.ArgumentTypeError(g.name, i+1, want, a)
 		}
 		in = append(in, got)
 	}

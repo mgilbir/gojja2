@@ -777,6 +777,23 @@ func ToGoAs(v Value, want reflect.Type) (got reflect.Value, ok bool) {
 	return got, true
 }
 
+// ArgumentTypeError is the TypeError for a template value that [ToGoAs] could
+// not give a Go function as its pos-th argument (counting from 1), worded the
+// way CPython words one: "f(): argument 1 must be int, not str". An integer
+// that is an integer on both sides and simply does not fit -- 300 for a uint8,
+// 2**70 for an int -- says that instead, since "must be int, not int" would
+// not.
+func ArgumentTypeError(fn string, pos int, want reflect.Type, got Value) error {
+	if got.IsInteger() && got.Kind() != KindBool {
+		switch want.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			return errs.New(errs.TypeError, "%s(): argument %d does not fit in %s", fn, pos, want)
+		}
+	}
+	return errs.New(errs.TypeError, "%s(): argument %d must be %s, not %s", fn, pos, want, got.TypeName())
+}
+
 func (m *methodObject) Call(args *CallArgs) (Value, error) {
 	t := m.fn.Type()
 	if t.NumIn() != len(args.Pos) || len(args.Kwargs) > 0 {
@@ -787,8 +804,7 @@ func (m *methodObject) Call(args *CallArgs) (Value, error) {
 	for i, a := range args.Pos {
 		got, ok := ToGoAs(a, t.In(i))
 		if !ok {
-			return Undefined, errs.New(errs.TypeError,
-				"%s(): argument %d is not a %s", m.name, i+1, t.In(i))
+			return Undefined, ArgumentTypeError(m.name, i+1, t.In(i), a)
 		}
 		in[i] = got
 	}
