@@ -7,6 +7,7 @@ package gojja2
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 
@@ -39,6 +40,12 @@ type Environment struct {
 	autoescape AutoescapeFunc
 	// finalize post-processes every printed value.
 	finalize func(value.Value) value.Value
+	// finalizeFunc is the finalize that sees the render; see
+	// WithFinalizeFunc. At most one of the two is set.
+	finalizeFunc FinalizeFunc
+	// joinPath turns a template name a template asks for into the name
+	// that is loaded; see WithJoinPath. nil leaves names as written.
+	joinPath func(name, parent string) string
 	// methods decides which Go methods a template may reach. nil means
 	// value.NullaryMethods.
 	methods value.MethodPolicy
@@ -546,8 +553,68 @@ func WithMethodPolicy(p value.MethodPolicy) Option {
 }
 
 // WithFinalize post-processes every value before it is printed.
+//
+// It is jinja2's finalize taking the value alone. Because it cannot see the
+// render, it is also applied when a print tag is folded at compile time, and
+// there, as in jinja2, it runs after the constant is escaped rather than before.
+// Use [WithFinalizeFunc] for one that reads the render or can fail. Setting
+// either replaces the other.
 func WithFinalize(fn func(value.Value) value.Value) Option {
-	return func(e *Environment) error { e.finalize = fn; return nil }
+	return func(e *Environment) error { e.finalize, e.finalizeFunc = fn, nil; return nil }
+}
+
+// FinalizeFunc post-processes a printed value with the render in view, and may
+// refuse it. It is what [WithFinalizeFunc] takes.
+type FinalizeFunc func(s *State, v value.Value) (value.Value, error)
+
+// WithFinalizeFunc post-processes every value before it is printed, like
+// [WithFinalize], with the render's [State] in hand and an error to return.
+//
+// It is jinja2's finalize decorated with @pass_context or @pass_eval_context:
+// s.Resolve reads the template context as context.resolve does, and
+// s.Autoescape is the eval context's setting. An error fails the render, and
+// is returned as it stands, so errors.Is and errors.As find it.
+//
+// Like jinja2's, such a finalize is never called at compile time, so a print
+// tag that would otherwise be folded to text is evaluated at render time
+// instead and fn sees the value rather than its escaped text. Under
+// autoescaping `{{ '<i>' }}` therefore reaches fn as "<i>" here and as
+// "&lt;i&gt;" under WithFinalize -- which is the difference jinja2 makes
+// between the two decorations. Template data is never finalized.
+//
+// Setting it replaces a [WithFinalize] hook, and a nil fn removes it.
+func WithFinalizeFunc(fn FinalizeFunc) Option {
+	return func(e *Environment) error { e.finalize, e.finalizeFunc = nil, fn; return nil }
+}
+
+// WithJoinPath sets how a template name written in a template is turned into
+// the name that is loaded. It is jinja2's Environment.join_path, which a
+// subclass overrides to make names relative to the template asking for them.
+//
+// fn is called for the name given to `{% extends %}`, `{% include %}`,
+// `{% import %}` and `{% from %}`, and for each candidate of a list, with
+// parent the name of the template whose source contains the tag -- the one
+// defining the block or macro being run, not necessarily the one the render
+// started from. What it returns is what the loader is asked for, what the
+// cache is keyed by, and so the parent of any tag inside the loaded template.
+//
+// As in jinja2, a template compiled by [Environment.FromString] has no name and
+// is not joined from, and neither is a name passed to [Environment.GetTemplate]
+// or [Environment.SelectTemplate] directly. fn sees only names that are
+// strings; anything else a template passes is left as it is. A "none of the
+// templates given were found" error lists the names as written.
+func WithJoinPath(fn func(name, parent string) string) Option {
+	return func(e *Environment) error { e.joinPath = fn; return nil }
+}
+
+// joinFrom is jinja2's `name = self.join_path(name, parent)`, where parent is
+// the template whose tag asked for name. A template from a string has no name,
+// which jinja2 passes as None, and a None parent is not joined.
+func (e *Environment) joinFrom(name string, parent *Template) string {
+	if e.joinPath == nil || parent == nil || parent.fromString {
+		return name
+	}
+	return e.joinPath(name, parent.name)
 }
 
 // WithExtensions enables the optional tags. `do` provides `{% do %}`;
@@ -723,6 +790,18 @@ func (e *Environment) Globals() map[string]value.Value {
 	return out
 }
 
+// Filters returns a copy of the registered filters, jinja2's own included,
+// keyed by the name a template uses.
+//
+// A copy for the reason [Environment.Globals] is one: writing to the map must
+// not replace a filter behind the environment's back. Use
+// [Environment.AddFilter] to change one.
+func (e *Environment) Filters() map[string]Filter { return maps.Clone(e.filters) }
+
+// Tests returns a copy of the registered tests, as [Environment.Filters] does
+// for filters. Use [Environment.AddTest] to change one.
+func (e *Environment) Tests() map[string]Test { return maps.Clone(e.tests) }
+
 // escapes reports whether a template is autoescaped. fromString marks one
 // compiled by FromString, which has no name for the policy to decide by.
 func (e *Environment) escapes(name string, fromString bool) bool {
@@ -843,16 +922,17 @@ func (e *Environment) SelectTemplate(names []string) (*Template, error) {
 	for i, name := range names {
 		values[i] = value.String(name)
 	}
-	return e.selectTemplateValues(values)
+	return e.selectTemplateValues(values, nil)
 }
 
-// selectTemplateValue is jinja2's select_template over one value.
+// selectTemplateValue is jinja2's select_template over one value, asked for by
+// the template parent; see joinFrom.
 //
 // The order is Python's, and each step is reachable from a template. Emptiness
 // is truthiness and is checked first, so `{% include none %}` and
 // `{% include [] %}` are both "an empty list of templates" -- neither ever
 // reaches the iteration that a number fails at.
-func (e *Environment) selectTemplateValue(v value.Value) (*Template, error) {
+func (e *Environment) selectTemplateValue(v value.Value, parent *Template) (*Template, error) {
 	on, err := value.IsTrue(v)
 	if err != nil {
 		return nil, err
@@ -869,7 +949,7 @@ func (e *Environment) selectTemplateValue(v value.Value) (*Template, error) {
 	for item := range seq {
 		names = append(names, item)
 	}
-	tmpl, err := e.selectTemplateValues(names)
+	tmpl, err := e.selectTemplateValues(names, parent)
 	if err != nil && v.Kind() == value.KindDict &&
 		errors.Is(err, errs.TemplatesNotFound) {
 		// TemplatesNotFound builds its `name` as `names and names[-1]`,
@@ -888,7 +968,7 @@ func (e *Environment) selectTemplateValue(v value.Value) (*Template, error) {
 // jinja2's message lists each candidate, substituting an undefined's own
 // explanation for its (empty) string form -- which is what tells an author
 // that the variable holding the name was never set.
-func (e *Environment) selectTemplateValues(names []value.Value) (*Template, error) {
+func (e *Environment) selectTemplateValues(names []value.Value, parent *Template) (*Template, error) {
 	if len(names) == 0 {
 		return nil, errs.New(errs.TemplatesNotFound,
 			"Tried to select from an empty list of templates.")
@@ -918,7 +998,14 @@ func (e *Environment) selectTemplateValues(names []value.Value) (*Template, erro
 		// its repr in the message, and a repr escapes by the
 		// interpreter's isprintable.
 		parts[i] = value.StrFor(name, e.pyVersion)
-		tmpl, err := e.GetTemplate(parts[i])
+		// Joined only to be loaded: the message names each candidate as
+		// it was written, because TemplatesNotFound is handed the list
+		// select_template was given rather than the joined names.
+		loadName := parts[i]
+		if name.IsString() {
+			loadName = e.joinFrom(loadName, parent)
+		}
+		tmpl, err := e.GetTemplate(loadName)
 		if err == nil {
 			return tmpl, nil
 		}

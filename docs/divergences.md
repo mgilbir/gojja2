@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the thirty-nine divergences below, **one** is worth going looking for:
+Of the forty-one divergences below, **one** is worth going looking for:
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
 `items` return generators, and gojja2's return lists. A generator is always
 truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
@@ -59,7 +59,6 @@ are safety controls rather than behavioural choices, and they live in
 | [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
 | [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | a template cannot write to your objects | Changes what the *host* sees after the render, not what renders |
-| [finalize and a constant print](#finalize-and-a-constant-print) | a constant print is not finalized at compile time | Only with `WithFinalize` and autoescape |
 | [Subscripting the `dict` global](#subscripting-the-dict-global) | `dict['k']` is undefined; in Python it is a generic alias | No -- it is a type annotation, not a lookup |
 | [Which line an error inside a multi-line tag names](#which-line-an-error-inside-a-multi-line-tag-names) | the failing token's line, not the tag's | No -- same error, different line number |
 | [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
@@ -72,6 +71,9 @@ are safety controls rather than behavioural choices, and they live in
 | [Listing the templates a loader has](#listing-the-templates-a-loader-has) | lists only what it can load; `PrefixLoader` sorts its prefixes | No -- a host API |
 | [Logging undefined access](#logging-undefined-access) | no `make_logging_undefined` | No -- the four Undefined classes are all there |
 | [A loader made from a function](#a-loader-made-from-a-function) | `LoaderFunc` reports a miss with `ErrNotFound`, not `None` | No -- a host API |
+| [Relative template names](#relative-template-names) | `WithJoinPath`'s hook is handed only string names | No -- a host API |
+| [The templates a template references](#the-templates-a-template-references) | `ReferencedTemplates` is asked of a compiled template | No -- a host API |
+| [The filter, test and global registries](#the-filter-test-and-global-registries) | `Filters`, `Tests` and `Globals` return copies; nothing removes an entry | No -- a host API |
 
 ---
 
@@ -1110,34 +1112,6 @@ including renders on other goroutines at the same time. `concurrency_test.go`
 pins all of it, and the version without the rebuild fails there with one
 goroutine's values appearing in another's output.
 
-### finalize and a constant print
-
-With `WithFinalize` **and** autoescaping on, a print whose expression is
-entirely constant renders differently:
-
-```jinja
-{% autoescape true %}{{ 'a' }}{% endautoescape %}
-```
-
-jinja2 gives `<Markup('a')>` and gojja2 gives `&lt;&#39;a&#39;&gt;`, for a
-hook spelled `lambda v: "<%r>" % (v,)`.
-
-jinja2 has two orders here, and which one applies depends on whether the
-expression folded. At runtime its code generator emits
-`escape(environment.finalize(value))`; at compile time `_output_child_to_const`
-does the reverse, `finalize(escape(const))`, and emits the result without
-escaping it again. So the same expression is finalized before escaping when it
-is written as a variable and after escaping when it is written as a literal.
-
-gojja2 uses the runtime order for both, because it does not run `finalize` at
-compile time at all: the hook is arbitrary Go supplied by the embedding
-program, it may not be pure, and folding would call it once per compile rather
-than once per render. Reproducing the asymmetry would mean accepting that
-trade to copy a wart.
-
-Without a finalize hook, or without autoescaping, the two agree. Asserted by
-the tests in `finalize_test.go`.
-
 ### Subscripting the `dict` global
 
 ```jinja
@@ -1396,6 +1370,50 @@ for a template it does not have; a `LoaderFunc` returns an error satisfying
 `errors.Is(err, gojja2.ErrNotFound)`, which is what `ignore missing`,
 `ChoiceLoader` and `SelectTemplate` test for. Like `FunctionLoader`, it cannot
 list.
+
+## jinja2 APIs gojja2 has in another shape
+
+Parts of jinja2's Python API that gojja2 does have, where the Go spelling hands
+over or accepts something slightly different. Each is graded against jinja2
+3.1.6 by the test named.
+
+### Relative template names
+
+jinja2 makes template names relative by overriding `Environment.join_path` in a
+subclass; gojja2 takes the same function as `WithJoinPath(func(name, parent
+string) string)`. It is called at the same points with the same parent -- the
+template whose source holds the tag, which for an overridden block is the child,
+for a macro body the macro's template and for a `{% call %}` body the caller's --
+and never for a template from a string or a name the host asks for directly. The
+cache is keyed by the joined name, and a "none of the templates given were
+found" error lists the names as written. `join_path_test.go` grades eighteen
+cases, renders and loader calls both.
+
+The difference: jinja2 hands its `join_path` whatever the template computed --
+a list given to `{% extends %}`, an undefined, a number -- and an override has to
+cope with each. The Go hook is called with string names only; anything else goes
+on exactly as it would with no hook.
+
+### The templates a template references
+
+`jinja2.meta.find_referenced_templates(env.parse(source))` is
+`Template.ReferencedTemplates()`: the same names in the same order, with
+`Dynamic: true` for each `None`, graded on forty-four templates in
+`referenced_test.go`. Each reference also carries the line of its tag.
+
+It is asked of a compiled `Template`, where jinja2 asks a parsed tree, so a
+source that parses but does not compile -- an unknown filter, say -- can be asked
+there and not here. It reads the template as written, like `Template.Syntax`, so
+`{% include 'a' ~ 'b' %}` is dynamic in both even though the compiler folds it.
+
+### The filter, test and global registries
+
+jinja2's `env.filters`, `env.tests` and `env.globals` are the environment's own
+dictionaries, so writing to one changes every template compiled afterwards and
+`del env.filters["upper"]` removes a filter. `Filters()`, `Tests()` and
+`Globals()` return copies: `AddFilter`, `AddTest` and `AddGlobal` are how one is
+changed, and nothing removes one. A fresh environment's filter and test names are
+jinja2's, name for name (`registry_accessors_test.go`).
 
 ## The bounds gojja2 puts on a render
 
