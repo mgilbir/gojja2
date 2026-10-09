@@ -34,6 +34,79 @@ type Dict struct {
 	// not collide.
 	strIdx map[string]int
 	index  map[hashKey]int
+	// pending is the Go map this dict has not been filled from yet, for a
+	// dict a render argument was converted into lazily; see FromGoLazy. It
+	// is nil for every other dict, and for this one once anything has
+	// needed the entries.
+	//
+	// Everything that reads entries, strIdx or index goes through a load
+	// first: lookupIdx, which every keyed read and write but GetString
+	// passes through, and Entries, Keys, Values and Clone, which read the
+	// entries directly. Reserve only sizes them; see there. The other
+	// helpers are reached only through those, or from the fill itself, and
+	// a load in them would be one no test could tell was there. Three
+	// reads answer from the Go map instead: Len, and a str-keyed GetString
+	// or Get whose value is a plain scalar. Those are the reads a loop over
+	// records makes, and answering them without building the dict is the
+	// whole point.
+	pending *pendingDict
+}
+
+// pendingDict is what a lazily converted dict is filled from.
+type pendingDict struct {
+	src map[string]any
+	// c is the walk the dict came out of. Filling it there, rather than
+	// in a walk of its own, is what keeps one Go container one value: a
+	// map the dict holds that the walk has already met elsewhere is found
+	// in c's memo, so the two places hold the same dict.
+	c *converter
+}
+
+// lazyDict is a Dict and its pendingDict in one allocation.
+type lazyDict struct {
+	Dict
+	p pendingDict
+}
+
+// load fills a lazily converted dict from its Go map, if it has not been.
+func (d *Dict) load() {
+	if d.pending != nil {
+		d.loadPending()
+	}
+}
+
+// loadPending is load's slow arm, kept out of line so that load inlines into
+// every method that needs it.
+//
+// pending is cleared first. Nothing the fill calls reads this dict back, but
+// if anything did it would find a dict partway full rather than start filling
+// it a second time. The pendingDict shares the dict's allocation, so it is
+// emptied as well: otherwise every filled dict would keep the caller's map and
+// the whole walk's memo alive for as long as it lived.
+func (d *Dict) loadPending() {
+	p := d.pending
+	d.pending = nil
+	src, c := p.src, p.c
+	*p = pendingDict{}
+	c.fillEntries(d, src)
+}
+
+// pendingScalar is the value a lazily converted dict holds for a Go value
+// that converts to a scalar without identity, and false for anything else.
+//
+// Only these may be answered without filling the dict. A container must be
+// the same object each time it is read, which only the filled dict
+// guarantees, and so must a NaN -- `x is x` is true of a NaN read twice from
+// one dict, and converting it twice would make two. A NaN is the one scalar
+// goScalar hands back carrying an object (an integer too wide for int64 does
+// too, and is left to the fill for the same reason: nothing here has to know
+// which objects have an identity a template can see).
+func pendingScalar(raw any) (Value, bool) {
+	v, ok := goScalar(raw)
+	if !ok || v.obj != nil {
+		return Value{}, false
+	}
+	return v, true
 }
 
 // smallDict is how many entries a dict holds before it builds a string index.
@@ -73,6 +146,7 @@ func (d *Dict) indexStrings(capacity int) {
 
 // lookupIdx finds the entry position for key.
 func (d *Dict) lookupIdx(key Value, py PythonVersion, use HashUse) (int, bool, error) {
+	d.load()
 	if key.kind == KindString {
 		if d.strIdx == nil {
 			i, ok := d.scanString(key.str)
@@ -196,14 +270,26 @@ func StringDict(keys []string, vals []Value) Value {
 }
 
 // Len is the number of entries.
-func (d *Dict) Len() int { return len(d.entries) }
+//
+// A dict still waiting on its Go map has exactly that map's keys, so its
+// length is known without filling it.
+func (d *Dict) Len() int {
+	if d.pending != nil {
+		return len(d.pending.src)
+	}
+	return len(d.entries)
+}
 
 // Entries returns the entries in insertion order. Callers must not retain the
 // slice across a mutation.
-func (d *Dict) Entries() []DictEntry { return d.entries }
+func (d *Dict) Entries() []DictEntry {
+	d.load()
+	return d.entries
+}
 
 // Keys returns the keys in insertion order.
 func (d *Dict) Keys() []Value {
+	d.load()
 	keys := make([]Value, len(d.entries))
 	for i, e := range d.entries {
 		keys[i] = e.Key
@@ -213,6 +299,7 @@ func (d *Dict) Keys() []Value {
 
 // Values returns the values in insertion order.
 func (d *Dict) Values() []Value {
+	d.load()
 	vals := make([]Value, len(d.entries))
 	for i, e := range d.entries {
 		vals[i] = e.Value
@@ -223,6 +310,12 @@ func (d *Dict) Values() []Value {
 // Get looks up key. An unhashable key is reported as an error rather than a
 // miss, because Python raises TypeError for it.
 func (d *Dict) Get(key Value, py PythonVersion) (Value, bool, error) {
+	if d.pending != nil && key.kind == KindString {
+		// Every key of a dict still waiting on its Go map is a plain
+		// str, and a str key finds only a str, so this is GetString.
+		v, ok := d.GetString(key.str)
+		return v, ok, nil
+	}
 	i, ok, err := d.lookupIdx(key, py, AsDictKey)
 	if err != nil || !ok {
 		return Undefined, false, err
@@ -232,6 +325,16 @@ func (d *Dict) Get(key Value, py PythonVersion) (Value, bool, error) {
 
 // GetString is the common case: lookup by a str key.
 func (d *Dict) GetString(key string) (Value, bool) {
+	if p := d.pending; p != nil {
+		raw, ok := p.src[key]
+		if !ok {
+			return Undefined, false
+		}
+		if v, ok := pendingScalar(raw); ok {
+			return v, true
+		}
+		d.loadPending()
+	}
 	var (
 		i  int
 		ok bool
@@ -295,6 +398,10 @@ func (d *Dict) setKnown(key, val Value) {
 // slice doubles its way up from nothing, and the index map rehashes as it
 // fills. Converting a caller's map[string]any is the common case -- a page
 // with fifty rows of four fields was doing it two hundred times.
+//
+// It does not fill a dict still waiting on its Go map. Room reserved there is
+// room the fill appends into, and an index it builds is one the fill records
+// every key in, since the fill stores through storeIdx like any other insert.
 func (d *Dict) Reserve(n int) {
 	if n <= 0 {
 		return
@@ -377,6 +484,7 @@ func (d *Dict) Delete(key Value, py PythonVersion) (bool, error) {
 
 // Clone returns a shallow copy.
 func (d *Dict) Clone() Value {
+	d.load()
 	out := &Dict{entries: append([]DictEntry(nil), d.entries...)}
 	if d.strIdx != nil {
 		out.strIdx = make(map[string]int, len(d.strIdx))

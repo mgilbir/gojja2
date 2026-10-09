@@ -33,6 +33,24 @@ import (
 // halves of the engine refuse the same sizes.
 const maxAllocBytes = math.MaxInt32
 
+// refusedFirst is the error a failed render reports: the budget's refusal, if
+// one was made, and err otherwise.
+//
+// A refusal that had somewhere to go is err already. One that had nowhere --
+// a struct field read, State.Resolve, a lazily converted record being filled
+// (see value.FromGoLazy) -- leaves a value short of what it should have held,
+// and the template can trip over that before it reaches the end of the render
+// where the refusal is re-reported: a record cut short has no `name`, and
+// `{{ u.name.upper() }}` raises an UndefinedError for it. That error is a
+// consequence, and a caller asking errors.Is(err, context.DeadlineExceeded)
+// is owed the cause.
+func (s *State) refusedFirst(err error) error {
+	if s.budget != nil && s.budget.failed != nil {
+		return s.budget.failed
+	}
+	return err
+}
+
 // ChargeBytes reserves n bytes of allocation against the render's output
 // budget, before the allocation is made.
 //

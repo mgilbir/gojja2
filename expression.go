@@ -69,7 +69,9 @@ func (x *Expression) KeepUndefined() *Expression {
 func (x *Expression) Eval(ctx context.Context, vars map[string]any) (v value.Value, err error) {
 	defer catchPanic(&err)
 	st := x.tmpl.newState(nil, 0, newBudget(ctx, x.tmpl.env))
-	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, x.tmpl.env.methods, st
+	// The result goes back to the host, so it is converted in full while
+	// the budget is still watching; see eagerConversion.
+	st.contextVars.raw, st.contextVars.expose, st.contextVars.budget = vars, x.tmpl.env.methods, eagerConversion{st}
 	return x.result(st)
 }
 

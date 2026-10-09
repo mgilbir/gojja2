@@ -708,3 +708,9 @@ which lives there as it does in jinja2, and a host object exposed by pointer,
 whose methods are the point. Everything else a render is handed is converted, so
 a template cannot write to the caller's data —
 [divergences.md](divergences.md#a-render-does-not-mutate-the-callers-data).
+
+Conversion is read-only, and several renders may share one `vars` map. It is
+also partly deferred: a `map[string]any` inside an argument is read when the
+template first needs more of it than a scalar field, which can be well into the
+render. Do not modify the data you passed while a render that was given it is
+still running.

@@ -6,6 +6,7 @@ package gojja2
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -460,5 +461,39 @@ func TestModuleCallIsSerialised(t *testing.T) {
 	slices.Sort(seen)
 	if seen = slices.Compact(seen); len(seen) != 50 {
 		t.Fatalf("calls overlapped: %d distinct answers", len(seen))
+	}
+}
+
+// TestModuleExportsOutliveTheirRender reads a record a module exported after
+// the context that made the module is over. A render converts its context
+// lazily, filling a record when something first needs it -- but a module's
+// exports go back to the host, so they must be whole when Module returns: a
+// record filled later would be charged to a finished render, and a cancelled
+// one would come back short with no error.
+func TestModuleExportsOutliveTheirRender(t *testing.T) {
+	rec := make(map[string]any, 10000)
+	for i := range 10000 {
+		rec[fmt.Sprintf("k%05d", i)] = i
+	}
+	tmpl, err := mustNew().FromString(`{% set exported = rec %}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	mod, err := tmpl.Module(ctx, map[string]any{"rec": rec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	v, ok := mod.Get("exported")
+	if !ok {
+		t.Fatal("exported is not exported")
+	}
+	d, ok := v.Dict()
+	if !ok {
+		t.Fatalf("exported is a %s", v.TypeName())
+	}
+	if n := len(d.Keys()); n != 10000 {
+		t.Errorf("read after the module's context ended, the record has %d keys; want 10000", n)
 	}
 }

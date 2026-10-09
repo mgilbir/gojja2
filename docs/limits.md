@@ -371,6 +371,15 @@ element and yields, whether it is reached as a render argument, through a
 struct field, or from a Go method's result; the last two are converted lazily,
 and a lazy conversion is charged to the render that resumes it.
 
+So is a record. Inside a render argument each `map[string]any` becomes a dict
+that is charged its length when it is made and filled only when something needs
+more than that length or a scalar field -- iterating it, comparing it, changing
+it, or reading a list out of it. Filling it charges and yields like the rest of
+the walk, and what a template never fills is never charged, because it is never
+built. A refusal while filling has nowhere to go but the budget, which keeps it:
+the render fails with the refusal, even if the record it left short made the
+template raise something else first.
+
 Output is counted wherever it lands, including text captured by
 `{% filter %}`, a block `{% set %}` or a macro body. Text that passes through
 two buffers is therefore counted twice; the buffers are the memory the bound

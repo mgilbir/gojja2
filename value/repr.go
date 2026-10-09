@@ -346,7 +346,7 @@ func openRepr(b *strings.Builder, v Value, seen *active, ascii bool, bud Budget,
 		default:
 			d, _ := v.Dict()
 			b.WriteByte('{')
-			return reprFrame{ents: d.entries, dict: true, close: '}', key: v.obj}, true, nil
+			return reprFrame{ents: d.Entries(), dict: true, close: '}', key: v.obj}, true, nil
 		}
 	}
 	if err := writeScalarRepr(b, v, ascii, bud, u); err != nil {
