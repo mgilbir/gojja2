@@ -28,7 +28,9 @@ it with `make mutate` when the analysis or the budget changes.
 from __future__ import annotations
 
 import atexit
+import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -90,6 +92,11 @@ CHECK = ["go", "test", "-count=1", "./dataflow/", "./syntax/"]
 CAP = ["systemd-run", "--user", "--scope", "-q",
        "-p", "MemoryMax=1500M", "-p", "MemorySwapMax=0",
        "-p", "RuntimeMaxSec=240", "--"]
+# A runner without a user systemd -- a CI machine -- names its own cap, as a
+# command prefix: MUTATE_CAP="timeout -s KILL 240 prlimit --as=4294967296 --".
+# Whatever it is, the baseline below has to pass under it, or nothing is run.
+if os.environ.get("MUTATE_CAP"):
+    CAP = shlex.split(os.environ["MUTATE_CAP"])
 CHECK_BUDGET = CAP + ["go", "test", "-count=1", "-timeout", "200s", ".", "./value/"]
 CHECK_CONFORMANCE = [
     "go", "test", "-count=1", "./conformance/", "-run",
@@ -260,6 +267,24 @@ def main(only: str = "") -> int:
             "mutate: testdata/generated/ is missing, so TestGeneratedCorporaAgree "
             "would skip and every analysis mutation it catches would read as a "
             "survivor; run `make import` first (or ARGS=--budget)")
+    # Every check must pass on the source as it is. A check that fails
+    # without a mutation fails with every mutation, and each one then reads
+    # as caught: a red suite, a missing tool, or a cap command this machine
+    # does not have would report "all caught" and measure nothing.
+    wanted = []
+    for _path, _where, _what, _line, _repl, checks in mutations():
+        if only == "budget" and checks != (CHECK_BUDGET,):
+            continue
+        if only == "analysis" and checks == (CHECK_BUDGET,):
+            continue
+        if checks not in wanted:
+            wanted.append(checks)
+    for checks in wanted:
+        if caught(checks):
+            raise SystemExit(
+                "mutate: a check fails before anything is mutated, so every "
+                "mutation would read as caught; fix the suite or the cap first: "
+                + " && ".join(" ".join(c) for c in checks))
     backups = {}
     with tempfile.TemporaryDirectory() as td:
         for path, _pattern in SITES:

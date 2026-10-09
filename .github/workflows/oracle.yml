@@ -99,6 +99,51 @@ jobs:
           echo "Every generated file, corpus and golden still matches the oracle." \
             >> "$GITHUB_STEP_SUMMARY"
 
+  # The differential checks: generated templates rendered by gojja2 and by the
+  # oracle, compared on output and error. They are the strongest check this
+  # repository has and none of them can run per commit -- each needs CPython --
+  # so until now they ran only when somebody remembered to run them locally.
+  #
+  # Each run draws a new seed and writes it to the summary, so a failure can be
+  # replayed exactly with `make soak N=... SEED=...`.
+  differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: astral-sh/setup-uv@v10.1.0
+      - run: make venv
+
+      - name: Soak
+        run: |
+          echo "Soak seed: ${{ github.run_id }}" >> "$GITHUB_STEP_SUMMARY"
+          make soak N=50000 SEED=${{ github.run_id }}
+
+      - name: Soak the structure and the analyses
+        run: make soak-syntax N=20000 SEED=${{ github.run_id }}
+
+      # From a cold cache, as this runner always is -- which is also the
+      # state that found the uncharged format precision a warm one did not.
+      - name: Differential fuzzing
+        run: make fuzz TIME=5m
+
+      # The budget half of `make mutate`: every charge site removed in turn,
+      # and the suite asked whether it notices. Monthly, and on demand: it is
+      # one `go test` per site, about an hour. The analysis half needs the
+      # imported corpora, which this runner does not build.
+      #
+      # This runner has no user systemd for the per-mutation cap, so it names
+      # its own; mutate refuses to start unless the unmutated suite passes
+      # under it, so a cap that does not work cannot read as "all caught".
+      - name: Mutate the budget
+        if: github.event.schedule == '41 5 1 * *' || github.event_name == 'workflow_dispatch'
+        env:
+          MUTATE_CAP: timeout -s KILL 240 prlimit --as=4294967296 --
+        run: make mutate ARGS=--budget
+
   # Is there a CPython gojja2 should know about, and what would it take?
   #
   # This does the reading a maintainer would otherwise do by hand: it renders
