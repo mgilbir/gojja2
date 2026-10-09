@@ -148,6 +148,37 @@ jobs:
           go test . -run xxx -fuzz '^FuzzAutoescape$' -fuzztime 60s
           go test . -run xxx -fuzz '^FuzzRenderData$' -fuzztime 60s
 
+  # The suite on Windows. Everything that does not depend on the operating
+  # system -- formatting, the GOMEMLIMIT pass, fuzzing, lint -- already runs on
+  # Linux above; this is what can differ: path handling in the loaders (where
+  # Windows reads drives, devices, streams and trailing dots in a name, and
+  # os.DirFS is what refuses them), the checkout's line endings, and timer
+  # resolution in the deadline tests.
+  #
+  # The race detector doubles the job, so it runs on main and nightly rather
+  # than on every pull request.
+  windows:
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -count=1 ./...
+      - name: Race
+        if: github.event_name != 'pull_request'
+        run: go test -race ./...
+
   lint:
     needs: authorize
     if: needs.authorize.outputs.trusted == 'true'
