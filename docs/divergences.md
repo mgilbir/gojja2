@@ -67,7 +67,7 @@ are safety controls rather than behavioural choices, and they live in
 | [The debug extension](#the-debug-extension) | `{% debug %}` is refused; `jinja2.ext.debug` is not offered | Only a template that uses `{% debug %}` |
 | [Native-type rendering](#native-type-rendering) | no `NativeEnvironment`; a render is always text | No -- a host API, not template behaviour |
 | [Evaluating a lone expression](#evaluating-a-lone-expression) | `CompileExpression` returns a `value.Value`, not a Python object | No -- a host API |
-| [Calling a template's macros from the host](#calling-a-templates-macros-from-the-host) | no `Template.module` or `make_module` | No -- a host API; `{% import %}` between templates works |
+| [Calling a template's macros from the host](#calling-a-templates-macros-from-the-host) | `Template.Module` is `make_module`; nothing is cached as `Template.module`, and each call has its own budget | No -- a host API |
 | [Listing the templates a loader has](#listing-the-templates-a-loader-has) | lists only what it can load; `PrefixLoader` sorts its prefixes | No -- a host API |
 | [Logging undefined access](#logging-undefined-access) | no `make_logging_undefined` | No -- the four Undefined classes are all there |
 | [A loader made from a function](#a-loader-made-from-a-function) | `LoaderFunc` reports a miss with `ErrNotFound`, not `None` | No -- a host API |
@@ -1271,14 +1271,13 @@ Asserted by the tests in `autoescape_test.go`.
 ## jinja2 APIs gojja2 does not have
 
 Every entry above is about what a template renders, or what the host sees
-around a render. These are parts of jinja2's *Python* API: four with no
-counterpart here, and three -- a lone expression, listing, and a loader made
-from a function -- whose counterpart differs in what it hands back. One is
-reachable from a template (`{% debug %}`); the rest change only what a host can
-ask for. Each was checked against jinja2 3.1.6, the version the corpus is graded
-against, and against the API gojja2 actually exports. None of the four is ruled
-out on principle the way async rendering or the sandbox are in
-[scope.md](scope.md); they are absent because nothing has needed them yet.
+around a render. These three are parts of jinja2's *Python* API with no
+counterpart here. One is reachable from a template (`{% debug %}`); the other two
+change only what a host can ask for. Each was checked against jinja2 3.1.6, the
+version the corpus is graded against, and against the API gojja2 actually
+exports. None is ruled out on principle the way async rendering or the sandbox
+are in [scope.md](scope.md); they are absent because nothing has needed them
+yet. The APIs gojja2 has in a different shape are in the next section.
 
 ### The debug extension
 
@@ -1309,6 +1308,22 @@ through `ast.literal_eval`. Every gojja2 render writes text -- `Render`,
 what comes back. A host that wants a value back can render `|tojson` and decode
 it.
 
+### Logging undefined access
+
+`jinja2.make_logging_undefined(logger)` builds an Undefined class that logs
+every use of a missing name and then behaves as the default one. gojja2 has all
+four of jinja2's own classes -- default, chainable, debug and strict, chosen with
+`WithUndefined` -- but no hook that observes an undefined being used. Before a
+render, `dataflow.Analyze(t.Syntax()).Context(t.Syntax())` reports every name a
+template reads from its context, and what each one does there, which answers
+"which names does this template expect" without rendering it at all.
+
+## jinja2 APIs gojja2 has in another shape
+
+Parts of jinja2's Python API that gojja2 does have, where the Go spelling hands
+over or accepts something slightly different. Each is graded against jinja2
+3.1.6 by the test named.
+
 ### Evaluating a lone expression
 
 `Environment.compile_expression("a + b")` is `Environment.CompileExpression`,
@@ -1324,13 +1339,39 @@ What differs is what comes back: a `value.Value` rather than a Python object.
 
 ### Calling a template's macros from the host
 
-jinja2 exposes a template's exports to Python: `get_template("a.html").module`
-is an object whose attributes are the template's macros and top-level `{% set %}`
-names, so `module.m(5)` calls a macro from host code and `module.v` reads a
-variable. gojja2 has no handle on a template's exports from Go. Between
-templates it works as in jinja2 -- `{% import %}` and `{% from ... import %}`
-reach both -- so a host can still call a macro by rendering a small template
-that imports and calls it.
+`Template.make_module(vars)` is `Template.Module(ctx, vars)`, and the
+`TemplateModule` it returns is a `*Module`: `Get` is `module.v`, `Call` and
+`CallArgs` are `module.m(5, b=2)`, `String` is `str(module)`, and `Names` lists
+what `vars(module)` holds besides its two private attributes. What a module
+exports, what its body renders, and how a call binds its arguments are
+jinja2's -- graded against CPython on 44 cases, from defaults that read an
+earlier parameter to a `caller` passed as a keyword, a module that extends
+another, one that imports a third without re-exporting it, and a macro
+re-exported from a template that escapes differently, whose result is `Markup`
+by the setting where it was *defined*. The differences are in how the host holds
+it:
+
+- **There is no `Template.module`.** jinja2 caches `make_module()` on the
+  template, so every caller shares one module and the state its macros mutate.
+  A `*Template` is shared between goroutines and renders, so gojja2 does not
+  cache one: call `Module(ctx, nil)` once and keep the result. Each `Module`
+  is a fresh `make_module`, as in jinja2.
+- **Every call is bounded on its own.** jinja2 has no bounds; here a call runs
+  under the `ctx` it is given and a fresh allowance of the environment's
+  limits, not under the context the module was made with, which is likely
+  over by then. Calls on one module are serialised, because they share its
+  state -- `module.inc()` twice is "1" and then "2" in both.
+- **`vars` is converted when the module is made**, all of it, rather than as
+  the template reads each name: the module outlives the call, and must not
+  read the caller's map afterwards.
+- **`Call` converts its arguments**, as `Render` converts variables, so a
+  macro that appends to a list it was given appends to its own copy; jinja2
+  appends to the caller's. `CallArgs` takes values as they are and behaves as
+  jinja2 does.
+- **`Names` is sorted.** jinja2 keeps the exported names in a set, whose order
+  varies between runs of CPython.
+- `make_module`'s `shared` and `locals` arguments, and `make_module_async`, are
+  not offered.
 
 ### Listing the templates a loader has
 
@@ -1353,16 +1394,6 @@ Three differences, all in what is listed rather than how it is asked for:
 - `PrefixLoader` lists its prefixes in sorted order. jinja2 walks its mapping
   in insertion order, which a Go map does not have.
 
-### Logging undefined access
-
-`jinja2.make_logging_undefined(logger)` builds an Undefined class that logs
-every use of a missing name and then behaves as the default one. gojja2 has all
-four of jinja2's own classes -- default, chainable, debug and strict, chosen with
-`WithUndefined` -- but no hook that observes an undefined being used. Before a
-render, `dataflow.Analyze(t.Syntax()).Context(t.Syntax())` reports every name a
-template reads from its context, and what each one does there, which answers
-"which names does this template expect" without rendering it at all.
-
 ### A loader made from a function
 
 `jinja2.FunctionLoader(fn)` is `LoaderFunc`. jinja2's function returns `None`
@@ -1370,12 +1401,6 @@ for a template it does not have; a `LoaderFunc` returns an error satisfying
 `errors.Is(err, gojja2.ErrNotFound)`, which is what `ignore missing`,
 `ChoiceLoader` and `SelectTemplate` test for. Like `FunctionLoader`, it cannot
 list.
-
-## jinja2 APIs gojja2 has in another shape
-
-Parts of jinja2's Python API that gojja2 does have, where the Go spelling hands
-over or accepts something slightly different. Each is graded against jinja2
-3.1.6 by the test named.
 
 ### Relative template names
 

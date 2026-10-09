@@ -119,6 +119,22 @@ The second is handed the render's `State` -- `Resolve` reads the context as
 error it returns fails the render as it stands, so `errors.Is` finds it. Setting
 either option replaces the other.
 
+### A template's macros, from Go
+
+```go
+mod, err := tmpl.Module(ctx, nil)                 // jinja2's t.make_module()
+html, err := mod.Call(ctx, "input", "q")          // t.module.input("q")
+v, ok := mod.Get("version")                       // t.module.version
+```
+
+`Module` renders the template once for what it exports -- its macros and
+top-level `{% set %}` names, but not a name starting with `_` or one bound by
+an import -- and `CallArgs` passes keyword arguments and a `caller`. Each call
+is bounded by the `ctx` it is given, and calls on one module are serialised,
+since its macros share its state. See
+[divergences.md](divergences.md#calling-a-templates-macros-from-the-host) for
+where it differs from jinja2's `Template.module`.
+
 ## Go values in the context
 
 Reflection, with Python semantics on the other side:
