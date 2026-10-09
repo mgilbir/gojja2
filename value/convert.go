@@ -134,6 +134,20 @@ func (c *converter) step() bool {
 	return true
 }
 
+// yield is step for a batch of n elements' worth of work, such as a run of
+// keys sorted: it counts as n units, so the render reads its context as often
+// as it would had the work been done one element at a time.
+func (c *converter) yield(n int) bool {
+	if c.err != nil {
+		return false
+	}
+	if err := pollWork(c.b, n); err != nil {
+		c.err = err
+		return false
+	}
+	return true
+}
+
 func (c *converter) memo(id containerID, v Value) {
 	if c.seen == nil {
 		c.seen = make(map[containerID]any, 4)
@@ -461,10 +475,15 @@ func (c *converter) fillEntries(dict *Dict, m map[string]any) {
 	} else {
 		for k := range m {
 			c.keys = append(c.keys, k)
+			if (len(c.keys)-start)%sortRun == 0 && !c.yield(sortRun) {
+				return
+			}
 		}
 		keys = c.keys[start:len(c.keys):len(c.keys)]
 	}
-	slices.Sort(keys)
+	if keys = c.sortKeys(keys); keys == nil {
+		return
+	}
 	dict.Reserve(len(keys))
 	for _, k := range keys {
 		if !c.step() {
@@ -476,6 +495,58 @@ func (c *converter) fillEntries(dict *Dict, m map[string]any) {
 	// Given back only on success: a refused walk is abandoned, and its
 	// converter with it.
 	c.keys = c.keys[:start]
+}
+
+// sortRun is how many keys sortKeys sorts, or merges, between yields.
+const sortRun = 4096
+
+// sortKeys sorts keys, yielding to the render between runs of sortRun keys, and
+// returns them sorted -- in keys itself or in a slice of its own -- or nil when
+// the render was told to stop.
+//
+// A map's keys are sorted before its first field is converted, and the
+// conversion is where the walk yields. For two hundred thousand keys the sort
+// was a seventh of filling the map with nothing to interrupt it, and under the
+// race detector on Windows a render given a deadline a tenth of the fill's ran
+// to more than half of it. So a large map is sorted in runs and merged, with a
+// yield after each run sorted and each run merged: the same O(n log n), with
+// the render able to stop inside it. Each yield counts as the run of work it
+// follows -- a render reads its context once every few thousand units, so a
+// yield counted as one unit was almost never a chance to stop.
+func (c *converter) sortKeys(keys []string) []string {
+	if len(keys) <= sortRun {
+		slices.Sort(keys)
+		return keys
+	}
+	for lo := 0; lo < len(keys); lo += sortRun {
+		slices.Sort(keys[lo:min(lo+sortRun, len(keys))])
+		if !c.yield(sortRun) {
+			return nil
+		}
+	}
+	src, dst := keys, make([]string, len(keys))
+	for width := sortRun; width < len(src); width *= 2 {
+		for lo := 0; lo < len(src); lo += 2 * width {
+			mid, hi := min(lo+width, len(src)), min(lo+2*width, len(src))
+			i, j, out := lo, mid, lo
+			for i < mid && j < hi {
+				if src[j] < src[i] {
+					dst[out] = src[j]
+					j++
+				} else {
+					dst[out] = src[i]
+					i++
+				}
+				if out++; (out-lo)%sortRun == 0 && !c.yield(sortRun) {
+					return nil
+				}
+			}
+			out += copy(dst[out:], src[i:mid])
+			copy(dst[out:], src[j:hi])
+		}
+		src, dst = dst, src
+	}
+	return src
 }
 
 func (c *converter) fromReflect(rv reflect.Value) Value {
