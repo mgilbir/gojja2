@@ -1,0 +1,8 @@
+# Check every file out exactly as it was committed.
+#
+# Git for Windows defaults to core.autocrlf=true, and actions/checkout does not
+# override it, so a Windows checkout rewrote every LF to CRLF. gojja2's corpus
+# is byte-exact by design -- cases are split on "\n---\n", and 43 of them carry
+# a deliberate CR or a mixed ending -- so that checkout graded 1,932 of 5,834
+# cases. Nothing here is a text file whose line endings may be chosen for it.
+* -text
