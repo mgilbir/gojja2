@@ -72,6 +72,22 @@ Every render takes a `context.Context` and stops when it is cancelled. See
 [limits.md](limits.md) for where cancellation is noticed, and for the two
 backstops behind it.
 
+### One block on its own
+
+```go
+s, err := tmpl.RenderBlockString(ctx, "content", map[string]any{"items": items})
+```
+
+renders `{% block content %}` and nothing around it -- the fragment an htmx
+response swaps in. It is jinja2's `t.blocks[name](t.new_context(vars))`, which
+is what jinja2-fragments does too, so it shares that API's edges: only the
+template's own blocks can be named (one only a parent defines is a `KeyError`),
+nothing outside the block runs (no `{% extends %}`, so `super()` has no parent;
+no top-level `{% set %}`, import or macro), and `required` is not checked. Keep
+what a fragment needs inside its block, or pass it in. `RenderBlock` and
+`RenderBlockValues` are the streaming and prepared-values forms; all three
+write nothing when the block fails.
+
 ## Go values in the context
 
 Reflection, with Python semantics on the other side:
