@@ -17,13 +17,59 @@ type Isolator interface {
 	IsolateWith(isolate func(Value) (Value, error)) (Value, error)
 }
 
+// Memo is a render's record of the copies it has made, keyed by the container
+// copied: a dict, a list or an object. The three are kept apart so that the
+// lookups a render makes most -- a dict read again and again in a loop -- hash
+// a pointer rather than an interface. The zero value is ready to use.
+type Memo struct {
+	dicts map[*Dict]Value
+	seqs  map[*Seq]Value
+	objs  map[any]Value
+}
+
+func (m *Memo) dict(d *Dict) (Value, bool) {
+	v, ok := m.dicts[d]
+	return v, ok
+}
+
+func (m *Memo) putDict(d *Dict, v Value) {
+	if m.dicts == nil {
+		m.dicts = make(map[*Dict]Value)
+	}
+	m.dicts[d] = v
+}
+
+func (m *Memo) seq(s *Seq) (Value, bool) {
+	v, ok := m.seqs[s]
+	return v, ok
+}
+
+func (m *Memo) putSeq(s *Seq, v Value) {
+	if m.seqs == nil {
+		m.seqs = make(map[*Seq]Value)
+	}
+	m.seqs[s] = v
+}
+
+func (m *Memo) obj(o any) (Value, bool) {
+	v, ok := m.objs[o]
+	return v, ok
+}
+
+func (m *Memo) putObj(o any, v Value) {
+	if m.objs == nil {
+		m.objs = make(map[any]Value)
+	}
+	m.objs[o] = v
+}
+
 // MemoBudget is a Budget that keeps a render's isolation memo, which a
 // conversion walking Go data for that render uses for the Values it meets in
 // it: a host method returning the list it keeps then hands the render one copy
 // of it however often it is called. See IsolateIn.
 type MemoBudget interface {
 	Budget
-	IsolationMemo() map[any]Value
+	IsolationMemo() *Memo
 }
 
 // Isolate returns v with every part a template could change in place replaced
@@ -53,12 +99,12 @@ func Isolate(v Value, b Budget) (Value, error) {
 // that returns the list it keeps on every call, is one copy throughout the
 // render -- an append through one reference is seen through the other, as in
 // jinja2 -- and a fresh one in the next render. A nil memo is a fresh one.
-func IsolateIn(v Value, b Budget, memo map[any]Value) (Value, error) {
+func IsolateIn(v Value, b Budget, memo *Memo) (Value, error) {
 	if !MayBeMutable(v) {
 		return v, nil
 	}
 	if memo == nil {
-		memo = map[any]Value{}
+		memo = &Memo{}
 	} else if done, ok := remembered(v, memo); ok {
 		// A container this render has copied already: the common case
 		// for a host function returning what it keeps, called in a loop.
@@ -69,25 +115,19 @@ func IsolateIn(v Value, b Budget, memo map[any]Value) (Value, error) {
 }
 
 // remembered is v's copy in memo, if v is a container already copied there.
-func remembered(v Value, memo map[any]Value) (Value, bool) {
-	var key any
+func remembered(v Value, memo *Memo) (Value, bool) {
 	switch v.kind {
 	case KindList, KindTuple:
-		key = v.obj
+		return memo.seq(v.obj.(*Seq))
 	case KindDict:
 		d, _ := v.Dict()
-		key = d
+		return memo.dict(d)
 	case KindObject:
-		k, ok := memoKey(v.obj)
-		if !ok {
-			return Value{}, false
+		if k, ok := memoKey(v.obj); ok {
+			return memo.obj(k)
 		}
-		key = k
-	default:
-		return Value{}, false
 	}
-	done, ok := memo[key]
-	return done, ok
+	return Value{}, false
 }
 
 // MayBeMutable reports whether v could hold something a template can change in
@@ -107,7 +147,7 @@ func MayBeMutable(v Value) bool {
 
 type isolator struct {
 	b    Budget
-	memo map[any]Value
+	memo *Memo
 	// lazy copies a dict by reference to the original, filled when first
 	// needed, rather than at once; see IsolateLazy.
 	lazy bool
@@ -125,7 +165,7 @@ func (iso *isolator) walk(v Value) (out Value, copied bool, err error) {
 	switch v.kind {
 	case KindList:
 		s := v.obj.(*Seq)
-		if done, ok := iso.memo[s]; ok {
+		if done, ok := iso.memo.seq(s); ok {
 			return done, true, nil
 		}
 		if err := chargeItems(iso.b, int64(len(s.items))); err != nil {
@@ -133,7 +173,7 @@ func (iso *isolator) walk(v Value) (out Value, copied bool, err error) {
 		}
 		seq := &Seq{items: make([]Value, len(s.items))}
 		out = Value{kind: KindList, obj: seq}
-		iso.memo[s] = out // before the elements, so a cycle closes on the copy
+		iso.memo.putSeq(s, out) // before the elements, so a cycle closes on the copy
 		for i, item := range s.items {
 			if seq.items[i], _, err = iso.walk(item); err != nil {
 				return Undefined, false, err
@@ -168,7 +208,7 @@ func (iso *isolator) walk(v Value) (out Value, copied bool, err error) {
 		return NewTuple(items...), true, nil
 	case KindDict:
 		d, _ := v.Dict()
-		if done, ok := iso.memo[d]; ok {
+		if done, ok := iso.memo.dict(d); ok {
 			return done, true, nil
 		}
 		if iso.lazy {
@@ -180,7 +220,7 @@ func (iso *isolator) walk(v Value) (out Value, copied bool, err error) {
 			ld := &lazyDict{p: pendingDict{from: d, iso: iso}}
 			ld.pending = &ld.p
 			out = Value{kind: KindDict, obj: &ld.Dict}
-			iso.memo[d] = out
+			iso.memo.putDict(d, out)
 			return out, true, nil
 		}
 		entries := d.Entries()
@@ -189,7 +229,7 @@ func (iso *isolator) walk(v Value) (out Value, copied bool, err error) {
 		}
 		out = NewDict()
 		target, _ := out.Dict()
-		iso.memo[d] = out
+		iso.memo.putDict(d, out)
 		// Keys are hashable, so nothing in one can change.
 		for _, e := range entries {
 			c, _, err := iso.walk(e.Value)
@@ -202,7 +242,7 @@ func (iso *isolator) walk(v Value) (out Value, copied bool, err error) {
 	case KindObject:
 		key, remembered := memoKey(v.obj)
 		if remembered {
-			if done, ok := iso.memo[key]; ok {
+			if done, ok := iso.memo.obj(key); ok {
 				return done, true, nil
 			}
 		}
@@ -214,14 +254,14 @@ func (iso *isolator) walk(v Value) (out Value, copied bool, err error) {
 			// Set elements are hashable, so the set's storage is all
 			// that needs copying.
 			out = FromObject(&Set{items: slices.Clone(o.items), index: o.index.clone()})
-			iso.memo[key] = out
+			iso.memo.putObj(key, out)
 			return out, true, nil
 		case Isolator:
 			if out, err = o.IsolateWith(iso.isolate); err != nil {
 				return Undefined, false, err
 			}
 			if remembered {
-				iso.memo[key] = out
+				iso.memo.putObj(key, out)
 			}
 			return out, true, nil
 		}
@@ -261,12 +301,12 @@ func (d *Dict) clone() *Dict {
 // bounds and memo serves: they read the original, and are filled through memo,
 // when first needed, so nothing may use them once that render is over --
 // anything that outlives it wants IsolateIn, which copies everything at once.
-func IsolateLazy(v Value, b Budget, memo map[any]Value) (Value, error) {
+func IsolateLazy(v Value, b Budget, memo *Memo) (Value, error) {
 	if !MayBeMutable(v) {
 		return v, nil
 	}
 	if memo == nil {
-		memo = map[any]Value{}
+		memo = &Memo{}
 	} else if done, ok := remembered(v, memo); ok {
 		return done, nil
 	}
@@ -277,6 +317,13 @@ func IsolateLazy(v Value, b Budget, memo map[any]Value) (Value, error) {
 // charge is remembered by the budget, which fails the render, and the template
 // is given nothing rather than the original it must not change.
 func (iso *isolator) lazyOrUndefined(v Value) Value {
+	if v.kind == KindDict {
+		// The read a loop makes again and again: a dict this render
+		// has a copy of already.
+		if done, ok := iso.memo.dict(v.obj.(*Dict)); ok {
+			return done
+		}
+	}
 	c, err := iso.isolate(v)
 	if err != nil {
 		return Undefined
