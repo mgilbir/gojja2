@@ -14,6 +14,7 @@ import (
 
 	"github.com/mgilbir/gojja2"
 	"github.com/mgilbir/gojja2/errs"
+	"github.com/mgilbir/gojja2/value"
 )
 
 // The fuzzing this repository already had is differential: it generates a
@@ -72,6 +73,11 @@ func fuzzVars() map[string]any {
 		"dict":  map[string]any{"a": 1, "b": 2},
 		"users": []any{map[string]any{"name": "ada", "age": 36}},
 		"html":  "<b>&amp;</b>",
+		// Values the host built as template values: a render must not
+		// write into them, and the same map is handed to both renders of
+		// a template, so one that did would show in the second.
+		"vlist": value.NewList(value.Int(1), value.NewList()),
+		"vdict": value.FromGo(map[string]any{"a": 1}),
 	}
 }
 
@@ -96,20 +102,73 @@ const (
 )
 
 func fuzzEnv() *gojja2.Environment {
-	return mustEnv(
+	env := mustEnv(
 		gojja2.WithMaxOutputBytes(fuzzMaxOutput),
 		gojja2.WithMaxIterations(fuzzMaxIterations),
+		gojja2.WithExtensions("do"),
 		gojja2.WithLoader(gojja2.DictLoader(map[string]string{
 			"inner":  `[{% block b %}inner{% endblock %}]`,
 			"parent": `{% block b %}parent{% endblock %}`,
 		})),
 	)
+	// Shared state a template can change in place: environment globals,
+	// and what host code hands out that it keeps. Every fuzzed template
+	// is rendered twice on one environment, and the second render must
+	// not see what the first did -- which is the isolation guarantee,
+	// checked against whatever the fuzzer writes. See value.Isolate.
+	env.AddGlobal("g_list", value.FromGo([]any{1, []any{2}}))
+	env.AddGlobal("g_dict", value.FromGo(map[string]any{"a": 1, "l": []any{1}}))
+	env.AddGlobal("g_ns", mustValue(`namespace(n=0, l=[])`))
+	env.AddGlobal("g_cycler", mustValue(`cycler("a", "b", "c")`))
+	env.AddGlobal("g_joiner", mustValue(`joiner(", ")`))
+	kept := value.FromGo([]any{1, map[string]any{"k": []any{}}})
+	env.AddGlobal("g_cached", gojja2.Func("g_cached",
+		func(*gojja2.State, *value.CallArgs) (value.Value, error) { return kept, nil }))
+	keptDict := value.FromGo(map[string]any{"a": []any{1}})
+	env.AddFilter("g_keep", func(*gojja2.State, value.Value, *value.CallArgs) (value.Value, error) {
+		return keptDict, nil
+	})
+	return env
+}
+
+// mustValue is the value of a jinja expression, for host values only a
+// template can make.
+func mustValue(expr string) value.Value {
+	x, err := mustEnv().CompileExpression(expr)
+	if err != nil {
+		panic(err)
+	}
+	v, err := x.Eval(context.Background(), nil)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+// isolationSeeds change every kind of shared state fuzzEnv and fuzzVars hold,
+// so the render-twice check below is asked about each from the first run, and
+// mutations of them are where the fuzzer starts.
+var isolationSeeds = []string{
+	`{% do g_list.append(9) %}{% do g_list[1].append(8) %}{{ g_list }}`,
+	`{% do g_dict.update(z=1) %}{% do g_dict.l.append(2) %}{{ g_dict|dictsort }}`,
+	`{% set g_ns.n = g_ns.n + 1 %}{% do g_ns.l.append(1) %}{{ g_ns.n }}{{ g_ns.l }}`,
+	`{{ g_cycler.next() }}{{ g_cycler.next() }}`,
+	`[{{ g_joiner() }}][{{ g_joiner() }}]`,
+	`{% do g_cached().append(2) %}{% do g_cached()[1].k.append(3) %}{{ g_cached() }}`,
+	`{% do (s|g_keep).a.append(2) %}{{ s|g_keep }}`,
+	`{% do vlist.append(4) %}{{ vlist }}`,
+	`{% do vdict.update(q=1) %}{{ vdict|dictsort }}`,
+	`{% do list.append(4) %}{% do dict.update(q=1) %}{{ list }}{{ dict|dictsort }}`,
+	`{% for x in [g_list, g_dict, vlist] %}{% do x.clear() %}{% endfor %}{{ g_list }}{{ g_dict }}{{ vlist }}`,
 }
 
 // FuzzRender is the whole pipeline: compile a template, then render it under a
 // deadline and a budget.
 func FuzzRender(f *testing.F) {
 	fuzzSeeds(f)
+	for _, src := range isolationSeeds {
+		f.Add(src)
+	}
 	f.Fuzz(func(t *testing.T, src string) {
 		// A template long enough to be slow to compile says nothing
 		// about correctness, and the corpus seeds are far below this.
@@ -134,7 +193,10 @@ func FuzzRender(f *testing.F) {
 		ctx, cancel := context.WithTimeout(context.Background(), fuzzDeadline)
 		defer cancel()
 		start := time.Now()
-		out, err := tmpl.RenderString(ctx, fuzzVars())
+		// One map for both renders, so a render that wrote into what it
+		// was handed is seen by the second.
+		vars := fuzzVars()
+		out, err := tmpl.RenderString(ctx, vars)
 		took := time.Since(start)
 
 		if took > fuzzWallClock {
@@ -164,10 +226,19 @@ func FuzzRender(f *testing.F) {
 		// differed between runs would mean an unsorted map had reached
 		// the output, which is the kind of thing that is reproducible
 		// once in fifty runs and never in a test.
+		//
+		// The second render shares the first's environment and its
+		// variables map, so this is also the isolation check: a render
+		// whose changes to a global, a host value or a cached result
+		// reached the next would render a different document, or fail
+		// where the first succeeded.
 		if !mayVary(src) && !hasAddress(out) {
 			ctx2, cancel2 := context.WithTimeout(context.Background(), fuzzDeadline)
 			defer cancel2()
-			again, err2 := tmpl.RenderString(ctx2, fuzzVars())
+			again, err2 := tmpl.RenderString(ctx2, vars)
+			if err2 != nil && !errors.Is(err2, context.DeadlineExceeded) {
+				t.Fatalf("rendering %q succeeded once and then failed: %v", src, err2)
+			}
 			if err2 == nil && !hasAddress(again) && again != out &&
 				(!strings.Contains(src, "__class__") || !differsOnlyByAddress(out, again)) {
 				t.Fatalf("rendering %q twice gave different documents:\n  %q\n  %q",
