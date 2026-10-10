@@ -79,7 +79,7 @@ type budget struct {
 	// State of a render shares: include, import and extends each build a
 	// State of their own, and a render must see one copy of a container
 	// wherever it reaches it. See State.isolate.
-	isolated map[any]value.Value
+	isolated *value.Memo
 }
 
 // resetAllowance starts a fresh accounting period on a budget that is reused.

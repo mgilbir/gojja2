@@ -107,12 +107,12 @@ func (s *State) isolateGlobal(v value.Value) (value.Value, error) {
 // outside it, for value.MemoBudget: the value package's conversions use it so
 // that a host value met through a Go method is the same copy as the one met
 // through a global. A host has no reason to call it. Nil outside a render.
-func (s *State) IsolationMemo() map[any]value.Value {
+func (s *State) IsolationMemo() *value.Memo {
 	if s == nil || s.budget == nil {
 		return nil
 	}
 	if s.budget.isolated == nil {
-		s.budget.isolated = make(map[any]value.Value)
+		s.budget.isolated = &value.Memo{}
 	}
 	return s.budget.isolated
 }

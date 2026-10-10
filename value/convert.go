@@ -354,12 +354,12 @@ func (c *converter) fromAny(v any) Value {
 			return v
 		}
 		if c.iso == nil {
-			memo := map[any]Value(nil)
+			var memo *Memo
 			if mb, ok := c.b.(MemoBudget); ok {
 				memo = mb.IsolationMemo()
 			}
 			if memo == nil {
-				memo = map[any]Value{}
+				memo = &Memo{}
 			}
 			c.iso = &isolator{b: c.b, memo: memo}
 		}
