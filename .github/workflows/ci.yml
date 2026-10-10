@@ -17,6 +17,10 @@ on:
   # notices within the day rather than at the next unrelated push.
   schedule:
     - cron: "17 5 * * *"
+    # Weekly, for the platforms that cost more than Linux and differ from it
+    # less often: the Windows and macOS jobs below run on this schedule and
+    # not the nightly one.
+    - cron: "41 6 * * 0"
   # So a run can be asked for without an empty commit.
   workflow_dispatch:
 
@@ -76,7 +80,11 @@ jobs:
 
   check:
     needs: authorize
-    if: needs.authorize.outputs.trusted == 'true'
+    # Not on the weekly trigger, which is the other platforms' alone; the
+    # nightly one already runs this.
+    if: >-
+      needs.authorize.outputs.trusted == 'true' &&
+      github.event.schedule != '41 6 * * 0'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -155,11 +163,16 @@ jobs:
   # os.DirFS is what refuses them), the checkout's line endings, and timer
   # resolution in the deadline tests.
   #
-  # The race detector doubles the job, so it runs on main and nightly rather
-  # than on every pull request.
+  # The race detector doubles the job, so it runs on main, weekly and on demand
+  # rather than on every pull request. A manual run on a branch is how to get it
+  # before landing anything timing-sensitive: `gh workflow run ci.yml --ref <b>`.
   windows:
     needs: authorize
-    if: needs.authorize.outputs.trusted == 'true'
+    # Every pull request and every push to main, and weekly rather than
+    # nightly on the schedule: a Windows minute bills at twice a Linux one.
+    if: >-
+      needs.authorize.outputs.trusted == 'true' &&
+      (github.event_name != 'schedule' || github.event.schedule == '41 6 * * 0')
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -179,9 +192,37 @@ jobs:
         if: github.event_name != 'pull_request'
         run: go test -race ./...
 
+  # macOS, weekly and on demand. A macOS minute bills at ten times a Linux one,
+  # and the platform has not yet differed from Linux in anything this suite
+  # checks -- this is the run that would say so. The same steps as Windows.
+  macos:
+    needs: authorize
+    if: >-
+      needs.authorize.outputs.trusted == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'schedule' && github.event.schedule == '41 6 * * 0'))
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -count=1 ./...
+      - name: Race
+        run: go test -race ./...
+
   lint:
     needs: authorize
-    if: needs.authorize.outputs.trusted == 'true'
+    # Not on the weekly trigger, which is the other platforms' alone; the
+    # nightly one already runs this.
+    if: >-
+      needs.authorize.outputs.trusted == 'true' &&
+      github.event.schedule != '41 6 * * 0'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
