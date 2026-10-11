@@ -1,0 +1,4 @@
+{
+  "case": "errors/format_code_non_ascii_with_underscore.jj2",
+  "variables": {}
+}

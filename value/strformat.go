@@ -4,6 +4,7 @@
 package value
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"strconv"
@@ -93,7 +94,7 @@ type formatSpec struct {
 	// goes between the digits after the point. Only a float lays it out;
 	// an integer or a string code reads it and ignores it.
 	fracGrouping byte // ',' '_' or 0
-	typ          byte
+	typ          rune
 	// zcoerce is 'z', which renders what rounds to zero without its sign.
 	// Python 3.11 added it (PEP 682), which is every version modelled here,
 	// so it needs no version gate.
@@ -243,7 +244,7 @@ func parseFormatSpec(spec string, v Value, py PythonVersion) (formatSpec, error)
 	switch len(r) - i {
 	case 0:
 	case 1:
-		f.typ = byte(r[i])
+		f.typ = r[i]
 	default:
 		// More than one character left is never a type, whatever it is.
 		return f, invalidSpec(spec, v)
@@ -280,8 +281,20 @@ func parseFormatSpec(spec string, v Value, py PythonVersion) (formatSpec, error)
 // cannotGroup is the complaint a grouping option makes about the code it was
 // written with. The code is the one in the spec, or the type's own default when
 // the spec left it out -- which is how `{:,}` on a string says "with 's'".
-func cannotGroup(sep, typ byte) error {
-	return errs.New(errs.ValueError, "Cannot specify '%c' with '%c'.", sep, typ)
+func cannotGroup(sep byte, typ rune) error {
+	return errs.New(errs.ValueError, "Cannot specify '%c' with '%s'.", sep, presentationCode(typ))
+}
+
+// presentationCode is how CPython writes a format code in a message: as itself
+// when it is printable ASCII, and as '\x' and its code point in lowercase hex,
+// unpadded, when it is not -- so `{:Ŧ}` is reported as '\x166' and a control
+// character as '\x1'. The type used to be kept as a byte, which cut U+0166
+// down to 0x66 -- 'f' -- and rendered `{:Ŧ}` as a float spec.
+func presentationCode(typ rune) string {
+	if typ > 32 && typ < 128 {
+		return string(typ)
+	}
+	return fmt.Sprintf("\\x%x", typ)
 }
 
 // commaAndUnderscore is what a spec asking for both groupings says. It names
@@ -300,9 +313,9 @@ func invalidSpec(spec string, v Value) error {
 		spec, v.TypeName())
 }
 
-func unknownCode(typ byte, v Value) error {
-	return errs.New(errs.ValueError, "Unknown format code '%c' for object of type '%s'",
-		typ, v.TypeName())
+func unknownCode(typ rune, v Value) error {
+	return errs.New(errs.ValueError, "Unknown format code '%s' for object of type '%s'",
+		presentationCode(typ), v.TypeName())
 }
 
 // body renders the value without the padding, and reports whether it is a

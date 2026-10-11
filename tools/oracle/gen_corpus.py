@@ -6111,6 +6111,15 @@ case("errors/format_c_too_large", "{{ '{:c}'.format(2**70) }}")
 # Only a float lays the separator out. An integer or a string code reads it and
 # ignores it -- precision included, so `{:.,d}` is not "Precision not allowed"
 # -- and 'n' alone refuses it, after the integer part's own check.
+# A format code outside printable ASCII is reported as '\\x' and its code
+# point in hex. gojja2 kept the code as a byte, so U+0166 became 0x66 -- 'f' --
+# and `{:Ŧ}` formatted a float where CPython refuses the spec.
+case("errors/format_code_non_ascii_truncating_to_f", "{{ '{:\u0166}'.format(1.5) }}")
+case("errors/format_code_latin1_on_int", "{{ '{:\u00e9}'.format(5) }}")
+case("errors/format_code_latin1_on_str", "{{ '{:\u00e9}'.format('a') }}")
+case("errors/format_code_control_character", "{{ '{:\\x01}'.format(5) }}")
+case("errors/format_code_non_ascii_with_comma", "{{ '{:,\u00e9}'.format(5) }}")
+case("errors/format_code_non_ascii_with_underscore", "{{ '{:_\u0166}'.format('a') }}")
 case("format/fraction_grouped",
      "{{ '{:.,f}'.format(1234.5678912) }}|{{ '{:,.,f}'.format(1234567.5678912) }}|"
      "{{ '{:._f}'.format(1234.5678912) }}|{{ '{:.,e}'.format(1234.5678912) }}|"
