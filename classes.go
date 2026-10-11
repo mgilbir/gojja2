@@ -862,21 +862,33 @@ func classNameOf(v value.Value) (string, bool) {
 }
 
 // HTMLRefusal reports that this type object carries __html__ and cannot answer
-// it, which is true of exactly one class: markupsafe's Markup.
+// it, which is true of the classes that define __html__ as an ordinary method:
+// markupsafe's Markup, jinja2's TemplateModule and ChainableUndefined.
 //
-// markupsafe defines __html__ as an ordinary method, so the class object holds
-// it unbound. `hasattr` says yes -- which is what `is escaped` asks, and it
-// answers True -- and calling it with no self raises. So printing the Markup
-// class under autoescape fails, where printing it without autoescape is its
-// repr, and `|string` is its repr either way.
+// The class object holds such a method unbound. `hasattr` says yes -- which is
+// what `is escaped` asks, and it answers True -- and calling it with no self
+// raises. So printing one of these classes under autoescape fails, where
+// printing it without autoescape is its repr, and `|string` is its repr either
+// way.
 //
-// Found by the render differential: `{% autoescape yes %}{{ ('x'|safe).__class__ }}`.
+// Found by the render differential for Markup:
+// `{% autoescape yes %}{{ ('x'|safe).__class__ }}`. The other two were found by
+// asking CPython which classes reachable from a template carry __html__.
 func (c *classObject) HTMLRefusal() error {
-	if c.qualified != "markupsafe.Markup" {
+	owner, ok := classesWithHTML[c.qualified]
+	if !ok {
 		return nil
 	}
 	return errs.New(errs.TypeError,
-		"Markup.__html__() missing 1 required positional argument: 'self'")
+		"%s.__html__() missing 1 required positional argument: 'self'", owner)
+}
+
+// classesWithHTML maps each class a template can reach whose __html__ is an
+// ordinary method to the name CPython's message gives it.
+var classesWithHTML = map[string]string{
+	"markupsafe.Markup":                 "Markup",
+	"jinja2.environment.TemplateModule": "TemplateModule",
+	"jinja2.runtime.ChainableUndefined": "ChainableUndefined",
 }
 
 func (c *classObject) Repr() string { return "<class '" + c.qualified + "'>" }

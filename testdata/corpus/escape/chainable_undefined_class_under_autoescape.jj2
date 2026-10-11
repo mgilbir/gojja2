@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "autoescape": true,
+    "undefined": "chainable"
+  }
+}
+---
+{{ nope.__class__ }}

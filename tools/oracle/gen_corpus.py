@@ -3244,12 +3244,19 @@ for _n, _src in [
 ]:
     case(f"divergence/{_n}", _src)
 
-# An imported module's class under autoescape: printing a class escapes its
-# repr here, where CPython finds TemplateModule.__html__ on the class and calls
-# it unbound.
-case("divergence/module_class_under_autoescape", '{% import "m.html" as m %}{{ m.__class__ }}',
-     __settings__={"autoescape": True},
-     __templates__={"m.html": "{% macro f() %}x{% endmacro %}"})
+# A class whose __html__ is an ordinary method holds it unbound: `is escaped`
+# is true of the class, and escaping it calls the method with no self. Markup
+# is graded elsewhere; these are the other two a template can reach.
+_mod = {"m.html": "{% macro f() %}x{% endmacro %}"}
+case("escape/module_class_under_autoescape", '{% import "m.html" as m %}{{ m.__class__ }}',
+     __settings__={"autoescape": True}, __templates__=_mod)
+case("escape/module_class_is_escaped", '{% import "m.html" as m %}{{ m.__class__ }}|{{ m.__class__ is escaped }}',
+     __templates__=_mod)
+case("escape/chainable_undefined_class_under_autoescape", "{{ nope.__class__ }}",
+     __settings__={"autoescape": True, "undefined": "chainable"})
+case("escape/chainable_undefined_class_is_escaped", "{{ nope.__class__ }}|{{ nope.__class__ is escaped }}",
+     __settings__={"undefined": "chainable"})
+case("escape/undefined_class_is_not_escaped", "{{ nope.__class__ is escaped }}")
 
 
 # A whitespace split with a maxsplit hands back the rest of the subject as its
