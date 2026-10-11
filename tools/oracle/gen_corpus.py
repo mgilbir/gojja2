@@ -1450,6 +1450,30 @@ case("escape/block", "{% autoescape true %}{{ v }}{% endautoescape %}{{ v }}", v
 case("escape/block_off", "{% autoescape false %}{{ v }}{% endautoescape %}{{ v }}",
      __settings__={"autoescape": True}, v="<b>")
 case("escape/markup_format", '{{ ("a{}b"|safe).format(v) }}', __settings__={"autoescape": True}, v="<x>")
+# A Markup's format runs each field through markupsafe's EscapeFormatter: the
+# conversion first, whose result is a plain str and is escaped; then a value
+# with __html_format__ (Markup refuses any spec; the Markup class holds it
+# unbound), then one with __html__ (a spec is refused, naming the type), then
+# everything else, formatted and escaped. gojja2 escaped by whether the field
+# was Markup *before* its conversion, and formatted the rest as str.format.
+_mf_mod = {"m.html": "{% macro f() %}x{% endmacro %}"}
+for _n, _src, _kw in [
+    ("spec_on_markup", "{{ ('{:f}'|safe).format('<'|safe) }}", {}),
+    ("align_on_markup", "{{ ('{:>5}'|safe).format('a'|safe) }}", {}),
+    ("plain_markup", "{{ ('{}'|safe).format('<'|safe) }}", {}),
+    ("str_conversion_of_markup", "{{ ('{!s}'|safe).format('<'|safe) }}", {}),
+    ("repr_conversion_of_markup", "{{ ('{!r}'|safe).format('<'|safe) }}", {}),
+    ("str_conversion_with_spec", "{{ ('{!s:>5}'|safe).format('<'|safe) }}", {}),
+    ("spec_on_plain_text", "{{ ('{:>5}'|safe).format('<') }}|{{ ('{}'|safe).format(3) }}", {}),
+    ("markup_class", "{{ ('{:5}'|safe).format(('a'|safe).__class__) }}", {}),
+    ("module", "{% import 'm.html' as m %}[{{ ('{}'|safe).format(m) }}]", {"__templates__": _mf_mod}),
+    ("spec_on_module", "{% import 'm.html' as m %}{{ ('{:5}'|safe).format(m) }}", {"__templates__": _mf_mod}),
+    ("module_class", "{% import 'm.html' as m %}{{ ('{}'|safe).format(m.__class__) }}", {"__templates__": _mf_mod}),
+    ("spec_on_module_class", "{% import 'm.html' as m %}{{ ('{:3}'|safe).format(m.__class__) }}", {"__templates__": _mf_mod}),
+    ("chainable_undefined", "[{{ ('{}'|safe).format(nope) }}]", {"__settings__": {"undefined": "chainable"}}),
+    ("spec_on_chainable_undefined", "{{ ('{:5}'|safe).format(nope) }}", {"__settings__": {"undefined": "chainable"}}),
+]:
+    case(f"escape/markup_format_field_{_n}", _src, **_kw)
 case("escape/literal_data", "<b>{{ v }}</b>", __settings__={"autoescape": True}, v="<i>")
 case("escape/macro", "{% macro m(x) %}<i>{{ x }}</i>{% endmacro %}{{ m(v) }}",
      __settings__={"autoescape": True}, v="<b>")
