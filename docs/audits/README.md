@@ -33,7 +33,8 @@ Rewriting an audit to match today's code destroys the only thing it is good for.
 | Report | Taken at | Covers | State |
 |---|---|---|---|
 | [codebase-audit-2026-09-16.md](codebase-audit-2026-09-16.md) | `fa584a9` | Every `.go` file, the Makefile, both workflows, the corpora | 30 findings, re-run 2026-09-18: 29 fixed, 1 never a defect |
-| [docs-audit-2026-09-18.md](docs-audit-2026-09-18.md) | `9da6620` | Every reader-facing surface: README, `docs/`, NOTICE, `make help`, godoc, the workflows' comments | 23 findings, re-run 2026-09-21: all 23 fixed |
+| [docs-audit-2026-09-18.md](docs-audit-2026-09-18.md) | `9da6620` | Every reader-facing surface: README, `docs/`, NOTICE, `make help`, godoc, the workflows' comments | 23 findings, re-run 2026-09-21: all 23 fixed; re-run 2026-10-11: 1 regressed, 4 partially |
+| [docs-audit-2026-10-11.md](docs-audit-2026-10-11.md) | `c09f2238` | Every reader-facing surface, godoc, examples, workflows, tool headers, every diagram | 39 findings (7 High, 23 Medium, 9 Low); not yet re-run |
 
 An earlier codebase audit, describing commit `b7c96ca`, was superseded rather
 than kept. It is still retrievable:
