@@ -3218,6 +3218,22 @@ for _n, _src in [
     ("lazy_reverse_length", "{{ [1, 2]|reverse|length }}"),
     ("lazy_reverse_truth", "{% if []|reverse %}t{% else %}f{% endif %}"),
     ("lazy_reverse_of_a_wide_range", "{{ range(2**70)|reverse|first }}"),
+    # |batch and |slice are generators too: always true, no length, not
+    # reversible and not JSON. Printing one directly shows an address, so
+    # what is graded is what a template does with it.
+    ("lazy_batch_truth", "{% if []|batch(2) %}t{% else %}f{% endif %}"),
+    ("lazy_batch_length", "{{ [1, 2]|batch(1)|length }}"),
+    ("lazy_batch_last", "{{ [1, 2]|batch(1)|last }}"),
+    ("lazy_batch_tojson", "{{ [1, 2]|batch(1)|tojson }}"),
+    ("lazy_slice_length", "{{ [1, 2]|slice(2)|length }}"),
+    ("lazy_slice_last", "{{ [1, 2]|slice(2)|last }}"),
+    # Two literals are two objects in CPython and one value here.
+    ("sameas_float_literals", "{{ 1.5 is sameas(1.5) }}"),
+    # Above 64 elements CPython's sort compares in an order of its own, so
+    # the pair a failing sort names differs.
+    ("long_sort_names_the_pair", "{{ (range(100)|list + ['a'] + range(100)|list)|sort }}"),
+    # Markup's own methods are not exposed here.
+    ("markup_escape_method", "{{ ('a'|safe).escape('<') }}"),
     # The same refusal reached through a proxy, whose iter() is the wrapped
     # object's.
     ("self_list_through_a_proxy",
@@ -3227,6 +3243,13 @@ for _n, _src in [
      "{% for k in C(self) %}{{ k }}{% endfor %}"),
 ]:
     case(f"divergence/{_n}", _src)
+
+# An imported module's class under autoescape: printing a class escapes its
+# repr here, where CPython finds TemplateModule.__html__ on the class and calls
+# it unbound.
+case("divergence/module_class_under_autoescape", '{% import "m.html" as m %}{{ m.__class__ }}',
+     __settings__={"autoescape": True},
+     __templates__={"m.html": "{% macro f() %}x{% endmacro %}"})
 
 
 # A whitespace split with a maxsplit hands back the rest of the subject as its
@@ -6341,7 +6364,7 @@ for _i, _subj in enumerate(["1f", "0x1f", "101", "0b101", "17", "0o17",
 # --- the code points the interpreters disagree about --------------------------
 # CPython carries its own Unicode, so which characters are printable, which are
 # digits and how each one cases are the interpreter's answers rather than
-# jinja2's. Across 3.11 to 3.14 that is 10,311 code points, and until the
+# jinja2's. Across 3.11 to 3.15 that is 15,125 code points, and until the
 # version became a value gojja2 answered the pinned one's way whatever was
 # asked for.
 #

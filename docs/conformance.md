@@ -1,7 +1,7 @@
 # How correct is it, and how do we know?
 
-**8130 of 8209 gradable cases (99.0%)** match CPython jinja2, across eight
-corpora from ten upstream projects. The 79 that do not are listed in
+**8130 of 8219 gradable cases (98.9%)** match CPython jinja2, across eight
+corpora from ten upstream projects. The 89 that do not are listed in
 `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
 
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["8130 / 8209 gradable  (99.0%)"]
+    TC --> RATE["8130 / 8219 gradable  (98.9%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 5889 | 5814 |
+| gojja2's own (committed, with goldens) | 5899 | 5814 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **8209** | **8130 (99.0%)** |
+| **total** | **8219** | **8130 (98.9%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -75,11 +75,11 @@ with what it just measured -- whenever every corpus is present, since `make
 import` is what builds most of them. It does that because the table had drifted,
 twice, after cases were added and the prose was not.
 
-The 79 that differ are listed in `testdata/known_failures.txt`. A case on that
+The 89 that differ are listed in `testdata/known_failures.txt`. A case on that
 list which starts passing also fails the test, so the list can only shrink
 deliberately.
 
-Nearly half of them are the same refusal in other words: CPython's message names
+Over a third of them are the same refusal in other words: CPython's message names
 a line of the module jinja2 generates, or an identifier inside it -- a keyword
 written twice in one call, a `break` that binds to no loop, a slice among several
 subscripts, a repeated macro parameter. gojja2 refuses each of those too. Most
