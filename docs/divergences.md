@@ -10,7 +10,7 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the forty-seven divergences below, **two** are worth going looking for in a
+Of the forty-six divergences below, **two** are worth going looking for in a
 template that works today.
 
 jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique`,
@@ -55,7 +55,6 @@ are safety controls rather than behavioural choices, and they live in
 | [A slice among several subscripts](#a-slice-among-several-subscripts) | both refuse it; the wording differs | No -- only the message differs |
 | [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | Only a template that raises a negative number to a fractional power |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
-| [An imported module's class under autoescape](#an-imported-modules-class-under-autoescape) | `{{ m.__class__ }}` prints the class; jinja2 raises `TypeError` | No -- the template is broken under CPython |
 | [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | Only `self is iterable`, which answers differently |
 | [`\N{...}` escapes](#n-escapes-in-string-literals) | refused; needs the Unicode name database | Only if you write `\N{...}` |
 | [A lone surrogate in a string literal](#a-lone-surrogate-in-a-string-literal) | `'\ud800'` is U+FFFD here | Only if you write a surrogate escape that is not half of a pair |
@@ -378,28 +377,6 @@ include still escapes an enclosing `{% filter %}` buffer, which is covered by
 the corpus -- but turning a function into an unconsumed generator is an
 artefact of compiling to Python, not a property of the language.
 `TestDivergenceContextFreeIncludeInAMacro` pins the rendered body.
-
-### An imported module's class under autoescape
-
-```jinja
-{% import "m.html" as m %}{{ m.__class__ }}
-```
-
-Under autoescape CPython raises `TypeError: TemplateModule.__html__() missing 1
-required positional argument: 'self'`. markupsafe's `escape()` asks whatever it
-is given for an `__html__` attribute and calls it, and jinja2's `TemplateModule`
-defines one -- so on the *class* it finds the plain function, unbound, and the
-call has no `self`. gojja2 prints the class, escaped:
-`&lt;class &#39;jinja2.environment.TemplateModule&#39;&gt;`.
-
-Without autoescape nothing asks for `__html__`, and both print `<class
-'jinja2.environment.TemplateModule'>`. Markup's class carries the same unbound
-method, and there the two agree: `{{ ('x'|safe).__class__ }}` under autoescape
-raises CPython's `TypeError` on both sides. The module's class is a type object
-gojja2 gives a name and a repr (see [Python object
-introspection](#python-object-introspection)) and nothing behind them, and a
-template that prints it is broken under CPython.
-`TestDivergenceModuleClassUnderAutoescape` pins all three answers.
 
 ### `{{ self|list }}`
 
@@ -1017,10 +994,10 @@ a name, a repr and equality:
 ```
 
 That is a statement about gojja2's own value model, and it is inert: there is
-nothing behind it. One consequence is visible, and is listed on its own: [an
-imported module's class under
-autoescape](#an-imported-modules-class-under-autoescape) raises in CPython and
-prints here.
+nothing behind it. The one thing a class carries that a template can observe is
+an unbound `__html__` -- Markup, TemplateModule and ChainableUndefined define
+one -- and gojja2 reproduces it: `is escaped` is true of those classes, and
+printing one under autoescape raises CPython's `TypeError`.
 
 `__doc__` is not. CPython answers it with the docstring of the built-in type --
 several paragraphs of English that change between Python releases -- and gojja2

@@ -1,0 +1,6 @@
+{
+  "case": "escape/chainable_undefined_class_is_escaped.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

@@ -143,26 +143,6 @@ func TestDivergenceIntrospectionGaps(t *testing.T) {
 	}
 }
 
-// Pins "An imported module's class under autoescape".
-func TestDivergenceModuleClassUnderAutoescape(t *testing.T) {
-	escaped := []gojja2.Option{gojja2.WithAutoescape(true)}
-	lib := map[string]string{"m.html": `{% macro f() %}x{% endmacro %}`}
-	for _, c := range []divCase{
-		// CPython: TypeError: TemplateModule.__html__() missing 1 required
-		// positional argument: 'self'
-		{src: `{% import "m.html" as m %}{{ m.__class__ }}`, tpls: lib, options: escaped,
-			want: `&lt;class &#39;jinja2.environment.TemplateModule&#39;&gt;`},
-		// Agreement: without autoescape nothing asks for __html__.
-		{src: `{% import "m.html" as m %}{{ m.__class__ }}`, tpls: lib,
-			want: `<class 'jinja2.environment.TemplateModule'>`},
-		// Agreement: Markup's class does carry the unbound __html__.
-		{src: `{{ ('x'|safe).__class__ }}`, options: escaped,
-			kind: errs.TypeError, msg: `Markup.__html__() missing 1 required positional argument: 'self'`},
-	} {
-		c.check(t)
-	}
-}
-
 // Pins "A callable fourth argument to `Undefined`".
 func TestDivergenceCallableUndefinedExc(t *testing.T) {
 	for _, c := range []divCase{

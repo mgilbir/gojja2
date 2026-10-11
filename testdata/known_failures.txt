@@ -225,9 +225,6 @@ own/divergence/long_sort_names_the_pair.jj2
 # See docs/divergences.md, "Python object introspection".
 own/divergence/markup_escape_method.jj2
 
-# --- an imported module's class under autoescape ---
-# See docs/divergences.md, "An imported module's class under autoescape".
-own/divergence/module_class_under_autoescape.jj2
 
 # --- an unpack count over a lazy filter's result ---------------------------------
 # The @3.14 suffix means "agrees with the pin, diverges on that one". 3.14 names

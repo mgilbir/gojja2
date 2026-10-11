@@ -1,5 +1,5 @@
 {
-  "case": "divergence/module_class_under_autoescape.jj2",
+  "case": "escape/module_class_under_autoescape.jj2",
   "oracle": {
     "impl": "cpython-jinja2",
     "version": "3.1.6",
