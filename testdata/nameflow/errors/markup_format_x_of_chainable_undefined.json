@@ -1,0 +1,6 @@
+{
+  "case": "errors/markup_format_x_of_chainable_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

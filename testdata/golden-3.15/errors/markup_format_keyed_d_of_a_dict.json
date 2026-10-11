@@ -1,0 +1,14 @@
+{
+  "case": "errors/markup_format_keyed_d_of_a_dict.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "format argument 'k': %d requires a real number, not markupsafe._MarkupEscapeHelper"
+  }
+}

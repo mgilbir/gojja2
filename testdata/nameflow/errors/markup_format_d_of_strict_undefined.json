@@ -1,0 +1,6 @@
+{
+  "case": "errors/markup_format_d_of_strict_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}
