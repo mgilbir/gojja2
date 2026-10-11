@@ -14,7 +14,10 @@ on:
   # trigger workflows. Only a push event says what is actually on main.
   push:
     branches: [main]
+  # `labeled` is how a maintainer releases a fork's pull request; see the
+  # authorize job. The other three are pull_request's defaults.
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   # A safety net for the case above: if a merge lands without a run, this
   # notices within the day rather than at the next unrelated push.
   schedule:
@@ -34,8 +37,10 @@ permissions:
 
 concurrency:
   # One run per branch or pull request; a new push cancels the previous run,
-  # except on main, where every commit's result is worth having.
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # except on main, where every commit's result is worth having. A label other
+  # than safe-to-test also raises a `labeled` run, which does nothing; it gets
+  # a group of its own so it cannot cancel a run that is doing something.
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'safe-to-test' && format('-label-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -50,13 +55,24 @@ jobs:
   # lock on the same door.
   #
   # A pull request from a branch in this repository needs write access to
-  # create, so it is trusted. One from a fork is trusted on a run whose event
-  # payload carries the `safe-to-test` label, which also takes write access to
-  # add. Adding the label starts no run: `pull_request` above lists no
-  # `types:`, so only opened, synchronize and reopened start one, and the label
-  # is read by the next of those. revoke-approval.yml deletes the label on a
-  # push, concurrently with the run that push starts here, and nothing orders
-  # the two. docs/contributing.md, "Sending it", describes the sequence.
+  # create, so it is trusted. One from a fork is trusted on exactly one event:
+  # a maintainer *adding* the `safe-to-test` label, which also takes write
+  # access. That run tests the commit the pull request had at that moment.
+  #
+  # A fork's push, open or reopen is never trusted, whatever labels it carries.
+  # Trusting a payload that merely *had* the label is what made the label
+  # gameable: a push raised a run whose payload still listed it, concurrently
+  # with revoke-approval.yml deleting it, and nothing ordered the two -- so an
+  # unreviewed commit could run once. Here a push cannot release anything; a
+  # new commit needs the label added again, which is a new decision by someone
+  # with write access, about the commit then at the head.
+  #
+  # One window remains, and no label scheme closes it: a commit pushed after
+  # the review and before the label lands is the one the labelled run tests.
+  # Check the head commit before labelling. docs/contributing.md, "Sending it".
+  #
+  # A `labeled` run for any other label, or on a branch in this repository,
+  # runs nothing: those pull requests are tested by their own pushes.
   authorize:
     runs-on: ubuntu-latest
     outputs:
@@ -69,19 +85,26 @@ jobs:
         # request turns "we only read your code" into "we ran your code".
         env:
           TRUSTED: ${{ github.event_name != 'pull_request'
-            || github.event.pull_request.head.repo.full_name == github.repository
-            || contains(github.event.pull_request.labels.*.name, 'safe-to-test') }}
+            || (github.event.action != 'labeled'
+                && github.event.pull_request.head.repo.full_name == github.repository)
+            || (github.event.action == 'labeled'
+                && github.event.label.name == 'safe-to-test'
+                && github.event.pull_request.head.repo.full_name != github.repository) }}
+          LABEL_ONLY: ${{ github.event.action == 'labeled' }}
         run: |
           echo "trusted=$TRUSTED" >> "$GITHUB_OUTPUT"
           if [ "$TRUSTED" = "true" ]; then
             echo "Trusted source; running the full check." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$LABEL_ONLY" = "true" ]; then
+            echo "A label was added that releases nothing; no jobs run." >> "$GITHUB_STEP_SUMMARY"
           else
             {
               echo "### Waiting for approval"
               echo
               echo "This pull request comes from a fork, so CI has not run."
-              echo "A maintainer who has reviewed the diff can add the"
-              echo '`safe-to-test` label to release it.'
+              echo "A maintainer who has read the diff at its current head"
+              echo 'commit can add the `safe-to-test` label: that runs CI on'
+              echo "that commit. A later push needs the label added again."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

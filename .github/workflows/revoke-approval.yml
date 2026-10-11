@@ -1,14 +1,13 @@
 name: Revoke CI approval
 
-# The `safe-to-test` label marks a fork pull request as trusted: ci.yml's
-# authorize job reads it from each run's event payload. A label is attached to
-# the pull request, not to a commit, so on its own it keeps applying after new
-# commits arrive -- which is the well-known hole in label-based gating: get the
-# label on a harmless diff, then push whatever you like. This removes the label
-# when the branch moves (a synchronize event). The same push also starts
-# ci.yml's own synchronize run, concurrently with this one, and nothing in
-# either workflow orders the deletion before that run reads its payload; see
-# docs/contributing.md, "Sending it".
+# Adding the `safe-to-test` label to a fork pull request is what runs CI on it:
+# ci.yml's authorize job trusts the `labeled` event and nothing else from a
+# fork, so a push never runs CI however the labels stand. A label is attached to
+# the pull request rather than to a commit, though, so left in place it would
+# look approved after a push. This removes it when the branch moves (a
+# synchronize event), so the pull request shows what is true -- the new head
+# has not been released -- and the next approval is an *add*, which is the event
+# that runs. See docs/contributing.md, "Sending it".
 on:
   pull_request_target:
     types: [synchronize]
