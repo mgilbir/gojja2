@@ -468,6 +468,17 @@ case("macro/missing_arg", "{% macro m(a, b) %}{{a}}{{b}}{% endmacro %}{{ m(1) }}
 LAYOUT = {"base.html": "[{% block title %}base title{% endblock %}|{% block body %}base body{% endblock %}]"}
 case("inherit/override", "{% extends 'base.html' %}{% block body %}child{% endblock %}", __templates__=LAYOUT)
 case("inherit/super", "{% extends 'base.html' %}{% block body %}<{{ super() }}>{% endblock %}", __templates__=LAYOUT)
+# Bare `super` -- a name, not a call -- is what jinja2's Context.super binds for
+# the block: the parent's definition where there is one, and an undefined
+# saying there is not where there is none. gojja2 bound a reference either
+# way, so a parentless block printed one and called it defined.
+case("inherit/super_bare_without_parent", "{% block a %}[{{ super }}]{% endblock %}")
+case("inherit/super_is_defined_without_parent", "{% block a %}[{{ super is defined }}]{% endblock %}")
+case("inherit/super_bare_without_parent_strict", "{% block a %}[{{ super }}]{% endblock %}",
+     __settings__={"undefined": "strict"})
+case("inherit/super_is_defined_with_parent",
+     "{% extends 'base.html' %}{% block body %}[{{ super is defined }}|{{ super() }}]{% endblock %}",
+     __templates__=LAYOUT)
 case("inherit/before_extends", "BEFORE{% extends 'base.html' %}AFTER{% block body %}c{% endblock %}TAIL", __templates__=LAYOUT)
 case("inherit/set_visible_in_block", "{% extends 'base.html' %}{% set v = 'V' %}{% block body %}{{ v }}{% endblock %}", __templates__=LAYOUT)
 case("inherit/three_level", "{% extends 'mid.html' %}{% block body %}C{{ super() }}{% endblock %}",

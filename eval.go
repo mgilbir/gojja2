@@ -114,6 +114,16 @@ func (ex *exec) evalName(n *ast.Name) (value.Value, error) {
 		if ex.blockName != "" {
 			// super() renders the next definition of the block
 			// currently being rendered, one step toward the base.
+			// Where there is none, jinja2's Context.super binds an
+			// undefined that says so -- not a reference that fails
+			// only when called -- so `{{ super }}` prints nothing,
+			// `super is defined` is false, and `super()` raises the
+			// undefined's hint.
+			if ex.blockIndex+1 >= len(ex.st.blocks[ex.blockName]) {
+				return ex.st.Undefined(value.UndefinedHint(
+					"there is no parent block called %s.",
+					value.Repr(value.String(ex.blockName)))), nil
+			}
 			return value.FromObject(&blockReference{
 				st: ex.st, name: ex.blockName, index: ex.blockIndex + 1,
 				sc: ex.blockScope,
