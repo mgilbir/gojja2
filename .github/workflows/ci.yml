@@ -46,13 +46,13 @@ concurrency:
 jobs:
   # Untrusted code does not run until somebody has looked at it.
   #
-  # GitHub's own "require approval for outside collaborators" setting is the
-  # right mechanism, and it cannot be used here: the API refuses it for a
-  # private repository ("Fork PR approval is not allowed for private
-  # repositories"). This gate does the same job in the workflow, so it holds
-  # now and keeps holding if the repository is made public -- at which point
-  # the native setting should be turned on as well, and this becomes a second
-  # lock on the same door.
+  # GitHub's own fork pull request approval setting is the native mechanism.
+  # It was unavailable while the repository was private ("Fork PR approval is
+  # not allowed for private repositories"), which is why this gate exists. The
+  # repository is public now, so the setting can be used too: it lives in the
+  # repository's Actions settings rather than here, and at its strictest --
+  # approval for every external contributor, not only first-time ones -- it
+  # is a second lock on the same door. This gate holds whatever it is set to.
   #
   # A pull request from a branch in this repository needs write access to
   # create, so it is trusted. One from a fork is trusted on exactly one event:
