@@ -1,0 +1,3 @@
+{}
+---
+{% if []|batch(2) %}t{% else %}f{% endif %}
