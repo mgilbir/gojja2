@@ -199,3 +199,35 @@ func TestNEscapeSaysWhyItIsRefused(t *testing.T) {
 		t.Errorf("a \\u escape rendered %q, %v", out, err)
 	}
 }
+
+// The other two leniency knobs refuse a value that names neither setting too.
+// Both used to compare against the strict value only, so any other number was
+// read as the lenient one: a block opening equal to the comment opening was
+// accepted, and so was "*.html", which escapes nothing.
+func TestLeniencyKnobsRejectAnUnknownValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts []gojja2.Option
+	}{
+		{"DelimiterLeniency", []gojja2.Option{
+			gojja2.WithCommentDelimiters("{%", "%}"),
+			gojja2.WithDelimiterLeniency(gojja2.DelimiterLeniency(7)),
+		}},
+		{"AutoescapeLeniency", []gojja2.Option{
+			gojja2.WithAutoescapeSelection(gojja2.SelectAutoescapeConfig{
+				Enabled:  []string{"*.html"},
+				Leniency: gojja2.AutoescapeLeniency(7),
+			}),
+		}},
+	} {
+		if _, err := gojja2.New(tc.opts...); err == nil {
+			t.Errorf("New accepted a %s that is neither value", tc.name)
+		}
+	}
+	if got := gojja2.DelimiterLeniency(7).String(); got != "DelimiterLeniency(7)" {
+		t.Errorf("an unknown DelimiterLeniency prints as %q", got)
+	}
+	if got := gojja2.AutoescapeLeniency(7).String(); got != "AutoescapeLeniency(7)" {
+		t.Errorf("an unknown AutoescapeLeniency prints as %q", got)
+	}
+}
