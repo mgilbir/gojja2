@@ -1,0 +1,14 @@
+{
+  "case": "intstr/markup_percent_d_digit_limit_before_junk.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.11"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"
+  }
+}

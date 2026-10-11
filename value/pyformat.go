@@ -852,16 +852,32 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 		if err := StrictRefusal(v); err != nil {
 			return formatted{}, err
 		}
-		return formatted{body: c.truncate(text(Str(v)))}, nil
+		s, err := StrErr(v, c.py)
+		if err != nil {
+			return formatted{}, err
+		}
+		return formatted{body: c.truncate(text(s))}, nil
 	case 'r':
 		if c.bytes {
 			// A bytes cannot hold repr()'s non-ASCII, so %r is
 			// ascii() there -- the same answer %a gives.
-			return formatted{body: c.truncate(text(Ascii(v)))}, nil
+			s, err := AsciiErr(v, c.py)
+			if err != nil {
+				return formatted{}, err
+			}
+			return formatted{body: c.truncate(text(s))}, nil
 		}
-		return formatted{body: c.truncate(text(Repr(v)))}, nil
+		s, err := ReprErr(v, c.py)
+		if err != nil {
+			return formatted{}, err
+		}
+		return formatted{body: c.truncate(text(s))}, nil
 	case 'a':
-		return formatted{body: c.truncate(text(Ascii(v)))}, nil
+		s, err := AsciiErr(v, c.py)
+		if err != nil {
+			return formatted{}, err
+		}
+		return formatted{body: c.truncate(text(s))}, nil
 
 	case 'c':
 		if c.bytes {
@@ -999,6 +1015,13 @@ func (c *conversion) integerDigits(v Value, base int, allowFloat bool) (string, 
 		return "", false, c.errNumberRequired(want, QualifiedTypeName(v), v.TypeName())
 	}
 
+	// Decimal text is limited and %o, %x and %X are not: CPython refuses
+	// `'%d' % (10 ** 5000)` and answers `'%x' % (10 ** 5000)`.
+	if base == 10 {
+		if err := BigIntStrRefusal(b); err != nil {
+			return "", false, err
+		}
+	}
 	negative := b.Sign() < 0
 	digits := new(big.Int).Abs(b).Text(base)
 	// For an integer, precision is a minimum number of digits. Python
@@ -1104,9 +1127,12 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 		// repr() of a Markup is text *about* the markup, so it is
 		// escaped like any other text -- including when the value it
 		// describes is itself Markup.
-		text := Repr(v)
+		text, err := ReprErr(v, c.py)
 		if c.verb == 'a' {
-			text = Ascii(v)
+			text, err = AsciiErr(v, c.py)
+		}
+		if err != nil {
+			return formatted{}, true, err
 		}
 		return formatted{body: c.truncate(EscapeHTML(text))}, true, nil
 
@@ -1144,6 +1170,11 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 // padDigits renders an integer's magnitude and applies the minimum-digit
 // precision, which is the part %d shares between the two paths.
 func (c *conversion) padDigits(b *big.Int) (string, bool, error) {
+	// %d is decimal text, which CPython refuses past MaxStrDigits; %x and %o
+	// are not, and do not come through here.
+	if err := BigIntStrRefusal(b); err != nil {
+		return "", false, err
+	}
 	digits := new(big.Int).Abs(b).Text(10)
 	if c.hasPrec && len(digits) < c.prec {
 		if err := chargeBytes(c.budget, int64(c.prec-len(digits))); err != nil {
@@ -1173,6 +1204,12 @@ func markupInt(v Value, verb byte, py PythonVersion) (*big.Int, error) {
 		return b, nil
 	case v.kind == KindString:
 		text, ok := pyNumericText(v.str, false, py)
+		// Decimal text past CPython's digit limit is refused before it
+		// is converted, which is the conversion the limit exists to
+		// keep from running.
+		if err := intTextLimit(v.str, text, ok, 10, py); err != nil {
+			return nil, err
+		}
 		if ok {
 			if b, good := new(big.Int).SetString(text, 10); good {
 				return b, nil

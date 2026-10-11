@@ -53,7 +53,7 @@ func FormatValue(v Value, spec string, py PythonVersion, budget Budget) (string,
 		if err := StrictRefusal(v); err != nil {
 			return "", err
 		}
-		return StrFor(v, py), nil
+		return StrErr(v, py)
 	}
 	// A type with no __format__ of its own inherits object's, which takes
 	// the empty spec and nothing else -- and never looks at what the spec
@@ -402,6 +402,13 @@ func (f formatSpec) formatInt(b *big.Int, v Value) (string, error) {
 			return "", errs.New(errs.OverflowError, "%%c arg not in range(0x110000)")
 		}
 		return string(rune(n)), nil
+	}
+	// Decimal text is limited and the power-of-two bases are not:
+	// `{:x}` of a 5000-digit number answers, `{:d}`, `{:n}` and `{:,}` raise.
+	if base == 10 {
+		if err := BigIntStrRefusal(b); err != nil {
+			return "", err
+		}
 	}
 	digits := new(big.Int).Abs(b).Text(base)
 	if f.typ == 'X' {

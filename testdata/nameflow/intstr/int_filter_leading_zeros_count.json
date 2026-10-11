@@ -1,0 +1,6 @@
+{
+  "case": "intstr/int_filter_leading_zeros_count.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

@@ -66,6 +66,13 @@ type undefinedInfo struct {
 	// It arrives already built, because what counts as callable is a
 	// question about macros and globals that this package cannot answer.
 	excRefusal error
+	// reprRefusal is what writing keyRepr or nameRepr raises in CPython: a
+	// key holding an int too wide for decimal text. jinja2 builds the
+	// message only when it raises, so `{{ {}[10 ** 5000] }}` prints
+	// nothing and `{{ {}[10 ** 5000].a }}` is the ValueError rather than
+	// the UndefinedError. The repr is still kept, for the Go caller who
+	// asks for a message regardless.
+	reprRefusal error
 }
 
 // UndefinedConstructed returns the undefined jinja2's Undefined(hint, obj,
@@ -93,10 +100,12 @@ func UndefinedConstructed(hint Value, obj Value, hasObj bool, name Value,
 		// __str__ prints it raw, so `Undefined(name='zz')` is "'zz' is
 		// undefined" and "{{ zz }}".
 		info.name, info.nameRepr = Str(name), Repr(name)
+		info.reprRefusal = IntStrRefusalIn(name)
 	case name.IsString():
 		info.owner, info.name = ObjectTypeRepr(obj), Str(name)
 	default:
 		info.owner, info.keyRepr, info.hasKey = ObjectTypeRepr(obj), Repr(name), true
+		info.reprRefusal = IntStrRefusalIn(name)
 	}
 	return Value{kind: KindUndefined, obj: info}
 }
@@ -134,6 +143,7 @@ func UndefinedIndex(owner Value, i int) Value {
 func UndefinedElement(owner, key Value) Value {
 	return Value{kind: KindUndefined, obj: &undefinedInfo{
 		keyRepr: Repr(key), hasKey: true, owner: ObjectTypeRepr(owner),
+		reprRefusal: IntStrRefusalIn(key),
 	}}
 }
 
@@ -151,9 +161,16 @@ func UndefinedSubscript(owner Value, keyRepr string) Value {
 // no Value here, so it is rendered as Python reprs one -- every bound present,
 // an omitted one as None.
 func UndefinedSlice(owner, start, stop, step Value) Value {
+	refusal := IntStrRefusalIn(start)
+	if refusal == nil {
+		refusal = IntStrRefusalIn(stop)
+	}
+	if refusal == nil {
+		refusal = IntStrRefusalIn(step)
+	}
 	return Value{kind: KindUndefined, obj: &undefinedInfo{
 		keyRepr: "slice(" + Repr(start) + ", " + Repr(stop) + ", " + Repr(step) + ")",
-		hasKey:  true, owner: ObjectTypeRepr(owner),
+		hasKey:  true, owner: ObjectTypeRepr(owner), reprRefusal: refusal,
 	}}
 }
 
@@ -208,6 +225,9 @@ func (v Value) UndefinedError() error {
 	if info.excRefusal != nil {
 		return info.excRefusal
 	}
+	if info.hint == "" && info.reprRefusal != nil {
+		return info.reprRefusal
+	}
 	switch {
 	case info.hint != "":
 		return errs.New(errs.UndefinedError, "%s", info.hint)
@@ -221,6 +241,17 @@ func (v Value) UndefinedError() error {
 	default:
 		return errs.New(errs.UndefinedError, "'%s' has no attribute '%s'", info.owner, info.name)
 	}
+}
+
+// debugTextRefusal is what DebugText raises in CPython, where its __str__
+// writes the key's repr: nil unless the key holds an int too wide for decimal
+// text. The name form writes the name raw and does not raise.
+func (v Value) debugTextRefusal() error {
+	info := v.undef()
+	if info.hint == "" && info.owner != "" && info.hasKey {
+		return info.reprRefusal
+	}
+	return nil
 }
 
 // DebugText is how DebugUndefined renders itself: the expression that failed,

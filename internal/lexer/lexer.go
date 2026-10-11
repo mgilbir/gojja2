@@ -4,6 +4,7 @@
 package lexer
 
 import (
+	"errors"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -655,7 +656,22 @@ func (l *lexer) lexExprToken() error {
 		return nil
 	}
 	if n := l.matchInteger(); n > 0 {
-		l.emit(Integer, l.advance(n))
+		line := l.line
+		text := l.advance(n)
+		// jinja2 converts the literal with int(), as its TokenStream
+		// pulls the token, and int() refuses decimal text past CPython's
+		// digit limit with a ValueError -- not a syntax error, and only
+		// once the parser gets this far, which is what a lexing failure
+		// here already means. A 0b, 0o or 0x literal is in a base that is
+		// a power of two, and exempt.
+		if err := literalDigitRefusal(text); err != nil {
+			var e *errs.Error
+			if errors.As(err, &e) {
+				e.Line, e.Name, e.Source = line, l.name, l.src
+			}
+			return err
+		}
+		l.emit(Integer, text)
 		return nil
 	}
 	if n := l.matchName(); n > 0 {

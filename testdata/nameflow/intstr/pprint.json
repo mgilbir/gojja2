@@ -1,0 +1,6 @@
+{
+  "case": "intstr/pprint.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

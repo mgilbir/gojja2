@@ -494,6 +494,17 @@ func (m *mappingProxy) UnhashableAs() value.Value {
 // `{{ m|pprint }}` prints `mappingproxy({'a': 1})`.
 func (m *mappingProxy) Str() string { return value.StrFor(m.d, m.py) }
 
+// StrErr and ReprErr are Str and Repr refusing what the dict refuses.
+func (m *mappingProxy) StrErr() (string, error) { return value.StrErr(m.d, m.py) }
+
+func (m *mappingProxy) ReprErr() (string, error) {
+	inner, err := value.ReprErr(m.d, m.py)
+	if err != nil {
+		return "", err
+	}
+	return "mappingproxy(" + inner + ")", nil
+}
+
 func (m *mappingProxy) Repr() string {
 	return "mappingproxy(" + value.ReprFor(m.d, m.py) + ")"
 }
@@ -630,6 +641,15 @@ func (v *dictView) ContainsErr(item value.Value, py value.PythonVersion) (found,
 	pair, _ := item.Seq()
 	eq, err := value.EqualBoolErr(pair.At(1), got, py)
 	return eq, true, err
+}
+
+// ReprErr is Repr refusing what the entries refuse.
+func (v *dictView) ReprErr() (string, error) {
+	inner, err := value.ReprErr(value.NewList(v.entries()...), v.py)
+	if err != nil {
+		return "", err
+	}
+	return v.kind.name() + "(" + inner + ")", nil
 }
 
 func (v *dictView) Repr() string {

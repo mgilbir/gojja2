@@ -1,0 +1,6 @@
+{
+  "case": "intstr/dict_keys_repr.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

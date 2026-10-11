@@ -1,0 +1,6 @@
+{
+  "case": "intstr/tojson_nested.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

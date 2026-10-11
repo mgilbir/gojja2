@@ -1,0 +1,6 @@
+{
+  "case": "intstr/striptags.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

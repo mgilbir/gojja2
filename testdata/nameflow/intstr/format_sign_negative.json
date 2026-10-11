@@ -1,0 +1,6 @@
+{
+  "case": "intstr/format_sign_negative.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

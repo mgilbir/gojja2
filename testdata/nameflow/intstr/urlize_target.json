@@ -1,0 +1,6 @@
+{
+  "case": "intstr/urlize_target.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

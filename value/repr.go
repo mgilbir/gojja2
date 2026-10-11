@@ -152,7 +152,7 @@ func ReprFor(v Value, py PythonVersion) string {
 	var b strings.Builder
 	// No budget: nothing is charged and nothing can refuse, so the error is
 	// always nil. See ReprBudget.
-	_ = writeRepr(&b, v, nil, false, nil, UnicodeFor(py))
+	_ = writeRepr(&b, v, nil, false, false, nil, UnicodeFor(py))
 	return b.String()
 }
 
@@ -168,10 +168,65 @@ func ReprFor(v Value, py PythonVersion) string {
 // The returned string is only meaningful when the error is nil.
 func ReprBudget(v Value, bud Budget, py PythonVersion) (string, error) {
 	var b strings.Builder
-	if err := writeRepr(&b, v, nil, false, bud, UnicodeFor(py)); err != nil {
+	if err := writeRepr(&b, v, nil, false, true, bud, UnicodeFor(py)); err != nil {
 		return "", err
 	}
 	return b.String(), nil
+}
+
+// ReprErr is [ReprFor] reporting what CPython's repr() raises rather than
+// writing it anyway: an int past MaxStrDigits decimal digits, wherever in the
+// value it sits. ReprFor and Repr stay total, for the many callers that build a
+// message or a key and have nowhere to put an error; a template-visible repr
+// asks this one.
+func ReprErr(v Value, py PythonVersion) (string, error) {
+	var b strings.Builder
+	if err := writeRepr(&b, v, nil, false, true, nil, UnicodeFor(py)); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// AsciiErr is [AsciiFor] reporting what ascii() raises, as ReprErr does.
+func AsciiErr(v Value, py PythonVersion) (string, error) {
+	var b strings.Builder
+	if err := writeRepr(&b, v, nil, true, true, nil, UnicodeFor(py)); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// StrErr is [StrFor] reporting what CPython's str() raises: an int past
+// MaxStrDigits decimal digits, on its own or anywhere inside a container,
+// whose str() is its repr.
+//
+// It does not consult StrictRefusal. The two are separate questions asked at
+// different sites -- a StrictUndefined refuses str() but not repr() -- and a
+// caller that needs both asks both.
+func StrErr(v Value, py PythonVersion) (string, error) {
+	switch v.kind {
+	case KindString:
+		return v.str, nil
+	case KindInt:
+		if v.obj == nil {
+			return strconv.FormatInt(int64(v.num), 10), nil
+		}
+	case KindUndefined:
+		if v.undef().behavior == UndefinedDebug {
+			if err := v.debugTextRefusal(); err != nil {
+				return "", err
+			}
+		}
+		return StrFor(v, py), nil
+	case KindObject:
+		if s, ok := v.obj.(StrerErr); ok {
+			return s.StrErr()
+		}
+		if s, ok := v.obj.(Strer); ok {
+			return s.Str(), nil
+		}
+	}
+	return ReprErr(v, py)
 }
 
 // reprChargeBlock is how much of a string is written between charges. It is the
@@ -221,8 +276,8 @@ func (a active) leave(key any) { delete(a, key) }
 // point is escaped, wherever it sits. It travels with the walk because ascii()
 // applies to the whole structure and not only to a bare string -- ascii(['é'])
 // is "['\\xe9']".
-func writeRepr(b *strings.Builder, v Value, seen active, ascii bool, bud Budget, u *UnicodeOverrides) error {
-	frame, open, err := openRepr(b, v, &seen, ascii, bud, u)
+func writeRepr(b *strings.Builder, v Value, seen active, ascii, refuse bool, bud Budget, u *UnicodeOverrides) error {
+	frame, open, err := openRepr(b, v, &seen, ascii, refuse, bud, u)
 	if err != nil {
 		return err
 	}
@@ -247,7 +302,7 @@ func writeRepr(b *strings.Builder, v Value, seen active, ascii bool, bud Budget,
 		if err := chargeItems(bud, 1); err != nil {
 			return err
 		}
-		frame, open, err := openRepr(b, child, &seen, ascii, bud, u)
+		frame, open, err := openRepr(b, child, &seen, ascii, refuse, bud, u)
 		if err != nil {
 			return err
 		}
@@ -318,7 +373,7 @@ func (f *reprFrame) advance(b *strings.Builder) (Value, bool) {
 // container is marked on the way down and unmarked when its frame closes, so
 // two references to one non-cyclic value are both expanded in full while a
 // value that contains itself collapses.
-func openRepr(b *strings.Builder, v Value, seen *active, ascii bool, bud Budget, u *UnicodeOverrides) (reprFrame, bool, error) {
+func openRepr(b *strings.Builder, v Value, seen *active, ascii, refuse bool, bud Budget, u *UnicodeOverrides) (reprFrame, bool, error) {
 	switch v.kind {
 	case KindList, KindTuple, KindDict:
 		next, ok := seen.enter(v.obj)
@@ -349,14 +404,14 @@ func openRepr(b *strings.Builder, v Value, seen *active, ascii bool, bud Budget,
 			return reprFrame{ents: d.Entries(), dict: true, close: '}', key: v.obj}, true, nil
 		}
 	}
-	if err := writeScalarRepr(b, v, ascii, bud, u); err != nil {
+	if err := writeScalarRepr(b, v, ascii, refuse, bud, u); err != nil {
 		return reprFrame{}, false, err
 	}
 	return reprFrame{}, false, nil
 }
 
 // writeScalarRepr renders everything that holds no children.
-func writeScalarRepr(b *strings.Builder, v Value, ascii bool, bud Budget, u *UnicodeOverrides) error {
+func writeScalarRepr(b *strings.Builder, v Value, ascii, refuse bool, bud Budget, u *UnicodeOverrides) error {
 	switch v.kind {
 	case KindUndefined:
 		b.WriteString("Undefined")
@@ -370,6 +425,11 @@ func writeScalarRepr(b *strings.Builder, v Value, ascii bool, bud Budget, u *Uni
 		}
 	case KindInt:
 		if big, ok := v.obj.(*big.Int); ok {
+			if refuse {
+				if err := BigIntStrRefusal(big); err != nil {
+					return err
+				}
+			}
 			b.WriteString(big.String())
 		} else {
 			b.WriteString(strconv.FormatInt(int64(v.num), 10))
@@ -394,6 +454,14 @@ func writeScalarRepr(b *strings.Builder, v Value, ascii bool, bud Budget, u *Uni
 		b.WriteByte('b')
 		writeBytesRepr(b, v.str)
 	case KindObject:
+		if r, ok := v.obj.(ReprerErr); ok && refuse {
+			text, err := r.ReprErr()
+			if err != nil {
+				return err
+			}
+			writeEscapedNonASCII(b, text, ascii)
+			return nil
+		}
 		if r, ok := v.obj.(Reprer); ok {
 			// ascii() is repr() with what it produced escaped
 			// afterwards, so an object that renders itself has no
@@ -620,7 +688,7 @@ func Ascii(v Value) string { return AsciiFor(v, DefaultPythonVersion) }
 // printable at all.
 func AsciiFor(v Value, py PythonVersion) string {
 	var b strings.Builder
-	_ = writeRepr(&b, v, nil, true, nil, UnicodeFor(py))
+	_ = writeRepr(&b, v, nil, true, false, nil, UnicodeFor(py))
 	return b.String()
 }
 

@@ -1,0 +1,6 @@
+{
+  "case": "intstr/fold_volatile_autoescape.jj2",
+  "variables": {
+    "x": "f"
+  }
+}

@@ -511,3 +511,16 @@ func (v PythonVersion) PercentKeyExcludesPositional() bool { return v.AtLeast(Py
 // format/percent_bytes_float_of_an_undefined_default,
 // format/percent_verb_bytes_float_of_wide_int.
 func (v PythonVersion) BytesFloatConvertsLikeStr() bool { return v.AtLeast(Python315) }
+
+// IntDigitLimitAfterValidation reports whether int() of decimal text checks the
+// whole string before it counts the digits.
+//
+// 3.11 counted the leading run of digits and refused it at once if there were
+// more than MaxStrDigits, so `int('1' * 4301 + 'x')` was "Exceeds the limit
+// (4300 digits) for integer string conversion: value has 4301 digits". 3.12
+// validates first, and the same text is "invalid literal for int() with base
+// 10". A template reaches it through Markup's %d, which is int() of the
+// argument -- `{{ ("%d"|safe) % s }}` -- and through int's own class. Corpus:
+// intstr/markup_percent_d_digit_limit_before_junk,
+// intstr/int_class_digit_limit_before_junk.
+func (v PythonVersion) IntDigitLimitAfterValidation() bool { return v.AtLeast(Python312) }

@@ -1537,11 +1537,23 @@ func convertAndFormat(st *State, v value.Value, conv, spec string) (string, erro
 		if err := value.StrictRefusal(v); err != nil {
 			return "", err
 		}
-		v = value.String(value.StrFor(v, st.PythonVersion()))
+		text, err := value.StrErr(v, st.PythonVersion())
+		if err != nil {
+			return "", err
+		}
+		v = value.String(text)
 	case "r":
-		v = value.String(value.ReprFor(v, st.PythonVersion()))
+		text, err := value.ReprErr(v, st.PythonVersion())
+		if err != nil {
+			return "", err
+		}
+		v = value.String(text)
 	case "a":
-		v = value.String(value.Ascii(v))
+		text, err := value.AsciiErr(v, st.PythonVersion())
+		if err != nil {
+			return "", err
+		}
+		v = value.String(text)
 	default:
 		return "", errs.New(errs.ValueError,
 			"Unknown conversion specifier %s", conv)
@@ -2105,8 +2117,13 @@ func methodRangeIndex(st *State, recv value.Value, args *value.CallArgs) (value.
 				return value.Undefined, errs.New(errs.ValueError,
 					"range.index(x): x not in range")
 			}
-			return value.Undefined, errs.New(errs.ValueError, "%s is not in range",
-				value.ReprFor(x, st.PythonVersion()))
+			// %R, formatted as the error is raised: a number too
+			// wide for decimal text refuses the message instead.
+			rep, err := value.ReprErr(x, st.PythonVersion())
+			if err != nil {
+				return value.Undefined, err
+			}
+			return value.Undefined, errs.New(errs.ValueError, "%s is not in range", rep)
 		}
 		return value.Undefined, errs.New(errs.ValueError,
 			"sequence.index(x): x not in sequence")
@@ -2515,7 +2532,13 @@ func methodSeqIndex(st *State, r value.Value, args *value.CallArgs) (value.Value
 	if st.PythonVersion().IndexMessageIsGeneric() {
 		return value.Undefined, errs.New(errs.ValueError, "list.index(x): x not in list")
 	}
-	return value.Undefined, errs.New(errs.ValueError, "%s is not in list", value.ReprFor(v, st.PythonVersion()))
+	// %R, formatted as the error is raised: a value holding a number too
+	// wide for decimal text refuses the message instead.
+	rep, err := value.ReprErr(v, st.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.Undefined, errs.New(errs.ValueError, "%s is not in list", rep)
 }
 
 // seqSearchBounds reads list.index's start and stop as slice indices: negative

@@ -1,0 +1,6 @@
+{
+  "case": "intstr/format_field_index.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

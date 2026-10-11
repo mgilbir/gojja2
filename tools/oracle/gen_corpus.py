@@ -7586,8 +7586,8 @@ case("errors/index_not_an_integer", '{{ "ab"|center("x") }}')
 # --- the width limit on computed integers -------------------------------------
 # Deliberate divergences, listed in testdata/known_failures.txt. CPython computes
 # both; gojja2 refuses past 2**20 bits. They compare rather than print, because
-# CPython 3.11 caps int->str conversion at 4300 digits and would raise about the
-# *printing* instead of answering the question these cases ask.
+# CPython caps int->str conversion at 4300 digits (see intstr/ below) and would
+# raise about the *printing* instead of answering the question these cases ask.
 #
 # The multiply case is the one that matters: the bound used to be on `**` alone,
 # so `x * x` reached a width `x ** 2` was refused, and multiplication doubles,
@@ -7595,11 +7595,236 @@ case("errors/index_not_an_integer", '{{ "ab"|center("x") }}')
 #
 # The exponent comes from the context rather than the template, so that jinja2's
 # optimizer cannot fold it. A folded constant is written into jinja2's generated
-# Python as a decimal literal, which is an int->str conversion, and CPython 3.11
+# Python as a decimal literal, which is an int->str conversion, and CPython
 # caps those at 4300 digits -- so the folded form raises about *printing* the
 # number instead of answering what the case asks.
 case("limits/integer_width_multiply", "{% set x = 2 ** e %}{{ (x * x) > x }}", e=524288)
 case("limits/integer_width_power", "{{ (2 ** e) > 0 }}", e=2000000)
+
+# --- CPython's limit on integer string conversion ----------------------------
+# CPython 3.11 and later refuse to convert an int to decimal text, or decimal
+# text to an int, past 4300 digits (sys.int_info.default_max_str_digits). It is
+# CPython's own bound, the same on every interpreter gojja2 reproduces, and a
+# template sees it wherever an int becomes text: printing, str(), repr() inside
+# a container, `~`, %d and str.format, |tojson, |pprint. The bases that are
+# powers of two are exempt both ways. gojja2 printed every digit.
+#
+# The exponent comes from the context wherever the point is a runtime refusal:
+# jinja2 folds `10 ** 5000` and writes the constant into the module it compiles
+# with repr(), so a literal power refuses the *template* -- which is the
+# subject of the intstr/fold_* cases and the wrong subject for the rest.
+_E = {"e": 4300}  # 10 ** 4300 is the smallest number with 4301 digits
+case("intstr/print_past_the_limit", "{{ 10 ** e }}", **_E)
+case("intstr/print_at_the_limit", "{{ (10 ** e - 1)|string|length }}", **_E)
+# The sign is not a digit: -(10**4300 - 1) prints, 4301 characters long.
+case("intstr/negative_at_the_limit", "{{ (1 - 10 ** e)|string|length }}", **_E)
+case("intstr/negative_past_the_limit", "{{ -(10 ** e) }}", **_E)
+for _n, _src in [
+    ("string_filter", "{{ (10 ** e)|string }}"),
+    ("concat", "{{ x ~ 10 ** e }}"),
+    ("list_repr", "{{ [1, 10 ** e] }}"),
+    ("tuple_repr", "{{ (10 ** e,) }}"),
+    ("dict_key_repr", "{{ {10 ** e: 1} }}"),
+    ("dict_value_repr", "{{ {1: 10 ** e} }}"),
+    ("tojson", "{{ (10 ** e)|tojson }}"),
+    ("tojson_key", "{{ {10 ** e: 1}|tojson }}"),
+    ("tojson_nested", "{{ {'a': [10 ** e]}|tojson }}"),
+    ("pprint", "{{ (10 ** e)|pprint }}"),
+    ("pprint_in_a_dict", "{{ {'a': [1, 10 ** e]}|pprint }}"),
+    ("percent_d", '{{ "%d"|format(10 ** e) }}'),
+    ("percent_i_precision", '{{ "%.3i"|format(10 ** e) }}'),
+    ("percent_u_keyed", '{{ "%(a)u"|format(a=10 ** e) }}'),
+    ("percent_s", '{{ "%s"|format(10 ** e) }}'),
+    ("percent_r", '{{ "%r"|format(10 ** e) }}'),
+    ("percent_a", '{{ "%a"|format(10 ** e) }}'),
+    ("percent_s_of_a_list", '{{ "%s"|format([10 ** e]) }}'),
+    ("percent_markup_s", '{{ ("%s"|safe)|format(10 ** e) }}'),
+    ("percent_markup_d", '{{ ("%d"|safe)|format(10 ** e) }}'),
+    ("percent_markup_s_of_a_list", '{{ ("%s"|safe)|format([10 ** e]) }}'),
+    ("format_empty", '{{ "{}".format(10 ** e) }}'),
+    ("format_d", '{{ "{:d}".format(10 ** e) }}'),
+    ("format_comma", '{{ "{:,}".format(10 ** e) }}'),
+    ("format_underscore", '{{ "{:_}".format(10 ** e) }}'),
+    ("format_n", '{{ "{:n}".format(10 ** e) }}'),
+    ("format_width", '{{ "{:10}".format(10 ** e) }}'),
+    ("format_sign_negative", '{{ "{:+,}".format(-(10 ** e)) }}'),
+    ("format_conversion_s", '{{ "{!s}".format(10 ** e) }}'),
+    ("format_conversion_r", '{{ "{!r}".format(10 ** e) }}'),
+    ("format_conversion_a", '{{ "{!a}".format(10 ** e) }}'),
+    ("format_field_index", '{{ "{0[0]}".format([10 ** e]) }}'),
+    ("format_nested_spec", '{{ "{:{}}".format(1, 10 ** e) }}'),
+    ("escape_filter", "{{ (10 ** e)|e }}"),
+    ("forceescape", "{{ (10 ** e)|forceescape }}"),
+    ("safe", "{{ (10 ** e)|safe }}"),
+    ("upper", "{{ (10 ** e)|upper }}"),
+    ("wordcount", "{{ (10 ** e)|wordcount }}"),
+    ("striptags", "{{ (10 ** e)|striptags }}"),
+    ("urlencode", "{{ (10 ** e)|urlencode }}"),
+    ("urlencode_pairs", "{{ {'a': 10 ** e}|urlencode }}"),
+    ("urlize", "{{ (10 ** e)|urlize }}"),
+    ("urlize_target", "{{ 'a b'|urlize(target=10 ** e) }}"),
+    ("xmlattr", "{{ {'a': 10 ** e}|xmlattr }}"),
+    ("replace_new", "{{ 'a'|replace('a', 10 ** e) }}"),
+    ("replace_old", "{{ 'a'|replace(10 ** e, 'b') }}"),
+    ("join_item", "{{ [10 ** e, 1]|join }}"),
+    ("join_separator", "{{ [1, 2]|join(10 ** e) }}"),
+    ("map_string", "{{ [10 ** e]|map('string')|list }}"),
+    ("range_repr", "{{ range(10 ** e) }}"),
+    ("range_in_a_list", "{{ [range(10 ** e)] }}"),
+    ("dict_keys_repr", "{{ ({10 ** e: 1}).keys() }}"),
+    ("dict_values_repr", "{{ ({1: 10 ** e}).values() }}"),
+    ("dict_items_string", "{{ ({1: 10 ** e}).items()|string }}"),
+    ("namespace_repr", "{% set ns = namespace(a=10 ** e) %}{{ ns }}"),
+    ("groupby_repr", "{{ [{'a': 10 ** e}]|groupby('a')|list }}"),
+    ("str_class", "{{ x.__class__(10 ** e) }}"),
+    ("markup_class", "{{ (x|safe).__class__([10 ** e]) }}"),
+    ("loop_cycle", "{% for i in [1] %}{{ loop.cycle(10 ** e) }}{% endfor %}"),
+    ("joiner", "{% set j = joiner(10 ** e) %}{{ j() }}{{ j() }}"),
+    # A message that writes the number with %r is formatted as it is raised,
+    # so the refusal replaces the error it was building.
+    ("list_index_message", "{{ [1].index(10 ** e) }}"),
+    ("range_index_message", "{{ range(5).index(10 ** e) }}"),
+    ("undefined_element_message", "{{ {}[10 ** e].a }}"),
+    ("undefined_tuple_element_message", "{{ {}[(1, 10 ** e)].a }}"),
+    ("truncate_length_message", "{{ 'a'|truncate(-(10 ** e)) }}"),
+    ("wordwrap_width_message", "{{ 'a'|wordwrap(-(10 ** e)) }}"),
+]:
+    case("intstr/" + _n, _src, x="abc", **_E)
+# jinja2 builds an undefined's message only when it raises, so one that is
+# never used costs nothing to print.
+case("intstr/undefined_element_unused", "{{ {}[10 ** e] }}|{{ ({}[10 ** e]) is undefined }}", **_E)
+# Under autoescape the output is escape(x), which is str(x) first; |join under
+# autoescape converts its items before its separator.
+case("intstr/autoescape_print", "{{ 10 ** e }}", __settings__={"autoescape": True}, **_E)
+case("intstr/autoescape_join_separator", "{{ ['a'|safe, 1]|join(10 ** e) }}",
+     __settings__={"autoescape": True}, **_E)
+# Where str(d) happens is visible against another failure: first, without
+# autoescaping, unless an attribute was given and the map over the value took
+# its iterator first; after every item's str() with autoescaping.
+case("intstr/join_separator_before_iteration", "{{ 5|join(10 ** e) }}", **_E)
+case("intstr/join_iteration_before_separator_with_attribute",
+     "{{ 5|join(10 ** e, attribute='a') }}", **_E)
+case("intstr/autoescape_join_item_before_separator", "{{ [nope]|join(10 ** e) }}",
+     __settings__={"autoescape": True, "undefined": "strict"}, **_E)
+# The power-of-two bases are linear to convert and exempt: %x, %o, %X and
+# str.format's b, o, x and X answer for the same number.
+case("intstr/power_of_two_bases_exempt",
+     '{{ "%x"|format(10 ** e)|length }}|{{ "%o"|format(10 ** e)|length }}'
+     '|{{ "%X"|format(10 ** e)|length }}|{{ "{:x}".format(10 ** e)|length }}'
+     '|{{ "{:b}".format(10 ** e)|length }}|{{ "{:o}".format(10 ** e)|length }}'
+     '|{{ "{:#_X}".format(10 ** e)|length }}', **_E)
+# Asking a too-wide number something other than its decimal text is fine.
+case("intstr/arithmetic_is_not_conversion",
+     "{{ (10 ** e) > 0 }}|{{ (10 ** e) % 7 }}|{{ (10 ** e).bit_length() }}"
+     "|{{ [10 ** e]|length }}|{{ (10 ** e) // 10 ** (e - 1) }}", **_E)
+
+# The other direction: decimal text to an int, counted on the digits alone --
+# leading zeros count; the sign, the surrounding whitespace and the underscores
+# between digits do not. jinja2's |int catches the ValueError and falls back on
+# int(float(value)), so a refused string is the float's answer or the default.
+_D = "1" * 4301
+for _n, _src, _s in [
+    ("int_filter_past_the_limit", "{{ s|int }}", _D),
+    ("int_filter_at_the_limit", "{{ s|int|string|length }}", _D[1:]),
+    ("int_filter_leading_zeros_count", "{{ s|int }}", "0" * 4300 + "1" * 20),
+    ("int_filter_underscores_not_counted", "{{ s|int|string|length }}", "1_" * 4299 + "1"),
+    ("int_filter_underscores_past_the_limit", "{{ s|int(7) }}", "1_" * 4300 + "1"),
+    ("int_filter_sign_and_space_not_counted", "{{ s|int|string|length }}", " -" + _D[1:] + "\n"),
+    ("int_filter_other_script", "{{ s|int(7) }}", "١" * 4301),
+    ("int_filter_bytes", "{{ s.encode()|int(7) }}", _D),
+    ("int_filter_base_16_exempt", '{{ "%x"|format(s|int(base=16))|length }}', _D),
+    ("int_filter_base_32_exempt", "{{ s|int(base=32) > 0 }}", _D),
+    ("int_filter_base_4_exempt", "{{ s|int(base=4) > 0 }}", _D),
+    ("int_filter_base_36_limited", "{{ s|int(base=36, default=7) }}", _D),
+    ("int_filter_base_3_limited", "{{ s|int(base=3, default=7) }}", _D),
+    ("int_filter_base_0_decimal_limited", "{{ s|int(base=0, default=7) }}", _D),
+    ("int_filter_base_0_prefixed_exempt", '{{ ("0x" ~ s)|int(base=0) > 0 }}', _D),
+    ("int_class", "{{ f.__class__(s) }}", _D),
+    ("int_class_at_the_limit", "{{ f.__class__(s)|string|length }}", _D[1:]),
+    ("int_class_base_16_exempt", "{{ f.__class__(s, 16) > 0 }}", _D),
+    ("int_class_base_36", "{{ f.__class__(s, 36) }}", _D),
+    ("int_class_base_0", "{{ f.__class__(s, 0) }}", _D),
+    ("int_class_bytes", "{{ f.__class__(s.encode()) }}", _D),
+    ("int_class_sign_and_space", "{{ f.__class__(' -' ~ s ~ ' ') }}", _D),
+    ("markup_percent_d_of_a_string", '{{ ("%d"|safe) % s }}', _D),
+    # 3.11 counted the leading run of digits and refused it before looking at
+    # the rest; 3.12 validates the whole string first. IntDigitLimitAfterValidation.
+    ("markup_percent_d_digit_limit_before_junk", '{{ ("%d"|safe) % s }}', _D + "x"),
+    ("int_class_digit_limit_before_junk", "{{ f.__class__(s) }}", _D + " x"),
+    # A misplaced underscore is refused before the count on every version.
+    ("int_class_trailing_underscore", "{{ f.__class__(s) }}", _D + "_"),
+]:
+    case("intstr/" + _n, _src, s=_s, f=1)
+# An attribute path's digit runs go through int() -- `int(x) if x.isdigit()`
+# -- when the filter builds its getter, which for |map and |selectattr is only
+# once there is an item to apply it to, and for |max only after the first one.
+for _n, _src in [
+    ("map_attribute", "{{ [[1]]|map(attribute=s)|list }}"),
+    ("map_attribute_empty", "{{ []|map(attribute=s)|list }}"),
+    ("map_attribute_dotted", "{{ [[1]]|map(attribute='0.' ~ s)|list }}"),
+    ("sort_attribute", "{{ [1, 2]|sort(attribute=s) }}"),
+    ("unique_attribute_empty", "{{ []|unique(attribute=s)|list }}"),
+    ("max_attribute_empty", "{{ []|max(attribute=s) }}"),
+    ("min_attribute", "{{ [[1]]|min(attribute=s) }}"),
+    ("sum_attribute_empty", "{{ []|sum(attribute=s) }}"),
+    ("groupby_attribute_empty", "{{ []|groupby(s) }}"),
+    ("join_attribute_empty", "{{ []|join(attribute=s) }}"),
+    ("selectattr", "{{ [[1]]|selectattr(s)|list }}"),
+    ("selectattr_empty", "{{ []|selectattr(s)|list }}"),
+]:
+    case("intstr/" + _n, _src, s=_D)
+case("intstr/map_attribute_at_the_limit", "{{ [[1]]|map(attribute=s)|list }}", s=_D[1:])
+
+# An integer literal is int() of its text, as jinja2's lexer pulls the token,
+# and the template does not compile; underscores are gone first, and a 0x, 0o
+# or 0b literal is in an exempt base. A literal the parser never reaches is
+# never converted.
+case("intstr/literal_past_the_limit", "{{ " + _D + " }}")
+case("intstr/literal_at_the_limit", "{{ " + _D[1:] + "|string|length }}")
+case("intstr/literal_underscores_past_the_limit", "{{ " + "_".join(_D) + " }}")
+case("intstr/literal_underscores_at_the_limit", "{{ " + "_".join(_D[1:]) + "|string|length }}")
+case("intstr/literal_zeros", "{{ " + "0" * 4301 + " }}")
+case("intstr/literal_attribute", "{{ x." + _D + " }}", x="abc")
+case("intstr/literal_float_exempt", "{{ " + _D + ".5 }}")
+case("intstr/literal_binary_exempt", "{{ 0b" + _D + " > 0 }}")
+case("intstr/literal_after_a_syntax_error", "{% if %}{{ " + _D + " }}")
+case("intstr/literal_before_a_syntax_error", "{{ " + _D + " }}{% if %}")
+case("intstr/literal_as_the_unexpected_token", "{{ 1 " + _D + " }}")
+
+# A constant jinja2 folds is written into the module it compiles with repr(),
+# so one past the limit refuses the template -- unless a larger fold absorbs it
+# first, or the escaping is not known until the render and nothing is folded.
+for _n, _src in [
+    ("fold_print", "{{ 10 ** 5000 }}"),
+    ("fold_set", "{% set n = 10 ** 5000 %}"),
+    ("fold_if_test", "{% if 10 ** 5000 %}y{% endif %}"),
+    ("fold_untaken_branch", "{% if x %}{{ 10 ** 5000 }}{% endif %}"),
+    ("fold_for_iterable", "{% for i in [10 ** 5000] %}{% endfor %}"),
+    ("fold_macro_default", "{% macro m(a=10 ** 5000) %}{% endmacro %}"),
+    ("fold_block", "{% block b %}{{ 10 ** 5000 }}{% endblock %}"),
+    ("fold_tuple", "{{ (10 ** 4300, x)|length }}"),
+    ("fold_negative", "{{ (-(10 ** 4300))|string|length }}"),
+    ("fold_filter_that_refuses", "{{ (10 ** 5000)|string|length }}"),
+    ("fold_float_that_refuses", "{{ (10 ** 5000)|float }}"),
+    ("fold_method_argument", '{{ "{:x}".format(10 ** 5000)|length }}'),
+    ("fold_concat_first", "{{ 10 ** 5000 ~ x }}"),
+    ("fold_concat_after_a_name", "{{ x ~ 10 ** 5000 }}"),
+    # Concat.as_const has no guard, so str() refusing inside a fold that is
+    # entirely constant leaves the optimizer as the template's refusal.
+    ("fold_concat_of_constants", "{{ 'a' ~ 10 ** 5000 }}"),
+    ("fold_hex_literal_printed", "{{ 0x" + "f" * 4000 + " }}"),
+    ("fold_before_an_unknown_filter", "{{ 10 ** 5000 }}{{ 1|nosuch }}"),
+    ("fold_after_an_unknown_filter", "{{ 1|nosuch }}{{ 10 ** 5000 }}"),
+    ("fold_operand_of_an_unknown_filter", "{{ (10 ** 5000)|nosuch }}"),
+    ("fold_left_of_an_unknown_filter", "{{ 10 ** 5000 + (1|nosuch) }}"),
+    ("fold_autoescape_true", "{% autoescape true %}{{ 10 ** 5000 }}{% endautoescape %}"),
+    ("fold_volatile_autoescape", "{% autoescape x %}{{ 10 ** 5000 }}{% endautoescape %}"),
+    ("fold_absorbed", "{{ (10 ** 5000) > 0 }}|{{ [10 ** 5000]|length }}"
+     "|{{ 'a' if 10 ** 5000 else 'b' }}|{{ '%x'|format(10 ** 5000)|length }}"),
+    ("fold_at_the_limit", "{{ (10 ** 4300 - 1)|string|length }}|{{ (1 - 10 ** 4300)|string|length }}"),
+    ("fold_volatile_absorbed", "{% autoescape x %}{{ (10 ** 5000) > 0 }}{% endautoescape %}"),
+]:
+    case("intstr/" + _n, _src, x="abc")
 
 # A repetition whose length does not fit a Py_ssize_t. CPython refuses it before
 # allocating anything, as an OverflowError in its own words, and so does gojja2

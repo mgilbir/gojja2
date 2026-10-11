@@ -27,6 +27,9 @@ func ConstructInt(v Value, base int, explicitBase bool, py PythonVersion) (Value
 	}
 	if v.kind == KindString || v.kind == KindBytes {
 		text, ok := pyNumericText(v.str, false, py)
+		if err := intTextLimit(v.str, text, ok, base, py); err != nil {
+			return Undefined, err
+		}
 		if ok {
 			if b, good := new(big.Int).SetString(stripBasePrefix(text, base), base); good {
 				return BigInt(b), nil

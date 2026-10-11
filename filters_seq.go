@@ -252,12 +252,19 @@ func filterRandom(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 // filterJoin concatenates, escaping items when autoescaping so that a list of
 // user strings cannot inject markup through the separator.
 func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
+	// str(d) can refuse -- an int too wide for decimal text -- and where it
+	// does depends on the branch: first thing without autoescaping, after
+	// every item's str() with it. So the refusal is kept until then.
 	sep := ""
+	var sepErr error
 	if d, ok := arg(args, 0, "d"); ok {
-		sep = value.StrFor(d, s.PythonVersion())
+		sep, sepErr = value.StrErr(d, s.PythonVersion())
 	}
 	attribute, _ := arg(args, 1, "attribute")
-	keyParts := attrParts(attribute)
+	keyParts, err := attrParts(attribute)
+	if err != nil {
+		return value.Undefined, err
+	}
 	withAttribute := func(item value.Value) (value.Value, error) {
 		if len(keyParts) == 0 {
 			return item, nil
@@ -271,9 +278,18 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	// `loop` inside its own body -- because each item's text is taken
 	// between its steps rather than after all of them.
 	if !s.autoescape {
+		// `str(d).join(map(str, value))`: str(d) before the map takes
+		// its iterator -- unless an attribute was given, in which case
+		// the map that applies it took one first.
+		if len(keyParts) == 0 && sepErr != nil {
+			return value.Undefined, sepErr
+		}
 		seq, err := value.Iterate(v)
 		if err != nil {
 			return value.Undefined, err
+		}
+		if sepErr != nil {
+			return value.Undefined, sepErr
 		}
 		var b strings.Builder
 		first := true
@@ -346,6 +362,10 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 			}
 			parts[i] = text
 		}
+		// `d = str(d)`, after the items.
+		if sepErr != nil {
+			return value.Undefined, sepErr
+		}
 		return value.String(strings.Join(parts, sep)), nil
 	}
 	// With markup involved the delimiter is escaped too, and every item
@@ -356,10 +376,17 @@ func filterJoin(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 		if _, err := strictStrFor(item, s.PythonVersion()); err != nil {
 			return value.Undefined, err
 		}
-		parts[i] = value.StrFor(escapeIfNeeded(item, s.PythonVersion()), s.PythonVersion())
+		escaped, err := escapeIfNeeded(item, s.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		parts[i] = escaped.AsString()
 	}
-	return value.Safe(strings.Join(parts,
-		value.StrFor(escapeIfNeeded(sepValue, s.PythonVersion()), s.PythonVersion()))), nil
+	sepEscaped, err := escapeIfNeeded(sepValue, s.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.Safe(strings.Join(parts, sepEscaped.AsString())), nil
 }
 
 func filterReverse(s *State, v value.Value, _ *value.CallArgs) (value.Value, error) {
@@ -415,7 +442,11 @@ func filterSort(s *State, v value.Value, args *value.CallArgs) (value.Value, err
 	if err != nil {
 		return value.Undefined, err
 	}
-	if err := stableSortBy(s, items, sortKeyFunc(s, attribute, caseSensitive), reverse); err != nil {
+	key, err := sortKeyFunc(s, attribute, caseSensitive)
+	if err != nil {
+		return value.Undefined, err
+	}
+	if err := stableSortBy(s, items, key, reverse); err != nil {
 		return value.Undefined, err
 	}
 	return value.NewList(items...), nil
@@ -508,7 +539,12 @@ func filterUnique(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		return value.Undefined, err
 	}
 	attribute, _ := arg(args, 1, "attribute")
-	key := attrKeyFunc(s, attribute, caseSensitive)
+	// make_attrgetter, before the walk: an attribute past CPython's digit
+	// limit refuses even an empty sequence.
+	key, err := attrKeyFunc(s, attribute, caseSensitive)
+	if err != nil {
+		return value.Undefined, err
+	}
 
 	items, err := materialize(s, v)
 	if err != nil {
@@ -557,7 +593,6 @@ func filterMinMax(wantMax bool) Filter {
 			return value.Undefined, err
 		}
 		attribute, _ := arg(args, 1, "attribute")
-		key := attrKeyFunc(s, attribute, caseSensitive)
 
 		items, err := materialize(s, v)
 		if err != nil {
@@ -565,6 +600,13 @@ func filterMinMax(wantMax bool) Filter {
 		}
 		if len(items) == 0 {
 			return s.Undefined(value.UndefinedHint("No aggregated item, sequence was empty.")), nil
+		}
+		// make_attrgetter only once the first item is in hand, so an
+		// attribute past CPython's digit limit refuses nothing when
+		// there is nothing to compare.
+		key, err := attrKeyFunc(s, attribute, caseSensitive)
+		if err != nil {
+			return value.Undefined, err
 		}
 
 		best := items[0]
@@ -799,7 +841,10 @@ func filterGroupby(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		return value.Undefined, err
 	}
 
-	parts := attrParts(attribute)
+	parts, err := attrParts(attribute)
+	if err != nil {
+		return value.Undefined, err
+	}
 	groupKey := func(item value.Value) (value.Value, error) {
 		k, err := attrPath(s, item, parts)
 		if err != nil {
@@ -890,7 +935,10 @@ func filterMap(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		// The same rule as groupby's: `default is not None`.
 		def, hasDef := args.Kwarg("default")
 		hasDef = hasDef && !def.IsNone()
-		parts := attrParts(attribute)
+		parts, err := attrParts(attribute)
+		if err != nil {
+			return value.Undefined, err
+		}
 		out, err := walk(func(item value.Value) (value.Value, error) {
 			got, err := attrPath(s, item, parts)
 			if err != nil {
@@ -986,7 +1034,10 @@ func filterSelectReject(keep, byAttribute bool) Filter {
 			}
 		}
 
-		parts := attrParts(attribute)
+		parts, err := attrParts(attribute)
+		if err != nil {
+			return value.Undefined, err
+		}
 		var out []value.Value
 		for _, item := range items {
 			subject := item
@@ -1069,6 +1120,19 @@ func (g *groupObject) GetIndex(i int) (value.Value, bool) {
 		return g.items, true
 	}
 	return value.Undefined, false
+}
+
+// ReprErr is Repr refusing what the key or the items refuse.
+func (g *groupObject) ReprErr() (string, error) {
+	key, err := value.ReprErr(g.key, g.py)
+	if err != nil {
+		return "", err
+	}
+	items, err := value.ReprErr(g.items, g.py)
+	if err != nil {
+		return "", err
+	}
+	return "(" + key + ", " + items + ")", nil
 }
 
 func (g *groupObject) Repr() string {

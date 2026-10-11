@@ -1,0 +1,6 @@
+{
+  "case": "intstr/loop_cycle.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

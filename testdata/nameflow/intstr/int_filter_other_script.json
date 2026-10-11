@@ -1,0 +1,6 @@
+{
+  "case": "intstr/int_filter_other_script.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "__settings__": {
+    "autoescape": true
+  },
+  "e": 4300
+}
+---
+{{ 10 ** e }}

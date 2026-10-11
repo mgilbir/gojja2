@@ -1,0 +1,6 @@
+{
+  "case": "intstr/join_separator_before_iteration.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

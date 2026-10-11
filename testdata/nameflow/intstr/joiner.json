@@ -1,0 +1,6 @@
+{
+  "case": "intstr/joiner.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

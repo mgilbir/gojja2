@@ -1,0 +1,5 @@
+{
+  "x": "abc"
+}
+---
+{% autoescape x %}{{ (10 ** 5000) > 0 }}{% endautoescape %}

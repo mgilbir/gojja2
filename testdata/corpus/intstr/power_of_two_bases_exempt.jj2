@@ -1,0 +1,5 @@
+{
+  "e": 4300
+}
+---
+{{ "%x"|format(10 ** e)|length }}|{{ "%o"|format(10 ** e)|length }}|{{ "%X"|format(10 ** e)|length }}|{{ "{:x}".format(10 ** e)|length }}|{{ "{:b}".format(10 ** e)|length }}|{{ "{:o}".format(10 ** e)|length }}|{{ "{:#_X}".format(10 ** e)|length }}

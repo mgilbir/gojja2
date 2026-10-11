@@ -1,0 +1,6 @@
+{
+  "case": "intstr/pprint_in_a_dict.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

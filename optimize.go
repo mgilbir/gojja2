@@ -83,7 +83,11 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 				if html, ok := value.HTML(v); ok {
 					v = value.Safe(html)
 				} else {
-					v = value.Safe(escapeHTML(value.StrFor(v, c.pyVersion())))
+					text, err := value.StrErr(v, c.pyVersion())
+					if err != nil {
+						continue
+					}
+					v = value.Safe(escapeHTML(text))
 				}
 			}
 			// finalize runs *here*, on the already-escaped value,
@@ -126,7 +130,17 @@ func foldConstantPrints(c *constEvaluator, body []ast.Stmt) {
 			// `{{ ['\u1c89'] }}` as an escape under 3.14, where the
 			// character is assigned and prints as itself -- the
 			// unfolded path was already right.
-			text := value.StrFor(v, c.pyVersion())
+			//
+			// A str() that raises -- an int too wide to print in
+			// decimal -- defers the child like any other exception
+			// here, and the general fold decides: the constant it
+			// leaves is written into jinja2's generated source with
+			// repr(), which raises the same error at compile time. See
+			// depChecker's Const arm.
+			text, err := value.StrErr(v, c.pyVersion())
+			if err != nil {
+				continue
+			}
 			// The text becomes part of the compiled template and is
 			// kept for as long as it is cached, so it obeys the same
 			// cap as any other folded constant. Leaving it for runtime
@@ -930,8 +944,7 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 		// same chain over a name took 31, and FromString takes no
 		// context to be stopped by.
 		var b strings.Builder
-		for _, item := range items {
-			text := value.StrFor(item, c.pyVersion())
+		for _, text := range items {
 			if c.st.ChargeBytes(int64(len(text))) != nil {
 				return value.Undefined, false
 			}
@@ -981,8 +994,11 @@ func (c *constEvaluator) constEvalNode(e ast.Expr) (value.Value, bool) {
 // `{{ (2147483648)[-2:] ~ 'x'.__class__(1, 2, 3, 4) }}` abandoned the whole
 // fold over the unfoldable right side and let the render report a TypeError,
 // where CPython refuses the template over the left one.
-func (c *constEvaluator) constConcatItems(nodes []ast.Expr) ([]value.Value, bool) {
-	out := make([]value.Value, 0, len(nodes))
+//
+// The str() is what refuses, so an int too wide to print in decimal refuses the
+// template too: `{{ 'a' ~ 10 ** 5000 }}` is a ValueError out of from_string.
+func (c *constEvaluator) constConcatItems(nodes []ast.Expr) ([]string, bool) {
+	out := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		v, ok := c.constEval(n)
 		if !ok {
@@ -992,7 +1008,14 @@ func (c *constEvaluator) constConcatItems(nodes []ast.Expr) ([]value.Value, bool
 			c.refuse(err)
 			return nil, false
 		}
-		out = append(out, v)
+		// StrErr, because a container's text is its repr and repr
+		// escapes by the interpreter's isprintable.
+		text, err := value.StrErr(v, c.pyVersion())
+		if err != nil {
+			c.refuse(err)
+			return nil, false
+		}
+		out = append(out, text)
 	}
 	return out, true
 }

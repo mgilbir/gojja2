@@ -267,7 +267,7 @@ func (ex *exec) renderValueRaw(v value.Value) (string, error) {
 	if err := value.StrictRefusal(v); err != nil {
 		return "", err
 	}
-	return value.StrFor(v, ex.pyVersion()), nil
+	return value.StrErr(v, ex.pyVersion())
 }
 
 func (ex *exec) renderValue(v value.Value) (string, error) {

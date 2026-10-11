@@ -1,0 +1,6 @@
+{
+  "case": "intstr/power_of_two_bases_exempt.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

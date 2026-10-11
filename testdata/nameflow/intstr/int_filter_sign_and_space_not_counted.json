@@ -1,0 +1,6 @@
+{
+  "case": "intstr/int_filter_sign_and_space_not_counted.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

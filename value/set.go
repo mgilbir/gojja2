@@ -193,6 +193,18 @@ func (s *Set) Repr() string {
 	return b.String()
 }
 
+// ReprErr is Repr refusing what CPython's repr() refuses: an element holding
+// an int too wide to print in decimal.
+// The elements are written with the default interpreter, as Repr writes them.
+func (s *Set) ReprErr() (string, error) {
+	for _, v := range s.items {
+		if _, err := ReprErr(v, DefaultPythonVersion); err != nil {
+			return "", err
+		}
+	}
+	return s.Repr(), nil
+}
+
 func (s *Set) Iterate() iter.Seq[Value] {
 	return func(yield func(Value) bool) {
 		for _, v := range s.items {

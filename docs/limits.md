@@ -85,6 +85,21 @@ the honest answer is a denial-of-service. Integers below that limit are exact
 and unbounded by machine word size, so `{{ 2 ** 100 }}` still renders all 31
 digits.
 
+**Printing one is a different limit, and it is CPython's own.** CPython 3.11
+and later refuse to turn an int of more than 4,300 decimal digits into text,
+and decimal text of more than 4,300 digits into an int
+(`sys.int_info.default_max_str_digits`). gojja2 reproduces that rather than
+adding to it: `{{ n }}`, `n|string`, `~`, `%d`, `str.format`, `|tojson` and
+`|pprint` of a 4,301-digit `n` raise CPython's `ValueError`, `('1' * 4301)|int`
+answers its default because jinja2's `|int` catches that error, and the bases
+that are powers of two -- `'%x'`, `'{:b}'`, `int(s, 16)` -- are exempt, as they
+are there. The sign does not count: -(10**4300 - 1) prints. It is not a knob,
+because it is behaviour to match rather than a bound to choose, and
+`WithMaxIntBits` does not move it: a number up to 2**20 bits can be computed,
+compared and measured with `.bit_length()`, and it is writing it out in decimal
+that stops at 4,300 digits, exactly as it does in CPython. The cases are in
+`testdata/corpus/intstr`.
+
 The width is checked *before* the integer is computed, so it is estimated from
 the operands, and the estimate is an upper bound: for `**` it is the width of
 the base times the exponent, which for a small base is up to twice the real
@@ -164,6 +179,14 @@ that raises, is declined without an error, leaving the expression to be
 evaluated at render time where the render's budget bounds it. The rendered
 result is identical -- it is just not computed early. Ordinary constants still
 fold, and nothing written on purpose builds a 64 KiB one this way.
+
+One consequence is visible, and it is in an integer. jinja2 writes a folded
+constant into the module it compiles with `repr()`, and CPython refuses an int
+past 4,300 digits there as anywhere else, so `{% set n = 10 ** 5000 %}` does not
+compile -- in gojja2 either. But a result wider than the 64 KiB the fold may
+build, `{% set n = 2 ** 524288 %}` and its 157,827 digits, is declined here, so
+the template compiles and refuses only if the number is printed. Below that
+width the template is refused exactly as jinja2 refuses it.
 
 A filter or test the host registered is folded too, when every operand is a
 constant, and runs under this budget: see

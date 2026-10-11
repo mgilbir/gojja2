@@ -1,0 +1,6 @@
+{
+  "case": "intstr/format_underscore.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

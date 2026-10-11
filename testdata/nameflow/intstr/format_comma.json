@@ -1,0 +1,6 @@
+{
+  "case": "intstr/format_comma.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "intstr/autoescape_print.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

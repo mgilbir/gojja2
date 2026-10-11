@@ -1,0 +1,6 @@
+{
+  "case": "intstr/forceescape.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

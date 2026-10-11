@@ -1,0 +1,9 @@
+{
+  "__settings__": {
+    "autoescape": true,
+    "undefined": "strict"
+  },
+  "e": 4300
+}
+---
+{{ [nope]|join(10 ** e) }}

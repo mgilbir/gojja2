@@ -1,0 +1,6 @@
+{
+  "case": "intstr/map_attribute_dotted.jj2",
+  "variables": {
+    "s": "or"
+  }
+}
