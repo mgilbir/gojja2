@@ -1,0 +1,4 @@
+{
+  "case": "errors/dunder_format_keyword_before_count.jj2",
+  "variables": {}
+}

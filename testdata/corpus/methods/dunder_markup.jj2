@@ -1,0 +1,3 @@
+{}
+---
+{% autoescape true %}{{ ('<'|safe).__str__() }}|{{ ('<'|safe).__repr__() }}|{{ ('<'|safe).__format__('>3') }}|{{ ('<'|safe) }}|{{ '<'.__str__() }}{% endautoescape %}|{{ (('<'|safe).__str__()).__class__.__name__ }}|{{ (('<'|safe).__format__('')).__class__.__name__ }}|{{ (('<'|safe).__repr__()).__class__.__name__ }}

@@ -1,0 +1,11 @@
+{
+  "case": "methods/dunder_scalars.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "a<|'a<'|  a<|5|5|005|-5|1,000,000,000,000,000,000,000,000,000,000|1.5|1.5|1.500|1e+16|True|True|True|1|    1|None|None|None|5|500.000000%"
+}

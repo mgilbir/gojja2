@@ -1,0 +1,11 @@
+{
+  "case": "methods/dunder_undefined_strict.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "Undefined|_fail_with_undefined_error|Undefined._fail_with_undefined_error|StrictUndefined.__format__|<bound method Undefined._fail_with_undefined_error of Undefined>"
+}

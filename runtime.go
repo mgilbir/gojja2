@@ -460,6 +460,11 @@ type builtinFunc struct {
 	// here, which is also what `{{ d.get.__class__() }}` refused as.
 	recv    string
 	pyClass string
+	// wrapper is set when this is a bound slot of a C type -- a
+	// method-wrapper, `(5).__str__` -- and names the class that defines
+	// the slot, which is what its __qualname__ reports: object.__str__ for
+	// an int, int.__repr__ for its repr. See dunders.go.
+	wrapper string
 	// self is the receiver, for the repr's address and for the equality two
 	// bound methods have.
 	self value.Value
@@ -521,6 +526,8 @@ func (f *builtinFunc) GetAttr(name string) (value.Value, bool) {
 		return value.String(f.pythonName()), true
 	case "__qualname__":
 		switch {
+		case f.wrapper != "":
+			return value.String(f.wrapper + "." + f.name), true
 		case f.pyClass != "":
 			return value.String(f.className2() + "." + f.name), true
 		case f.recv != "":
@@ -529,6 +536,9 @@ func (f *builtinFunc) GetAttr(name string) (value.Value, bool) {
 		return value.String(f.pythonName()), true
 	case "__module__":
 		switch {
+		case f.wrapper != "":
+			// A method-wrapper has no __module__ at all.
+			return value.Undefined, false
 		case f.pyClass != "":
 			if i := strings.LastIndexByte(f.pyClass, '.'); i >= 0 {
 				return value.String(f.pyClass[:i]), true
@@ -571,6 +581,8 @@ func (f *builtinFunc) TypeName() string {
 	switch {
 	case f.class != "":
 		return "type"
+	case f.wrapper != "":
+		return "method-wrapper"
 	case f.pyClass != "":
 		return "method"
 	case f.recv != "":
@@ -592,6 +604,9 @@ func (f *builtinFunc) Repr() string {
 		// qualified one in the receiver's own repr.
 		return "<bound method " + f.className2() + "." + f.name + " of " +
 			value.ReprFor(f.self, value.DefaultPythonVersion) + ">"
+	case f.wrapper != "":
+		return fmt.Sprintf("<method-wrapper '%s' of %s object at 0x%x>",
+			f.name, f.recv, reflect.ValueOf(f).Pointer())
 	case f.recv != "":
 		return fmt.Sprintf("<built-in method %s of %s object at 0x%x>",
 			f.name, f.recv, reflect.ValueOf(f).Pointer())
@@ -634,7 +649,7 @@ func (f *builtinFunc) Equals(other value.Value) (bool, bool) {
 	if f.recv == "" && f.pyClass == "" {
 		return f == o, true
 	}
-	if f.name != o.name || f.recv != o.recv || f.pyClass != o.pyClass {
+	if f.name != o.name || f.recv != o.recv || f.pyClass != o.pyClass || f.wrapper != o.wrapper {
 		return false, true
 	}
 	if value.SameObject(f.self, o.self) {

@@ -1,0 +1,6 @@
+{
+  "case": "methods/dunder_bound_objects.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

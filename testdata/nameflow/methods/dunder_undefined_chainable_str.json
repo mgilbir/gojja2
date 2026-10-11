@@ -1,0 +1,6 @@
+{
+  "case": "methods/dunder_undefined_chainable_str.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

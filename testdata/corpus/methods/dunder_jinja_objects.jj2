@@ -1,0 +1,8 @@
+{
+  "__templates__": {
+    "inc.html": "[{{ v|default('none') }}]",
+    "mac.html": "{% macro f(x) %}<{{x}}>{% endmacro %}{% set exported = 'E' %}"
+  }
+}
+---
+{% for x in [1] %}{{ loop.__repr__() }}|{{ loop.__str__() }}|{{ loop.__repr__ }}|{{ loop.__format__('') }}|{{ loop.__str__.__qualname__ }}|{% endfor %}{% macro m() %}{% endmacro %}{{ m.__str__() }}|{{ m.__repr__() }}|{{ m.__format__('') }}|{{ m.__repr__.__qualname__ }}|{{ m.__repr__ }}|{% for g in [{'a':1}]|groupby('a') %}{{ g.__repr__() }}|{{ g.__str__() }}|{{ g.__repr__ }}|{{ g.__str__.__qualname__ }}|{{ g.__format__('') }}{% endfor %}|{{ self.__str__.__qualname__ }}|{{ self.__repr__.__qualname__ }}|{{ cycler(1).__str__.__class__.__name__ }}|{% import 'mac.html' as mm %}{{ mm.__str__() }}|{{ mm.__str__.__qualname__ }}|{{ mm.__repr__.__qualname__ }}

@@ -1,0 +1,6 @@
+{
+  "case": "errors/dunder_format_no_argument_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

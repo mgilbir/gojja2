@@ -1,0 +1,6 @@
+{
+  "case": "methods/dunder_jinja_objects.jj2",
+  "variables": {
+    "self": "or"
+  }
+}

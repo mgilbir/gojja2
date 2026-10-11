@@ -1,0 +1,3 @@
+{}
+---
+{{ (5).__str__ is defined }}|{{ (5).__str__ is callable }}|{{ (5).__str__ == (5).__str__ }}|{{ (5).__str__ != (5).__repr__ }}|{{ (5).__format__ == (5).__format__ }}|{{ (5)|attr('__str__') is callable }}|{{ ((5)|attr('__repr__'))() }}|{{ (nope|attr('__repr__'))() }}|{{ "{0.__str__.__name__}".format(5) }}|{{ "{0.__str__.__name__}".format(nope) }}|{{ "{0.__class__.__name__}".format(nope) }}|{{ {'__str__': 1}.__str__() }}|{{ {'__str__': 1}|attr('__str__') is callable }}|{{ {'__str__': 1}['__str__'] }}|{{ (5).__str__()|length }}

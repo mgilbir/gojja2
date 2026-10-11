@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "debug"
+  }
+}
+---
+{{ nope.__repr__() }}|{{ nope.__str__.__name__ }}|{{ nope.__str__.__qualname__ }}|{{ nope.__format__.__qualname__ }}|{{ nope.__str__ }}

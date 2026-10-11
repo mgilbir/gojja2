@@ -5219,6 +5219,76 @@ case("errors/format_positional_and_keyword", '{{ "%s"|format(1, k=2) }}')
 case("errors/markup_format_positional_and_keyword", '{{ ("%s"|safe)|format(1, k=2) }}')
 case("errors/format_positional_and_keyword_on_strict_undefined", '{{ nope|format(1, k=2) }}',
      __settings__={"undefined": "strict"})
+# --- __str__, __repr__ and __format__ on a value --------------------------------
+# Every Python object has the three, and jinja2's default getattr() reaches
+# them, so they are str(), repr() and format() spelled as calls. What a bound
+# one *is* differs by where it comes from -- a C slot is a method-wrapper named
+# by the class defining the slot, __format__ is a builtin method named by the
+# receiver, and a def in a Python class is a bound method -- and a template can
+# read all of that off __class__, __qualname__ and __module__.
+case("methods/dunder_scalars",
+     r"""{{ 'a<'.__str__() }}|{{ 'a<'.__repr__() }}|{{ 'a<'.__format__('>4') }}|{{ (5).__str__() }}|{{ (5).__repr__() }}|{{ (5).__format__("03") }}|{{ (-5).__format__("x") }}|{{ (10**30).__format__(",") }}|{{ (1.5).__str__() }}|{{ (1.5).__repr__() }}|{{ (1.5).__format__(".3f") }}|{{ (1e16).__str__() }}|{{ true.__str__() }}|{{ true.__repr__() }}|{{ true.__format__("") }}|{{ true.__format__("d") }}|{{ true.__format__(">5") }}|{{ none.__str__() }}|{{ none.__repr__() }}|{{ none.__format__("") }}|{{ (5).__format__('x'|safe) }}|{{ (5).__format__('%') }}""")
+case("methods/dunder_containers",
+     r"""{{ [1,'a'].__str__() }}|{{ [1,'a'].__repr__() }}|{{ [1,'a'].__format__("") }}|{{ (1,).__str__() }}|{{ (1,).__repr__() }}|{{ {'a':1}.__str__() }}|{{ {'a':1}.__repr__() }}|{{ {'a':1}.__format__('') }}|{{ range(3).__str__() }}|{{ range(3).__repr__() }}|{{ range(3).__format__('') }}|{{ 'a'.encode().__str__() }}|{{ 'a'.encode().__repr__() }}|{{ 'a'.encode().__format__('') }}|{{ {'a':1}.keys().__str__() }}|{{ {'a':1}.items().__repr__() }}|{{ ({'a':1}.keys() - []).__repr__() }}|{{ {}.keys().mapping.__repr__() }}|{{ {}.keys().mapping.__format__("") }}|{{ {'__repr__': 1}.__repr__() }}""")
+case("methods/dunder_markup",
+     r"""{% autoescape true %}{{ ('<'|safe).__str__() }}|{{ ('<'|safe).__repr__() }}|{{ ('<'|safe).__format__('>3') }}|{{ ('<'|safe) }}|{{ '<'.__str__() }}{% endautoescape %}|{{ (('<'|safe).__str__()).__class__.__name__ }}|{{ (('<'|safe).__format__('')).__class__.__name__ }}|{{ (('<'|safe).__repr__()).__class__.__name__ }}""")
+case("methods/dunder_bound_objects",
+     r"""{{ (5).__str__.__class__ }}|{{ (5).__format__.__class__ }}|{{ nope.__str__.__class__ }}|{{ (5).__str__.__name__ }}|{{ (5).__str__.__qualname__ }}|{{ (5).__repr__.__qualname__ }}|{{ (5).__format__.__qualname__ }}|{{ true.__format__.__qualname__ }}|{{ (5).__format__.__module__ }}|{{ (5).__str__.__module__ is defined }}|{{ 'a'.__str__.__qualname__ }}|{{ ('a'|safe).__str__.__qualname__ }}|{{ ('a'|safe).__repr__.__qualname__ }}|{{ ('a'|safe).__repr__.__module__ }}|{{ ('a'|safe).__format__.__qualname__ }}|{{ ('a'|safe).__repr__ }}|{{ 'a'.encode().__str__.__qualname__ }}|{{ none.__repr__.__qualname__ }}|{{ {}.keys().__repr__.__qualname__ }}|{{ ({}.keys() - []).__repr__.__qualname__ }}|{{ range(1).__repr__.__qualname__ }}|{{ {}.keys().mapping.__str__.__qualname__ }}|{{ lipsum.__repr__.__qualname__ }}|{{ 'a'.upper.__repr__.__qualname__ }}|{{ (5).__str__.__repr__.__qualname__ }}|{{ cycler(1).__repr__.__qualname__ }}|{{ cycler(1).next.__repr__.__qualname__ }}""")
+case("methods/dunder_lookup_paths",
+     r"""{{ (5).__str__ is defined }}|{{ (5).__str__ is callable }}|{{ (5).__str__ == (5).__str__ }}|{{ (5).__str__ != (5).__repr__ }}|{{ (5).__format__ == (5).__format__ }}|{{ (5)|attr('__str__') is callable }}|{{ ((5)|attr('__repr__'))() }}|{{ (nope|attr('__repr__'))() }}|{{ "{0.__str__.__name__}".format(5) }}|{{ "{0.__str__.__name__}".format(nope) }}|{{ "{0.__class__.__name__}".format(nope) }}|{{ {'__str__': 1}.__str__() }}|{{ {'__str__': 1}|attr('__str__') is callable }}|{{ {'__str__': 1}['__str__'] }}|{{ (5).__str__()|length }}""")
+case("methods/dunder_jinja_objects",
+     r"""{% for x in [1] %}{{ loop.__repr__() }}|{{ loop.__str__() }}|{{ loop.__repr__ }}|{{ loop.__format__('') }}|{{ loop.__str__.__qualname__ }}|{% endfor %}{% macro m() %}{% endmacro %}{{ m.__str__() }}|{{ m.__repr__() }}|{{ m.__format__('') }}|{{ m.__repr__.__qualname__ }}|{{ m.__repr__ }}|{% for g in [{'a':1}]|groupby('a') %}{{ g.__repr__() }}|{{ g.__str__() }}|{{ g.__repr__ }}|{{ g.__str__.__qualname__ }}|{{ g.__format__('') }}{% endfor %}|{{ self.__str__.__qualname__ }}|{{ self.__repr__.__qualname__ }}|{{ cycler(1).__str__.__class__.__name__ }}|{% import 'mac.html' as mm %}{{ mm.__str__() }}|{{ mm.__str__.__qualname__ }}|{{ mm.__repr__.__qualname__ }}""",
+     __templates__=INC)
+case("methods/dunder_undefined",
+     r"""[{{ nope.__str__() }}]|{{ nope.__repr__() }}|[{{ nope.__format__('') }}]|{{ nope.__str__ }}|{{ nope.__repr__ }}|{{ nope.__str__.__qualname__ }}|{{ nope.__str__.__module__ }}|{{ nope.__format__.__qualname__ }}|{{ nope.__str__() is undefined }}""")
+# Namespace.__getattribute__ answers its own fields and refuses everything
+# else, these three included.
+case("methods/dunder_namespace",
+     r"""{{ namespace(a=1).__str__ is defined }}|{{ namespace(__str__=1).__str__ }}|{{ namespace(a=1).__repr__ is defined }}|{{ namespace(a=1).__format__ is defined }}""")
+for _kind in ("chainable", "debug", "strict"):
+    case(f"methods/dunder_undefined_{_kind}",
+         r"""{{ nope.__repr__() }}|{{ nope.__str__.__name__ }}|{{ nope.__str__.__qualname__ }}|{{ nope.__format__.__qualname__ }}|{{ nope.__str__ }}""",
+         __settings__={"undefined": _kind})
+case("methods/dunder_undefined_chainable_str", "[{{ nope.__str__() }}]|[{{ nope.a.__format__('') }}]",
+     __settings__={"undefined": "chainable"})
+case("methods/dunder_undefined_debug_str", "{{ nope.__str__() }}|{{ nope.__format__('') }}",
+     __settings__={"undefined": "debug"})
+for _name, _tmpl, _settings in [
+    ("wrapper_positional", "{{ (5).__str__(1) }}", None),
+    ("wrapper_keyword", "{{ (5).__repr__(x=1) }}", None),
+    ("wrapper_keyword_before_positional", "{{ (5).__str__(1, x=1) }}", None),
+    ("format_no_argument", "{{ [1].__format__() }}", None),
+    ("format_two_arguments", "{{ [1].__format__('', '') }}", None),
+    ("format_no_argument_bool", "{{ true.__format__() }}", None),
+    ("format_no_argument_markup", "{{ ('a'|safe).__format__() }}", None),
+    ("format_no_argument_undefined", "{{ nope.__format__() }}", None),
+    ("format_keyword", "{{ (5).__format__(format_spec='x') }}", None),
+    ("format_keyword_before_count", "{{ (5).__format__(1, x=1) }}", None),
+    ("format_int_spec", "{{ (5).__format__(1) }}", None),
+    ("format_none_spec", "{{ (5).__format__(none) }}", None),
+    ("format_undefined_spec", "{{ (5).__format__(nope) }}", None),
+    ("format_list_spec", "{{ [1].__format__('5') }}", None),
+    ("format_none_receiver_spec", "{{ none.__format__('x') }}", None),
+    ("format_undefined_receiver_spec", "{{ nope.__format__('>3') }}", None),
+    ("format_float_code", "{{ (1.5).__format__('d') }}", None),
+    ("format_str_code", "{{ 'a'.__format__('d') }}", None),
+    ("markup_repr_positional", "{{ ('a'|safe).__repr__(1) }}", None),
+    ("markup_repr_keyword_before_positional", "{{ ('a'|safe).__repr__(1, x=1) }}", None),
+    ("markup_striptags_keyword_before_positional", "{{ ('a'|safe).striptags(1, x=1) }}", None),
+    ("undefined_str_positional", "{{ nope.__str__(1) }}", None),
+    ("undefined_str_keyword", "{{ nope.__str__(x=1) }}", None),
+    ("group_str_positional", "{% for g in [{'a':1}]|groupby('a') %}{{ g.__str__(1) }}{% endfor %}", None),
+    ("int_digit_limit", "{% for x in [5000] %}{{ (10**x).__str__() }}{% endfor %}", None),
+    ("strict_str", "{{ nope.__str__() }}", "strict"),
+    ("strict_str_any_arguments", "{{ nope.__str__(1, x=2) }}", "strict"),
+    ("strict_format", "{{ nope.__format__('') }}", "strict"),
+    ("strict_format_spec", "{{ nope.__format__('x') }}", "strict"),
+]:
+    if _settings:
+        case(f"errors/dunder_{_name}", _tmpl, __settings__={"undefined": _settings})
+    else:
+        case(f"errors/dunder_{_name}", _tmpl)
+
 # float() takes a sign on a NaN as it does on an infinity; strconv does not.
 case("filters/float_signed_nan",
      r"""{{ "-nan"|float }}|{{ "+NAN"|float }}|{{ ("%f"|safe)|format("-nan") }}|{{ ("%F"|safe) % "+nan" }}""")

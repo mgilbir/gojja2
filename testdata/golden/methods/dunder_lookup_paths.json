@@ -1,0 +1,11 @@
+{
+  "case": "methods/dunder_lookup_paths.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "True|True|True|True|True|True|5|Undefined|__str__|__str__|Undefined|{'__str__': 1}|True|1|1"
+}
