@@ -72,7 +72,7 @@ are safety controls rather than behavioural choices, and they live in
 | [An `{% autoescape %}` flag that is a StrictUndefined](#an--autoescape--flag-that-is-a-strictundefined) | raises at the tag; jinja2 raises at the first output that escapes | Only a body whose output is empty or folded at compile time |
 | [A macro's view of the loop it was defined in](#a-macros-view-of-the-loop-it-was-defined-in) | a macro keeps the values its loop had when it was defined; jinja2's reads them live, and `missing` after the loop | Only a macro that is called after its iteration has passed |
 | [A `{% set %}` block writing to a name that was never set](#a--set--block-writing-to-a-name-that-was-never-set) | both raise `TypeError`; jinja2 names a sentinel of its own | No -- only the type in the message |
-| [Python object introspection](#python-object-introspection) | `__doc__` and `__mro__` are empty; a Markup's `escape` and `__html__` are undefined; two sandbox routes are absent | Only a template that prints a docstring or an MRO, or calls one of those two methods |
+| [Python object introspection](#python-object-introspection) | `__doc__` and `__mro__` are empty; a Markup's `escape` and `__html__`, and every dunder but `__str__`, `__repr__` and `__format__`, are undefined; two sandbox routes are absent | Only a template that prints a docstring or an MRO, or calls one of those methods |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
 | [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | by default a template's changes to your data, the environment's globals, a module's state or what your functions return stay in its render, and a Go method on a pointer receiver is refused; `WithSharedState` gives jinja2's sharing back | Changes what the *host*, the next render and other tenants see -- never what this render renders, unless it calls a pointer-receiver method |
 | [Subscripting the `dict` global](#subscripting-the-dict-global) | `dict['k']` is undefined; in Python it is a generic alias | Only a template that prints a subscripted `dict` or `list` class, which is a type annotation rather than a lookup |
@@ -1073,9 +1073,10 @@ Five corners of it are not implemented, and each is in
 {{ c.__class__.next(c) }}          Cycler.next on CPython, undefined here
 ```
 
-The first two are dunders, which gojja2 does not expose on a value either, so
-the type object has none to hand out, and calling the undefined it answers
-instead raises. The third is the generic-alias divergence recorded below under
+The first two are dunders of a *class*: slot wrappers and method descriptors
+that take their receiver as an argument. gojja2 has none to hand out -- the three
+a value does answer, below, are bound to it -- and calling the undefined it
+answers instead raises. The third is the generic-alias divergence recorded below under
 [Subscripting the `dict` global](#subscripting-the-dict-global), reached through
 jinja2's attribute fallback instead of through a subscript -- and the reason a
 name a class does not have is undefined here. The fourth is an arity message:
@@ -1105,8 +1106,37 @@ protocol method are not: the attributes are undefined here, so
 `{{ ('a'|safe).escape('<') }}` and `{{ ('a'|safe).__html__() }}` raise
 `UndefinedError` where jinja2 renders `&lt;` and `a`.
 
+A value's own `__str__`, `__repr__` and `__format__` are implemented, on every
+value but a namespace, whose `__getattribute__` refuses them in CPython too. They
+are str(), repr() and format() spelled as calls, and the bound object is what
+CPython's is: a `method-wrapper` named by the class that defines the slot, a
+built-in `__format__` named by the receiver, or a bound method of the Python
+class that defines it -- which is how an undefined answers them at all, since
+`Undefined.__getattr__` only runs for a name the class lacks:
+
+```jinja
+{{ (5).__format__("03") }}            005
+{{ (5).__str__.__qualname__ }}        object.__str__
+{{ nope.__repr__() }}                 Undefined
+{{ nope.__str__ }}                    <bound method Undefined.__str__ of Undefined>
+```
+
+The rest of a value's dunders are not, and are undefined here: the operators and
+their reflected and in-place forms (`__add__`, `__mod__`, `__iadd__`, ...), the
+comparisons and `__hash__`, the container protocol (`__len__`, `__contains__`,
+`__getitem__`, `__iter__`, `__setitem__`, ...), the conversions (`__bool__`,
+`__int__`, `__float__`, `__index__`, `__round__`, ...), and the object machinery
+(`__init__`, `__new__`, `__setattr__`, `__getattribute__`, `__dir__`, `__sizeof__`,
+`__reduce__`, `__getstate__`, `__init_subclass__`, `__subclasshook__`). Each
+operator dunder answers `NotImplemented` for an operand it does not take --
+`(5).__add__('a')` -- which is a value gojja2 does not have; `__sizeof__` is
+CPython's allocation size; the pickling and object-construction hooks lead into
+the interpreter the way `__subclasses__` does. The container and conversion
+ones are well-defined and could be added the same way as the three above.
+`__self__` is not answered on any bound method, these included.
+
 `TestDivergenceIntrospectionGaps` pins gojja2's answers for `__doc__`,
-`__mro__`, `escape` and `__html__`.
+`__mro__`, `escape`, `__html__`, a value's `__len__` and a class's `__str__`.
 
 Everything else a type object answers matches: `__name__`, `__qualname__`,
 `__module__`, its repr, equality with another type object *and with the class

@@ -1,0 +1,3 @@
+{}
+---
+[{{ nope.__str__() }}]|{{ nope.__repr__() }}|[{{ nope.__format__('') }}]|{{ nope.__str__ }}|{{ nope.__repr__ }}|{{ nope.__str__.__qualname__ }}|{{ nope.__str__.__module__ }}|{{ nope.__format__.__qualname__ }}|{{ nope.__str__() is undefined }}

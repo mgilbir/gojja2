@@ -101,6 +101,13 @@ func (c *classObject) unboundMethod(name string) (value.Value, bool) {
 	if !ok {
 		return value.Undefined, false
 	}
+	// A value's __str__, __repr__ and __format__ are bound to it; the
+	// class's are slot wrappers and method descriptors of their own, which
+	// the probe cannot stand for. Not answered -- see "Python object
+	// introspection" in docs/divergences.md.
+	if valueDunders[name] {
+		return value.Undefined, false
+	}
 	bound, ok := lookupAttr(nil, probe, name)
 	if !ok {
 		return value.Undefined, false

@@ -1,0 +1,6 @@
+{
+  "case": "methods/dunder_lookup_paths.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

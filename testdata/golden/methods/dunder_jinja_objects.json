@@ -1,0 +1,11 @@
+{
+  "case": "methods/dunder_jinja_objects.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "<LoopContext 1/1>|<LoopContext 1/1>|<bound method LoopContext.__repr__ of <LoopContext 1/1>>|<LoopContext 1/1>|object.__str__|<Macro 'm'>|<Macro 'm'>|<Macro 'm'>|Macro.__repr__|<bound method Macro.__repr__ of <Macro 'm'>>|(1, [{'a': 1}])|(1, [{'a': 1}])|<bound method _GroupTuple.__repr__ of (1, [{'a': 1}])>|_GroupTuple.__str__|(1, [{'a': 1}])|object.__str__|TemplateReference.__repr__|method-wrapper||TemplateModule.__str__|TemplateModule.__repr__"
+}

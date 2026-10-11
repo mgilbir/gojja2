@@ -68,13 +68,16 @@ func builtinMethod(s *State, recv value.Value, name string) (value.Value, bool) 
 						if callState == nil {
 							callState = s
 						}
-						if n := len(args.Pos); n > 0 {
-							return value.Undefined, errs.New(errs.TypeError,
-								"Markup.%s() takes 1 positional argument but %d were given", name, n+1)
-						}
+						// Python binds keywords before it counts
+						// positionals, so `striptags(1, x=1)` is
+						// about the keyword.
 						if len(args.Kwargs) > 0 {
 							return value.Undefined, errs.New(errs.TypeError,
 								"Markup.%s() got an unexpected keyword argument '%s'", name, args.Kwargs[0].Name)
+						}
+						if n := len(args.Pos); n > 0 {
+							return value.Undefined, errs.New(errs.TypeError,
+								"Markup.%s() takes 1 positional argument but %d were given", name, n+1)
 						}
 						return fn(callState, markupRecv)
 					}), true
@@ -1637,6 +1640,12 @@ func (a fieldAccessor) apply(v value.Value, py value.PythonVersion) (value.Value
 	// dunder is a bare AttributeError under every class, ChainableUndefined
 	// hands back itself for the rest, and the others raise their own error.
 	if v.IsUndefined() {
+		// What the class does have comes first: `{0.__class__}` and
+		// `{0.__str__}` of an undefined are real attributes, found before
+		// __getattr__ is consulted.
+		if attr, ok := lookupAttr(nil, v, a.name); ok {
+			return attr, nil
+		}
 		if strings.HasPrefix(a.name, "__") && strings.HasSuffix(a.name, "__") {
 			return value.Undefined, errs.New(errs.AttributeError, "%s", a.name)
 		}

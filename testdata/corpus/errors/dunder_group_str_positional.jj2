@@ -1,0 +1,3 @@
+{}
+---
+{% for g in [{'a':1}]|groupby('a') %}{{ g.__str__(1) }}{% endfor %}

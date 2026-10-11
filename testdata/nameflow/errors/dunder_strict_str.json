@@ -1,0 +1,6 @@
+{
+  "case": "errors/dunder_strict_str.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

@@ -138,6 +138,11 @@ func TestDivergenceIntrospectionGaps(t *testing.T) {
 		// calling one raises.
 		{src: `{{ ('a'|safe).escape('<') }}`, kind: errs.UndefinedError, msg: `'markupsafe.Markup object' has no attribute 'escape'`},
 		{src: `{{ ('a'|safe).__html__() }}`, kind: errs.UndefinedError, msg: `'markupsafe.Markup object' has no attribute '__html__'`},
+		// CPython: 1. A value answers __str__, __repr__ and __format__ and
+		// no other dunder.
+		{src: `{{ [1].__len__() }}`, kind: errs.UndefinedError, msg: `'list object' has no attribute '__len__'`},
+		// CPython: 5, through the class's slot wrapper.
+		{src: `{{ (5).__class__.__str__(5) }}`, kind: errs.UndefinedError, msg: `'type object' has no attribute '__str__'`},
 	} {
 		c.check(t)
 	}

@@ -1,0 +1,11 @@
+{
+  "case": "methods/dunder_bound_objects.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "<class 'method-wrapper'>|<class 'builtin_function_or_method'>|<class 'method'>|__str__|object.__str__|int.__repr__|int.__format__|bool.__format__|None|False|str.__str__|str.__str__|Markup.__repr__|markupsafe|Markup.__format__|<bound method Markup.__repr__ of Markup('a')>|bytes.__str__|NoneType.__repr__|dict_keys.__repr__|set.__repr__|range.__repr__|mappingproxy.__str__|function.__repr__|builtin_function_or_method.__repr__|method-wrapper.__repr__|object.__repr__|method.__repr__"
+}

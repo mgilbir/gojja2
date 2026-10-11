@@ -1,0 +1,6 @@
+{
+  "case": "errors/dunder_format_undefined_spec.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "errors/dunder_undefined_str_keyword.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

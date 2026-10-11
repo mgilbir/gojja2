@@ -1,0 +1,7 @@
+{
+  "__settings__": {
+    "undefined": "chainable"
+  }
+}
+---
+[{{ nope.__str__() }}]|[{{ nope.a.__format__('') }}]

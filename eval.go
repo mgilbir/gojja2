@@ -492,6 +492,12 @@ func (ex *exec) getAttr(base value.Value, name string) (value.Value, error) {
 		return classOf(base), nil
 	}
 	if base.IsUndefined() {
+		// Undefined.__getattr__ only runs for a name the class does not
+		// have, and __str__, __repr__ and __format__ it has: `{{
+		// nope.__str__() }}` is "" under the default class.
+		if fn, ok := dunderMethod(ex.st, base, name); ok {
+			return fn, nil
+		}
 		if base.UndefinedBehavior() == value.UndefinedChainable {
 			return base, nil
 		}
@@ -560,6 +566,13 @@ func lookupAttr(s *State, base value.Value, name string) (value.Value, bool) {
 	// methods -- and no table in builtinMethod, which only covers the
 	// container types.
 	if v, ok := numericAttr(s, base, name); ok {
+		return v, true
+	}
+	// __str__, __repr__ and __format__, which every object has; after the
+	// object's own attributes, so a host's own name of that spelling wins,
+	// and before the item fallback, which `{'__str__': 1}.__str__` does
+	// not reach in CPython either.
+	if v, ok := dunderMethod(s, base, name); ok {
 		return v, true
 	}
 	return value.Undefined, false

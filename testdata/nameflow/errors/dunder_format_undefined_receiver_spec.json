@@ -1,0 +1,6 @@
+{
+  "case": "errors/dunder_format_undefined_receiver_spec.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}
