@@ -65,10 +65,11 @@ Six things worth knowing before the sixth line:
 [docs/guide.md](docs/guide.md) has the rest under headings you can link to:
 loaders, rendering and what buffers, rendering one block, finalize, calling a
 template's macros from Go, the Go bridge, stateless renders and
-`WithSharedState`, errors, the four undefined behaviours, autoescaping, the
-syntax options, what `New` refuses, which CPython to reproduce, constructs
-gojja2 cannot honour, asking questions about a template and what it does with
-your variables, filter policies, overlays, and concurrency.
+`WithSharedState`, concurrency, errors, the four undefined behaviours,
+autoescaping, the syntax options, what `New` refuses, which CPython to
+reproduce, constructs gojja2 cannot honour, filter policies and overlays.
+[docs/analysis.md](docs/analysis.md) is for tools: a template's structure,
+the templates it names, and what it does with your variables.
 [docs/extending.md](docs/extending.md) covers adding a filter, a test or a
 global, and exposing a type on its own terms.
 
