@@ -26,9 +26,10 @@
 // Environment are safe for concurrent use.
 //
 // The prose documentation is in the docs/ directory of the repository:
-// docs/guide.md for using the package, docs/extending.md for writing filters,
-// tests, globals and objects, docs/limits.md for the bounds, and
-// docs/divergences.md for where gojja2 and CPython's jinja2 differ.
+// docs/guide.md for using the package, docs/analysis.md for asking a template
+// about its structure and variables without rendering it, docs/extending.md
+// for writing filters, tests, globals and objects, docs/limits.md for the
+// bounds, and docs/divergences.md for where gojja2 and CPython's jinja2 differ.
 package gojja2
 
 import (

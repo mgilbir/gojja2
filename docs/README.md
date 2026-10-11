@@ -7,7 +7,7 @@ Start from the question, not the filename.
 | What is this, and how do I render a template? | [../README.md](../README.md) |
 | How do I configure loaders, autoescaping, syntax, undefined values? | [guide.md](guide.md) |
 | Will a render change my data? Can I reuse one context, or one module, across requests? | [guide.md](guide.md#stateless-renders), and [guide.md](guide.md#concurrency) for sharing across goroutines |
-| Which variables does a template need, and which templates does it pull in? | [guide.md](guide.md#asking-questions-about-a-template) |
+| Which variables does a template need, and which templates does it pull in? | [analysis.md](analysis.md) |
 | How do I serve many tenants, or vary settings per request, from one environment? | [guide.md](guide.md#overlays) |
 | Which CPython should I reproduce? | [guide.md](guide.md#which-cpython) |
 | Will my jinja2 templates render the same here? | [divergences.md](divergences.md) — the divergences that can change what a working template renders are named in its first paragraph |
@@ -42,6 +42,7 @@ tell which one lost.
 | Where gojja2 deliberately differs from CPython jinja2 | [divergences.md](divergences.md) |
 | What bounds a render, and which option adjusts it | [limits.md](limits.md) |
 | What a render copies, what it refuses, and what stays the host's to keep stateless | [guide.md](guide.md#stateless-renders) |
+| What a template's structure, references and variables are, without rendering it | [analysis.md](analysis.md) |
 | The conformance corpora, the oracle, and the numbers | [conformance.md](conformance.md) |
 | Which upstream projects are consulted, and under what licence | [../NOTICE](../NOTICE) |
 | How the pieces fit, and what nesting must not drop | [architecture.md](architecture.md) |
