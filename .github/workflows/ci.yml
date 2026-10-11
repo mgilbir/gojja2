@@ -1,7 +1,9 @@
 name: CI
 
-# `make check` has always described itself as "everything CI should run".
-# Nothing ran it: there was no workflow, so the conformance guarantee the README
+# `make check` once described itself as "everything CI should run" -- it is
+# now this file's Linux steps without the fuzzing, and the Windows and macOS
+# jobs are extra. Before this file nothing ran it: there was no workflow, so the
+# conformance guarantee the README
 # relies on -- that a known failure which starts passing fails the build -- held
 # only when someone remembered. It did drift.
 on:
@@ -48,8 +50,13 @@ jobs:
   # lock on the same door.
   #
   # A pull request from a branch in this repository needs write access to
-  # create, so it is trusted. One from a fork is not, until a maintainer adds
-  # the `safe-to-test` label -- which also takes write access.
+  # create, so it is trusted. One from a fork is trusted on a run whose event
+  # payload carries the `safe-to-test` label, which also takes write access to
+  # add. Adding the label starts no run: `pull_request` above lists no
+  # `types:`, so only opened, synchronize and reopened start one, and the label
+  # is read by the next of those. revoke-approval.yml deletes the label on a
+  # push, concurrently with the run that push starts here, and nothing orders
+  # the two. docs/contributing.md, "Sending it", describes the sequence.
   authorize:
     runs-on: ubuntu-latest
     outputs:

@@ -31,7 +31,7 @@ if err != nil {
 return tmpl.Render(ctx, w, map[string]any{"user": user, "items": items})
 ```
 
-Five things worth knowing before the sixth line:
+Six things worth knowing before the sixth line:
 
 - **Go values cross by reflection.** A struct exposes its exported fields, by
   name or `json` tag, and its methods that take no arguments; slices become
@@ -41,21 +41,34 @@ Five things worth knowing before the sixth line:
 - **Errors carry the Python exception class** jinja2 would have raised, so
   `errors.Is(err, errs.UndefinedError)` works, and `errors.Is(err,
   errs.LookupError)` catches a `KeyError` exactly as `except` would.
-- **A template compiled with `FromString` is escaped**, because it has no name
-  to decide by. Defaulting it to *unescaped* is how an escaped-by-configuration
-  project ends up emitting raw user input.
-- **A render cannot mutate what you passed it**, and cannot outrun its
-  `context.Context` — or, behind that, ten million loop iterations and 256 MiB
-  of output. Zero means "the default" for every limit option, so a configuration
+- **Under an extension-based autoescape policy, a template compiled with
+  `FromString` is escaped**, because it has no name to decide by. Defaulting
+  it to *unescaped* is how an escaped-by-configuration project ends up
+  emitting raw user input. With no autoescape option at all nothing is
+  escaped, as in jinja2.
+- **A template cannot mutate what you passed it**, through `Render` or as
+  prepared values through `RenderValues`: what it could change is copied
+  first, and calling a Go method declared on a pointer is refused.
+  `WithSharedState` opts back in to jinja2's sharing, one behaviour at a time.
+  Go code you supply -- a filter, a function, a method that writes through a
+  map its struct holds -- runs as written, so whether it keeps state is yours
+  to say. [The guide](docs/guide.md#stateless-renders) has the detail.
+- **A render stops once its `context.Context` is cancelled**, read every 4,096
+  units of work, so check `ctx.Err()` first if a short render must not succeed
+  late -- and behind that at ten million loop iterations and 256 MiB of
+  output. Zero means "the default" for every limit option, so a configuration
   nobody filled in is the safe one.
 - **`FSLoader` refuses any name with a `..` segment** rather than cleaning it
   into something else: a template that asks for a file outside its root gets
   "not found", and not a different file.
 
 [docs/guide.md](docs/guide.md) has the rest under headings you can link to:
-loaders, rendering and what buffers, the Go bridge, errors, the four undefined
-behaviours, autoescaping, the syntax options, which CPython to reproduce, and
-concurrency.
+loaders, rendering and what buffers, rendering one block, finalize, calling a
+template's macros from Go, the Go bridge, stateless renders and
+`WithSharedState`, errors, the four undefined behaviours, autoescaping, the
+syntax options, what `New` refuses, which CPython to reproduce, constructs
+gojja2 cannot honour, asking questions about a template and what it does with
+your variables, filter policies, overlays, and concurrency.
 [docs/extending.md](docs/extending.md) covers adding a filter, a test or a
 global, and exposing a type on its own terms.
 
@@ -111,9 +124,9 @@ gets:
 env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
 ```
 
-Across those five, a small share of the committed cases answer differently. Each
-version is graded against its own recorded output, so the option is measured
-rather than asserted.
+Across those five, a small share of the committed cases answer differently.
+Each version is graded against its own recorded output, so the option is
+measured rather than asserted.
 [docs/guide.md](docs/guide.md#which-cpython) has the shape of it and
 [docs/conformance.md](docs/conformance.md#which-cpython) the numbers.
 
@@ -130,7 +143,8 @@ The 89 that differ are listed in `testdata/known_failures.txt`, and a case on
 that list which starts passing fails the build. Over a third are the same refusal
 in other words -- CPython's message names a line of the module jinja2 generates
 -- and most of the rest are Python behaviour gojja2 deliberately does not
-reproduce, such as object introspection past `__class__`.
+reproduce, such as object introspection past `__class__`, or jinja2's lazy
+filters answering generators where gojja2 answers lists.
 [docs/divergences.md](docs/divergences.md) explains most of them by kind.
 
 On top of the corpora, roughly a million generated templates have been rendered
@@ -140,7 +154,9 @@ reproducible; `make fuzz TIME=5m` runs it coverage-guided.
 
 Numbers in documentation drift, so these do not get to: `TestConformance` parses
 the table in [docs/conformance.md](docs/conformance.md) and the figure in this
-paragraph, and fails the build on any disagreement with what it just measured.
+paragraph, and fails on any disagreement with what it just measured -- on a
+machine with every corpus imported. With one missing it logs and skips, and no
+CI workflow imports them, so CI does not check these figures.
 
 [docs/conformance.md](docs/conformance.md) has the per-corpus table, what each
 corpus contributes and why, how a context is synthesised for templates that ship
@@ -170,25 +186,27 @@ Jinja itself, MiniJinja, minja, llama.cpp, a collection of real chat templates,
 a documentation theme and four project generators. `make suites` downloads them
 on demand into the gitignored `third_party/`; nothing from any of them is
 vendored, committed or redistributed. `NOTICE` names each one with its licence,
-and each generated corpus repeats it in its own `SOURCES.md`.
+and most generated corpora repeat it in their own `SOURCES.md` (the minijinja
+and jinja-harvest ones do not yet).
 
 ## Development
 
 ```
-make help       # all targets
+make help       # the targets
 make venv       # CPython + jinja2 oracle
 make suites     # download reference suites (gitignored)
 make oracle     # regenerate goldens from CPython jinja2
 make test       # go test ./...
-make check      # everything CI runs, in CI's order
+make check      # CI's Linux and lint steps, in CI's order (not its fuzzing)
 make ask T='{{ 1/2 }}'  # what does CPython jinja2 render for this?
 ```
 
-CI runs on every pull request and on every commit that reaches `main`. A pull
-request from a **fork** deliberately runs nothing until a maintainer has read
-the diff and added the `safe-to-test` label: CI executes the code in the pull
-request, and that is not something to do to an unreviewed branch. Pushing a new
-commit after the label is applied requires it to be applied again.
+CI runs on every pull request, on every commit that reaches `main`, nightly, and
+weekly on Windows and macOS. A pull request from a **fork** runs nothing unless
+its triggering event carries the `safe-to-test` label, because CI executes the
+code in the pull request. Adding the label does not itself start a run, and a
+push removes it; [docs/contributing.md](docs/contributing.md#sending-it) says
+exactly what the workflows do.
 
 [docs/contributing.md](docs/contributing.md) has the rest: how to tell a bug
 from a deliberate divergence, where a conformance case has to live, how to

@@ -65,7 +65,7 @@ jobs:
       - name: Build the oracle virtualenv
         run: make venv
 
-      # `make oracle` reaches all four interpreters through `uv run --python`,
+      # `make oracle` reaches every interpreter through `uv run --python`,
       # so this is also the check that every one of them is still available.
       - name: Regenerate everything the oracle produces
         run: make oracle

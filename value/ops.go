@@ -993,6 +993,11 @@ func Pow(a, b Value, budget Budget, py PythonVersion) (Value, error) {
 }
 
 // estimatePowBits bounds the width of base**exp without computing it.
+//
+// It is an upper bound, not the width: the base's bit length times exp, which
+// for a base of 2 -- two bits -- is nearly twice the real 1+exp. So a power
+// under the ceiling can be refused: 2**600000 is 600,001 bits and is estimated
+// at 1,200,000. WithMaxIntBits documents that.
 func estimatePowBits(base *big.Int, exp int64) int64 {
 	bits := int64(base.BitLen())
 	if bits <= 1 {

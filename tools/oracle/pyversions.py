@@ -91,7 +91,7 @@ def run(version: str, args: list[str], **kw) -> subprocess.CompletedProcess:
     """Run a script under one interpreter, with the pinned jinja2 available.
 
     `uv run --no-project` builds the environment per call and throws it away,
-    so reaching four interpreters needs no four checked-in virtualenvs and
+    so reaching every interpreter needs no checked-in virtualenv per version and
     cannot drift from the pin the way a stale one would.
     """
     cmd = ["uv", "run", "--quiet", "--python", version, "--no-project",

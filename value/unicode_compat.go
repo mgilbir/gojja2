@@ -13,8 +13,8 @@ import (
 //
 // CPython carries its own Unicode, so which characters are printable, which
 // are digits and how each one cases are all decided by the interpreter rather
-// than by jinja2. Across 3.11 to 3.14 there are 10,311 code points the four do
-// not all agree about, and WithPythonVersion would mean less than it says if a
+// than by jinja2. Across the interpreters gojja2 reproduces there are
+// thousands of code points they do not all agree about, and WithPythonVersion would mean less than it says if a
 // render reproduced one interpreter's rules and another's tables.
 //
 // The committed tables are the pinned interpreter's, and this records only the

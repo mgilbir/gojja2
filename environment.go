@@ -3,6 +3,32 @@
 
 // Package gojja2 is a pure Go implementation of the Jinja2 template language,
 // built to render exactly what CPython's jinja2 renders.
+//
+// An [Environment] holds the configuration -- loader, autoescaping, filters,
+// tests, globals, limits -- and compiles a [Template], which renders with
+// [Template.Render] or [Template.RenderString]:
+//
+//	env, err := gojja2.New(gojja2.WithLoader(gojja2.DictLoader{"hi": "Hello {{ name }}!"}))
+//	tmpl, err := env.GetTemplate("hi")
+//	out, err := tmpl.RenderString(ctx, map[string]any{"name": "World"})
+//
+// Every render takes a [context.Context], which bounds it: the render reads
+// it every few thousand units of work, so give it a deadline. Behind the
+// context sit backstops for a caller who does not -- [WithMaxIterations],
+// [WithMaxOutputBytes], [WithMaxRecursion], [WithMaxIntBits] -- which are on
+// by default, because a template's author may not be its caller.
+//
+// Renders are stateless by default: a render copies anything from outside it
+// that a template could change, so nothing one render does reaches the
+// caller's values, the next render or another tenant -- except through host
+// code the engine cannot see into; see [SharedState]. [WithSharedState] gives
+// back jinja2's behaviour one piece at a time. A *Template and a configured
+// Environment are safe for concurrent use.
+//
+// The prose documentation is in the docs/ directory of the repository:
+// docs/guide.md for using the package, docs/extending.md for writing filters,
+// tests, globals and objects, docs/limits.md for the bounds, and
+// docs/divergences.md for where gojja2 and CPython's jinja2 differ.
 package gojja2
 
 import (
@@ -19,9 +45,15 @@ import (
 )
 
 // Filter is a value transformer invoked by `x|name(...)`.
+//
+// One the host registers may be called while a template compiles, when every
+// operand is a constant -- `{{ 'a'|f }}` -- and its result is then reused by
+// every render: see docs/extending.md, "You may be run at compile time". It
+// must therefore give the same answer for the same arguments in every render.
 type Filter func(s *State, v value.Value, args *value.CallArgs) (value.Value, error)
 
-// Test is a predicate invoked by `x is name(...)`.
+// Test is a predicate invoked by `x is name(...)`. Like a [Filter], one the
+// host registers may be called at compile time when every operand is constant.
 type Test func(s *State, v value.Value, args *value.CallArgs) (bool, error)
 
 // Environment holds the configuration templates are compiled and rendered
@@ -338,14 +370,6 @@ func WithAutoescapeFunc(fn AutoescapeFunc) Option {
 	return func(e *Environment) error { e.autoescape = fn; return nil }
 }
 
-// SelectAutoescapeConfig mirrors the parameters of jinja2's select_autoescape.
-//
-// The zero value follows jinja2's own defaults, with one documented exception
-// noted on Enabled: the HTML and XML extensions escape, nothing is explicitly
-// disabled, a template compiled from a string escapes, and anything else does
-// not. That is deliberate -- every field here is written so that the quiet
-// reading is the safe one, and a caller has to say something explicit to
-// escape less.
 // AutoescapeLeniency is how much [WithAutoescapeSelection] and
 // [WithAutoescapeExtensions] will accept in an extension list.
 //
@@ -376,6 +400,14 @@ func (l AutoescapeLeniency) String() string {
 	return "RefuseImpossibleExtensions"
 }
 
+// SelectAutoescapeConfig mirrors the parameters of jinja2's select_autoescape.
+//
+// The zero value follows jinja2's own defaults, with one documented exception
+// noted on Enabled: the HTML and XML extensions escape, nothing is explicitly
+// disabled, a template compiled from a string escapes, and anything else does
+// not. That is deliberate -- every field here is written so that the quiet
+// reading is the safe one, and a caller has to say something explicit to
+// escape less.
 type SelectAutoescapeConfig struct {
 	// Enabled lists the extensions that turn escaping on. A leading dot is
 	// optional and case is ignored. Empty means html, htm, xml and xhtml.
@@ -654,8 +686,14 @@ func WithExtensions(names ...string) Option {
 	}
 }
 
-// WithMaxRecursion bounds how deeply templates may include, extend or call
-// into each other. Zero restores the default.
+// WithMaxRecursion bounds how deeply templates may nest renders: an include,
+// an extends, an import, a macro call, a block, and a recursive loop's
+// `loop(...)` each count one level. Exceeding it raises a RecursionError
+// with the limit on the error's Limit field.
+//
+// Zero or a negative n restores the default of 100. Unlike the other bounds
+// this one cannot be removed, because past it is a Go stack overflow, which
+// kills the process rather than failing the render.
 func WithMaxRecursion(n int) Option {
 	return func(e *Environment) error {
 		if n <= 0 {
@@ -709,6 +747,12 @@ func WithMaxOutputBytes(n int64) Option {
 // grows exponentially while the template stays the same size -- twelve
 // iterations were enough to exhaust the machine with the output and iteration
 // budgets both set, because neither counts the memory a big.Int occupies.
+//
+// The width is checked before the integer is computed, so it is estimated
+// from the operands, and the estimate is an upper bound: for `**` it is the
+// base's width times the exponent, up to twice the real width for a small
+// base. A result under the bound can be refused -- `2 ** 600000` is 600,001
+// bits wide and is refused by the default, as 1,200,000.
 //
 // Zero restores the default of 2**20 bits. A negative n removes the bound and
 // gives CPython's arithmetic back.

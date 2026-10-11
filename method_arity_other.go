@@ -12,7 +12,7 @@ import "github.com/mgilbir/gojja2/value"
 //
 // method_arity.go carries the pinned interpreter's wording in full; this
 // carries only the entries another one words differently, because most of them
-// are identical and a second full copy per version would be four tables to keep
+// are identical and a second full copy per version would be one more table to keep
 // in step. A method absent here answers as the pin does.
 //
 // Regenerate with `make arity-matrix`.

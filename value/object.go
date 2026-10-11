@@ -13,6 +13,11 @@ import (
 // Attribute access is the only required capability; the optional interfaces
 // below add indexing, length, iteration and rendering. This mirrors Python,
 // where a type opts into protocols one dunder at a time.
+//
+// A render copies what reaches it from outside that a template could change,
+// but an Object is copied only if it implements [Isolator]. One that does not
+// is handed to every render as it is, so if anything a template can reach
+// changes it, that change is seen by every render given it.
 type Object interface {
 	// GetAttr resolves `obj.name`. Returning false means "no such
 	// attribute", which the runtime turns into Undefined rather than an

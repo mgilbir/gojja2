@@ -10,20 +10,33 @@ the output `make ask T='...'` gives.
 
 ## If you are porting templates, read this paragraph
 
-Of the forty-two divergences below, **one** is worth going looking for:
-jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
-`items` return generators, and gojja2's return lists. A generator is always
-truthy, so in jinja2 `{% if items|selectattr("active") %}` runs its body even
-when nothing was selected. gojja2 answers the question the template asked.
-Spelling it `|selectattr("active")|list` is exact in both, and is what jinja2's
-own documentation tells you to write.
+Of the forty-seven divergences below, **two** are worth going looking for in a
+template that works today.
 
-One other renders differently rather than failing, but only for a template that
-asks `{{ self is iterable }}` -- `True` in jinja2, `False` here. Iterating
-`self` raises under both.
+jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique`,
+`items`, `batch` and `slice` return generators, and gojja2's return lists. A
+generator is always truthy, so in jinja2 `{% if items|selectattr("active") %}`
+and `{% if rows|batch(3) %}` run their body even when the result is empty, and
+`|length`, `|last` or `|tojson` on one raise. gojja2 answers the question the
+template asked. Spelling it `|selectattr("active")|list` is exact in both, and
+is what jinja2's own documentation tells you to write.
 
-Everything else on this page either fails under CPython too, was never
-reproducible, or changes something outside the render. The table says which.
+The other is a handful of things gojja2 cannot carry, so a template that
+renders under CPython is refused here: a negative number raised to a fractional
+power (a `complex`), a `\N{...}` escape, and a codec other than utf-8, ascii and
+latin-1. They are [templates jinja2 renders and gojja2
+cannot](#templates-jinja2-renders-and-gojja2-cannot), and each is a string you
+can search for.
+
+A few more answer differently from a template that works under CPython -- a
+different output, or an error here -- but each is a corner nobody writes by
+accident: `{{ self is iterable }}`, a macro called after the loop iteration that
+defined it, `is sameas` between two literals, a lone surrogate escape, a
+subscripted `dict` class, `__doc__` and `__mro__`, a Markup's `escape()`, an
+`{% autoescape %}` flag that is a StrictUndefined. Others differ only where
+CPython does not repeat its own answer, such as the order a set prints in.
+Everything else on this page fails under CPython too, was never reproducible,
+or changes something outside the render. The table's third column says which.
 
 The bounds gojja2 puts on a render -- iterations, output, nesting, allocation --
 are safety controls rather than behavioural choices, and they live in
@@ -33,42 +46,47 @@ are safety controls rather than behavioural choices, and they live in
 
 | divergence | what differs | can it change a correct template? |
 |---|---|---|
-| [Lazy sequence filters](#lazy-sequence-filters) | sequence filters return lists, not generators | **Yes** -- and toward what the author meant |
+| [Lazy sequence filters](#lazy-sequence-filters) | sequence filters, `batch` and `slice` return lists, not generators | **Yes** -- and toward what the author meant |
 | [A constant that folds to an infinity](#a-constant-that-folds-to-an-infinity) | `{% if 1e400 %}` renders; jinja2 raises `NameError` | No -- the template is broken under CPython |
 | [A folded infinity jinja2 writes out](#a-folded-infinity-jinja2-writes-out) | renders the number; jinja2 raises `NameError: name 'inf' is not defined` | No -- it renders where CPython cannot |
 | [A macro with a repeated parameter name](#a-macro-with-a-repeated-parameter-name) | both refuse it; the wording differs | No -- only the message differs |
 | [A keyword written twice in one call](#a-keyword-written-twice-in-one-call) | both refuse it; the wording differs | No -- only the message differs |
 | [A break or a continue that binds to no loop](#a-break-or-a-continue-that-binds-to-no-loop) | both refuse it; the wording differs | No -- only the message differs |
 | [A slice among several subscripts](#a-slice-among-several-subscripts) | both refuse it; the wording differs | No -- only the message differs |
-| [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | No -- nothing can consume the `complex` |
+| [Complex numbers](#complex-numbers) | `(-8) ** (1/3)` raises `ValueError`; jinja2 makes a `complex` | Only a template that raises a negative number to a fractional power |
 | [A macro containing a context-free include](#a-macro-containing-a-context-free-include) | the macro renders; jinja2 returns a generator repr | No -- the body never ran under CPython |
+| [An imported module's class under autoescape](#an-imported-modules-class-under-autoescape) | `{{ m.__class__ }}` prints the class; jinja2 raises `TypeError` | No -- the template is broken under CPython |
 | [`{{ self\|list }}`](#-selflist-) | `TypeError`; jinja2 raises `KeyError: 0` | Only `self is iterable`, which answers differently |
 | [`\N{...}` escapes](#n-escapes-in-string-literals) | refused; needs the Unicode name database | Only if you write `\N{...}` |
 | [A lone surrogate in a string literal](#a-lone-surrogate-in-a-string-literal) | `'\ud800'` is U+FFFD here | Only if you write a surrogate escape that is not half of a pair |
 | [Which codecs and handlers are known](#which-codecs-and-error-handlers-encode-and-decode-know) | utf-8, ascii, latin-1; jinja2 has ~100. Three error handlers are missing too | Only outside those three, or with `namereplace` or a surrogate handler on a decode |
 | [Objects whose repr carries an address](#objects-whose-repr-carries-an-address) | a different address | No -- unreproducible in CPython too |
 | [`\|pprint` of a value that contains itself](#pprint-of-a-value-that-contains-itself) | a different address | No -- likewise |
-| [A comparison that runs out of stack under 3.14](#a-comparison-that-runs-out-of-stack-under-314) | the sentence is CPython's through 3.13; 3.14 names the stack it used | No -- only under 3.14, and only the wording |
+| [A comparison that runs out of stack from 3.14](#a-comparison-that-runs-out-of-stack-from-314) | the sentence is CPython's through 3.13; 3.14 and 3.15 name the stack they used | No -- only under 3.14 or 3.15, and only the wording |
 | [The order a set prints in](#the-order-a-set-prints-in) | sorted, where CPython's is its hash order | No -- CPython's own order differs between runs |
 | [lipsum() and random](#lipsum-and-random) | a different random draw | No -- likewise |
 | [`is sameas` on two literals](#is-sameas-on-two-literals) | `1.5 is sameas(1.5)` is True here, False there; so is `==` on two bound methods of literals | Only for a literal-vs-literal `sameas` or method comparison, which is a tautology |
+| [A NaN handed in from Go twice](#a-nan-handed-in-from-go-twice) | two NaNs in a Go context are two objects, however they were written | Only a NaN the host placed in two places, compared or searched for |
 | [Comparison order inside a long sort](#comparison-order-inside-a-long-sort) | which pair a failing sort names | Only inside an error message, above 64 elements |
+| [A repetition that overflows on a loop's second pass under 3.15](#a-repetition-that-overflows-on-a-loops-second-pass-under-315) | the overflow names "C ssize_t" in CPython once the instruction has warmed up; gojja2 always gives the first pass's wording | Only the message, only under 3.15 |
+| [A callable fourth argument to `Undefined`](#a-callable-fourth-argument-to-undefined) | `UndefinedError` with the hint; jinja2 calls the argument and raises what that raises | No -- both raise, with a different error |
 | [An `{% autoescape %}` flag that is a StrictUndefined](#an--autoescape--flag-that-is-a-strictundefined) | raises at the tag; jinja2 raises at the first output that escapes | Only a body whose output is empty or folded at compile time |
 | [A macro's view of the loop it was defined in](#a-macros-view-of-the-loop-it-was-defined-in) | a macro keeps the values its loop had when it was defined; jinja2's reads them live, and `missing` after the loop | Only a macro that is called after its iteration has passed |
 | [A `{% set %}` block writing to a name that was never set](#a--set--block-writing-to-a-name-that-was-never-set) | both raise `TypeError`; jinja2 names a sentinel of its own | No -- only the type in the message |
-| [Python object introspection](#python-object-introspection) | `__doc__` is empty; two sandbox routes are absent | No |
+| [Python object introspection](#python-object-introspection) | `__doc__` and `__mro__` are empty; a Markup's `escape` and `__html__` are undefined; two sandbox routes are absent | Only a template that prints a docstring or an MRO, or calls one of those two methods |
 | [`len()` of a very long range](#len-of-a-very-long-range) | nothing -- matched exactly, boundary included | No |
-| [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | a template's changes to your data, the environment's globals or what your functions return stay in its render | Changes what the *host*, the next render and other tenants see -- never what this render renders |
-| [Subscripting the `dict` global](#subscripting-the-dict-global) | `dict['k']` is undefined; in Python it is a generic alias | No -- it is a type annotation, not a lookup |
+| [A render does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data) | by default a template's changes to your data, the environment's globals, a module's state or what your functions return stay in its render, and a Go method on a pointer receiver is refused; `WithSharedState` gives jinja2's sharing back | Changes what the *host*, the next render and other tenants see -- never what this render renders, unless it calls a pointer-receiver method |
+| [Subscripting the `dict` global](#subscripting-the-dict-global) | `dict['k']` is undefined; in Python it is a generic alias | Only a template that prints a subscripted `dict` or `list` class, which is a type annotation rather than a lookup |
 | [Which line an error inside a multi-line tag names](#which-line-an-error-inside-a-multi-line-tag-names) | the failing token's line, not the tag's | No -- same error, different line number |
 | [What a missing template's error says](#what-a-missing-templates-error-says) | the message names the template, not a search path | No -- same error, same name |
 | [No automatic template reload](#no-automatic-template-reload) | no `auto_reload`; use `ClearCache` | Changes when an edit is picked up |
 | [The default autoescape extension set](#the-default-autoescape-extension-set) | adds `xhtml` to jinja2's three | Only ever escapes *more*, never less |
+| [Block and comment openings that are the same string](#block-and-comment-openings-that-are-the-same-string) | `New` refuses them by default; jinja2 accepts them | No -- a configuration, and `WithDelimiterLeniency` accepts it |
 | [An overlay's registrations stay in the overlay](#an-overlays-registrations-stay-in-the-overlay) | `AddFilter`/`AddTest`/`AddGlobal` on an overlay do not reach its base; in jinja2 they do | No -- a host API |
 | [The debug extension](#the-debug-extension) | `{% debug %}` is refused; `jinja2.ext.debug` is not offered | Only a template that uses `{% debug %}` |
 | [Native-type rendering](#native-type-rendering) | no `NativeEnvironment`; a render is always text | No -- a host API, not template behaviour |
 | [Evaluating a lone expression](#evaluating-a-lone-expression) | `CompileExpression` returns a `value.Value`, not a Python object | No -- a host API |
-| [Calling a template's macros from the host](#calling-a-templates-macros-from-the-host) | `Template.Module` is `make_module`; nothing is cached as `Template.module`, and each call has its own budget | No -- a host API |
+| [Calling a template's macros from the host](#calling-a-templates-macros-from-the-host) | `Template.Module` is `make_module`; nothing is cached as `Template.module`, and each call has its own budget and, unless `ShareModuleState`, starts from the module's state as it was made | No -- a host API |
 | [Listing the templates a loader has](#listing-the-templates-a-loader-has) | lists only what it can load; `PrefixLoader` sorts its prefixes | No -- a host API |
 | [Logging undefined access](#logging-undefined-access) | no `make_logging_undefined` | No -- the four Undefined classes are all there |
 | [A loader made from a function](#a-loader-made-from-a-function) | `LoaderFunc` reports a miss with `ErrNotFound`, not `None` | No -- a host API |
@@ -78,7 +96,7 @@ are safety controls rather than behavioural choices, and they live in
 
 ---
 
-## The one that can change what a working template renders
+## The one most likely to change what a working template renders
 
 ### Lazy sequence filters
 
@@ -86,19 +104,24 @@ are safety controls rather than behavioural choices, and they live in
 {% if items|selectattr("active") %}...{% endif %}
 ```
 
-jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique` and
-`items` return generators, and `reverse` returns Python's `reversed()` iterator
-for anything but a string. gojja2's return lists. Anything that *walks* the
-result forwards -- iterating it, `|list`, `|join`, `|first`, `|sort` -- behaves
-identically. Five things do not:
+jinja2's `map`, `select`, `reject`, `selectattr`, `rejectattr`, `unique`,
+`items`, `batch` and `slice` return generators, and `reverse` returns Python's
+`reversed()` iterator for anything but a string. gojja2's return lists.
+Anything that *walks* the result forwards -- iterating it, `|list`, `|join`,
+`|first`, `|sort` -- behaves identically. Five things do not:
 
 | template | jinja2 | gojja2 |
 |---|---|---|
 | `{{ [1,2]\|map("string") }}` | `<generator object ... at 0x7f9c...>` | `['1', '2']` |
-| `{% if items\|selectattr("active") %}` | always taken | taken when non-empty |
-| `{{ items\|selectattr("active")\|length }}` | `TypeError: object of type 'generator' has no len()` | the count |
-| `{{ items\|map("string")\|last }}` | `TypeError: 'generator' object is not reversible` | the last item |
+| `{% if items\|selectattr("active") %}`, `{% if rows\|batch(3) %}` | always taken | taken when non-empty |
+| `{{ items\|selectattr("active")\|length }}`, `{{ rows\|batch(3)\|length }}` | `TypeError: object of type 'generator' has no len()` | the count |
+| `{{ items\|map("string")\|last }}`, `{{ rows\|slice(3)\|last }}` | `TypeError: 'generator' object is not reversible` | the last item |
 | `{{ tools\|map(attribute="f")\|tojson }}` | `TypeError: Object of type generator is not JSON serializable` | the JSON |
+
+`slice(n)` always yields `n` slices, empty or not, so its truth agrees on both
+sides; what differs for it is the count, the last slice, the JSON and the
+generator's repr. `TestDivergenceBatchAndSliceAreLists` pins gojja2's side of
+both filters.
 
 The first cannot be matched by anyone: the address differs between two runs of
 CPython itself, which is why the corpus case that prints one is marked
@@ -110,9 +133,10 @@ when nothing was selected -- a long-standing footgun that the documentation
 tells you to spell `|selectattr("active")|list` around. Reproducing it would
 mean building the trap on purpose, and a template that guards a section on an
 empty filter result would render the section. gojja2 answers the question the
-template asked. This is the one divergence here that can change what a working
-template renders, and it changes it toward what the author meant; if you are
-porting templates, `|list` before `|length` or a truth test is exact in both.
+template asked. Of the divergences here this is the one a working template is
+most likely to meet, and it changes the answer toward what the author meant; if
+you are porting templates, `|list` before `|length` or a truth test is exact in
+both.
 
 The fifth is not hypothetical: DeepSeek-R1's own chat template, as vendored by
 llama.cpp, writes `{{ tools | map(attribute='function') | tojson(indent=2) }}`,
@@ -126,9 +150,12 @@ budget. `{{ range(2**70)|last }}` answers exactly on both.
 
 A knock-on: a filter that raises does so at the point gojja2 applies it, where
 jinja2 defers until the generator is consumed. The exception is the same; where
-it surfaces can differ by a tag or two.
+it surfaces can differ by a tag or two -- and a result nothing consumes never
+raises in jinja2 at all, so `{{ [1, 2]|slice(0) }}` prints a generator there and
+is a `ZeroDivisionError` here.
 
-A second knock-on, visible only on CPython 3.14: that version names the count in
+A second knock-on, visible only from CPython 3.14, and so in gojja2 only under
+`WithPythonVersion(Python314)` or `Python315`: those versions name the count in
 `too many values to unpack`, and only for a list, a tuple or a dict -- everything
 else goes through the iterator path, which does not count. So a lazy filter's
 result carries no count there and gojja2's list does:
@@ -137,13 +164,19 @@ result carries no count there and gojja2's list does:
 {% for a, b in [[1,2,3]|reverse] %}{% endfor %}
 ```
 
-is `(expected 2)` on CPython 3.14 and `(expected 2, got 3)` here. `|sort` agrees,
-because jinja2's sort returns a real list too. Faking it would mean pretending
-the value is something other than what gojja2 holds.
+is `(expected 2)` on CPython 3.14 and 3.15 and `(expected 2, got 3)` here under
+either.
+`|sort` agrees, because jinja2's sort returns a real list too. Faking it would
+mean pretending the value is something other than what gojja2 holds.
 
-## Where jinja2 raises and gojja2 renders
+## Templates already broken under jinja2
 
-Each of these is a template that is already broken under CPython jinja2. gojja2 answers the question the template asked instead, or refuses for a reason of its own. If you are porting, none of these changes a template that works today.
+Each of these is a template that CPython jinja2 refuses, or renders as
+something other than what it says -- a generator's address in place of a
+macro's body. gojja2 answers the question the template asked instead, or
+refuses it too, with its own reasons or with CPython's words. If you are
+porting, none of these changes a template that works today, with one exception
+noted in its entry: `{{ self is iterable }}`.
 
 ### A constant that folds to an infinity
 
@@ -157,12 +190,16 @@ constant into its generated Python as that constant's repr, and
 
 It only bites when the constant is emitted as *code*. `{{ 1e400 }}` prints
 `inf`, because the output folder converts it to text before it is written out;
-`{% if 1e400 %}`, `{% set x = 1e400 %}` and `{{ ('1e400')|float|int }}` raise.
+`{% if 1e400 %}` and `{% set x = 1e400 %}` raise.
 
-gojja2 renders the template. Reproducing the other answer would mean carrying a
-poisoned constant through the optimizer so that *using* it raises a NameError
+gojja2 renders the template. Reproducing the other answer would mean carrying
+a poisoned constant through the optimizer so that *using* it raises a NameError
 about a Python identifier that has no counterpart here. The corpus case is in
 `testdata/known_failures.txt`.
+
+`{{ ('1e400')|float|int }}` raises on both sides, with a different error: the
+`NameError` there, and here `OverflowError: cannot convert float infinity to
+integer`, which is what CPython's own `int()` says of an infinity.
 
 ### A macro with a repeated parameter name
 
@@ -184,7 +221,7 @@ to match.
 gojja2 refuses the template too, from its own parser, with
 
 ```
-TemplateSyntaxError: duplicate argument 'a' in function definition
+SyntaxError: duplicate argument 'a' in function definition
 ```
 
 which is CPython's wording with the parameter the template actually wrote.
@@ -324,21 +361,6 @@ compiled and failed at render time with `a slice is only valid inside a
 subscript`, a message that exists nowhere in CPython, and the constant forms
 failed too where CPython renders them.
 
-### Complex numbers
-
-```jinja
-{{ (-8) ** (1/3) }}
-```
-
-CPython renders `(1.0000000000000002+1.7320508075688772j)`. A negative base
-raised to a fractional power is the only way a template can reach Python's
-`complex` type: there is no complex literal, no filter accepts or returns one,
-and every arithmetic operator on one is a type error in any template that then
-tries to use the result.
-
-gojja2 raises `ValueError` rather than inventing an approximation that would be
-wrong in a different way. Asserted by `TestOperatorsMatchCPython`.
-
 ### A macro containing a context-free include
 
 ```jinja
@@ -355,6 +377,29 @@ gojja2 renders the macro. The bypass itself *is* reproduced -- a context-free
 include still escapes an enclosing `{% filter %}` buffer, which is covered by
 the corpus -- but turning a function into an unconsumed generator is an
 artefact of compiling to Python, not a property of the language.
+`TestDivergenceContextFreeIncludeInAMacro` pins the rendered body.
+
+### An imported module's class under autoescape
+
+```jinja
+{% import "m.html" as m %}{{ m.__class__ }}
+```
+
+Under autoescape CPython raises `TypeError: TemplateModule.__html__() missing 1
+required positional argument: 'self'`. markupsafe's `escape()` asks whatever it
+is given for an `__html__` attribute and calls it, and jinja2's `TemplateModule`
+defines one -- so on the *class* it finds the plain function, unbound, and the
+call has no `self`. gojja2 prints the class, escaped:
+`&lt;class &#39;jinja2.environment.TemplateModule&#39;&gt;`.
+
+Without autoescape nothing asks for `__html__`, and both print `<class
+'jinja2.environment.TemplateModule'>`. Markup's class carries the same unbound
+method, and there the two agree: `{{ ('x'|safe).__class__ }}` under autoescape
+raises CPython's `TypeError` on both sides. The module's class is a type object
+gojja2 gives a name and a repr (see [Python object
+introspection](#python-object-introspection)) and nothing behind them, and a
+template that prints it is broken under CPython.
+`TestDivergenceModuleClassUnderAutoescape` pins all three answers.
 
 ### `{{ self|list }}`
 
@@ -378,6 +423,32 @@ One case answers rather than failing, though, so it is not only wording:
 is `True` in jinja2, because the test only asks whether `iter()` accepts the
 object, and `False` here. A template that branches on it takes the other
 branch.
+
+## Templates jinja2 renders and gojja2 cannot
+
+These work under CPython jinja2 and are refused here, because each needs
+something gojja2 does not carry: a `complex` type, the Unicode name database, a
+string that can hold half of a UTF-16 pair, a codec's character table. gojja2
+refuses rather than approximate, except for a lone surrogate, which a Go string
+cannot hold at all and which becomes U+FFFD. If you are porting, these are the
+ones that can stop a template that works today, and each starts from something
+you can search a template for: `**`, `\N{`, a `\ud800`-`\udfff` escape,
+`.encode(` and `.decode(`.
+
+### Complex numbers
+
+```jinja
+{{ (-8) ** (1/3) }}
+```
+
+CPython renders `(1.0000000000000002+1.7320508075688772j)`. A negative base
+raised to a fractional power is the only way a template can reach Python's
+`complex` type: there is no complex literal and no filter returns one. Once made
+it is Python's own -- `+ 1` and `* 2` work, `|abs` gives its magnitude, and
+ordering it against a number is a `TypeError`.
+
+gojja2 raises `ValueError` rather than inventing an approximation that would be
+wrong in a different way. Asserted by `TestOperatorsMatchCPython`.
 
 ### `\N{...}` escapes in string literals
 
@@ -418,7 +489,6 @@ Every other escape -- `\xNN`, `\uNNNN`, `\UNNNNNNNN`, octal, and the
 single-character escapes -- is exact, including CPython's quirk that `"\é"`
 decodes to the four characters `\xe9`.
 
-
 ### A lone surrogate in a string literal
 
 ```jinja
@@ -439,13 +509,14 @@ and three bytes of U+FFFD here.
 Carrying one would mean a string representation that is not a Go string, for a
 value no text source can contain: nothing read from a file, a context or a
 decode is a lone surrogate, only an escape written for the purpose. The codec
-entry above is the same limit reached from the other side. It is pinned by
+entry below is the same limit reached from the other side. It is pinned by
 `TestLoneSurrogateLiteral` rather than by corpus cases, because the corpus's
 reference files are UTF-8 too and cannot hold CPython's answer.
+
 ### Which codecs and error handlers `.encode()` and `.decode()` know
 
 ```jinja
-{{ "€"|string.encode("cp1252") }}
+{{ ("€"|string).encode("cp1252") }}
 ```
 
 CPython ships about a hundred codecs. gojja2 implements the three a template
@@ -511,7 +582,8 @@ every well-formed input and fails on the first malformed byte, which is the
 moment nobody wants a surprise.
 
 So compiling a template looks for them and puts what it finds on
-[`Template.Unsupported`](extending.md), whether or not anyone asked:
+[`Template.Unsupported`](guide.md#constructs-gojja2-cannot-honour), whether or
+not anyone asked:
 
 ```go
 tmpl, err := env.GetTemplate("page.html")
@@ -543,8 +615,9 @@ own -- `Namespace`, `LoopContext`, `Macro`, `TemplateReference`,
 `TemplateModule` -- and three of them none at all. `Cycler`, `Joiner` and
 `BlockReference` fall back to Python's default, `<module.Qualname object at
 0xADDR>`. gojja2 prints the same form with the address of its own object, on
-the same terms as `|pprint` above: the form is reproducible and the address is
-not, so the conformance suite treats it as ungradable.
+the same terms as [`|pprint` of a cyclic value](#pprint-of-a-value-that-contains-itself)
+below: the form is reproducible and the address is not, so the conformance
+suite treats it as ungradable.
 
 ```jinja
 {{ joiner() }}                  <jinja2.utils.Joiner object at 0x...>
@@ -556,10 +629,10 @@ not, so the conformance suite treats it as ungradable.
 Only a *call* renders a block. Printing the reference prints the object, which
 is why `{% block x %}{{ self.x }}{% endblock %}` terminates.
 
-### A comparison that runs out of stack under 3.14
+### A comparison that runs out of stack from 3.14
 
 ```jinja
-{% set l = [] %}{% set m = [] %}{% do l.append(m) %}{% do m.append(l) %}{{ l == m }}
+{% set l = [] %}{% set m = [] %}{% set _ = l.append(m) %}{% set _ = m.append(l) %}{{ l == m }}
 ```
 
 A comparison names itself when the stack runs out, unlike the *call* path, whose
@@ -567,13 +640,13 @@ suffix 3.12 dropped:
 
 ```
 3.11, 3.12, 3.13:  maximum recursion depth exceeded in comparison
-3.14:              Stack overflow (used 8156 kB) in comparison
+3.14, 3.15:        Stack overflow (used 8156 kB) in comparison
 ```
 
-gojja2 says the first on every version. The number in 3.14's is the stack *this
-machine* had -- it differs between two runs of CPython on two machines, and
-there is nothing for gojja2 to compute it from. The corpus cannot hold the case
-for the same reason a `|pprint` id cannot;
+gojja2 says the first under every `WithPythonVersion`, 3.14 and 3.15 included.
+The number in their sentence is the stack *this machine* had -- it differs between two runs
+of CPython on two machines, and there is nothing for gojja2 to compute it from.
+The corpus cannot hold the case for the same reason a `|pprint` id cannot;
 `conformance/recursion_compare_test.go` pins the sentence instead.
 
 ### `|pprint` of a value that contains itself
@@ -595,14 +668,19 @@ gojja2: [<Recursion on list with id=18132333323128>,
          'a string long enough that pprint will not fit this on one line']
 ```
 
-A cyclic value reaches `pprint` at all only when its `repr` is too wide to
-print on one line; a small one collapses to `{...}` first, which is exact.
+Any cyclic value prints an id under `|pprint`, however small: pprint writes a
+value with a repr of its own, which marks a cycle where the builtin repr
+collapses it. `{{ l }}` of a list holding itself is `[[...]]` on both sides,
+exactly, while `{{ l|pprint }}` is `[<Recursion on list with id=...>]` on both,
+with two different ids.
 
-This sentence was untrue for a while, and nothing noticed, because the corpus
-cannot hold a case whose answer carries an id that changes between two runs of
-CPython. `conformance/recursion_repr_test.go` asserts it outside the corpus
-instead: it blanks the id and compares the rest against CPython's own output,
-so the form is pinned exactly and only the number is allowed to differ.
+What a cyclic value prints under `|pprint` was described wrongly here more than
+once, and nothing noticed, because the corpus cannot hold a case whose answer
+carries an id that changes between two runs of CPython.
+`conformance/recursion_repr_test.go` asserts it outside the corpus instead,
+small values included: it blanks the id and compares the rest against CPython's
+own output, so the form is pinned exactly and only the number is allowed to
+differ.
 
 ### The order a set prints in
 
@@ -645,13 +723,23 @@ the cases here pop until it is empty and compare the sorted result. And a
 `{{ s.add(1) }}{{ s|list|sort }}` reports "'int' and 'str'" where CPython
 reports "'str' and 'int'".
 
-`|pprint` is the exception, and it is graded. pprint does not use the repr's
-order: it sorts with `pprint._safe_key`, which is the elements' own ordering
-wherever they have one, so a set of integers pretty-prints as `0, 1, 2` and a
-set of strings in string order -- both reproducible, and both matched here
-exactly. A set holding *mixed* types is not: `_safe_key` falls back to
-`(type name, id(obj))`, and an address is an address. gojja2 keeps its repr
-order for that case, which is at least the same one twice.
+`|pprint` of a short set is not an exception. pprint writes anything that fits
+on one line with the builtin repr, so a short set pretty-prints in hash order
+there and in repr order here -- `{{ s|pprint }}` of four short strings is
+`{'delta', 'c', 'a', 'b'}` in one CPython run and `{'a', 'b', 'c', 'delta'}`
+every time here. It is the same divergence again.
+
+A set too wide for one line is the exception, and it is graded. pprint lays it
+out one element per line and sorts it first, with `pprint._safe_key`, which is
+the elements' own ordering wherever they have one, so a set of integers
+pretty-prints as `0, 1, 2` and a set of strings in string order -- both
+reproducible, and both matched here exactly. Where two elements cannot be
+compared, `_safe_key` falls back to `(type name, id(obj))`. For two elements of
+one type, such as `(1,)` and `('a',)`, the address decides, and an address is
+an address; gojja2 keeps its repr order there, which is at least the same one
+twice. For two *types* the name decides, and that is reproducible -- a wide set
+of integers and strings lists every integer first -- so it is not a divergence
+and is not covered by this entry.
 
 Of the two answers gojja2's is the reproducible one, which is a reason to prefer
 it rather than a claim that CPython is wrong: an unordered collection has no
@@ -712,7 +800,8 @@ on purpose:
 The third is two objects because jinja2 folds each literal into one of its own;
 the fourth is one because CPython's compiler shares the constant between the two
 assignments. Following it would mean modelling the small-int cache, the fold and
-the compiler's constant table together.
+the compiler's constant table together. `TestDivergenceSameasOnTwoLiterals` pins
+gojja2's answers to all of these.
 
 ### A NaN handed in from Go twice
 
@@ -763,7 +852,64 @@ as a single run.
 
 Above that, CPython splits the list into runs and merges them, and gojja2 uses
 a stable sort of its own. The result is identical; only which pair a failing
-comparison names can differ.
+comparison names can differ:
+
+```jinja
+{{ (range(30)|list + ['a'] + range(30)|list)|sort }}     'str' and 'int' in both
+{{ (range(100)|list + ['a'] + range(100)|list)|sort }}   'str' and 'int' on CPython, 'int' and 'str' here
+```
+
+`TestDivergenceLongSortNamesItsOwnPair` pins both.
+
+### A repetition that overflows on a loop's second pass under 3.15
+
+```jinja
+{% for n in [2, 10**30] %}{{ 'a' * n }}{% endfor %}
+```
+
+CPython 3.15's specialising interpreter has a fast path for `str * int`, and its
+overflow is worded differently from the generic one: `Python int too large to
+convert to C ssize_t` where the generic path says `cannot fit 'int' into an
+index-sized integer`. An instruction runs generically the first time and
+specialised after, so the same `'a' * n` answers one way on a loop's first pass
+and the other way on its second -- and, for a template CPython has cached, on
+any render after the first.
+
+gojja2 answers the first pass's wording wherever the multiplication is written
+in the template. Reproducing the second would mean keeping state per
+instruction that outlives a render, which is exactly what a render here may not
+do. Inside jinja2's own filters the instruction has always run before, so
+`|indent` and `|tojson` answer the specialised wording, and gojja2 does too
+(`value.PythonVersion.LibraryRepeatOverflowNamesSsizeT`). Asserted by
+`own/divergence/repeat_overflow_in_a_loop.jj2@3.15` in
+`testdata/known_failures.txt`.
+
+### A callable fourth argument to `Undefined`
+
+```jinja
+{{ -nope.__class__(1, 2, 3, range) }}
+```
+
+A template can build an undefined of its own by calling an undefined's class,
+whose arguments are `hint`, `obj`, `name` and `exc`. jinja2 raises
+`exc(message)` when the undefined is used, so a callable `exc` is *called* at
+that point, and the template raises whatever comes of that. The message is the
+hint, `1`, so `range(1)` makes a range, and raising a range is `TypeError:
+exceptions must derive from BaseException`; with `dict` in its place the call
+itself fails, `'int' object is not iterable`. No exception class is reachable
+from a template, so under CPython this raises something other than the
+undefined's error.
+
+gojja2 raises `UndefinedError` with the hint as its message, `1`. It has no
+evaluator at the point an undefined reports itself, and calling `exc` when the
+undefined is made instead would run it for an undefined that is never used,
+which is a worse wrong answer than not calling it. A fourth argument that
+cannot be called is reproduced, because that one fails before the message is
+used: `{{ -nope.__class__(1, 2, 3, 5) }}` is `TypeError: 'int' object is not
+callable` on both sides. The three corpus cases
+`testdata/corpus/divergence/undefined_exc_callable_*` are listed in
+`testdata/known_failures.txt`, and `TestDivergenceCallableUndefinedExc` pins
+gojja2's answers.
 
 ### An `{% autoescape %}` flag that is a StrictUndefined
 
@@ -871,10 +1017,10 @@ a name, a repr and equality:
 ```
 
 That is a statement about gojja2's own value model, and it is inert: there is
-nothing behind it. One consequence is visible: under autoescape, CPython's
-`escape()` finds `__html__` on the *class* of an imported module and calls it
-unbound, so `{{ m.__class__ }}` raises where gojja2 prints the class. That is
-an artifact of the class object existing at all.
+nothing behind it. One consequence is visible, and is listed on its own: [an
+imported module's class under
+autoescape](#an-imported-modules-class-under-autoescape) raises in CPython and
+prints here.
 
 `__doc__` is not. CPython answers it with the docstring of the built-in type --
 several paragraphs of English that change between Python releases -- and gojja2
@@ -886,8 +1032,8 @@ renders nothing, as it does for any attribute it has not got:
 
 Carrying those strings would mean carrying a copy of CPython's documentation
 and keeping it in step with the version being compared against, to answer an
-attribute that says nothing about the value. A 352-case sweep of attribute and
-item lookup across every kind found this and nothing else.
+attribute that says nothing about the value. A sweep of attribute and item
+lookup across every kind of value found this and nothing else.
 
 `__mro__` is not implemented either, and that sweep did not find it because it
 asked values rather than the class objects behind them:
@@ -898,7 +1044,7 @@ asked values rather than the class objects behind them:
 
 It belongs with `__subclasses__` rather than with `__class__`: the method
 resolution order is the first step of the walk from a value to the interpreter's
-builtins, which is the escape route the two sandbox tests above document. A class
+builtins, which is the escape route the two sandbox tests below document. A class
 object here has a name, a repr and equality, and nothing that leads anywhere.
 
 Calling one is *not* the same decision, and is implemented: `{{ n.__class__() }}`
@@ -943,20 +1089,22 @@ Five corners of it are not implemented, and each is in
 
 ```jinja
 {{ s.__class__.__len__ }}          a slot wrapper on CPython, undefined here
-{{ n.__class__.__abs__(lst) }}     a slot wrapper words its refusal differently:
-                                   "requires a 'int' object but received a 'list'"
+{{ n.__class__.__abs__(lst) }}     TypeError on CPython: "descriptor '__abs__' requires
+                                   a 'int' object but received a 'list'"; UndefinedError here
 {{ lst.__class__.nope }}           the generic alias list['nope'] on CPython
 {{ yes.__class__.conjugate(yes, 1) }}  "int.conjugate()" there, "bool" here
 {{ c.__class__.next(c) }}          Cycler.next on CPython, undefined here
 ```
 
 The first two are dunders, which gojja2 does not expose on a value either, so
-the type object has none to hand out. The third is the generic-alias divergence
-recorded above for `list[...]`, reached through jinja2's attribute fallback
-instead of through a subscript -- and the reason a name a class does not have is
-undefined here. The fourth is an arity message: bool defines no methods of its
-own, so CPython's descriptor is int's and says so, where gojja2's delegates to
-the receiver's own bound method and words it after the receiver.
+the type object has none to hand out, and calling the undefined it answers
+instead raises. The third is the generic-alias divergence recorded below under
+[Subscripting the `dict` global](#subscripting-the-dict-global), reached through
+jinja2's attribute fallback instead of through a subscript -- and the reason a
+name a class does not have is undefined here. The fourth is an arity message:
+bool defines no methods of its own, so CPython's descriptor is int's and says
+so, where gojja2's delegates to the receiver's own bound method and words it
+after the receiver.
 
 The fifth is the classes jinja2 writes in Python -- `Cycler`, `LoopContext`,
 `Joiner` and `Macro`. Their methods are plain Python functions, which is a
@@ -976,9 +1124,12 @@ no corpus and no differential can grade.
 
 Of the methods Markup adds to str, `striptags()` and `unescape()` are
 implemented and graded. The class method `Markup.escape` and the `__html__`
-protocol method are not: `{{ ('a'|safe).escape('<') }}` and
-`{{ ('a'|safe).__html__() }}` answer an undefined attribute where jinja2 answers
-`Markup('&lt;')` and `Markup('a')`.
+protocol method are not: the attributes are undefined here, so
+`{{ ('a'|safe).escape('<') }}` and `{{ ('a'|safe).__html__() }}` raise
+`UndefinedError` where jinja2 renders `&lt;` and `a`.
+
+`TestDivergenceIntrospectionGaps` pins gojja2's answers for `__doc__`,
+`__mro__`, `escape` and `__html__`.
 
 Everything else a type object answers matches: `__name__`, `__qualname__`,
 `__module__`, its repr, equality with another type object *and with the class
@@ -1026,8 +1177,8 @@ and `2**63` raises.
 
 Internally the length is still computed exactly, in arbitrary precision, and
 only clamped where a Go `int` is required -- iterating or ordinary indexing.
-Asserted by `TestRangeLengthDoesNotOverflow` and graded against CPython over
-1,452 start/stop/step combinations.
+Asserted by `TestRangeLengthDoesNotOverflow`, and checked against CPython by a
+sweep of start/stop/step combinations when it was written.
 
 That clamp was once described here as unobservable, on the grounds that a loop
 over a range that long is stopped by the render budget long before the count
@@ -1046,10 +1197,12 @@ matters. It is not, and probing found two ways to see it:
   over such a range raise the `OverflowError` above and never walk. gojja2 asks
   the same question before it materialises; graded by the `errors/wide_range_*`
   cases. The ordering is CPython's too: `seq = list(value)` is `do_slice`'s
-  first statement, so `{{ range(2 ** 70)|slice(0) }}` is the OverflowError and
-  not the ZeroDivisionError.
+  first statement, so `{{ range(2 ** 70)|slice(0)|list }}` is the OverflowError
+  and not the ZeroDivisionError. Without the `|list` jinja2 never runs that
+  statement and prints a generator, while gojja2 raises the same OverflowError
+  -- the [lazy-filter](#lazy-sequence-filters) difference again.
 
-What remains observable is the lazy-filter fork below: jinja2's `|reverse`
+What remains observable is the lazy-filter fork above: jinja2's `|reverse`
 answers an iterator, which `|first` reads in constant time, while gojja2's
 answers a list -- and a list of 2**70 elements cannot exist, so
 `{{ range(2 ** 70)|reverse|first }}` runs out of budget here where CPython
@@ -1058,7 +1211,12 @@ prints the last element. That is the same choice as everything else in
 
 ## Differences in how the host is treated
 
-These do not change what a template renders. They change what the *caller* sees around the render, which is worth knowing before you port a deployment rather than a template.
+Most of these change what the *caller* sees around the render -- its own data,
+its configuration, its error messages -- rather than what a template renders,
+which is worth knowing before you port a deployment rather than a template. The
+few a template can see say so in their entry, and in the table's third column:
+a pointer-receiver method refused, a subscripted `dict` class, a folded
+infinity, and the default autoescape extensions.
 
 ### A render does not mutate the caller's data
 
@@ -1082,48 +1240,64 @@ t.render(xs=xs)   # [1, 9]
 t.render(xs=xs)   # [1, 9, 9]   -- and xs is now [1, 9, 9]
 ```
 
-gojja2 converts what it is given, so the same template renders `[1, 9]` both
-times and the caller's slice is still `[1]`. Maps and nested containers are the
-same. This is deliberate: a template is usually the least trusted part of a
-program, and several filters mutate in place in jinja2 -- `do_indent` extends
-the list it is handed -- so the alternative is a template reaching into the
-host's state by accident.
+gojja2 renders `[1, 9]` both times, and the caller's list is still `[1]` --
+whether it was handed in as a Go slice to `Render` or as a prepared
+`value.Value` to `RenderValues`. A render works on a copy of anything a template
+could change in place, made the first time the render reaches it, so nothing a
+template does outlives its render. This is deliberate: a template is usually
+the least trusted part of a program, several filters mutate in place in jinja2
+-- `do_indent` extends the list it is handed -- and a value reused across
+requests would carry one request's changes into the next, or into another
+tenant's. [guide.md](guide.md#stateless-renders) is the reference for what is
+copied, what is refused, and how to choose otherwise.
 
 The same holds for everything a render reaches from somewhere that outlives
 it. jinja2 lets a template change an environment global in place -- append to a
 global list, update a global dict, advance a global `cycler` -- and the change
 is there for the next render, on every thread, and for every overlay sharing
 the global: one tenant's write is the next tenant's data. gojja2 copies what a
-template could change before the render can change it, the first time the
-render reaches it, so the change is the render's alone:
+template could change before the render can change it, so the change is the
+render's alone:
 
 | what | shared between renders? | how |
 |---|---|---|
-| a slice, map or nested container in the context | no | converted for each render |
+| a slice, map or nested container in the context of `Render` | no | converted for each render |
 | a `value.Value` in the context of `Render` | no | copied the first time the render reaches it |
+| a `value.Value` handed to `RenderValues`, `RenderBlockValues`, `Expression.EvalValues` or `Module.CallArgs` | no, unless `ShareRenderValues` | copied the first time the render reaches it, as `Render` copies; under the flag, used as it is |
 | a global registered on the Environment | no | copied the first time the render reaches it; a dict only as far as the render reaches into it |
 | what a host function (`Func`, `Class`), a host filter or a Go method returns | no | copied; a value it returns twice is one copy for the whole render |
 | a constant folded into the compiled template | no | copied each time it is evaluated |
-| a host object exposed by pointer | **yes** | its methods are the point; copying it would break every stateful object, and which methods a template may call is the host's method policy |
+| a `Module`'s state, from one `Call` to the next | no, unless `ShareModuleState` | every call starts from the state `Template.Module` left, and `Module.Get` returns a copy |
+| a host object exposed by pointer | **yes** | not copied: a template reads its fields live and calls the methods declared on the value, which receive a copy of the struct. A method declared on the pointer could change the object, so calling one is refused -- a `TemplateRuntimeError` wrapping `ErrSharedState` -- unless `AllowPointerMethods`. Which methods a template may reach at all is the host's method policy |
+
+CPython jinja2 shares all of it: the caller's objects, a module's state from
+call to call, and the host's objects with every method on them. Each of the
+three `WithSharedState` flags in the table gives one of those back, for
+templates trusted not to need the guarantee, and `ShareAll` is jinja2's
+behaviour throughout. Under `ShareRenderValues`, `{% set _ = lst.append(9) %}`,
+`{% set _ = d.update(x) %}` and `{% set d.v %}...{% endset %}` write through to
+the caller's value and stay written -- after the render, and for every later
+render given the same values -- so a prepared `vars` map reused across requests
+carries whatever an earlier template put in it.
+
+What the engine cannot see into stays the host's to get right, whatever the
+setting: a function, filter, test or `value.Object` the host registers or
+passes in runs as written, and so does a method declared on the value that
+writes through a map, a slice or a pointer its struct holds. A mutable
+`value.Object` is copied per render only if it implements `value.Isolator`;
+otherwise every render shares it.
 
 Within one render nothing changes: a global or a host value reached twice --
 through an include, an import or a second call -- is one value, so a change
-made through one reference is seen through the other, as in jinja2. A module
-from `Template.Module` keeps its copies for its whole life, as its state does.
-What differs is only that the next render, and every other tenant, starts from
-the environment's own value. `isolation_test.go` pins each row, under the race
-detector; see `value.Isolate` for the mechanism and its cost, which is charged
-to the render like any other walk.
-
-This holds for `Render` and `RenderString`, which convert what they are given.
-It does **not** hold for `RenderValues`, whose whole purpose is to skip that
-conversion: the values handed to it are used as they are, so
-`{% set _ = lst.append(9) %}`, `{% set _ = d.update(x) %}` and
-`{% set d.v %}...{% endset %}` write through to the caller's value and stay
-written -- after the render, and for every later render given the same values.
-That is the documented trade for skipping the conversion, and it is why a
-`vars` map prepared once and reused across requests should be built per render
-instead if the templates are not trusted.
+made through one reference is seen through the other, as in jinja2. What
+differs is only that the next render, and every other tenant, starts from the
+caller's or the environment's own value. A module made by `Template.Module`
+starts each `Call` from the state it was made with and makes that call's own
+copies of the globals it reaches; under `ShareModuleState` it keeps, for its
+whole life, what earlier calls changed and the copies they made, as its state in
+jinja2 does. `isolation_test.go` and `shared_test.go` pin each row and each
+flag, under the race detector; see `value.Isolate` for the mechanism and its
+cost, which is charged to the render like any other walk.
 
 A list written *in the template* is rebuilt per render for the same reason: it
 is part of the compiled tree, which every render of that template shares --
@@ -1146,8 +1320,9 @@ gojja2's `dict` is a callable that builds a dict, and nothing here models
 generic aliases, so all three are undefined and render empty. Calling it --
 which is what the global is for -- is identical in both.
 
-The other class globals are unaffected: `range['k']` raises in CPython too,
-because only a handful of builtins accept the annotation form.
+The other class globals are unaffected: `range['k']` is undefined in CPython
+too, because only a handful of builtins accept the annotation form, and it
+renders empty on both sides.
 
 `__class__` reaches the same two classes a second way, and diverges the same
 way. `lst` is `[1]` and `d` is `{'a': 1}` here, from the context rather than
@@ -1174,9 +1349,9 @@ CPython reserves for a type object:
 | `{{ n.__class__\|dictsort }}` | `type object 'int' has no attribute 'items'` |
 
 Five filters reach the second of those -- `dictsort`, `xmlattr`, `wordwrap`,
-`wordwrap(wrapstring=...)` and `urlize(rel=...)`. A 161-shape sweep over every
-subject the template generator writes and every accessor it can follow one with
-found the generic alias above and nothing else.
+`wordwrap(wrapstring=...)` and `urlize(rel=...)`. A sweep over every subject
+the template generator writes and every accessor it can follow one with found
+the generic alias above and nothing else.
 
 ### A folded infinity jinja2 writes out
 
@@ -1287,6 +1462,25 @@ whole extension rather than on any trailing substring, and a template compiled
 from a string is escaped by default (jinja2's `default_for_string=True`).
 Asserted by the tests in `autoescape_test.go`.
 
+### Block and comment openings that are the same string
+
+```go
+gojja2.New(gojja2.WithCommentDelimiters("{%", "%}"))   // refused: block is {% too
+```
+
+jinja2 checks its delimiters with `assert block != variable != comment`, a
+chained comparison, which never compares the block opening against the comment
+one -- so it accepts the two being equal, and which of the two a `{%` opens is
+then decided by the order its lexer tries them. `a{% if false %}b{% endif %}c`
+renders `abc` there: both tags are read as comments.
+
+`New` refuses any two equal openings by default: which reading such a template
+gets is a detail of the lexer rather than something its author chose.
+`WithDelimiterLeniency(MatchJinja2Delimiters)` reproduces jinja2's check
+exactly, and the template above then renders `abc` here too; the two pairs
+jinja2 does compare are refused at either setting. See
+[guide.md](guide.md#what-new-refuses). Asserted by `TestDelimiterLeniency`.
+
 ### An overlay's registrations stay in the overlay
 
 jinja2's `Environment.overlay` copies the environment's `__dict__`, so the
@@ -1347,7 +1541,8 @@ unknown extension "debug": the known ones are do and loopcontrols
 and the tag on its own does not compile (`Encountered unknown tag 'debug'.`),
 exactly as it does not in jinja2 without the extension. For one value,
 `{{ x|pprint }}` prints what the tag would; there is no template-side way to
-list the filters and tests.
+list the filters and tests. `TestDivergenceDebugExtensionIsRefused` pins both
+refusals.
 
 ### Native-type rendering
 
@@ -1393,31 +1588,42 @@ What differs is what comes back: a `value.Value` rather than a Python object.
 `TemplateModule` it returns is a `*Module`: `Get` is `module.v`, `Call` and
 `CallArgs` are `module.m(5, b=2)`, `String` is `str(module)`, and `Names` lists
 what `vars(module)` holds besides its two private attributes. What a module
-exports, what its body renders, and how a call binds its arguments are
-jinja2's -- graded against CPython on 44 cases, from defaults that read an
-earlier parameter to a `caller` passed as a keyword, a module that extends
-another, one that imports a third without re-exporting it, and a macro
-re-exported from a template that escapes differently, whose result is `Markup`
-by the setting where it was *defined*. The differences are in how the host holds
-it:
+exports, what its body renders, and how a call binds its arguments are jinja2's
+-- graded against CPython on the 41 cases in `host_module_test.go`, from
+defaults that read an earlier parameter to a `caller` passed as a keyword, a
+module that extends another, one that imports a third without re-exporting it,
+and a macro re-exported from a template that escapes differently, whose result
+is `Markup` by the setting where it was *defined*. The differences are in how
+the host holds it:
 
 - **There is no `Template.module`.** jinja2 caches `make_module()` on the
   template, so every caller shares one module and the state its macros mutate.
   A `*Template` is shared between goroutines and renders, so gojja2 does not
   cache one: call `Module(ctx, nil)` once and keep the result. Each `Module`
   is a fresh `make_module`, as in jinja2.
+- **A call leaves the module's state as it found it.** jinja2's module keeps
+  what one call changed for the next, so a macro that updates a `namespace()`
+  makes `module.inc()` answer "1" and then "2". By default every `Call` here
+  starts from the state the module had when `Template.Module` returned, so it
+  answers "1" both times, and `Get` returns a copy that no later call changes
+  -- one caller's call cannot change what the next caller's sees. Under
+  `WithSharedState(ShareModuleState)` the module keeps its state from call to
+  call and `Get` returns the module's own value, as in jinja2; see [A render
+  does not mutate the caller's data](#a-render-does-not-mutate-the-callers-data).
 - **Every call is bounded on its own.** jinja2 has no bounds; here a call runs
   under the `ctx` it is given and a fresh allowance of the environment's
   limits, not under the context the module was made with, which is likely
-  over by then. Calls on one module are serialised, because they share its
-  state -- `module.inc()` twice is "1" and then "2" in both.
+  over by then. Calls on one module are serialised, because each works on the
+  module's state while it runs.
 - **`vars` is converted when the module is made**, all of it, rather than as
   the template reads each name: the module outlives the call, and must not
   read the caller's map afterwards.
-- **`Call` converts its arguments**, as `Render` converts variables, so a
-  macro that appends to a list it was given appends to its own copy; jinja2
-  appends to the caller's. `CallArgs` takes values as they are and behaves as
-  jinja2 does.
+- **A call works on copies of its arguments.** `Call` converts them, as
+  `Render` converts variables, and `CallArgs` copies a prepared `value.Value`
+  the macro could change, so a macro that appends to a list it was given
+  appends to its own copy; jinja2 appends to the caller's. Under
+  `WithSharedState(ShareRenderValues)`, `CallArgs` takes values as they are
+  and behaves as jinja2 does.
 - **`Names` is sorted.** jinja2 keeps the exported names in a set, whose order
   varies between runs of CPython.
 - `make_module`'s `shared` and `locals` arguments, and `make_module_async`, are

@@ -4,7 +4,7 @@
 """Record what a CPython other than the pinned one answers, where it differs.
 
 testdata/golden holds the pinned interpreter's answer to every corpus case, and
-that is what TestConformance grades. But gojja2 reproduces four interpreters,
+that is what TestConformance grades. But gojja2 reproduces several interpreters,
 and they do not agree: `{{ d[1:2] }}` raises TypeError on 3.11 and KeyError on
 3.12, division by zero is worded two ways, and CPython carries its own Unicode
 so the digits themselves move. Those differences are what WithPythonVersion

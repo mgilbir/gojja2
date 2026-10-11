@@ -67,10 +67,6 @@ func Str(v Value) string {
 	return Repr(v)
 }
 
-// HTML is the escaped form a value carries for itself -- Python's __html__.
-// ok is false when it has none, which is every value but an Object that
-// implements HTMLer. A Markup string answers through IsSafe instead, because
-// markupsafe returns it unchanged rather than asking it for anything.
 // HTMLRefuser is an Object that carries __html__ but cannot answer it.
 //
 // There is exactly one: the Markup *class*. markupsafe defines __html__ as an
@@ -93,6 +89,10 @@ func HTMLRefusal(v Value) error {
 	return nil
 }
 
+// HTML is the escaped form a value carries for itself -- Python's __html__.
+// ok is false when it has none, which is every value but an Object that
+// implements HTMLer. A Markup string answers through IsSafe instead, because
+// markupsafe returns it unchanged rather than asking it for anything.
 func HTML(v Value) (string, bool) {
 	if v.kind == KindObject {
 		if h, ok := v.obj.(HTMLer); ok {

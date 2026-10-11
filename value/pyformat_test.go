@@ -285,7 +285,7 @@ func TestFormatSpecRules(t *testing.T) {
 
 // wantPercentC is %c's refusal as the pinned interpreter words it. Before 3.14
 // every wrong argument got one sentence; 3.14 names what it got instead. The
-// corpus grades this against CPython on all four versions -- this only keeps
+// corpus grades this against CPython on every version -- this only keeps
 // the unit test pointed at whichever one is the default.
 func wantPercentC(what string) string {
 	if value.DefaultPythonVersion.PercentCNamesTheType() {

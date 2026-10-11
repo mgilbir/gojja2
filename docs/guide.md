@@ -43,7 +43,7 @@ something else. A template that asks for a file outside its root gets
 |---|---|
 | `GetTemplate(name)` | loads, compiles, **caches** on success |
 | `SelectTemplate(names)` | the first that exists — what `{% extends %}` does with a list |
-| `FromString(source)` | compiles anonymously; autoescapes by default; **does not cache** |
+| `FromString(source)` | compiles anonymously; escaped under an extension-based autoescape policy, unescaped with none ([below](#autoescaping)); **does not cache** |
 | `FromNamedString(name, source)` | compiles under a name, which decides autoescaping and appears in errors |
 
 Compiled templates live in a bounded LRU of 400, as jinja2's does.
@@ -65,8 +65,14 @@ differs from jinja2's.
 ```go
 err := tmpl.Render(ctx, w, map[string]any{"user": user})     // streams to w
 s, err := tmpl.RenderString(ctx, map[string]any{...})        // returns the whole document
-err := tmpl.RenderValues(ctx, w, map[string]value.Value{...}) // skips the Go conversion
+err = tmpl.RenderValues(ctx, w, map[string]value.Value{...})  // values already converted
 ```
+
+`RenderValues` skips the conversion from Go, not the copy: a value a template
+could change is copied the first time the render reaches it, exactly as
+`Render` copies one, so a prepared `vars` map can be reused across renders. See
+[Stateless renders](#stateless-renders) for what is copied and the flag that
+turns it off.
 
 `RenderString` returns the empty string when the render fails, not a partial
 document. `Render` flushes what it produced before the failure, because leaving
@@ -77,9 +83,12 @@ Output streams to `w` except where a construct captures its own body — see
 [architecture.md](architecture.md#what-holds-output-before-writing-it) for the
 six that do.
 
-Every render takes a `context.Context` and stops when it is cancelled. See
-[limits.md](limits.md) for where cancellation is noticed, and for the two
-backstops behind it.
+Every render takes a `context.Context` and stops once it is cancelled, but the
+context is read every 4,096 units of work, not on every one: a render shorter
+than that completes and returns success against a context that was already
+cancelled. Check `ctx.Err()` before rendering if that matters. See
+[limits.md](limits.md#how-promptly-a-cancelled-render-stops) for what counts as
+a unit, and for the two backstops behind it.
 
 ### One block on its own
 
@@ -130,8 +139,11 @@ v, ok := mod.Get("version")                       // t.module.version
 `Module` renders the template once for what it exports -- its macros and
 top-level `{% set %}` names, but not a name starting with `_` or one bound by
 an import -- and `CallArgs` passes keyword arguments and a `caller`. Each call
-is bounded by the `ctx` it is given, and calls on one module are serialised,
-since its macros share its state. See
+is bounded by the `ctx` it is given, calls on one module are serialised, and
+every call starts from the state `Module` left: a macro that updates a
+module-level `namespace()` changes it for that call only, and `Get` returns a
+copy. jinja2's module keeps its state from call to call;
+[Stateless renders](#stateless-renders) has the flag that does the same. See
 [divergences.md](divergences.md#calling-a-templates-macros-from-the-host) for
 where it differs from jinja2's `Template.module`.
 
@@ -140,15 +152,21 @@ where it differs from jinja2's `Template.module`.
 Reflection, with Python semantics on the other side:
 
 - a **struct** exposes its exported fields, by name or by `json` tag, and its
-  methods that take no arguments — value or pointer receiver;
+  methods that take no arguments. A method declared on a pointer receiver is
+  in the method set only when the struct is passed as a pointer, and even then
+  calling it is refused by default, because it could change the object you
+  passed in -- see [Stateless renders](#stateless-renders);
 - an **embedded struct** promotes, as it does in Go: `{{ user.ID }}` reaches
   the embedded base's field, a shallower field of the same name shadows a
   deeper one, and two of one name at one depth promote neither. The embedded
   field stays reachable by its own name (`{{ user.Base.ID }}`). For *listing* —
-  `|items`, `{% for %}`, `|tojson` — the rule is `encoding/json`'s instead: an
-  embedded struct serialises flat, so `{{ user|tojson }}` is what
+  `|items`, `{% for %}`, `|tojson` — the keys are `encoding/json`'s instead: an
+  embedded struct serialises flat, so `{{ user|tojson }}` has the keys
   `json.Marshal` gives. A `json` tag on an embedded field names it and stops
-  the promotion, exactly as it does there.
+  the promotion, exactly as it does there. The *order* is not json's:
+  `|items` and `{% for %}` list the outer struct's own fields first, in
+  declaration order, then each level of promoted fields in turn, and `|tojson`
+  sorts the keys, as jinja2's does for every dict.
 
   One corner differs from `encoding/json`: a tag on an embedded field whose
   *type* is unexported is ignored, and the fields promote as if it were not
@@ -179,6 +197,107 @@ inside the engine. See [scope.md](scope.md) on why there is no sandbox.
 To present a type on its own terms rather than by reflection, implement
 `value.Object`: [extending.md](extending.md#exposing-a-go-type-directly).
 
+## Stateless renders
+
+A render leaves nothing behind. jinja2 hands a template the caller's own
+objects, so `{% do xs.append(9) %}` appends to the caller's list, a macro module
+keeps what one call changed for the next, and a method the template calls runs
+on the caller's object. A context, a module or a host object reused across
+requests then carries one request's changes into the next -- or into another
+tenant's. gojja2 does none of that by default.
+
+**What is copied.** A value a template could change in place -- a list, a dict,
+a set, a namespace, a `value.Object` that implements `value.Isolator` -- is
+copied the first time a render reaches it, and the render works on its copy.
+Within the render every reference to it is that one copy, so two names for one
+list stay two names for one list. That covers everything a template is handed
+from outside: the arguments to `Render` and `RenderString`, the prepared values
+given to `RenderValues`, `RenderBlockValues`, `Expression.EvalValues` and
+`Module.CallArgs`, the environment's globals, and whatever a host function,
+filter or method returns. A `Module` starts every `Call` from the state
+`Template.Module` left, and `Module.Get` returns a copy.
+
+**What is refused instead.** A Go method declared on a pointer receiver can
+change the object you passed in, and the object cannot be copied out from under
+its own methods. Calling one is an error:
+
+```go
+type Counter struct{ N int }
+
+func (c *Counter) Inc() int { c.N++; return c.N }
+
+tmpl, _ := env.FromString(`{{ c.Inc() }}`)
+_, err := tmpl.RenderString(ctx, map[string]any{"c": &Counter{}})
+if errors.Is(err, gojja2.ErrSharedState) {
+    // refused: an errs.TemplateRuntimeError naming *Counter.Inc and
+    // WithSharedState(AllowPointerMethods); the Counter is unchanged
+}
+```
+
+Naming the method without calling it, `{{ c.Inc }}`, is not refused. A method
+declared on the value receives a copy of the struct and is called as usual. A
+`value.MethodPolicy` of your own sees `MethodInfo.PointerReceiver`, so it can
+hide such methods altogether.
+
+**Giving jinja2's behaviour back.** `WithSharedState` takes any combination of
+three flags, each one of jinja2's behaviours, for templates trusted not to need
+the guarantee. `ShareAll` is all three; `New` refuses a bit that is not one of
+them. None of them reaches the environment's globals, what `Render` and
+`RenderString` are given, or what host code returns: those are copied
+whatever the flags say.
+
+| flag | gives back |
+|---|---|
+| `ShareRenderValues` | `RenderValues`, `RenderBlockValues`, `Expression.EvalValues` and `Module.CallArgs` use the caller's values as they are, so a template's change reaches the caller's value and every later render given it |
+| `ShareModuleState` | a `Module` keeps what one call changed for the next, as jinja2's `TemplateModule` does, and `Get` returns the module's own value |
+| `AllowPointerMethods` | a template may call a method declared on a pointer receiver |
+
+```go
+env, _ := gojja2.New(gojja2.WithExtensions("do"),
+    gojja2.WithSharedState(gojja2.ShareRenderValues))
+tmpl, _ := env.FromString(`{% do xs.append(9) %}{{ xs }}`)
+vars := map[string]value.Value{"xs": value.NewList(value.Int(1))}
+_ = tmpl.RenderValues(ctx, w, vars) // [1, 9]
+_ = tmpl.RenderValues(ctx, w, vars) // [1, 9, 9]; without the flag, [1, 9] again
+```
+
+```go
+env, _ := gojja2.New(gojja2.WithSharedState(gojja2.ShareModuleState))
+tmpl, _ := env.FromString(`{% set ns = namespace(n=0) %}` +
+    `{% macro inc() %}{% set ns.n = ns.n + 1 %}{{ ns.n }}{% endmacro %}`)
+mod, _ := tmpl.Module(ctx, nil)
+a, _ := mod.Call(ctx, "inc") // 1
+b, _ := mod.Call(ctx, "inc") // 2; without the flag, 1 again
+```
+
+```go
+env, _ := gojja2.New(gojja2.WithSharedState(gojja2.AllowPointerMethods))
+tmpl, _ := env.FromString(`{{ c.Inc() }}`)
+c := &Counter{N: 5}
+s, _ := tmpl.RenderString(ctx, map[string]any{"c": c}) // "6", and c.N is now 6
+```
+
+**What stays yours.** The engine copies what a template is handed; it cannot
+see into code. A function, filter or test you register, the methods of a
+`value.Object` you pass in, and a method declared on the value that writes
+through a map, a slice or a pointer its struct holds all run as written -- the
+method's copy of the struct shares that map:
+
+```go
+type Cache struct{ M map[string]int }
+
+func (c Cache) Put() string { c.M["k"]++; return "" } // {{ c.Put() }} changes c.M
+```
+
+Whether such code keeps state across renders is up to you. A `value.Object`
+that a template can change is copied per render only if it implements
+`value.Isolator`; one that does not is shared by every render that reaches it.
+And the default stops a render changing what it was given, not you changing it
+while the render runs -- see [Concurrency](#concurrency).
+
+[divergences.md](divergences.md#a-render-does-not-mutate-the-callers-data)
+compares this with jinja2.
+
 ## Errors
 
 Every error carries the Python exception class jinja2 would have raised:
@@ -194,8 +313,8 @@ question `except` would. `err.Error()` is the bare message, matching Python's
 fields, and `(*errs.Error).Detail()` renders class, message and
 `template, line N` together for a human.
 
-`ErrNotFound`, `ErrTooManyIterations`, `ErrOutputTooLarge` and `ErrInternal` are
-the package-level sentinels.
+`ErrNotFound`, `ErrTooManyIterations`, `ErrOutputTooLarge`, `ErrSharedState`
+and `ErrInternal` are the package-level sentinels.
 
 ## Missing values
 
@@ -205,13 +324,13 @@ returns. Rendering `[{{ nope }}]`, `[{{ nope.a.b }}]` and
 
 | behaviour | jinja2 class | `{{ nope }}` | `{{ nope.a.b }}` | `{% if nope %}` |
 |---|---|---|---|---|
-| `UndefinedDefault` (zero value) | `Undefined` | `[]` | error | `[]` |
-| `UndefinedChainable` | `ChainableUndefined` | `[]` | `[]` | `[]` |
-| `UndefinedDebug` | `DebugUndefined` | `[{{ nope }}]` | error | `[]` |
-| `UndefinedStrict` | `StrictUndefined` | error | error | error |
+| `value.UndefinedDefault` (zero value) | `Undefined` | `[]` | error | `[]` |
+| `value.UndefinedChainable` | `ChainableUndefined` | `[]` | `[]` | `[]` |
+| `value.UndefinedDebug` | `DebugUndefined` | `[{{ nope }}]` | error | `[]` |
+| `value.UndefinedStrict` | `StrictUndefined` | error | error | error |
 
-`UndefinedStrict` is the one to develop against: it turns a typo in a variable
-name into a failure instead of a silently empty page.
+`value.UndefinedStrict` is the one to develop against: it turns a typo in a
+variable name into a failure instead of a silently empty page.
 
 ## Autoescaping
 
@@ -245,9 +364,9 @@ says nothing gets the checking. `Disabled` entries are checked the same way --
 one that cannot match errs toward escaping *more*, which is safe, but it is
 still not the configuration you wrote down.
 
-`SelectAutoescape` and `SelectAutoescapeWith` are unchanged and always lenient:
-they return an `AutoescapeFunc` and have nowhere to report a refusal, so the
-checking lives in the option, which has an error to return.
+`SelectAutoescape` and `SelectAutoescapeWith` do no such checking, whatever
+`Leniency` says: they return an `AutoescapeFunc` and have nowhere to report a
+refusal, so the checking lives in the option, which has an error to return.
 
 A typo that is still a plausible extension -- `hmtl` -- cannot be told from a
 suffix somebody really uses, and is accepted at either setting.
@@ -258,9 +377,13 @@ extension rather than on any trailing substring. With no arguments it escapes
 `html`, `htm`, `xml` and `xhtml` — jinja2's three plus one, which only ever
 escapes *more*; see [divergences.md](divergences.md#the-default-autoescape-extension-set).
 
-**A template compiled with `FromString` is escaped**, because it has no name to
-decide by. Defaulting it to unescaped is how an escaped-by-configuration project
-ends up emitting raw user input.
+**Under an extension-based policy, a template compiled with `FromString` is
+escaped** -- `WithAutoescapeExtensions`, `WithAutoescapeSelection`, or
+`WithAutoescapeFunc` with `SelectAutoescape` or `SelectAutoescapeWith` --
+because it has no name to decide by. Defaulting it to unescaped is how an
+escaped-by-configuration project ends up emitting raw user input. With **no**
+autoescape option nothing is escaped, `FromString` included, which is jinja2's
+default too: `gojja2.New()` renders `{{ '<i>' }}` as `<i>`.
 
 `SelectAutoescapeWith(SelectAutoescapeConfig{...})` takes the disabled-extension
 list, the default, and `DisableForString`. Every field is written so the quiet
@@ -303,6 +426,7 @@ There is no environment to use when it does -- it returns `nil` and the error.
 | a negative `TruncateLeeway` | `truncate` refuses it when it runs, so the environment built and then failed on every render that reached the filter |
 | a `PythonVersion` that is not one of the five | gojja2 reproduces CPython 3.11 to 3.15; anything else has no answers to give, and taking the default silently would render something nobody asked for |
 | an `UnsupportedLeniency` that is neither value | likewise |
+| a `SharedState` with a bit that is not one of its flags | a typo must not quietly widen what a template may do; see [Stateless renders](#stateless-renders) |
 
 Two things that look like they should be refused and are not. An **empty**
 delimiter means "leave this one alone", which is how one can be overridden
@@ -337,12 +461,14 @@ jinja2 3.1.6 is one library, but it runs on an interpreter, and the interpreter
 decides some of what a template does. `{{ d[0:1] }}` raises `TypeError` on
 CPython 3.11 and `KeyError` on 3.12. `{{ xs|sort(reverse=none) }}` is an error
 on 3.11 and a forward sort on 3.12. A division by zero is worded six ways before
-3.14 and one way after. And CPython carries its own Unicode, so which characters
-are digits, how they case, and how `repr` escapes them all move too.
+3.14 and one way after. 3.15 rewords most of the errors a printf-style `%`
+format raises. And CPython carries its own Unicode, so which characters are
+digits, how they case, and how `repr` escapes them all move too.
 
-Across 3.11 to 3.14 that is **66 of gojja2's 2,241 committed conformance cases**
--- 2.9%. Most answer exactly two ways; a few, such as `{{ 1.0 % 0 }}`, answer
-three.
+Across 3.11 to 3.15 that moves a small share of gojja2's committed conformance
+cases. Most of those answer two ways; a few, such as `{{ 1.0 % 0 }}`, answer
+three. [conformance.md](conformance.md#which-cpython) has the counts, measured
+rather than restated here.
 
 A render reproduces the pinned interpreter, 3.13, by default. Choose another to
 match a service already running on it:
@@ -356,12 +482,12 @@ constants are `Python311` through `Python315`, and `DefaultPythonVersion` is the
 pinned one -- the interpreter every committed table and golden was generated
 from, which the Makefile's `PYTHON_VERSION` sets and a test holds the two to.
 
-What it changes is a closed list -- sixteen behaviour and wording rules, plus
-the Unicode tables -- and every rule is named in `value/pyversion.go` with the
+What it changes is a closed list of behaviour and wording rules, plus the
+Unicode tables, and every rule is named in `value/pyversion.go` with the
 release that moved it and the conformance case that grades it. Everything
-outside that list is identical on every interpreter, which is 98.3% of the
-corpus. [conformance.md](conformance.md#which-cpython) has the measurements and
-how each version is graded.
+outside that list is identical on every interpreter.
+[conformance.md](conformance.md#which-cpython) has how many rules and cases
+that is, and how each version is graded.
 
 This is *not* a compatibility shim for older jinja2: the library is pinned at
 3.1.6 throughout. It is only about which Python that library is running on.
@@ -424,7 +550,7 @@ type, a closed set of kinds, and children reached through **labelled edges**.
 ```go
 tmpl, _ := env.FromString(`{% if admin %}{{ name }}{% endif %}`)
 
-syntax.Walk(tmpl.Syntax(), func(n *syntax.Node, role syntax.Role) bool {
+syntax.Walk(tmpl.Syntax().Root, func(n *syntax.Node, role syntax.Role) bool {
     if role == syntax.RoleTest && n.Kind == syntax.KindName {
         fmt.Println(n.Attr("name"), "decides something")
     }
@@ -612,7 +738,20 @@ committed case.
 
 `WithPolicies` overrides the defaults jinja2 keeps in `Environment.policies`:
 `URLizeRel` (jinja2 defaults it to `"noopener"`), `URLizeTarget`, and
-`TruncateLeeway`.
+`TruncateLeeway` (5). It replaces the whole struct, so start from
+`DefaultPolicies()`:
+
+```go
+p := gojja2.DefaultPolicies()
+p.URLizeTarget = "_blank"
+env, err := gojja2.New(gojja2.WithPolicies(p))
+```
+
+A struct written from scratch, `Policies{URLizeTarget: "_blank"}`, also sets
+`URLizeRel` to `""` and `TruncateLeeway` to 0: `urlize` then emits
+`target="_blank"` links with no `rel="noopener"`, which is the opening a
+`_blank` target needs closed. The rest of jinja2's `Environment.policies` has
+no option here.
 
 ## Overlays
 
@@ -654,18 +793,22 @@ options leave alone everything compiling reads: the syntax and delimiters, the
 extensions, the loader, the autoescape policy, finalize, the Undefined, the
 policies, the Python version, `WithMaxIntBits`, and the two unsupported-construct
 options. Constant folding bakes each of those into the tree. What is left -- the
-render limits, the method policy, the globals, the cache size -- is read while
-rendering, from the overlay. So an overlay that changes only those costs about
-as much as the render itself, while one that changes autoescape compiles each
-template it is asked for (`BenchmarkPerRequestEnvironment`, one page with a
-layout and an include):
+render limits, the method policy, `WithSharedState`, the globals, the cache
+size -- is read while rendering, from the overlay. So an overlay that changes
+only those costs about as much as the render itself, while one that changes
+autoescape compiles each template it is asked for. `BenchmarkPerRequestEnvironment` renders one page
+with a layout and an include; measured 2026-10-11 on an AMD Ryzen 9 6900HX with
+`GOMAXPROCS` 2, median of three (`go test -run x -bench
+BenchmarkPerRequestEnvironment -benchmem -count=3 .`). It is a snapshot: the
+ratios are the point, and the absolute figures move with the machine and the
+engine.
 
 | per request | time | allocations |
 |---|---|---|
-| one shared environment, no per-request state | 11.7µs | 135 |
-| `Overlay` that reuses compiled templates | 16.1µs | 197 |
-| `Overlay(WithAutoescape(true))`, compiles its own | 42.5µs | 395 |
-| `New` | 56.2µs | 475 |
+| one shared environment, no per-request state | 13.6µs | 133 |
+| `Overlay` that reuses compiled templates | 17.9µs | 198 |
+| `Overlay(WithAutoescape(true))`, compiles its own | 45.0µs | 396 |
+| `New` | 59.8µs | 482 |
 
 Two things make an overlay compile a template itself even then: the overlay
 having registered a filter or test of its own, since folding runs them, and the
@@ -703,18 +846,23 @@ tree is shared by every render of that template. `concurrency_test.go` pins
 this; the version without the rebuild fails there with one goroutine's values
 appearing in another's output.
 
-Nothing one render changes reaches another render, another tenant or the
-host. A global registered on the `Environment`, a `value.Value` in the context,
-and whatever a host function, filter or method returns are copied the first
-time a render reaches them, if a template could change them -- a dict only as
-far as the render reaches into it -- and the render works on its copy; within
-the render, every reference to one of them is that one copy. jinja2 lets a
-change to a global persist into later renders; gojja2 does not. The one thing
-deliberately shared is a host object exposed by pointer, whose methods are the
-point --
-[divergences.md](divergences.md#a-render-does-not-mutate-the-callers-data).
+By default nothing a template changes reaches another render, another tenant
+or the host. A global registered on the `Environment`, a value in the context --
+given to `Render` or, already converted, to `RenderValues` -- and whatever a
+host function, filter or method returns are copied the first time a render
+reaches them, if a template could change them -- a dict only as far as the
+render reaches into it -- and the render works on its copy. A call on a `Module`
+starts from the module's state as `Template.Module` left it, and a Go method
+declared on a pointer receiver, which could change the host's object, is
+refused rather than called. jinja2 does none of this: a change to a global, an
+argument or a module persists into later renders. `WithSharedState` gives back
+the last three -- uncopied prepared values, module state and pointer methods --
+and code the engine cannot see into, such as a function or filter you
+register, keeps whatever state it keeps; see
+[Stateless renders](#stateless-renders) for both.
 
-Conversion is read-only, and several renders may share one `vars` map. It is
+Conversion is read-only, and several renders may share one `vars` map, or one
+prepared `map[string]value.Value`, unless `ShareRenderValues` is set. It is
 also partly deferred: a `map[string]any` inside an argument is read when the
 template first needs more of it than a scalar field, which can be well into the
 render. Do not modify the data you passed while a render that was given it is

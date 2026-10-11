@@ -40,6 +40,10 @@ import (
 // which fails the render; a panic in fn fails the render rather than unwinding
 // the caller.
 //
+// Like any [Filter] the host registers, the result may be called while a
+// template compiles when every argument is a constant, and its answer reused
+// by every render; fn must give the same answer for the same arguments.
+//
 // FilterFunc panics if fn is not a function of that shape, or if params does
 // not name each of its parameters after the value, exactly as
 // text/template.Funcs panics on a bad function: it is a mistake in the program,

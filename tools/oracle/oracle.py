@@ -15,14 +15,17 @@ its corpus can be consumed without rewriting:
     ---
     template source
 
-The header is the render context. Two reserved keys are stripped out of it:
+The header is the render context. Three reserved keys are stripped out of it:
 
     __settings__   environment options (see SETTING_KEYS)
     __profile__    named environment profile (see profiles.py)
     __templates__  {name: source} of extra templates reachable by
                    include/import/extends
 
-A file with no `\n---\n` separator is treated as all-template, empty context.
+A file with no `\\n---\\n` separator is treated as all-template, empty context.
+
+With --check nothing is written: it exits 1 if any golden under --golden is
+missing or differs from what the corpus renders now, and 0 otherwise.
 """
 
 from __future__ import annotations
@@ -146,7 +149,9 @@ def main() -> int:
     # The same address-space bound and per-case alarm the server runs under.
     apply_limits()
 
-    ap = argparse.ArgumentParser(description=__doc__)
+    # RawDescription keeps the format block above laid out as written.
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corpus", type=Path, help="directory of *.jj2 cases")
     ap.add_argument("--golden", type=Path, help="directory to write *.json goldens into")
     ap.add_argument("--check", action="store_true", help="fail instead of rewriting goldens")

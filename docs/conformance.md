@@ -33,7 +33,7 @@ flowchart LR
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
     TC --> RATE["8130 / 8219 gradable  (98.9%)"]
-    TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>build fails if either drifts</i>"]
+    TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>fails the test if either drifts —<br/>only with every corpus imported,<br/>which no CI workflow does</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
     class ORA spec
@@ -70,10 +70,12 @@ On top of that, roughly a million generated templates have been rendered by both
 implementations and compared (see below).
 
 Those numbers are not typed in by hand. `TestConformance` parses this page *and*
-the README's headline figure, and fails the build on anything that disagrees
-with what it just measured -- whenever every corpus is present, since `make
-import` is what builds most of them. It does that because the table had drifted,
-twice, after cases were added and the prose was not.
+the README's headline figure, and fails on anything that disagrees with what it
+just measured -- whenever every corpus is present, since `make import` is what
+builds most of them. With one absent it logs that the figures were not checked
+and moves on, and no CI workflow runs `make import`, so CI never checks them: a
+contributor with the corpora imported does. It does that because the table had
+drifted, twice, after cases were added and the prose was not.
 
 The 89 that differ are listed in `testdata/known_failures.txt`. A case on that
 list which starts passing also fails the test, so the list can only shrink
@@ -87,8 +89,9 @@ of the rest are Python behaviour jinja2 inherits and gojja2 deliberately does
 not reproduce: object introspection
 (`__subclasses__`, `__mro__`, unbound methods, generic aliases such as
 `dict['k']`), the legacy iteration protocol behind `{{ self|list }}`, a folded
-infinity that jinja2 writes into its generated source as the bare word `inf`, a
-lazy `|reverse`, a macro's view of the loop it was defined in, and an
+infinity that jinja2 writes into its generated source as the bare word `inf`,
+lazy `|reverse`, `|batch` and `|slice`, a long sort's comparison order, a
+module's class under autoescape, a macro's view of the loop it was defined in, and an
 `{% autoescape %}` flag that is a StrictUndefined. Two are Jinja's own
 sandbox-escape tests, two are DeepSeek-R1's chat template piping `map()` into
 `|tojson` (a generator, which `json.dumps` refuses), and two meet gojja2's bound
@@ -110,9 +113,11 @@ against CPython's answers on a fresh checkout with no network and no Python.
 Run `make suites && make import` to add the rest: the upstream repositories are
 cloned at pinned revisions into the gitignored `third_party/`, and the cases and
 their goldens are built into the gitignored `testdata/generated/`. Nothing from
-those projects is vendored or committed, and each generated corpus carries a
-`SOURCES.md` recording where it came from, under what license, and which inputs
-were dropped and why.
+those projects is vendored or committed. The chat-templates, cookiecutter,
+llamacpp, minja and wild corpora each carry a `SOURCES.md` recording where they
+came from, under what license, and which inputs were dropped and why; the
+minijinja and jinja-harvest importers write none, so for those two the
+revision is the pin in the Makefile.
 
 Cookiecutter templates are the one corpus that arrives with a context already
 written: `cookiecutter.json` is one, in JSON, chosen by the template's author.
@@ -154,25 +159,28 @@ but it runs on an interpreter, and the interpreter decides what `{{ d[0:1] }}`
 raises, whether `{{ xs|sort(reverse=none) }}` is an error, how a division by
 zero is worded, and which code points are digits.
 
-Across CPython 3.11 to 3.14 that is **66 of the 2,241 committed cases** — 2.9%:
+Across CPython 3.11 to 3.15 that is **500 of the 5,899 committed cases**:
 
 | | |
 |---|---|
-| identical on all four interpreters | 2,175 (97.1%) |
-| answer differently somewhere | 66 |
-| of those, the Unicode tables — printability, digits, casing | 20 |
-| of those, error wording only | 34 |
-| of those, behaviour: raises where it now renders, or a different class | 12 |
+| identical on every interpreter | 5,399 (91.5%) |
+| answer differently somewhere | 500 |
+| of those, answering two ways | 460 |
+| of those, answering three ways | 40 |
 
-63 of the 66 answer exactly two ways. The three that do not are `1.0 % 0` and
-its neighbours, which CPython words three ways: "float modulo" through 3.12,
-"float modulo by zero" in 3.13, and "division by zero" from 3.14. gojja2 knew
-about two of those and the corpus reached none of them, so the version that was
-wrong had nothing to answer for until the cases went in.
+`TestPublishedVersionFigures` recomputes this table from the committed goldens
+and fails on any disagreement, so it cannot go stale the way the figures it
+replaced did -- those had been written for 2,241 cases and four interpreters,
+and stayed while the corpus more than doubled.
 
-The Unicode row is twenty cases because twenty were written; the corpus reached
-none of those code points until `testdata/corpus/unicode/` went in, which is why
-the tables were wrong for so long without anything saying so.
+None answers four or five ways. The three-way cases are where two releases
+each moved the same answer: `1.0 % 0` and its neighbours, which CPython words
+"float modulo" through 3.12, "float modulo by zero" in 3.13 and "division by
+zero" from 3.14; the printf-style `%` errors 3.14 and then 3.15 reworded; and a
+`mappingproxy` used as a key, which 3.12 and then 3.14 described differently.
+gojja2 knew about two of the `1.0 % 0` wordings before the corpus reached any of
+them, which is how the version that was wrong had nothing to answer for until
+the cases went in.
 
 `PYTHON_VERSION` in the Makefile pins which one is the specification, and it is
 part of that specification rather than a convenience: CPython carries its own
@@ -184,15 +192,15 @@ choose; `TestDefaultVersionMatchesThePin` fails if a bump moves one and not the
 other, since gojja2 rendering as one interpreter against tables generated from
 another is a wrong answer nothing else would catch.
 
-A render reproduces the pinned version by default and any of the four on
+A render reproduces the pinned version by default and any of the five on
 request:
 
 ```go
 env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
 ```
 
-The rules are a closed list -- sixteen, each named in `value/pyversion.go` with
-the release that moved it and the corpus case that grades it, and
+The rules are a closed list, each named in `value/pyversion.go` with the
+release that moved it and the corpus case that grades it, and
 `TestEveryVersionRuleNamesACorpusCase` fails a rule whose case does not exist. The version is
 passed as an argument to every function whose answer can depend on it rather
 than read from a package variable, so a signature carrying it declares "this
@@ -224,8 +232,8 @@ check that covers every code point rather than the ones a case happens to
 mention, and it is what proves a regeneration changed nothing it should not.
 
 Only the differences are stored. `testdata/golden` is the pinned version's full
-set; `testdata/golden-3.11`, `-3.12` and `-3.14` hold the cases that answer
-differently -- 36, 9 and 33 files, 78 in all -- laid over it. `make golden-matrix`
+set; `testdata/golden-3.11`, `-3.12`, `-3.14` and `-3.15` hold the cases that
+answer differently -- 103, 26, 206 and 414 files, 749 in all -- laid over it. `make golden-matrix`
 regenerates them by asking each interpreter through `uv run --python`, so the
 sets rotate on their own when the pin moves rather than being rebuilt by hand.
 `TestEveryPythonVersion` grades every case against every interpreter, and
@@ -234,11 +242,12 @@ a case the corpus no longer has, so the directories cannot rot as CPython moves.
 
 **The Unicode tables move with it too.** CPython carries its own Unicode, so the
 interpreter decides case mappings, which characters are digits, and how `repr`
-escapes them -- 10,311 code points on which the four do not all agree. Those are
+escapes them -- 15,125 code points on which 3.11 to 3.15 do not all agree, from
+Unicode 14.0.0 in 3.11 to 17.0.0 in 3.15 (measured when 3.15 was added, over
+every code point's predicates, case mappings and `repr`). Those are
 recorded per version as well, and the storage is small because the difference is
-simply which characters had been assigned yet: they arrive in blocks, so ten
-thousand code points collapse into a few dozen ranges and the whole table is
-about 15 KB.
+simply which characters had been assigned yet: they arrive in blocks, so
+fifteen thousand code points collapse into ranges rather than one entry each.
 
 Doing it turned up a bug in the pinned version rather than only in the option.
 `isalpha` and `isprintable` were read straight off Go's tables, which are a
@@ -262,7 +271,7 @@ line:
 ```
 make soak N=200000      # seeded run, reproducible
 make fuzz TIME=5m       # coverage-guided, via go test -fuzz
-make fuzz-props TIME=5m # properties only, no oracle -- what CI runs
+make fuzz-props TIME=5m # properties only, no oracle -- CI runs 60 s per target
 ```
 
 Generation is structured rather than byte-level: random bytes are read as
@@ -271,13 +280,16 @@ error, and a mutation changes one choice rather than corrupting a tag. A
 divergence is shrunk against the same check before it is reported, so findings
 arrive minimal.
 
-A case is an *environment* as well as a template, and **eleven settings are
-drawn alongside it**. Every one of them was fixed at jinja2's default once, and each
-turned out to hide something.
+A case is an *environment* as well as a template, and **fifteen settings are
+drawn alongside it**, from the same bytes as the template. Every one of them was
+fixed at jinja2's default once, and each turned out to hide something.
 
-*What the engine does with a value:* **autoescaping**, and the **Undefined
-class** -- all four, `StrictUndefined` included, which was excluded for as long
-as a folded constant disagreed about *when* it raises.
+*What the engine does with a value:* **autoescaping**, and **`select_autoescape`**
+over the `html` extension, which lets each template's *name* decide -- the
+case's own is `.html` and the templates it pulls in are `.txt`, so an escaping
+and a non-escaping template meet across every extends, include and import --
+and the **Undefined class** -- all four, `StrictUndefined` included, which was
+excluded for as long as a folded constant disagreed about *when* it raises.
 
 *What the template means:* the lexer's **`trim_blocks`**, **`lstrip_blocks`**
 and **`keep_trailing_newline`**. Sixty thousand templates a run all lexed under
@@ -305,8 +317,18 @@ The parser knows `{% break %}`, `{% continue %}` and `{% do %}`, all three need
 an extension, and for as long as the run enabled none of them those statements
 were graded by two hand-written corpus cases and nothing else.
 
-`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as an eleventh axis,
-configuring both sides to match.
+*What the template reaches:* the **auxiliary templates** it can extend, include
+and import (`flat`, `modules`, `chain`, `blocks`, `captured`, `escaped` and
+`stateful` -- among them a module that imports another and hides a name, a
+base that itself extends, and blocks inside a loop, a capture or an
+`{% autoescape %}`), the **context** it renders against
+(`default`, `empty`, and `awkward` values), and the environment **policies**
+(`urlize`'s rel and target, `truncate`'s leeway), which change what a filter
+produces for every template in the environment rather than for one call. Each
+is drawn from a named set, weighted toward the default the soak always used.
+
+`GOJJA2_FUZZ_PYTHON=3.11 make soak` moves the interpreter as a sixteenth axis --
+per run rather than per case -- configuring both sides to match.
 
 Both engines are handed the same settings from one function, because there were
 two built by hand and they had drifted: the syntax soak sent autoescaping and
@@ -315,9 +337,11 @@ setting applied to one side only is a comparison between two environments rather
 than between two engines, and it looks exactly like a divergence.** Every run
 prints a count per axis, because a dimension that silently stopped varying would
 otherwise look exactly like a clean run. For the extensions the count is of the
-tag actually *written* as well as the setting drawn, and a run of any size that
-writes none of them fails: enabling `loopcontrols` costs a run nothing if no
-template ever writes a break.
+tag actually *written* as well as the setting drawn, and a run of more than a
+thousand templates that writes none of them fails: enabling `loopcontrols` costs
+a run nothing if no template ever writes a break. The same size of run fails if
+it never draws `select_autoescape`, or any one of the named template, context or
+policy sets.
 
 The oracle runs as a warm subprocess. That is what makes a soak practical at
 all: starting an interpreter and importing jinja2 per case costs tens of
@@ -339,24 +363,33 @@ scopes until the assignment runs.
 sequenceDiagram
     participant F as TestDifferential / FuzzTemplate
     participant G as GenerateCase<br/>(grammar decisions, not bytes)
+    participant O as oracle_server.py<br/>(warm CPython, PYTHONHASHSEED=5,<br/>2 GB RLIMIT_AS, 5 s alarm)
     participant J as gojja2
-    participant O as oracle_server.py<br/>(warm CPython, 2 GB RLIMIT_AS, 5 s alarm)
+    participant O2 as second oracle<br/>(PYTHONHASHSEED=1, started<br/>only when a divergence needs it)
 
     F->>G: seeded or mutated bytes
-    G-->>F: template + fixed JSON context
-    par the same input to both
-        F->>J: render
+    G-->>F: template + 15 drawn settings,<br/>among them its context, template and policy sets
+    F->>O: {"name", "src", "ctx", "settings", "templates"} — one JSON line
+    O-->>F: ok+output | error | resource-error
+    alt a resource error, or an answer nothing reproduces (an address, a generator, a multi-element set)
+        F->>F: discard, next case
+    else gradable
+        F->>J: render the same case, 5 s deadline
         J-->>F: output | error{class, message, line}
-    and
-        F->>O: {"src", "ctx", "settings"} — one JSON line
-        O-->>F: ok+output | error | resource-error (not graded)
+        alt output, exception class, message and line all agree, or gojja2 hit a limit
+            F->>F: next case
+        else divergence
+            F->>O2: the same request
+            O2-->>F: CPython's answer from a second process
+            alt the two oracles disagree
+                F->>F: discard as unstable (TestDifferential counts these)
+            else CPython agrees with itself
+                F->>F: minimize() — reshrink against the same check
+                F-->>F: report the minimal case
+            end
+        end
     end
-    alt output, exception class, message and line all agree
-        F->>F: next case
-    else divergence
-        F->>F: minimize() — reshrink against the same check
-        F-->>F: report the minimal case
-    end
+    Note over F: TestDifferential stops after 10 reported divergences
 ```
 
 A resource error from the oracle's sandbox — `MemoryError`, `RecursionError`,
