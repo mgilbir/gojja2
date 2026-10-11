@@ -164,13 +164,22 @@ func TestALazyFillStopsPromptly(t *testing.T) {
 		t.Skipf("filling the map takes %s here, which is too short to "+
 			"distinguish stopping early from finishing", natural)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), natural/10)
-	defer cancel()
-	start = time.Now()
-	if _, err := tmpl.RenderString(ctx, args); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("render with a deadline: %v, want context.DeadlineExceeded", err)
+	// The fastest of three: noise only ever slows a render, so a fill that
+	// yields stops early on at least one try and one that does not runs to
+	// the end on every try. See TestConversionStopsPromptly.
+	stopped := time.Duration(1<<63 - 1)
+	for range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), natural/10)
+		start = time.Now()
+		_, err := tmpl.RenderString(ctx, args)
+		took := time.Since(start)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("render with a deadline: %v, want context.DeadlineExceeded", err)
+		}
+		stopped = min(stopped, took)
 	}
-	if stopped := time.Since(start); stopped > natural/2 {
+	if stopped > natural/2 {
 		t.Errorf("a render with a %s deadline ran %s of the %s the fill takes; "+
 			"the fill is not yielding between fields",
 			(natural / 10).Round(time.Millisecond), stopped.Round(time.Millisecond),

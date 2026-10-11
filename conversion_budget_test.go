@@ -165,14 +165,25 @@ func TestConversionStopsPromptly(t *testing.T) {
 
 	// A second render converts afresh: the memo lives in the render's own
 	// scope, so this is the same work again.
+	//
+	// The fastest of three, because noise -- a collection, a busy CI
+	// runner, Windows' scheduler -- only ever makes a render slower: a
+	// walk that yields stops early on at least one try, and one that does
+	// not runs to the end on every try. A single sample put a yielding walk
+	// at 62% of a 96ms conversion on a Windows runner once.
 	deadline := natural / 10
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
-	defer cancel()
-	start = time.Now()
-	if _, err := tmpl.RenderString(ctx, args); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("render with a deadline: %v, want context.DeadlineExceeded", err)
+	stopped := time.Duration(1<<63 - 1)
+	for range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		start = time.Now()
+		_, err := tmpl.RenderString(ctx, args)
+		took := time.Since(start)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("render with a deadline: %v, want context.DeadlineExceeded", err)
+		}
+		stopped = min(stopped, took)
 	}
-	stopped := time.Since(start)
 
 	// Half the natural time sits well above the deadline plus one check
 	// interval, and well below finishing the walk, which is what the defect
