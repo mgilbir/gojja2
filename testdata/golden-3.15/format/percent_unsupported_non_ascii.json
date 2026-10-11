@@ -1,0 +1,14 @@
+{
+  "case": "format/percent_unsupported_non_ascii.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "stray % at position 1 or unexpected format character 'é' (U+00E9) at position 2"
+  }
+}

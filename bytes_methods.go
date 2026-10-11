@@ -103,13 +103,13 @@ func searchArg(v value.Value) (string, error) {
 // is -1 where b"abc".find(b"", 3) is 3 -- and so does an end before the start.
 // Clamping the start up to the length instead made an empty needle match at the
 // end of every such search: 34 of them in a random sweep, all of this shape.
-func bytesBounds(s string, args *value.CallArgs, first int) (from, to int, ok bool, err error) {
+func bytesBounds(s string, args *value.CallArgs, first int, py value.PythonVersion) (from, to int, ok bool, err error) {
 	read := func(i, def int, clampUp bool) (int, error) {
 		v, got := args.Arg(i)
 		if !got || v.IsNone() {
 			return def, nil
 		}
-		idx, err := sliceIndexOf(v)
+		idx, err := sliceIndexOf(v, py)
 		if err != nil {
 			return 0, err
 		}
@@ -396,14 +396,14 @@ func bytesIsTitle(_ *State, r value.Value, _ *value.CallArgs) (value.Value, erro
 // --- search -----------------------------------------------------------------
 
 func bytesFind(fromRight, raising bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
-	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	return func(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		v, _ := args.Arg(0)
 		needle, err := searchArg(v)
 		if err != nil {
 			return value.Undefined, err
 		}
 		s := r.AsString()
-		from, to, ok, err := bytesBounds(s, args, 1)
+		from, to, ok, err := bytesBounds(s, args, 1, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -431,14 +431,14 @@ func bytesFind(fromRight, raising bool) func(*State, value.Value, *value.CallArg
 	}
 }
 
-func bytesCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+func bytesCount(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 	v, _ := args.Arg(0)
 	needle, err := searchArg(v)
 	if err != nil {
 		return value.Undefined, err
 	}
 	s := r.AsString()
-	from, to, ok, err := bytesBounds(s, args, 1)
+	from, to, ok, err := bytesBounds(s, args, 1, st.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -451,10 +451,10 @@ func bytesCount(_ *State, r value.Value, args *value.CallArgs) (value.Value, err
 // bytesAffix is startswith and endswith, which take a bytes or a tuple of them
 // and word their refusal in terms of the method that was called.
 func bytesAffix(name string, match func(string, string) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
-	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	return func(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		v, _ := args.Arg(0)
 		s := r.AsString()
-		from, to, inRange, err := bytesBounds(s, args, 1)
+		from, to, inRange, err := bytesBounds(s, args, 1, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -943,8 +943,13 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 	perSep := 1
 	if v, ok := arg(args, 1, "bytes_per_sep"); ok {
 		// `int`, not Py_ssize_t, so it gives up at 2**31 and the
-		// OverflowError names a C int.
-		n, err := indexOf(v, cInt)
+		// OverflowError names a C int -- until 3.15, which made it a
+		// Py_ssize_t like every other count.
+		kind := cInt
+		if st.PythonVersion().HexGroupIsSsizeT() {
+			kind = cSSizeT
+		}
+		n, err := indexOf(v, kind)
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -997,7 +1002,10 @@ func bytesHex(st *State, r value.Value, args *value.CallArgs) (value.Value, erro
 	if group < 0 {
 		group = -group
 	}
-	if group == 0 {
+	// A group at least as long as the data puts no separator in at all.
+	// Negating the most negative Py_ssize_t leaves it negative, and a group
+	// that wide must not reach the loops below, which step by it.
+	if group == 0 || group < 0 || group >= len(s) {
 		return value.String(hex.EncodeToString([]byte(s))), nil
 	}
 	var parts []string

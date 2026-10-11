@@ -301,7 +301,7 @@ There is no environment to use when it does -- it returns `nil` and the error.
 | `WithNewlineSequence` outside `"\n"`, `"\r\n"`, `"\r"` | jinja2 asserts the same three; anything else rendered here and raised there |
 | two of the block, variable and comment *opening* strings being equal | a template cannot be read two ways, and guessing which is worse than saying so. `WithDelimiterLeniency` turns this down; see below |
 | a negative `TruncateLeeway` | `truncate` refuses it when it runs, so the environment built and then failed on every render that reached the filter |
-| a `PythonVersion` that is not one of the four | gojja2 reproduces CPython 3.11 to 3.14; anything else has no answers to give, and taking the default silently would render something nobody asked for |
+| a `PythonVersion` that is not one of the five | gojja2 reproduces CPython 3.11 to 3.15; anything else has no answers to give, and taking the default silently would render something nobody asked for |
 | an `UnsupportedLeniency` that is neither value | likewise |
 
 Two things that look like they should be refused and are not. An **empty**
@@ -352,7 +352,7 @@ env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
 ```
 
 `Environment.PythonVersion` reports what an environment settled on. The
-constants are `Python311` through `Python314`, and `DefaultPythonVersion` is the
+constants are `Python311` through `Python315`, and `DefaultPythonVersion` is the
 pinned one -- the interpreter every committed table and golden was generated
 from, which the Makefile's `PYTHON_VERSION` sets and a test holds the two to.
 

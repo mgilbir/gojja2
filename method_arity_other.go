@@ -88,4 +88,8 @@ var methodArityOther = map[value.PythonVersion]map[string]methodSignature{
 		"str.splitlines":          {minArgs: 0, maxArgs: 1, fewMessage: "", manyMessage: "splitlines() takes at most 1 argument (%d given)", kwNames: []string{"keepends"}, kwMessage: "'%s' is an invalid keyword argument for splitlines()", anyKw: false},
 		"str.startswith":          {minArgs: 1, maxArgs: 3, fewMessage: "startswith() takes at least 1 argument (%d given)", manyMessage: "startswith() takes at most 3 arguments (%d given)", kwNames: []string{}, kwMessage: "startswith() takes no keyword arguments", anyKw: false},
 	},
+	// CPython 3.15: 1 of the table's entries differ.
+	value.Python315: {
+		"bytes.replace": {minArgs: 2, maxArgs: 3, fewMessage: "replace() takes at least 2 positional arguments (%d given)", manyMessage: "replace() takes at most 3 arguments (%d given)", kwNames: []string{"count"}, kwMessage: "replace() takes at least 2 positional arguments (0 given)", anyKw: false},
+	},
 }

@@ -516,8 +516,15 @@ func (m *mappingProxy) EqualsErr(other value.Value, py value.PythonVersion) (boo
 }
 
 // OrderDelegate makes <, <=, > and >= the wrapped object's, as
-// mappingproxy_richcompare makes them. See value.OrderDelegate.
-func (m *mappingProxy) OrderDelegate() value.Value { return m.d }
+// mappingproxy_richcompare makes them through 3.14. From 3.15 it answers
+// NotImplemented for all four, so the proxy orders against nothing. See
+// value.OrderDelegate.
+func (m *mappingProxy) OrderDelegate(py value.PythonVersion) (value.Value, bool) {
+	if py.ProxyOrderingIsRefused() {
+		return value.Undefined, false
+	}
+	return m.d, true
+}
 
 // ContainsErr delegates, because mappingproxy_check_key is
 // `PySequence_Contains(pp->mapping, key)` -- the wrapped object answers, with

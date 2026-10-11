@@ -299,14 +299,14 @@ interpreter by `make value-depth` into `testdata/value_depth.json`, and
 `TestValueWalkDepthsAreMeasured` fails if this table drifts from it or from
 gojja2's own wall:
 
-| walk | 3.11 | 3.12 | 3.13 (pinned) | 3.14 | gojja2 |
-|---|---|---|---|---|---|
-| `==`, `<`, `\|min` | 992 | 9994 | 9995 | 43439 | 1000 |
-| `\|sort` | 990 | 9993 | 9993 | 43414 | 999 |
-| `\|tojson` | 986 | 9993 | 9994 | 52126 | 1000 |
-| `\|pprint` | 326 | 328 | 328 | 328 | 1000 |
-| `{{ v }}`, `\|string`, `\|upper`, a dict key | 990 | 9993 | 9994 | 65159 | no wall |
-| hashing a tuple | no limit | no limit | no limit | no limit | no limit |
+| walk | 3.11 | 3.12 | 3.13 (pinned) | 3.14 | 3.15 | gojja2 |
+|---|---|---|---|---|---|---|
+| `==`, `<`, `\|min` | 992 | 9994 | 9995 | 43430 | 40114 | 1000 |
+| `\|sort` | 990 | 9993 | 9993 | 43405 | 40089 | 999 |
+| `\|tojson` | 986 | 9993 | 9994 | 52115 | 47405 | 1000 |
+| `\|pprint` | 326 | 328 | 328 | 328 | 328 | 1000 |
+| `{{ v }}`, `\|string`, `\|upper`, a dict key | 990 | 9993 | 9994 | 65145 | 65185 | no wall |
+| hashing a tuple | no limit | no limit | no limit | no limit | no limit | no limit |
 
 The `|sort` row is one lower than the comparison row on both sides for the same
 reason: the list being sorted is itself a level, so the comparison inside it

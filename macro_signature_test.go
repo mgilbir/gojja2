@@ -43,6 +43,28 @@ func TestDuplicateMacroParameterIsRefused(t *testing.T) {
 	}
 }
 
+// The refusal is CPython's compiler's, so it is worded as the chosen interpreter
+// words it: 3.15 calls the name a parameter rather than an argument. The corpus
+// cannot grade this -- its case is a recorded divergence, because jinja2's
+// message names a generated identifier -- so this is what does.
+func TestDuplicateMacroParameterFollowsThePythonVersion(t *testing.T) {
+	const src = `{% macro m(a, a) %}{{ a }}{% endmacro %}`
+	for _, tc := range []struct {
+		py   PythonVersion
+		want string
+	}{
+		{Python311, "duplicate argument 'a' in function definition"},
+		{Python313, "duplicate argument 'a' in function definition"},
+		{Python314, "duplicate argument 'a' in function definition"},
+		{Python315, "duplicate parameter 'a' in function definition"},
+	} {
+		_, err := mustNew(WithPythonVersion(tc.py)).FromString(src)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("under %s: got %v, want %q", tc.py, err, tc.want)
+		}
+	}
+}
+
 // The shapes jinja2 *accepts* keep working. A duplicate is refused in a
 // signature and nowhere else: unpacking, assignment and `with` all let the
 // later binding win, and a macro may be redefined.

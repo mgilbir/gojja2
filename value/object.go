@@ -104,9 +104,14 @@ type IterableErr interface {
 // and all, and one on the right answers the reflected operator the same way:
 // `1e3 >= mappingproxy(d)` is "'<=' not supported between instances of 'dict'
 // and 'float'", and a proxy over a string orders as the string.
+//
+// ok is false when, for the interpreter asked about, the object does not
+// delegate after all and its ordering is simply unsupported: 3.15's
+// mappingproxy hands only == and != to the mapping. See
+// PythonVersion.ProxyOrderingIsRefused.
 type OrderDelegate interface {
 	Object
-	OrderDelegate() Value
+	OrderDelegate(py PythonVersion) (Value, bool)
 }
 
 // Equaler lets an Object decide == for itself. The second result reports

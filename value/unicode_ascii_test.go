@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 )
 
-var everyVersion = []PythonVersion{Python311, Python312, Python313, Python314}
+var everyVersion = []PythonVersion{Python311, Python312, Python313, Python314, Python315}
 
 // The tables walked the slow way, which is what NameClass and IsIdentifier did
 // before they learned an ASCII fast path.

@@ -10246,6 +10246,106 @@ for _n, _src in _MUP:
 case("markup/percent_int_of_an_undefined_strict", "{% set v = nope %}{{ ('%d'|safe) % v }}",
      __settings__={"undefined": "strict"})
 
+# --- CPython 3.15 -------------------------------------------------------------
+# What 3.15 moved that the corpus did not already reach. Each is named by a rule
+# in value/pyversion.go; several also pin how the *pin* answers, because writing
+# them found gojja2 wrong there too.
+#
+# printf-style formatting was rewritten in 3.15: each refusal names its
+# argument -- by key, by place in the tuple, or not at all for a lone one -- and
+# a malformed format says where the '%' was. The bookkeeping underneath is
+# CPython's arglen/argidx, and three of these were wrong on every version before
+# gojja2 modelled it: a `%(key)` makes the looked-up value the whole argument
+# source, so a positional conversion after it has nothing left (3.15 refuses it
+# outright), and a `*` in the keyed conversion took the value itself; and under
+# a Markup format every argument is markupsafe's helper, which no `*` accepts.
+_PCT15 = [
+    ("percent_error_named_by_key", "{{ '%(a)c' % {'a': 1.5} }}"),
+    ("percent_error_named_by_key_bytes", "{{ ('%(a)c'.encode()) % {'a'.encode(): 1.5} }}"),
+    ("percent_error_named_by_position", "{{ '%c %c' % (65, 1.5) }}"),
+    ("percent_error_star_named_by_position", "{{ '%*s' % (1.5, 'x') }}"),
+    ("percent_error_star_named_bytes", "{{ ('%*s'.encode()) % ('a', 'x'.encode()) }}"),
+    ("percent_positional_after_a_key", "{{ '%(a)s %s' % {'a': 1} }}"),
+    ("percent_positional_after_two_keys", "{{ '%(a)s %(b)s %d' % {'a': 1, 'b': 2} }}"),
+    ("percent_positional_after_a_key_bytes",
+     "{{ ('%(a)s %s'.encode()) % {'a'.encode(): 'x'.encode()} }}"),
+    ("percent_positional_after_a_key_markup", "{{ ('%(a)s %s'|safe) % {'a': 1} }}"),
+    ("percent_stray_after_a_key", "{{ '%(a)s %' % {'a': 1} }}"),
+    ("percent_positional_before_a_key", "{{ '%s %(a)s' % {'a': 1} }}"),
+    ("percent_star_after_a_key", "{{ '%(a)*d' % {'a': 1} }}"),
+    ("percent_star_precision_after_a_key", "{{ '%(a).*f' % {'a': 1.5} }}"),
+    ("percent_star_after_a_key_bytes", "{{ ('%(a)*s'.encode()) % {'a'.encode(): 'x'.encode()} }}"),
+    ("percent_star_after_a_missing_key", "{{ '%(z)*d' % {'a': 1} }}"),
+    ("percent_key_looked_up_before_the_width", "{{ 'x%(z)99999999999999999999d' % {} }}"),
+    ("percent_mapping_checked_before_the_key", "{{ '%(a' % 1 }}"),
+    ("percent_star_of_a_lone_list", "{{ '%*d' % [1, 2] }}"),
+    ("percent_markup_star_of_a_tuple", "{{ ('%*d'|safe) % (5, 3) }}"),
+    ("percent_markup_star_of_a_lone_argument", "{{ ('%*d'|safe) % 5 }}"),
+    ("percent_markup_float_of_a_list", "{{ ('%f'|safe) % [1] }}"),
+    ("percent_markup_mapping_required", "{{ ('%(a)s'|safe) % 1 }}"),
+    ("percent_markup_named_by_key", "{{ ('%(a)c'|safe) % {'a': 1.5} }}"),
+    ("percent_not_enough_of_a_tuple", "{{ '%s%s%s' % (1, 2) }}"),
+    ("percent_bytes_not_all_converted_tuple", "{{ ('%s'.encode()) % ('a'.encode(), 'b'.encode()) }}"),
+    ("percent_bytes_mapping_required_bytes", "{{ ('%(a)s'.encode()) % 'x'.encode() }}"),
+    ("percent_b_named_qualified", "{{ ('%b'.encode()) % nope }}"),
+    ("percent_x_of_a_str", "{{ '%x' % 'a' }}"),
+    ("percent_d_of_none", "{{ '%d' % none }}"),
+    ("percent_f_of_none", "{{ '%f' % none }}"),
+    ("percent_incomplete_after_digits", "{{ 'x%5.' % 1 }}"),
+    ("percent_incomplete_after_a_modifier", "{{ 'x%l' % 1 }}"),
+    ("percent_width_too_big_after_a_key", "{{ 'x%(a)99999999999999999999d' % {'a': 1} }}"),
+    ("percent_unsupported_quote", "{{ \"%'\" % 1 }}"),
+    ("percent_unsupported_quote_bytes", "{{ (\"ab%'\".encode()) % 1 }}"),
+    ("percent_unsupported_non_ascii", "{{ " + lit("é%é") + " % 1 }}"),
+    ("percent_unsupported_non_ascii_letter_after_text",
+     "{{ " + lit("éé%5.2Z") + " % 1 }}"),
+    ("percent_unsupported_control", "{{ " + lit("ab%\x01") + " % 1 }}"),
+    ("percent_unsupported_unassigned", "{{ " + lit("ab%͸") + " % 1 }}"),
+    ("percent_unsupported_control_bytes", "{{ (" + lit("ab%\x01") + ".encode()) % 1 }}"),
+    ("percent_unsupported_high_byte", "{{ (" + lit("ab%é") + ".encode('latin-1')) % 1 }}"),
+    ("percent_incomplete_key_after_text", "{{ " + lit("éé%(a") + " % {'a': 1} }}"),
+]
+for _n, _src in _PCT15:
+    case("format/" + _n, _src)
+
+# A str repeated inside jinja2's own code -- |indent's `" " * width` -- by a
+# count too wide for an index. 3.15's specialised str * int says "C ssize_t"
+# where the generic path says "cannot fit"; a library instruction has always run
+# before, and here jinja2's constant folder runs it once at compile time too.
+case("filters/indent_width_overflows", "{{ 'a'|indent(10**30) }}")
+case("filters/indent_width_overflows_negative", "{{ 'a\nb'|indent(-10**30, true) }}")
+# The same multiplication written in the template, in a loop: the instruction
+# is generic the first time and specialised after, so 3.15 answers "ssize_t" on
+# the second pass. gojja2 cannot keep per-instruction state across renders and
+# answers the first pass's wording -- a recorded divergence.
+case("divergence/repeat_overflow_in_a_loop",
+     "{% for n in [2, 10**30] %}{{ 'a' * n }}{% endfor %}")
+
+# bytes.hex's group is a Py_ssize_t from 3.15, so the most negative one is a
+# group wider than any data -- and negating it is where an implementation that
+# steps by the group loops forever.
+case("bytes/hex_group_most_negative_ssize_t", "{{ 'abcdef'.encode().hex('-', -2**63) }}")
+case("bytes/hex_group_below_the_ssize_t_floor", "{{ 'abcdef'.encode().hex('-', -(2**63)-1) }}")
+
+# 3.15 lets bytes.replace take its count by keyword, as str.replace has since
+# 3.13. The refusal before it is the method's own.
+case("methods/bytes_replace_count_keyword",
+     "{{ 'aaa'.encode().replace('a'.encode(), 'b'.encode(), count=2) }}")
+case("methods/bytes_replace_keywords_only", "{{ 'a'.encode().replace(count=1) }}")
+
+# Unicode 17.0.0, which 3.15 carries: new letters with case pairs, a new set of
+# decimal digits, and characters that became printable and so stop being
+# escaped by repr.
+case("unicode/case_unicode17_pair",
+     r"{{ '꟎'.upper() }}|{{ '꟏'.upper() }}|{{ '꟏'.lower() }}"
+     r"|{{ '꟎'.isalpha() }}|{{ '꟏'.isupper() }}|{{ '꟏'|title }}")
+case("unicode/digits_unicode17",
+     r"{{ '\U00011de3'.isdigit() }}|{{ '\U00011de3'.isdecimal() }}"
+     r"|{{ '\U00011de3\U00011de4'|int(-1) }}|{{ ('\U00011de3' ~ '.5')|float(-1.0) }}")
+case("unicode/repr_unicode17", r"{{ ['\U00016ea0', '\U00016ebb', '\U00011de3'] }}")
+case("unicode/identifier_unicode17",
+     r"{{ '꟎'.isidentifier() }}|{{ ('x' ~ '\U00011de3').isidentifier() }}")
+
 
 def main() -> int:
     if DST.exists():

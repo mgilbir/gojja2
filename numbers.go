@@ -303,6 +303,9 @@ func intToBytes(st *State, b *big.Int, args *value.CallArgs) (value.Value, error
 		return value.Undefined, err
 	}
 	if length < 0 {
+		if st.PythonVersion().ToBytesSaysLengthCannotBeNegative() {
+			return value.Undefined, errs.New(errs.ValueError, "length cannot be negative")
+		}
 		return value.Undefined, errs.New(errs.ValueError,
 			"length argument must be non-negative")
 	}

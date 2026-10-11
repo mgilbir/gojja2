@@ -27,7 +27,7 @@ func TestEnvironmentPythonVersionRoundTrips(t *testing.T) {
 			got, value.DefaultPythonVersion)
 	}
 	for _, want := range []value.PythonVersion{
-		value.Python311, value.Python312, value.Python313, value.Python314,
+		value.Python311, value.Python312, value.Python313, value.Python314, value.Python315,
 	} {
 		env, err := gojja2.New(gojja2.WithPythonVersion(want))
 		if err != nil {

@@ -1,0 +1,15 @@
+{
+  "case": "macro/duplicate_parameter.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "SyntaxError",
+    "message": "duplicate parameter 'l_1_a' in function definition (<template>, line 12)",
+    "lineno": 12
+  }
+}

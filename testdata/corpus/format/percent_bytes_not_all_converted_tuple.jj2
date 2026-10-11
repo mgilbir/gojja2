@@ -1,0 +1,3 @@
+{}
+---
+{{ ('%s'.encode()) % ('a'.encode(), 'b'.encode()) }}

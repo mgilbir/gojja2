@@ -14,7 +14,8 @@ import (
 // jinja2 3.1.6 is one library, but it runs on an interpreter, and the
 // interpreter decides what `{{ d[0:1] }}` raises, whether `{{ x|sort(reverse=
 // none) }}` is an error, and how a division by zero is worded. Across CPython
-// 3.11 to 3.14, 66 of gojja2's 2,241 corpus cases answer differently.
+// 3.11 to 3.15 a few percent of gojja2's corpus cases answer differently;
+// docs/conformance.md has the measured figures.
 //
 // See [WithPythonVersion]. The rules themselves are named and documented one
 // by one in value/pyversion.go.
@@ -27,6 +28,7 @@ const (
 	Python312 = value.Python312
 	Python313 = value.Python313
 	Python314 = value.Python314
+	Python315 = value.Python315
 
 	// DefaultPythonVersion is what an environment that does not choose
 	// gets: the pinned interpreter, the one every committed table and
@@ -42,10 +44,9 @@ const (
 //
 //	env, err := gojja2.New(gojja2.WithPythonVersion(gojja2.Python311))
 //
-// What it changes is a closed list -- sixteen rules, each named in
-// value/pyversion.go with the release that moved it and the corpus case that
-// grades it. Everything outside that list is identical on every version, which
-// is 97.1% of the corpus.
+// What it changes is a closed list of rules, each named in value/pyversion.go
+// with the release that moved it and the corpus case that grades it, plus the
+// Unicode tables. Everything outside that list is identical on every version.
 func WithPythonVersion(v PythonVersion) Option {
 	return func(e *Environment) error {
 		if !v.Known() {
@@ -53,7 +54,7 @@ func WithPythonVersion(v PythonVersion) Option {
 			// the default: the default is the pin, and it need not be
 			// the newest.
 			return fmt.Errorf("gojja2: unknown PythonVersion %d; gojja2 reproduces %s to %s",
-				int(v), value.Python311, value.Python314)
+				int(v), value.Python311, value.Python315)
 		}
 		e.pyVersion = v
 		// The lexer needs it too: the class it matches a name out of is

@@ -836,7 +836,7 @@ func (ex *exec) evalSlice(base value.Value, n *ast.Slice) (value.Value, error) {
 // This is shared with strSliceBounds deliberately. Both convert the same thing
 // and they used to disagree -- the search methods refused an integer this one
 // clamps -- so a template could tell which implementation it had reached.
-func sliceIndexOf(v value.Value) (int, error) {
+func sliceIndexOf(v value.Value, py value.PythonVersion) (int, error) {
 	if i, ok := v.Int64(); ok {
 		return int(i), nil
 	}
@@ -846,17 +846,28 @@ func sliceIndexOf(v value.Value) (int, error) {
 		}
 		return math.MaxInt, nil
 	}
-	return 0, errs.New(errs.TypeError,
+	return 0, errSliceIndices(py)
+}
+
+// errSliceIndices is _PyEval_SliceIndex's refusal of a bound that is neither
+// an integer nor None. 3.15 stopped mentioning None in it; see
+// value.PythonVersion.SliceIndexMessageOmitsNone.
+func errSliceIndices(py value.PythonVersion) error {
+	if py.SliceIndexMessageOmitsNone() {
+		return errs.New(errs.TypeError,
+			"slice indices must be integers or have an __index__ method")
+	}
+	return errs.New(errs.TypeError,
 		"slice indices must be integers or None or have an __index__ method")
 }
 
 // sliceIndex converts one slice operand, which only the branches that index
 // with it may do -- see evalSlice.
-func sliceIndex(v value.Value) (*int, error) {
+func sliceIndex(v value.Value, py value.PythonVersion) (*int, error) {
 	if v.IsNone() {
 		return nil, nil
 	}
-	idx, err := sliceIndexOf(v)
+	idx, err := sliceIndexOf(v, py)
 	if err != nil {
 		return nil, err
 	}
@@ -873,6 +884,9 @@ func bigSliceBounds(start, stop, step value.Value) (a, b, c *big.Int, err error)
 		if n, whole := v.BigInt(); whole {
 			return n, nil
 		}
+		// Not errSliceIndices: a range slices through sliceobject.c's
+		// evaluate_slice_index, which kept "or None" in 3.15 when
+		// _PyEval_SliceIndex dropped it.
 		return nil, errs.New(errs.TypeError,
 			"slice indices must be integers or None or have an __index__ method")
 	}
@@ -900,17 +914,17 @@ func bigSliceBounds(start, stop, step value.Value) (a, b, c *big.Int, err error)
 // ValueError it does not catch. Converting start and stop first therefore made
 // `{{ "abcde"[:1.5:0] }}` print nothing where CPython fails the render with
 // "slice step cannot be zero".
-func sliceBounds(start, stop, step value.Value) (a, b, c *int, err error) {
-	if c, err = sliceIndex(step); err != nil {
+func sliceBounds(start, stop, step value.Value, py value.PythonVersion) (a, b, c *int, err error) {
+	if c, err = sliceIndex(step, py); err != nil {
 		return nil, nil, nil, err
 	}
 	if c != nil && *c == 0 {
 		return nil, nil, nil, errs.New(errs.ValueError, "slice step cannot be zero")
 	}
-	if a, err = sliceIndex(start); err != nil {
+	if a, err = sliceIndex(start, py); err != nil {
 		return nil, nil, nil, err
 	}
-	if b, err = sliceIndex(stop); err != nil {
+	if b, err = sliceIndex(stop, py); err != nil {
 		return nil, nil, nil, err
 	}
 	return a, b, c, nil
@@ -934,7 +948,7 @@ func sliceRepr(start, stop, step value.Value, py value.PythonVersion) string {
 func sliceOf(base value.Value, startV, stopV, stepV value.Value, py value.PythonVersion) (value.Value, error) {
 	// Converted per branch rather than up front, so that a base with no
 	// subscript at all answers before the operands are judged.
-	indices := func() (*int, *int, *int, error) { return sliceBounds(startV, stopV, stepV) }
+	indices := func() (*int, *int, *int, error) { return sliceBounds(startV, stopV, stepV, py) }
 	switch base.Kind() {
 	case value.KindString:
 		start, stop, step, err := indices()

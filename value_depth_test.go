@@ -53,7 +53,7 @@ func TestValueWalkDepthsAreMeasured(t *testing.T) {
 			continue
 		}
 		// CPython's columns, in the order the header lists them.
-		for i, v := range []string{"3.11", "3.12", "3.13", "3.14"} {
+		for i, v := range depthVersions {
 			want := recorded[v][w.key]
 			if got := cells[i]; got != strconv.Itoa(want) {
 				t.Errorf("%s under CPython %s: the table says %s, "+
@@ -130,15 +130,21 @@ func readRecordedDepths(t *testing.T) map[string]map[string]int {
 	if err := json.Unmarshal(raw, &file); err != nil {
 		t.Fatalf("testdata/value_depth.json: %v", err)
 	}
-	if len(file.Walks) != 4 {
-		t.Fatalf("testdata/value_depth.json holds %d interpreters, want 4", len(file.Walks))
+	if len(file.Walks) != len(depthVersions) {
+		t.Fatalf("testdata/value_depth.json holds %d interpreters, want %d",
+			len(file.Walks), len(depthVersions))
 	}
 	return file.Walks
 }
 
-// depthRow matches one row of the table: the walk, four CPython columns and
+// depthVersions are the table's CPython columns, in the order the header lists
+// them.
+var depthVersions = []string{"3.11", "3.12", "3.13", "3.14", "3.15"}
+
+// depthRow matches one row of the table: the walk, a column per CPython and
 // gojja2's.
-var depthRow = regexp.MustCompile(`^\| (.+?) \| (\S+) \| (\S+) \| (\S+) \| (\S+) \| (.+?) \|$`)
+var depthRow = regexp.MustCompile(`^\| (.+?) \|` +
+	strings.Repeat(` (\S+) \|`, len(depthVersions)) + ` (.+?) \|$`)
 
 // readDepthTable reads the rows out of docs/limits.md, keyed by the first cell.
 func readDepthTable(t *testing.T) map[string][]string {
@@ -153,10 +159,11 @@ func readDepthTable(t *testing.T) map[string][]string {
 		if m == nil {
 			continue
 		}
-		out[m[1]] = []string{m[2], m[3], m[4], m[5], m[6]}
+		out[m[1]] = m[2:]
 	}
 	if len(out) == 0 {
-		t.Fatal("docs/limits.md has no six-column table; this test would pass on an empty file")
+		t.Fatalf("docs/limits.md has no %d-column table; this test would pass on an empty file",
+			len(depthVersions)+2)
 	}
 	return out
 }
