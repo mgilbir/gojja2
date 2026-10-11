@@ -1940,10 +1940,11 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, cyclic bool, inde
 		// order over mixed types and is what the set's own repr uses --
 		// but it is not CPython's here: a set of integers pprints as
 		// 0, 1, 2 there and 0, 1, 10 in repr order. So the copy this
-		// prints is re-sorted by value, and falls back to the order it
-		// came in where two elements cannot be compared. That last case
-		// is the one CPython keys on id(), which no other process can
-		// reproduce; see docs/divergences.md.
+		// prints is re-sorted by value, by class name where two classes
+		// cannot be compared, and falls back to the order it came in
+		// where two of one class cannot be. That last case is the one
+		// CPython keys on id(), which no other process can reproduce;
+		// see docs/divergences.md.
 		sortForPPrint(st, items)
 		b.WriteString("{")
 		err := pformatItems(st, b, items, indent, allowance+1,
@@ -1959,17 +1960,31 @@ func pformatSeen(st *State, b *strings.Builder, v value.Value, cyclic bool, inde
 }
 
 // sortForPPrint orders a set's elements the way pprint._safe_key does: by value
-// where the two can be compared, and leaving them as they came where they
-// cannot. Stable, so the incomparable pairs keep the set's own total order
-// rather than an arbitrary one.
+// where the two can be compared, and where `<` is a TypeError by
+// (str(type(x)), id(x)) instead. Two classes are then ordered by name, which
+// every run of CPython agrees on -- a wide set of integers and strings lists
+// the integers first, since "<class 'int'>" sorts before "<class 'str'>". Two
+// of one class fall through to the address, which no other process can
+// reproduce, so those keep the order they came in: the sort is stable, and the
+// set's own total order is at least the same one twice.
 func sortForPPrint(st *State, items []value.Value) {
+	py := st.PythonVersion()
 	sort.SliceStable(items, func(i, j int) bool {
-		less, err := value.Ordered("<", items[i], items[j], st.PythonVersion())
-		if err != nil {
+		less, err := value.Ordered("<", items[i], items[j], py)
+		if err == nil {
+			return less
+		}
+		if !errors.Is(err, errs.TypeError) {
 			return false
 		}
-		return less
+		return pythonTypeString(items[i]) < pythonTypeString(items[j])
 	})
+}
+
+// pythonTypeString is str(type(v)): what _safe_key compares two values by once
+// `<` has refused them.
+func pythonTypeString(v value.Value) string {
+	return "<class '" + value.QualifiedTypeName(v) + "'>"
 }
 
 // safeRepr is the repr pprint measures with when the value contains itself.
