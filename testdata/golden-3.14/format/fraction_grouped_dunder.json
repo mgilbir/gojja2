@@ -1,0 +1,11 @@
+{
+  "case": "format/fraction_grouped_dunder.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.14"
+  },
+  "ok": true,
+  "output": "1234.500,000|1234.000,000|1234|x|0,000,000,012,345.678|1.5|1234.567,891 1234.567_891|1234.567,891"
+}

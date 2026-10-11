@@ -1,0 +1,4 @@
+{
+  "case": "errors/format_fraction_group_comma_then_underscore.jj2",
+  "variables": {}
+}

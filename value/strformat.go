@@ -64,7 +64,7 @@ func FormatValue(v Value, spec string, py PythonVersion, budget Budget) (string,
 		return "", errs.New(errs.TypeError,
 			"unsupported format string passed to %s.__format__", v.TypeName())
 	}
-	f, err := parseFormatSpec(spec, v)
+	f, err := parseFormatSpec(spec, v, py)
 	if err != nil {
 		return "", err
 	}
@@ -76,7 +76,8 @@ func FormatValue(v Value, spec string, py PythonVersion, budget Budget) (string,
 	return f.pad(body, numeric, budget)
 }
 
-// formatSpec is [[fill]align][sign][#][0][width][grouping][.precision][type].
+// formatSpec is [[fill]align][sign][#][0][width][grouping][.precision][type],
+// and from 3.14 the precision is [.[digits][grouping]].
 type formatSpec struct {
 	fill     rune
 	align    byte // '<' '>' '^' '=', or 0 when the type's default applies
@@ -88,7 +89,11 @@ type formatSpec struct {
 	grouping byte // ',' '_' or 0
 	prec     int
 	hasPrec  bool
-	typ      byte
+	// fracGrouping is the separator 3.14 allows after the precision, which
+	// goes between the digits after the point. Only a float lays it out;
+	// an integer or a string code reads it and ignores it.
+	fracGrouping byte // ',' '_' or 0
+	typ          byte
 	// zcoerce is 'z', which renders what rounds to zero without its sign.
 	// Python 3.11 added it (PEP 682), which is every version modelled here,
 	// so it needs no version gate.
@@ -98,7 +103,7 @@ type formatSpec struct {
 	budget Budget
 }
 
-func parseFormatSpec(spec string, v Value) (formatSpec, error) {
+func parseFormatSpec(spec string, v Value, py PythonVersion) (formatSpec, error) {
 	f := formatSpec{fill: ' '}
 	r := []rune(spec)
 	i := 0
@@ -189,7 +194,42 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 		for i < len(r) && r[i] >= '0' && r[i] <= '9' {
 			i++
 		}
+		// The digits are read, and an overflow reported, before anything
+		// after them is looked at.
+		if i > start {
+			n, err := ParseFormatInteger(string(r[start:i]))
+			if err != nil {
+				return f, err
+			}
+			f.prec, f.hasPrec = n, true
+		}
+		if py.FractionalGrouping() {
+			// The fraction's separators are read the way the integer
+			// part's are: one of each at most, comma first, and the
+			// pair in either order is "both". A second comma is not
+			// read here, so it falls to the type -- `{:.,,}` is about
+			// a code called ',' -- while a comma after an underscore
+			// is refused on sight.
+			if i < len(r) && r[i] == ',' {
+				f.fracGrouping = ','
+				i++
+			}
+			if i < len(r) && r[i] == '_' {
+				if f.fracGrouping != 0 {
+					return f, commaAndUnderscore()
+				}
+				f.fracGrouping = '_'
+				i++
+			}
+			if i < len(r) && r[i] == ',' && f.fracGrouping == '_' {
+				return f, commaAndUnderscore()
+			}
+		}
 		if i == start {
+			// A separator stands in for the digits from 3.14 --
+			// `{:.,f}` is the default precision, grouped -- so what is
+			// missing is a dot with nothing at all after it.
+			//
 			// A dot with no digits after it is settled while the spec
 			// is being read, so the complaint names neither the
 			// presentation type nor the value's own -- `{:.f}` and
@@ -199,11 +239,6 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 			return f, errs.New(errs.ValueError,
 				"Format specifier missing precision")
 		}
-		n, err := ParseFormatInteger(string(r[start:i]))
-		if err != nil {
-			return f, err
-		}
-		f.prec, f.hasPrec = n, true
 	}
 	switch len(r) - i {
 	case 0:
@@ -231,6 +266,13 @@ func parseFormatSpec(spec string, v Value) (formatSpec, error) {
 		default:
 			return f, cannotGroup(f.grouping, f.typ)
 		}
+	}
+	// The fraction's separator is refused with 'n' alone, which takes its
+	// separators from the locale -- after the integer part's, so `{:,.,n}`
+	// is about the first comma. Every other code accepts it here, and only
+	// the float codes have a fraction to put it in.
+	if f.fracGrouping != 0 && f.typ == 'n' {
+		return f, cannotGroup(f.fracGrouping, f.typ)
 	}
 	return f, nil
 }
@@ -513,7 +555,13 @@ func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
 	if f.hasPrec && f.prec > math.MaxInt32 {
 		return "", errs.New(errs.ValueError, "precision too big")
 	}
-	if err := chargeBytes(f.budget, int64(f.prec)); err != nil {
+	// A grouped fraction is a third longer again, and the separators are
+	// paid for with the digits rather than after them.
+	charge := int64(f.prec)
+	if f.fracGrouping != 0 {
+		charge += charge / 3
+	}
+	if err := chargeBytes(f.budget, charge); err != nil {
 		return "", err
 	}
 	prec := f.prec
@@ -592,6 +640,9 @@ func (f formatSpec) formatFloat(x float64, v Value) (string, error) {
 	if f.grouping != 0 {
 		body = groupMantissa(body, f.grouping)
 	}
+	if f.fracGrouping != 0 {
+		body = groupFraction(body, f.fracGrouping)
+	}
 	if percent {
 		body += "%"
 	}
@@ -659,6 +710,31 @@ func groupMantissa(body string, sep byte) string {
 		return intPart + "." + rest + exp
 	}
 	return intPart + exp
+}
+
+// groupFraction separates the digits after the point into threes counted from
+// the point, so a short group falls at the end: `{:.,}` of 1234.5678912 is
+// "1234.567,891,2". It stops at the exponent as groupMantissa does, and a body
+// with no point -- `{:.0,f}`, or the shortest repr of 1e+20 -- has nothing to
+// separate.
+func groupFraction(body string, sep byte) string {
+	head, exp := splitExponent(body)
+	intPart, frac, found := strings.Cut(head, ".")
+	if !found || len(frac) <= 3 {
+		return body
+	}
+	var b strings.Builder
+	b.Grow(len(body) + len(frac)/3)
+	b.WriteString(intPart)
+	b.WriteByte('.')
+	for i := 0; i < len(frac); i += 3 {
+		if i > 0 {
+			b.WriteByte(sep)
+		}
+		b.WriteString(frac[i:min(i+3, len(frac))])
+	}
+	b.WriteString(exp)
+	return b.String()
 }
 
 // expForm is Python's 'e': a two-digit exponent at minimum, where Go writes as
