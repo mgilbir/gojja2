@@ -89,19 +89,19 @@ func (t *Template) RenderString(ctx context.Context, vars map[string]any) (strin
 // RenderValues renders into w with variables that are already template values,
 // skipping the conversion from Go.
 //
-// Skipping the conversion also skips what it protects. [Template.Render]
-// converts what it is given, so a template cannot write to the caller's data;
-// the values passed here are used as they are, and a template can mutate them:
-// `{% set _ = lst.append(9) %}`, `{% set _ = d.update(x) %}` and
-// `{% set d.v %}...{% endset %}` all write through to the caller's [value.Value].
-// The writes are visible after the render and to every later render given the
-// same values, so a prepared vars map reused across requests carries whatever
-// an earlier template put in it.
+// A value a template could change in place -- a list, a dict, a namespace --
+// is copied the first time the render reaches it, exactly as [Template.Render]
+// copies a [value.Value] it is handed, so `{% do lst.append(9) %}` changes the
+// render's copy and never the caller's. A prepared vars map can therefore be
+// reused across renders and goroutines.
 //
-// Build the values per render, or use [Template.Render], if a template must not
-// be able to do that. See docs/divergences.md, "A render does not mutate the
-// caller's data".
+// [WithSharedState]([ShareRenderValues]) skips the copy: the values are then
+// used as they are, the template's writes reach the caller's values and stay
+// there for every later render given them, as in jinja2.
 func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[string]value.Value) (err error) {
+	if !t.env.sharesValues() {
+		return t.renderGo(ctx, w, asAny(vars))
+	}
 	// A bufio.Writer keeps the many small writes a template makes from
 	// becoming many small syscalls, and gives the render one place to
 	// flush from.
@@ -118,6 +118,21 @@ func (t *Template) RenderValues(ctx context.Context, w io.Writer, vars map[strin
 	}()
 	defer catchPanic(&err)
 	return t.renderInto(&stringWriter{w: bw}, vars, 0, newBudget(ctx, t.env), nil)
+}
+
+// sharesValues reports whether prepared values are handed to a template
+// uncopied; see ShareRenderValues.
+func (e *Environment) sharesValues() bool { return e.shared&ShareRenderValues != 0 }
+
+// asAny hands prepared values to the path that converts Go values, which
+// copies a value.Value a template could change the first time the render
+// reaches it -- the copy RenderValues makes unless sharing is allowed.
+func asAny(vars map[string]value.Value) map[string]any {
+	out := make(map[string]any, len(vars))
+	for k, v := range vars {
+		out[k] = v
+	}
+	return out
 }
 
 // renderGo is Render and RenderString's shared path.

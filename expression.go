@@ -77,9 +77,14 @@ func (x *Expression) Eval(ctx context.Context, vars map[string]any) (v value.Val
 }
 
 // EvalValues is [Expression.Eval] with variables that are already template
-// values. As with [Template.RenderValues], they are used as they are, so an
-// expression that mutates one -- `lst.append(1)` -- mutates the caller's.
+// values. As with [Template.RenderValues], what the expression could change is
+// copied first, so `lst.append(1)` changes a copy, unless
+// [WithSharedState]([ShareRenderValues]) says to use the caller's values as
+// they are.
 func (x *Expression) EvalValues(ctx context.Context, vars map[string]value.Value) (v value.Value, err error) {
+	if !x.tmpl.env.sharesValues() {
+		return x.Eval(ctx, asAny(vars))
+	}
 	defer catchPanic(&err)
 	st := x.tmpl.newState(vars, 0, newBudget(ctx, x.tmpl.env))
 	st.eager = true // the result goes back to the host; see State.eager

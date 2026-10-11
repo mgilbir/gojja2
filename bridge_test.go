@@ -157,10 +157,12 @@ func TestSelfComparisonTerminates(t *testing.T) {
 }
 
 // TestPointerReceiverMethodsAreReachable pins the documented feature for the
-// receiver style Go code actually uses. Dereferencing the pointer before
-// wrapping the struct discarded its method set entirely.
+// receiver style Go code actually uses, where the environment allows it -- by
+// default a pointer method is refused, since it can change the host's object
+// (see shared_test.go). Dereferencing the pointer before wrapping the struct
+// discarded its method set entirely.
 func TestPointerReceiverMethodsAreReachable(t *testing.T) {
-	env := mustNew()
+	env := mustNew(WithSharedState(AllowPointerMethods))
 	got, err := renderVars(t, env, `{{ a.Label() }}`, map[string]any{"a": &ptrAccount{Name: "x"}})
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -214,7 +216,7 @@ func TestWithMethodPolicyWidensExposure(t *testing.T) {
 // TestPanickingMethodBecomesAnError pins that host code reached from a
 // template cannot unwind the caller's goroutine.
 func TestPanickingMethodBecomesAnError(t *testing.T) {
-	out, err := renderVars(t, mustNew(), `{{ a.Boom() }}`, map[string]any{"a": &ptrAccount{Name: "x"}})
+	out, err := renderVars(t, mustNew(WithSharedState(AllowPointerMethods)), `{{ a.Boom() }}`, map[string]any{"a": &ptrAccount{Name: "x"}})
 	if err == nil {
 		t.Fatalf("expected an error from a panicking method, got %q", out)
 	}

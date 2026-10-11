@@ -197,6 +197,9 @@ func (ex *exec) invoke(callee value.Value, args *value.CallArgs) (value.Value, e
 	if m, ok := callee.Interface().(*macroObject); ok {
 		return ex.callMacro(m, args)
 	}
+	if err := ex.st.refuseSharedCall(callee); err != nil {
+		return value.Undefined, err
+	}
 	// A stateful callable is handed the render, so it can charge the budget
 	// for whatever it is about to do.
 	if fn, ok := callee.Interface().(statefulCaller); ok {

@@ -140,15 +140,17 @@ func TestBridgeFieldNaming(t *testing.T) {
 	}
 }
 
-// guide.md promises "value or pointer receiver", so both have to answer when
-// the host hands over a pointer -- which is the shape most Go code uses.
+// Both receivers have to answer when the host hands over a pointer -- which is
+// the shape most Go code uses -- once the environment allows pointer methods.
+// By default only the value method answers; see shared_test.go.
 func TestBridgeMethodReceivers(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"pointer host, value method", `{{ h.ValueMethod() }}`, "value"},
 		{"pointer host, pointer method", `{{ h.PointerMethod() }}`, "pointer"},
 		{"as a bare attribute", `{{ h.ValueMethod }}`, ""},
 	} {
-		got, err := renderBridge(t, tc.src, map[string]any{"h": bridgeFixture()})
+		got, err := renderBridge(t, tc.src, map[string]any{"h": bridgeFixture()},
+			gojja2.WithSharedState(gojja2.AllowPointerMethods))
 		if tc.want == "" {
 			continue // a bound method's repr is not what this pins
 		}

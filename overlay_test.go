@@ -178,6 +178,12 @@ func compileOverlayCases() []overlayCase {
 	}
 }
 
+// overlayPointerHost has a method declared on its pointer, which a template
+// may call only where the environment allows it.
+type overlayPointerHost struct{}
+
+func (*overlayPointerHost) Hi() string { return "hi" }
+
 // runtimeOverlayCases change nothing compiling reads, so the overlay reuses the
 // parent's compiled tree -- and must still render with its own setting, which
 // is what want shows.
@@ -194,6 +200,9 @@ func runtimeOverlayCases() []overlayCase {
 		{option: "WithMaxRecursion", opt: WithMaxRecursion(1), name: "deep",
 			sources: map[string]string{"deep": `{% include 'inc.html' %}`},
 			vars:    map[string]any{"x": 1}, parent: "1|[1]", want: "error:recursion"},
+		{option: "WithSharedState", opt: WithSharedState(AllowPointerMethods), name: "t",
+			sources: map[string]string{"t": `{{ h.Hi() }}`},
+			vars:    map[string]any{"h": &overlayPointerHost{}}, parent: "error:pointer receiver", want: "hi"},
 		{option: "WithMethodPolicy", opt: WithMethodPolicy(value.AllMethods), name: "t",
 			sources: map[string]string{"t": `{{ h.Echo is defined }}{% include 'mleaf' %}`},
 			vars:    map[string]any{"h": overlayHost{}}, parent: "False|False", want: "True|True"},
@@ -747,7 +756,8 @@ func TestOverlayClassifiesEveryEnvironmentField(t *testing.T) {
 		// Read only while rendering, or only by validate.
 		"methods": "runtime", "maxRecursion": "runtime", "maxIterations": "runtime",
 		"maxOutputBytes": "runtime", "delimiterLeniency": "runtime", "joinPath": "runtime",
-		"cache": "own", "overlay": "own",
+		"shared": "runtime",
+		"cache":  "own", "overlay": "own",
 	}
 	typ := reflect.TypeFor[Environment]()
 	for i := range typ.NumField() {
