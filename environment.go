@@ -33,6 +33,7 @@ package gojja2
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -245,16 +246,30 @@ const (
 )
 
 func (l DelimiterLeniency) String() string {
-	if l == MatchJinja2Delimiters {
+	switch l {
+	case RefuseCollidingDelimiters:
+		return "RefuseCollidingDelimiters"
+	case MatchJinja2Delimiters:
 		return "MatchJinja2Delimiters"
 	}
-	return "RefuseCollidingDelimiters"
+	return fmt.Sprintf("DelimiterLeniency(%d)", int(l))
 }
 
 // WithDelimiterLeniency selects how strictly the tag openings are checked
 // against one another. See [RefuseCollidingDelimiters], which is the default.
+//
+// A value that is neither is refused. Taking it as either would be a guess,
+// and the check that read "not the strict one" took every unknown value as
+// the lenient one -- a setting whose job is to refuse, quietly not refusing.
 func WithDelimiterLeniency(l DelimiterLeniency) Option {
-	return func(e *Environment) error { e.delimiterLeniency = l; return nil }
+	return func(e *Environment) error {
+		switch l {
+		case RefuseCollidingDelimiters, MatchJinja2Delimiters:
+			e.delimiterLeniency = l
+			return nil
+		}
+		return fmt.Errorf("gojja2: unknown DelimiterLeniency %d", int(l))
+	}
 }
 
 // validate checks what only the finished configuration can show, which is the
@@ -394,10 +409,13 @@ const (
 )
 
 func (l AutoescapeLeniency) String() string {
-	if l == AcceptAnyExtension {
+	switch l {
+	case RefuseImpossibleExtensions:
+		return "RefuseImpossibleExtensions"
+	case AcceptAnyExtension:
 		return "AcceptAnyExtension"
 	}
-	return "RefuseImpossibleExtensions"
+	return fmt.Sprintf("AutoescapeLeniency(%d)", int(l))
 }
 
 // SelectAutoescapeConfig mirrors the parameters of jinja2's select_autoescape.
@@ -485,6 +503,15 @@ func WithAutoescapeExtensions(extensions ...string) Option {
 // the caller wrote down.
 func WithAutoescapeSelection(cfg SelectAutoescapeConfig) Option {
 	return func(e *Environment) error {
+		// An unknown Leniency is refused rather than read as either: the
+		// check below used to run only for the strict value, so any other
+		// number skipped it and accepted "*.html" -- a setting that escapes
+		// nothing, from a value that names no setting at all.
+		switch cfg.Leniency {
+		case RefuseImpossibleExtensions, AcceptAnyExtension:
+		default:
+			return fmt.Errorf("gojja2: unknown AutoescapeLeniency %d", int(cfg.Leniency))
+		}
 		if cfg.Leniency == RefuseImpossibleExtensions {
 			for _, group := range []struct {
 				field string

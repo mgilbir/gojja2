@@ -425,7 +425,7 @@ There is no environment to use when it does -- it returns `nil` and the error.
 | two of the block, variable and comment *opening* strings being equal | a template cannot be read two ways, and guessing which is worse than saying so. `WithDelimiterLeniency` turns this down; see below |
 | a negative `TruncateLeeway` | `truncate` refuses it when it runs, so the environment built and then failed on every render that reached the filter |
 | a `PythonVersion` that is not one of the five | gojja2 reproduces CPython 3.11 to 3.15; anything else has no answers to give, and taking the default silently would render something nobody asked for |
-| an `UnsupportedLeniency` that is neither value | likewise |
+| an `UnsupportedLeniency`, `DelimiterLeniency` or `AutoescapeLeniency` that names no setting | likewise -- and the last two used to read any unknown value as the lenient one |
 | a `SharedState` with a bit that is not one of its flags | a typo must not quietly widen what a template may do; see [Stateless renders](#stateless-renders) |
 
 Two things that look like they should be refused and are not. An **empty**
