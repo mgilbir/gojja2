@@ -790,8 +790,9 @@ link instead.
 ## Sending it
 
 CI (`.github/workflows/ci.yml`) starts on a pull request when it is opened,
-pushed to or reopened, on every push to `main`, nightly at 05:17 UTC, weekly on
-Sunday at 06:41 UTC, and on demand. Which jobs run depends on the trigger:
+pushed to, reopened or labelled, on every push to `main`, nightly at 05:17 UTC,
+weekly on Sunday at 06:41 UTC, and on demand. Which jobs run depends on the
+trigger:
 
 | job | steps | pull request | push to `main` | nightly | weekly | on demand |
 |---|---|---|---|---|---|---|
@@ -800,47 +801,38 @@ Sunday at 06:41 UTC, and on demand. Which jobs run depends on the trigger:
 | `windows` | vet · test · race | without race | yes | — | yes | yes |
 | `macos` | vet · test · race | — | — | — | yes | yes |
 
-Every job waits on `authorize`, which trusts a run that is not a `pull_request`
-event, a pull request whose branch is in this repository, and a fork's pull
-request whose labels *in that run's event payload* include `safe-to-test`.
-Anything else skips every job, and the job summary says the run is waiting for
-approval. CI executes the code in the pull request, which is why a fork's runs
-nothing until a maintainer has labelled it.
+Every job waits on `authorize`. It trusts a run that is not a `pull_request`
+event, and a pull request whose branch is in this repository -- except on a
+`labeled` event, which such a pull request does not need. A **fork's** pull
+request is trusted on exactly one event: a maintainer *adding* the
+`safe-to-test` label. Its open, push and reopen runs skip every job whatever
+labels it carries. CI executes the code in the pull request, which is why a
+fork's runs nothing until somebody with write access has decided to run it.
 
 ```mermaid
 stateDiagram-v2
-    state "no label" as Unlabelled
-    state "safe-to-test" as Labelled
-    [*] --> Unlabelled: a fork opens a pull request
-    Unlabelled --> Labelled: a maintainer adds the label<br/><i>(this starts no run)</i>
-    Labelled --> Unlabelled: a push to the branch<br/><i>(revoke-approval.yml deletes the label,<br/>concurrently with that push's own CI run)</i>
-    note right of Unlabelled
-        a CI run whose payload has no label
-        skips every job
-    end note
-    note right of Labelled
-        a CI run whose payload has the label
-        is trusted and runs its jobs
-    end note
+    state "unreleased" as Waiting
+    state "released at commit C" as Released
+    [*] --> Waiting: a fork opens a pull request<br/><i>(that run skips its jobs)</i>
+    Waiting --> Released: a maintainer reads the diff at C<br/>and adds safe-to-test<br/><i>(that labeled run tests C)</i>
+    Released --> Waiting: a push moves the head past C<br/><i>(its run skips its jobs, and<br/>revoke-approval.yml removes the label)</i>
 ```
 
-What the two workflows do, read from their YAML, and worth knowing before
-relying on the label:
-
-- **Adding the label starts nothing.** `pull_request` declares no `types:`, so
-  only the default opened, synchronize and reopened events start CI, and
-  `labeled` is not among them. The label is read by the next run one of those
-  starts.
-- **A push both runs CI and revokes the label.** The label is attached to the
-  pull request rather than to a commit, so on its own it would keep applying to
-  whatever is pushed after it. `revoke-approval.yml` runs on
-  `pull_request_target` `synchronize` — the event a push raises — and deletes
-  it. The same push starts CI's own `synchronize` run; the two run
-  concurrently, `authorize` reads the label from its event payload rather than
-  asking for the pull request's current labels, and nothing in either workflow
-  orders the deletion before that read.
-- **Only a push revokes.** `revoke-approval.yml` reacts to `synchronize` alone;
-  a label that is not removed by hand stays through a reopen.
+- **The label is the trigger, not a standing permission.** Adding it raises a
+  `labeled` run, and that run tests the commit the pull request had at that
+  moment. A push afterwards runs nothing until the label is added again, so the
+  approval always names a commit someone chose to release.
+- **Read the head before labelling.** The labelled run tests whatever is at the
+  head when the label lands, so a commit pushed between your review and the
+  label is the one that runs. No label scheme closes that window; checking the
+  head commit hash before labelling does.
+- **The label is removed on a push** by `revoke-approval.yml`
+  (`pull_request_target`, `synchronize`), so the pull request does not look
+  released when its new head is not. That workflow never checks out the pull
+  request's code. Removing it is bookkeeping: CI does not read it from a push.
+- **Another label runs nothing.** A `labeled` run for any other label, or on a
+  pull request from this repository, skips every job, and has a concurrency
+  group of its own so it cannot cancel a run that is doing something.
 
 Commit messages here say *why*, at length, and name what was checked. Look at
 `git log` before writing one.

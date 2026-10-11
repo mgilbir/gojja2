@@ -202,11 +202,12 @@ make ask T='{{ 1/2 }}'  # what does CPython jinja2 render for this?
 ```
 
 CI runs on every pull request, on every commit that reaches `main`, nightly, and
-weekly on Windows and macOS. A pull request from a **fork** runs nothing unless
-its triggering event carries the `safe-to-test` label, because CI executes the
-code in the pull request. Adding the label does not itself start a run, and a
-push removes it; [docs/contributing.md](docs/contributing.md#sending-it) says
-exactly what the workflows do.
+weekly on Windows and macOS. A pull request from a **fork** runs nothing until a
+maintainer has read the diff and adds the `safe-to-test` label, because CI
+executes the code in the pull request: adding the label runs CI on the commit
+the pull request has then, and a later push runs nothing until the label is
+added again. [docs/contributing.md](docs/contributing.md#sending-it) has the
+details.
 
 [docs/contributing.md](docs/contributing.md) has the rest: how to tell a bug
 from a deliberate divergence, where a conformance case has to live, how to
