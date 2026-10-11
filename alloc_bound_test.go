@@ -30,9 +30,20 @@ import (
 // and each is rendered with its allocation counted against the size of the
 // template plus the size of what it rendered.
 //
-// The factor is measured, not chosen: across the corpus the median is 1.4, the
-// 99th percentile 2.9 and the worst 4.9, the same to one decimal place on every
-// run. Thirty-two is six times the worst observed.
+// The factor is measured, not chosen. When it was set the corpus's median was
+// 1.4, its 99th percentile 2.9 and its worst 4.9. The corpus has grown since: on
+// 3,140 templates (2026-10-11) the median is 0.5, the 99th percentile 3.5 and
+// the worst 19.6 -- a |pprint of a forty-element set, which lays every element
+// out on a line of its own -- the same to one decimal place on every run.
+// Thirty-two still clears that worst case, by a margin that is no longer
+// large; the log line below is how anyone would see it shrink.
+//
+// The bound is asserted only without the race detector. Under -race,
+// sync.Pool drops what it is given at random and the detector allocates on its
+// own account, so the same template measures anywhere from 21 to 33 times its
+// size from one run to the next -- a count of the detector, not of the engine.
+// The figures are still logged there; the plain test run and the GOMEMLIMIT
+// run assert them.
 //
 // What this catches is a render that starts allocating something large per
 // call, whatever the template -- a buffer sized once, a table built eagerly, a
@@ -117,7 +128,7 @@ func TestRenderAllocationStaysInProportion(t *testing.T) {
 			worstRatio, worstSrc = r, src
 		}
 		ratios = append(ratios, float64(per)/float64(base))
-		if per > allocFactor*base {
+		if per > allocFactor*base && !raceDetector {
 			t.Errorf("rendering %d bytes of template into %d bytes of output "+
 				"allocated %d, more than %d times their size:\n  %q",
 				len(src), out.Len(), per, allocFactor, truncate(src, 200))
