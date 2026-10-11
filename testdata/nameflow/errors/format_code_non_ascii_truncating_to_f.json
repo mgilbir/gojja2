@@ -1,0 +1,4 @@
+{
+  "case": "errors/format_code_non_ascii_truncating_to_f.jj2",
+  "variables": {}
+}

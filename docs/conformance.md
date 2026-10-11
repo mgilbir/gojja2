@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**8393 of 8481 gradable cases (99.0%)** match CPython jinja2, across eight
+**8399 of 8487 gradable cases (99.0%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The 88 that do not are listed in
 `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["8393 / 8481 gradable  (99.0%)"]
+    TC --> RATE["8399 / 8487 gradable  (99.0%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>fails the test if either drifts —<br/>only with every corpus imported,<br/>which no CI workflow does</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 6161 | 6077 |
+| gojja2's own (committed, with goldens) | 6167 | 6083 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **8481** | **8393 (99.0%)** |
+| **total** | **8487** | **8399 (99.0%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -158,11 +158,11 @@ but it runs on an interpreter, and the interpreter decides what `{{ d[0:1] }}`
 raises, whether `{{ xs|sort(reverse=none) }}` is an error, how a division by
 zero is worded, and which code points are digits.
 
-Across CPython 3.11 to 3.15 that is **541 of the 6,161 committed cases**:
+Across CPython 3.11 to 3.15 that is **541 of the 6,167 committed cases**:
 
 | | |
 |---|---|
-| identical on every interpreter | 5,620 (91.2%) |
+| identical on every interpreter | 5,626 (91.2%) |
 | answer differently somewhere | 541 |
 | of those, answering two ways | 499 |
 | of those, answering three ways | 42 |
