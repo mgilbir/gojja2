@@ -738,8 +738,8 @@ compared, `_safe_key` falls back to `(type name, id(obj))`. For two elements of
 one type, such as `(1,)` and `('a',)`, the address decides, and an address is
 an address; gojja2 keeps its repr order there, which is at least the same one
 twice. For two *types* the name decides, and that is reproducible -- a wide set
-of integers and strings lists every integer first -- so it is not a divergence
-and is not covered by this entry.
+of integers and strings lists every integer first -- so gojja2 orders them the
+same way, and `filters/pprint_set_of_ints_and_strings` grades it.
 
 Of the two answers gojja2's is the reproducible one, which is a reason to prefer
 it rather than a claim that CPython is wrong: an unordered collection has no
