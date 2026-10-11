@@ -2,7 +2,8 @@
 
 The short version: **CPython jinja2 is the specification, so start by asking
 it.** Almost every change here begins with `make ask` and ends with a
-conformance case.
+conformance case. When a command fails, or passes having checked less than you
+expected, [troubleshooting.md](troubleshooting.md) has the symptom.
 
 ## Setting up
 
