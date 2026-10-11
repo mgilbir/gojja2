@@ -1,0 +1,6 @@
+{
+  "case": "intstr/replace_old.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

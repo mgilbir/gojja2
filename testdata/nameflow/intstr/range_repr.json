@@ -1,0 +1,6 @@
+{
+  "case": "intstr/range_repr.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

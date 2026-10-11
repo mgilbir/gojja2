@@ -1,0 +1,6 @@
+{
+  "case": "intstr/max_attribute_empty.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

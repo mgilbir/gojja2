@@ -1,0 +1,6 @@
+{
+  "case": "intstr/xmlattr.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

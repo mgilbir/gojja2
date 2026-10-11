@@ -1,0 +1,6 @@
+{
+  "case": "intstr/format_conversion_a.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

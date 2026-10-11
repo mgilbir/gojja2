@@ -829,6 +829,15 @@ func (n *namespaceObject) QualifiedName() string { return "jinja2.utils.Namespac
 // is the bare name with no explanation around it.
 func (n *namespaceObject) AttributeError(name string) string { return name }
 
+// ReprErr is Repr refusing what the dict inside it refuses.
+func (n *namespaceObject) ReprErr() (string, error) {
+	inner, err := value.ReprErr(value.Value(dictValue(n.d)), n.py)
+	if err != nil {
+		return "", err
+	}
+	return "<Namespace " + inner + ">", nil
+}
+
 func (n *namespaceObject) Repr() string {
 	return "<Namespace " + value.ReprFor(value.Value(dictValue(n.d)), n.py) + ">"
 }

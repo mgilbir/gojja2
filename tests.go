@@ -306,15 +306,20 @@ func isEscaped(v value.Value) bool {
 // escapeIfNeeded is shared by the escaping filters. It is markupsafe's
 // escape(): Markup passes through, a value carrying its own escaped form hands
 // that over, and everything else is escaped.
-func escapeIfNeeded(v value.Value, py value.PythonVersion) value.Value {
+func escapeIfNeeded(v value.Value, py value.PythonVersion) (value.Value, error) {
 	if v.IsSafe() {
-		return v
+		return v, nil
 	}
 	if html, ok := value.HTML(v); ok {
-		return value.Safe(html)
+		return value.Safe(html), nil
 	}
-	// StrFor: a container's text is its repr and repr escapes by the
+	// StrErr: a container's text is its repr and repr escapes by the
 	// interpreter's isprintable, so `{{ ['\ua7da']|urlize }}` shows the
-	// character under 3.14 and the escape under the pin.
-	return value.Safe(escapeHTML(value.StrFor(v, py)))
+	// character under 3.14 and the escape under the pin. And escape() is
+	// str() first, which refuses an int too wide for decimal text.
+	text, err := value.StrErr(v, py)
+	if err != nil {
+		return value.Undefined, err
+	}
+	return value.Safe(escapeHTML(text)), nil
 }

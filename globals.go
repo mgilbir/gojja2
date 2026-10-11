@@ -298,6 +298,18 @@ func (r *rangeObject) HashKey() (string, bool) {
 
 func (r *rangeObject) TypeName() string { return "range" }
 
+// ReprErr is Repr refusing what CPython's does: a bound too wide to print in
+// decimal. `{{ range(10 ** 5000) }}` is a ValueError there.
+func (r *rangeObject) ReprErr() (string, error) {
+	start, stop, step := r.bounds()
+	for _, b := range []*big.Int{start, stop, step} {
+		if err := value.BigIntStrRefusal(b); err != nil {
+			return "", err
+		}
+	}
+	return r.Repr(), nil
+}
+
 func (r *rangeObject) Repr() string {
 	start, stop, step := r.bounds()
 	var b strings.Builder

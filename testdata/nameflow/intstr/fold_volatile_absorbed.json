@@ -1,0 +1,6 @@
+{
+  "case": "intstr/fold_volatile_absorbed.jj2",
+  "variables": {
+    "x": "f"
+  }
+}

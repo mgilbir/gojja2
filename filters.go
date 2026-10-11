@@ -167,7 +167,7 @@ func strictStrFor(v value.Value, py value.PythonVersion) (string, error) {
 	if err := value.StrictRefusal(v); err != nil {
 		return "", err
 	}
-	return value.StrFor(v, py), nil
+	return value.StrErr(v, py)
 }
 
 func runeFilter(f func(i int, r rune, u *value.UnicodeOverrides) string) Filter {
@@ -307,40 +307,55 @@ func collect(s *State, seq iter.Seq[value.Value]) ([]value.Value, error) {
 // else is one lookup with that value as the key, which is how
 // `|max(attribute=false)` reads element 0 and `|max(attribute=2.5)` reports
 // "no element 2.5" rather than looking for an attribute called "2.5".
-func attrParts(attribute value.Value) []value.Value {
+//
+// The int() can fail: a run of more than 4300 digits is past CPython's limit on
+// reading decimal text, and jinja2 lets the ValueError out of whichever filter
+// asked, at the point it asked.
+func attrParts(attribute value.Value) ([]value.Value, error) {
 	if attribute.IsNone() || attribute.IsUndefined() {
-		return nil
+		return nil, nil
 	}
 	if attribute.Kind() != value.KindString {
-		return []value.Value{attribute}
+		return []value.Value{attribute}, nil
 	}
 	fields := strings.Split(attribute.AsString(), ".")
 	parts := make([]value.Value, 0, len(fields))
 	for _, part := range fields {
-		if n, ok := pyDigitsToInt(part); ok {
+		n, ok, err := pyDigitsToInt(part)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			parts = append(parts, n)
 			continue
 		}
 		parts = append(parts, value.String(part))
 	}
-	return parts
+	return parts, nil
 }
 
 // pyDigitsToInt reads a part the way `int(x) if x.isdigit() else x` does.
 //
 // str.isdigit accepts no sign and no spaces, so "-1" and " 1" are names; it
 // does accept other scripts' digits, and int() reads those, so "١" is 1.
-func pyDigitsToInt(part string) (value.Value, bool) {
+func pyDigitsToInt(part string) (value.Value, bool, error) {
 	if part == "" {
-		return value.Undefined, false
+		return value.Undefined, false, nil
+	}
+	digits := 0
+	for _, r := range part {
+		if pyDigitValue(r) < 0 {
+			return value.Undefined, false, nil
+		}
+		digits++
+	}
+	if err := value.IntParseRefusal(digits); err != nil {
+		return value.Undefined, false, err
 	}
 	var n int64
 	var wide *big.Int
 	for _, r := range part {
 		d := pyDigitValue(r)
-		if d < 0 {
-			return value.Undefined, false
-		}
 		// Python builds the integer however wide it is, and a lookup
 		// with it is a lookup with an int -- which finds no key spelled
 		// as the digits. Reading it as a name instead found one.
@@ -354,9 +369,9 @@ func pyDigitsToInt(part string) (value.Value, bool) {
 		n = n*10 + int64(d)
 	}
 	if wide != nil {
-		return value.BigInt(wide), true
+		return value.BigInt(wide), true, nil
 	}
-	return value.Int(n), true
+	return value.Int(n), true, nil
 }
 
 // pyDigitValue is the decimal value of a rune str.isdigit accepts, or -1.
@@ -433,7 +448,7 @@ func attrPath(s *State, v value.Value, parts []value.Value) (value.Value, error)
 // make_multi_attrgetter while these use make_attrgetter. The difference is
 // visible: a list comparison settles equal keys without ordering them, so
 // `[nope1, nope2]|sort` succeeds where `[nope1, nope2]|max` raises.
-func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value.Value) (value.Value, error) {
+func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) (func(value.Value) (value.Value, error), error) {
 	fold := func(v value.Value) value.Value {
 		if !caseSensitive && v.IsString() {
 			// Markup.lower() is Markup: markupsafe overrides the
@@ -457,9 +472,12 @@ func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 				return value.Undefined, err
 			}
 			return fold(v), nil
-		}
+		}, nil
 	}
-	parts := attrParts(trimSpec(attribute))
+	parts, err := attrParts(trimSpec(attribute))
+	if err != nil {
+		return nil, err
+	}
 	return func(v value.Value) (value.Value, error) {
 		if err := s.Poll(); err != nil {
 			return value.Undefined, err
@@ -469,11 +487,11 @@ func attrKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 			return value.Undefined, err
 		}
 		return fold(k), nil
-	}
+	}, nil
 }
 
 // sortKeyFunc builds the key extractor a sorting filter uses.
-func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value.Value) (value.Value, error) {
+func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) (func(value.Value) (value.Value, error), error) {
 	fold := func(v value.Value) value.Value {
 		if !caseSensitive && v.IsString() {
 			// Markup.lower() is Markup: markupsafe overrides the
@@ -494,7 +512,7 @@ func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 	if attribute.IsUndefined() || attribute.IsNone() {
 		return func(v value.Value) (value.Value, error) {
 			return value.NewList(fold(v)), nil
-		}
+		}, nil
 	}
 	// A comma-separated specification sorts by several keys in turn --
 	// but only a string one: make_multi_attrgetter splits nothing else.
@@ -507,7 +525,11 @@ func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 	}
 	paths := make([][]value.Value, len(specs))
 	for i, spec := range specs {
-		paths[i] = attrParts(spec)
+		p, err := attrParts(spec)
+		if err != nil {
+			return nil, err
+		}
+		paths[i] = p
 	}
 	return func(v value.Value) (value.Value, error) {
 		keys := make([]value.Value, len(paths))
@@ -519,7 +541,7 @@ func sortKeyFunc(s *State, attribute value.Value, caseSensitive bool) func(value
 			keys[i] = fold(k)
 		}
 		return value.NewList(keys...), nil
-	}
+	}, nil
 }
 
 // stableSortBy sorts in place, reproducing CPython's comparison order.
@@ -717,6 +739,20 @@ func filterString(s *State, v value.Value, _ *value.CallArgs) (value.Value, erro
 	return value.String(text), nil
 }
 
+// replaceArgs is `soft_str(old), soft_str(new)`, in that order: either can
+// refuse, an int too wide for decimal text being the one that does.
+func replaceArgs(old, new value.Value, py value.PythonVersion) (string, string, error) {
+	from, err := value.StrErr(old, py)
+	if err != nil {
+		return "", "", err
+	}
+	to, err := value.StrErr(new, py)
+	if err != nil {
+		return "", "", err
+	}
+	return from, to, nil
+}
+
 // filterReplace implements jinja2's do_replace, whose autoescaping rule is
 // finer than it looks; see below.
 func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
@@ -738,7 +774,10 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		if err != nil {
 			return value.Undefined, err
 		}
-		from, to := value.Str(old), value.Str(new)
+		from, to, err := replaceArgs(old, new, s.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
 		if err := chargeReplace(s, src, from, to, count); err != nil {
 			return value.Undefined, err
 		}
@@ -771,7 +810,10 @@ func filterReplace(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		}
 		markup = true
 	}
-	from, to := value.Str(old), value.Str(new)
+	from, to, err := replaceArgs(old, new, s.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
+	}
 	if markup && !new.IsSafe() {
 		to = escapeHTML(to)
 	}
@@ -1037,12 +1079,20 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	if ok, err := value.Ordered(">=", length, value.Int(int64(endLen)), s.PythonVersion()); err != nil {
 		return value.Undefined, err
 	} else if !ok {
+		// The f-string is built before the assert raises, and str() of
+		// a length too wide for decimal text refuses first.
+		if err := value.IntStrRefusalIn(length); err != nil {
+			return value.Undefined, err
+		}
 		return value.Undefined, errs.New(errs.AssertionError,
 			"expected length >= %d, got %s", endLen, value.Str(length))
 	}
 	if ok, err := value.Ordered(">=", leeway, value.Int(0), s.PythonVersion()); err != nil {
 		return value.Undefined, err
 	} else if !ok {
+		if err := value.IntStrRefusalIn(leeway); err != nil {
+			return value.Undefined, err
+		}
 		return value.Undefined, errs.New(errs.AssertionError,
 			"expected leeway >= 0, got %s", value.Str(leeway))
 	}
@@ -1238,8 +1288,13 @@ func wrapLine(s *State, text string, widthVal value.Value, breakLong, breakOnHyp
 		return nil, err
 	}
 	if tooNarrow {
-		return nil, errs.New(errs.ValueError,
-			"invalid width %s (must be > 0)", value.ReprFor(widthVal, s.PythonVersion()))
+		// textwrap formats the message with %r before it raises, and a
+		// width too wide for decimal text refuses that first.
+		rep, err := value.ReprErr(widthVal, s.PythonVersion())
+		if err != nil {
+			return nil, err
+		}
+		return nil, errs.New(errs.ValueError, "invalid width %s (must be > 0)", rep)
 	}
 	// Past that, the width is only compared against -- so a float wraps as
 	// its value -- until a word has to be cut at it, which is a slice, and
@@ -1758,7 +1813,15 @@ func escapeArg(safe bool, v value.Value, py value.PythonVersion) value.Value {
 	case value.KindInt, value.KindFloat, value.KindBool, value.KindNone:
 		return v
 	}
-	return escapeIfNeeded(v, py)
+	escaped, err := escapeIfNeeded(v, py)
+	if err != nil {
+		// markupsafe escapes an argument when the conversion asks for
+		// its text, not before -- so a value whose str() refuses is
+		// handed over as it is, and refuses when %s or %r reaches it,
+		// after whatever the conversions before it had to say.
+		return v
+	}
+	return escaped
 }
 
 // filterPprint renders a value the way Python's pprint.pformat does: repr()
@@ -2740,6 +2803,14 @@ func pyParseInt(text string, base int, py value.PythonVersion) (*big.Int, bool) 
 	if s == "" {
 		return nil, false
 	}
+	// CPython's digit limit: decimal text -- any base that is not a power of
+	// two -- with more than 4300 digits is a ValueError, which do_int
+	// catches like any other. The float fallback then reads it, so
+	// `('1' * 4301)|int` is the default (the float overflows) and a long
+	// run of leading zeros is the float's rounding of the number.
+	if value.IntParseBaseLimited(base) && value.IntParseRefusal(value.CountDigits(s)) != nil {
+		return nil, false
+	}
 	n, ok := new(big.Int).SetString(s, base)
 	if !ok {
 		return nil, false
@@ -3102,7 +3173,10 @@ func filterSum(s *State, v value.Value, args *value.CallArgs) (value.Value, erro
 		return value.Undefined, errs.New(errs.TypeError,
 			"sum() can't sum bytes [use b''.join(seq) instead]")
 	}
-	parts := attrParts(attribute)
+	parts, err := attrParts(attribute)
+	if err != nil {
+		return value.Undefined, err
+	}
 	for _, item := range items {
 		if len(parts) > 0 {
 			item, err = attrPath(s, item, parts)

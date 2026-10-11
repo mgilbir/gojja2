@@ -1,0 +1,6 @@
+{
+  "case": "intstr/wordwrap_width_message.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

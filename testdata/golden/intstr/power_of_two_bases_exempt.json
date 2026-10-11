@@ -1,0 +1,11 @@
+{
+  "case": "intstr/power_of_two_bases_exempt.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "3572|4762|3572|3572|14285|4762|4466"
+}

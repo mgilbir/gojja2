@@ -1,0 +1,6 @@
+{
+  "case": "intstr/escape_filter.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

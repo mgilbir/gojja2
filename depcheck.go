@@ -4,6 +4,8 @@
 package gojja2
 
 import (
+	"errors"
+
 	"github.com/mgilbir/gojja2/errs"
 	"github.com/mgilbir/gojja2/internal/ast"
 	"github.com/mgilbir/gojja2/value"
@@ -42,6 +44,19 @@ func (c *depChecker) fail(kind string, filterName string, line int) {
 	e.Name = c.name
 	e.Source = c.source
 	c.err = e
+}
+
+// failWith records an error raised by something other than a lookup, placed
+// in the template.
+func (c *depChecker) failWith(err error, line int) {
+	if c.err != nil {
+		return
+	}
+	var e *errs.Error
+	if errors.As(err, &e) {
+		e.Line, e.Name, e.Source = line, c.name, c.source
+	}
+	c.err = err
 }
 
 func (c *depChecker) failAt(line int, format string, args ...any) {
@@ -138,6 +153,17 @@ func (c *depChecker) expr(e ast.Expr, soft bool) {
 		return
 	}
 	switch n := e.(type) {
+	case *ast.Const:
+		// jinja2's generator writes a constant into the module it compiles
+		// as its repr(), and an int too wide for decimal text makes that
+		// raise: `{% set n = 10 ** 5000 %}` folds, and the fold is written
+		// out, so the template does not compile. The softening of an
+		// {% if %} has nothing to say about it -- it is not a lookup.
+		// A constant that folded into a larger one is gone by now, which
+		// is why `{{ (10 ** 5000) > 0 }}` compiles.
+		if err := value.IntStrRefusalIn(n.Value); err != nil {
+			c.failWith(err, n.Line())
+		}
 	case *ast.Filter:
 		if _, ok := c.env.filters[n.Name]; !ok && !soft {
 			c.fail("filter", n.Name, n.Line())

@@ -1,0 +1,6 @@
+{
+  "case": "intstr/wordcount.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

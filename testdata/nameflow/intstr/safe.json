@@ -1,0 +1,6 @@
+{
+  "case": "intstr/safe.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

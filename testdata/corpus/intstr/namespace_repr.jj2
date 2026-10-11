@@ -1,0 +1,6 @@
+{
+  "x": "abc",
+  "e": 4300
+}
+---
+{% set ns = namespace(a=10 ** e) %}{{ ns }}

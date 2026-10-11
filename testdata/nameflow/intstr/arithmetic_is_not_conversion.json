@@ -1,0 +1,6 @@
+{
+  "case": "intstr/arithmetic_is_not_conversion.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

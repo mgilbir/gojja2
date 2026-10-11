@@ -1,0 +1,6 @@
+{
+  "case": "intstr/format_width.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

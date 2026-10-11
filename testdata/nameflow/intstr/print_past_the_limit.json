@@ -1,0 +1,6 @@
+{
+  "case": "intstr/print_past_the_limit.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

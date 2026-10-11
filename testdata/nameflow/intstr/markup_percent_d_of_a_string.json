@@ -1,0 +1,6 @@
+{
+  "case": "intstr/markup_percent_d_of_a_string.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

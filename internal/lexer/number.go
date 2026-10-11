@@ -157,6 +157,23 @@ func (l *lexer) matchInteger() int {
 	return 0
 }
 
+// literalDigitRefusal is the error int(literal, 0) raises for a decimal literal
+// with more than value.MaxStrDigits digits. The underscores are gone before
+// jinja2 calls int(), and a run of zeros -- the only decimal literal that may
+// start with one -- counts every zero.
+func literalDigitRefusal(text string) error {
+	if len(text) > 1 && text[0] == '0' {
+		switch text[1] | 0x20 {
+		case 'b', 'o', 'x':
+			return nil
+		}
+	}
+	if len(text) <= value.MaxStrDigits {
+		return nil
+	}
+	return value.IntParseRefusal(value.CountDigits(text))
+}
+
 // ParseInteger converts an integer literal to a value, at arbitrary precision.
 func ParseInteger(text string) (value.Value, error) {
 	digits := strings.ReplaceAll(text, "_", "")

@@ -1,0 +1,6 @@
+{
+  "case": "intstr/percent_i_precision.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

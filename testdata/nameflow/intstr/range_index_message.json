@@ -1,0 +1,6 @@
+{
+  "case": "intstr/range_index_message.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

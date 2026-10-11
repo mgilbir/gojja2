@@ -1,0 +1,6 @@
+{
+  "case": "intstr/int_filter_base_0_decimal_limited.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

@@ -86,7 +86,12 @@ func filterURLEncode(s *State, v value.Value, _ *value.CallArgs) (value.Value, e
 		return value.String(strings.Join(parts, "&")), nil
 	}
 	// A bare string keeps "/" unescaped, matching urllib.parse.quote.
-	quoted, err := quoteURL(s, value.StrFor(v, s.PythonVersion()), true)
+	// url_quote is str() of anything that is not already text.
+	text, err := value.StrErr(v, s.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
+	}
+	quoted, err := quoteURL(s, text, true)
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -279,7 +284,11 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		attrs += ` rel="` + escapeHTML(strings.Join(sortedRel, " ")) + `"`
 	}
 	if targetTrue {
-		attrs += ` target="` + escapeHTML(value.StrFor(target, s.PythonVersion())) + `"`
+		text, err := value.StrErr(target, s.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		attrs += ` target="` + escapeHTML(text) + `"`
 	}
 
 	// trim_url is jinja2's closure: the comparison happens per link, and the
@@ -304,7 +313,11 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	if err := value.StrictRefusal(v); err != nil {
 		return value.Undefined, err
 	}
-	escaped := value.StrFor(escapeIfNeeded(v, s.PythonVersion()), s.PythonVersion())
+	escapedValue, err := escapeIfNeeded(v, s.PythonVersion())
+	if err != nil {
+		return value.Undefined, err
+	}
+	escaped := escapedValue.AsString()
 	words := splitKeepingSpace(escaped)
 
 	for i, word := range words {
@@ -475,9 +488,15 @@ func filterXMLAttr(s *State, v value.Value, args *value.CallArgs) (value.Value, 
 		// is ` y="&amp;"` and not the double-escaped ` y="&amp;amp;"`.
 		// Both halves go through it, as do_xmlattr's two escape() calls
 		// do -- a Markup key is left alone too.
-		parts = append(parts, fmt.Sprintf(`%s="%s"`,
-			value.Str(escapeIfNeeded(e.Key, s.PythonVersion())),
-			value.Str(escapeIfNeeded(e.Value, s.PythonVersion()))))
+		escKey, err := escapeIfNeeded(e.Key, s.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		escValue, err := escapeIfNeeded(e.Value, s.PythonVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		parts = append(parts, fmt.Sprintf(`%s="%s"`, escKey.AsString(), escValue.AsString()))
 	}
 
 	out := strings.Join(parts, " ")
@@ -673,7 +692,13 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 			b.WriteString("false")
 		}
 	case value.KindInt:
-		b.WriteString(value.ReprFor(v, st.PythonVersion()))
+		// int.__repr__, which is decimal text and refuses past CPython's
+		// digit limit: `{{ (10 ** 5000)|tojson }}` is a ValueError.
+		text, err := value.ReprErr(v, st.PythonVersion())
+		if err != nil {
+			return err
+		}
+		b.WriteString(text)
 	case value.KindFloat:
 		f := v.AsFloat()
 		// Python's json emits NaN and Infinity bare, which is not valid
@@ -763,6 +788,11 @@ func writeJSON(st *State, b *strings.Builder, v value.Value, indent jsonIndent, 
 				return errs.New(errs.TypeError,
 					"keys must be str, int, float, bool or None, not %s",
 					k.TypeName())
+			}
+			// An int key is written with int.__repr__, which
+			// refuses past CPython's digit limit like any other.
+			if err := value.IntStrRefusal(k); err != nil {
+				return err
 			}
 			if err := writeJSONString(st, b, jsonKeyText(k)); err != nil {
 				return err

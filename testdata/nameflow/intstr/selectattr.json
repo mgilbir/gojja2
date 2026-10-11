@@ -1,0 +1,6 @@
+{
+  "case": "intstr/selectattr.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

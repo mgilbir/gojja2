@@ -1,0 +1,6 @@
+{
+  "case": "intstr/undefined_element_message.jj2",
+  "variables": {
+    "e": "ofr"
+  }
+}

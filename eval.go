@@ -354,13 +354,24 @@ func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
 		return value.Undefined, err
 	}
 	markup := false
-	for _, v := range parts {
+	texts := make([]string, len(parts))
+	for i, v := range parts {
 		// markup_join maps soft_str over the sequence and stops at the
 		// first operand that is already Markup, so the refusal and the
-		// scan happen together and in order.
+		// scan happen together and in order. str() is what refuses: a
+		// StrictUndefined, and an int too wide to print in decimal.
+		//
+		// StrErr, because a container's text is its repr and repr
+		// escapes by the interpreter's isprintable. See the same call in
+		// optimize.go, which folds this at compile time.
 		if err := value.StrictRefusal(v); err != nil {
 			return value.Undefined, err
 		}
+		text, err := value.StrErr(v, ex.pyVersion())
+		if err != nil {
+			return value.Undefined, err
+		}
+		texts[i] = text
 		if v.IsSafe() {
 			markup = true
 		}
@@ -382,11 +393,8 @@ func (ex *exec) evalConcat(n *ast.Concat) (value.Value, error) {
 	escaping := ex.autoescape && markup && !ex.volatileEscape
 
 	var b strings.Builder
-	for _, v := range parts {
-		// StrFor, because a container's text is its repr and repr
-		// escapes by the interpreter's isprintable. See the same call in
-		// optimize.go, which folds this at compile time.
-		text := value.StrFor(v, ex.pyVersion())
+	for i, v := range parts {
+		text := texts[i]
 		if escaping && !v.IsSafe() {
 			text = escapeHTML(text)
 		}

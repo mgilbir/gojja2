@@ -1,0 +1,6 @@
+{
+  "case": "intstr/tuple_repr.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

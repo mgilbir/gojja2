@@ -1,0 +1,6 @@
+{
+  "case": "intstr/int_filter_underscores_past_the_limit.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

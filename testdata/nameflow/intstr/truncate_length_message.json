@@ -1,0 +1,6 @@
+{
+  "case": "intstr/truncate_length_message.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

@@ -19,8 +19,10 @@ import (
 // instead.
 func TestWithMaxIntBits(t *testing.T) {
 	// 2**524288 is the widest power of two `**` will build under the
-	// default; squaring it is two bits over.
-	const square = `{% set x = 2 ** 524288 %}{{ (x * x)|string|length }}`
+	// default; squaring it is two bits over. The answer is the width rather
+	// than the digits: CPython refuses to print an int past 4300 digits, and
+	// so does gojja2.
+	const square = `{% set x = 2 ** 524288 %}{{ (x * x).bit_length() }}`
 	const modest = `{{ (2 ** 2000) > 0 }}`
 
 	for _, tc := range []struct {
@@ -32,8 +34,8 @@ func TestWithMaxIntBits(t *testing.T) {
 	}{
 		{"default refuses", nil, square, "", "over the 1048576 bit limit"},
 		{"zero restores the default", []Option{WithMaxIntBits(0)}, square, "", "over the 1048576 bit limit"},
-		{"raised allows it", []Option{WithMaxIntBits(4 << 20)}, square, "315653", ""},
-		{"negative removes it", []Option{WithMaxIntBits(-1)}, square, "315653", ""},
+		{"raised allows it", []Option{WithMaxIntBits(4 << 20)}, square, "1048577", ""},
+		{"negative removes it", []Option{WithMaxIntBits(-1)}, square, "1048577", ""},
 		{"lowered refuses earlier", []Option{WithMaxIntBits(1024)}, modest, "", "over the 1024 bit limit"},
 		{"modest is fine by default", nil, modest, "True", ""},
 		// WithoutLimits is about the two *budgets*. This is a ceiling,

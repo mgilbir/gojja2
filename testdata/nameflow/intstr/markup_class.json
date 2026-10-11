@@ -1,0 +1,7 @@
+{
+  "case": "intstr/markup_class.jj2",
+  "variables": {
+    "e": "or",
+    "x": "or"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "intstr/int_filter_base_16_exempt.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "case": "intstr/join_attribute_empty.jj2",
+  "variables": {
+    "s": "or"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "case": "intstr/concat.jj2",
+  "variables": {
+    "e": "or",
+    "x": "o"
+  }
+}

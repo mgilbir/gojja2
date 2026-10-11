@@ -150,6 +150,20 @@ type Strer interface {
 	Str() string
 }
 
+// ReprerErr is [Reprer] for an Object whose repr can fail: one that shows the
+// values it holds, any of which may be an int too wide for CPython to print in
+// decimal. A refusing repr -- [ReprErr], [StrErr] -- consults it before
+// Reprer; the plain one never does.
+type ReprerErr interface {
+	ReprErr() (string, error)
+}
+
+// StrerErr is [Strer] for an Object whose str() can fail, as ReprerErr is for
+// its repr.
+type StrerErr interface {
+	StrErr() (string, error)
+}
+
 // HTMLer is an Object that carries its own escaped form, which is Python's
 // __html__. markupsafe's escape() asks for that rather than escaping str(obj),
 // and jinja2's `escaped` test is exactly "has one". A str says the same thing

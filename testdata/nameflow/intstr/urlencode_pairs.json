@@ -1,0 +1,6 @@
+{
+  "case": "intstr/urlencode_pairs.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

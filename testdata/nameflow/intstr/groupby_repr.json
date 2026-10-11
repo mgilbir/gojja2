@@ -1,0 +1,6 @@
+{
+  "case": "intstr/groupby_repr.jj2",
+  "variables": {
+    "e": "or"
+  }
+}

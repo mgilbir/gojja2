@@ -1,0 +1,6 @@
+{
+  "case": "intstr/namespace_repr.jj2",
+  "variables": {
+    "e": "or?"
+  }
+}
