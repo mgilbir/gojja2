@@ -1,0 +1,6 @@
+{
+  "case": "escape/markup_format_text.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

@@ -1,0 +1,3 @@
+{}
+---
+{% for x in ["inf"] %}{{ ("%d"|safe)|format(x|float) }}{% endfor %}

@@ -159,6 +159,17 @@ func ParseFloat(text string, py PythonVersion) (float64, bool) {
 	}
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil && !errors.Is(err, strconv.ErrRange) {
+		// Python takes a sign on a NaN as it does on an infinity, and
+		// strconv only on the infinity: `"-nan"|float` was the filter's
+		// default 0.0 where CPython's float() answers nan. The sign is
+		// kept, as CPython keeps it, though nothing a template prints
+		// shows it.
+		if len(s) == 4 && (s[0] == '+' || s[0] == '-') && strings.EqualFold(s[1:], "nan") {
+			if s[0] == '-' {
+				return math.Copysign(math.NaN(), -1), true
+			}
+			return math.NaN(), true
+		}
 		return 0, false
 	}
 	return f, true

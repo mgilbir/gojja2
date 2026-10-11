@@ -1224,8 +1224,10 @@ func markupInt(v Value, verb byte, py PythonVersion) (*big.Int, error) {
 
 // markupFloat is Python's float() over the helper.
 func markupFloat(v Value, py PythonVersion) (float64, error) {
-	if f, ok := v.Float64(); ok {
-		return f, nil
+	if v.IsNumber() {
+		// float() of an int too wide for a float64 overflows; reading
+		// it as inf printed `("%e"|safe) % 10**400` where CPython raises.
+		return FloatOrOverflow(v)
 	}
 	if v.kind == KindString {
 		if text, ok := pyNumericText(v.str, true, py); ok {

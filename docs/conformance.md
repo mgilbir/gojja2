@@ -1,6 +1,6 @@
 # How correct is it, and how do we know?
 
-**8290 of 8378 gradable cases (98.9%)** match CPython jinja2, across eight
+**8321 of 8409 gradable cases (99.0%)** match CPython jinja2, across eight
 corpora from ten upstream projects. The 88 that do not are listed in
 `testdata/known_failures.txt`, and a case on that list which starts passing
 fails the build.
@@ -32,7 +32,7 @@ flowchart LR
     G1 --> TC["TestConformance"]
     G2 --> TC
     KF["known_failures.txt<br/><i>an admission, not a waiver</i>"] --> TC
-    TC --> RATE["8290 / 8378 gradable  (98.9%)"]
+    TC --> RATE["8321 / 8409 gradable  (99.0%)"]
     TC -->|"checks the published table"| RM["docs/conformance.md + README<br/><i>fails the test if either drifts —<br/>only with every corpus imported,<br/>which no CI workflow does</i>"]
 
     classDef spec fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -51,7 +51,7 @@ no network and no Python.
 
 | corpus | gradable cases | matching CPython jinja2 |
 |---|---|---|
-| gojja2's own (committed, with goldens) | 6058 | 5974 |
+| gojja2's own (committed, with goldens) | 6089 | 6005 |
 | MiniJinja fixtures | 159 | 159 |
 | Jinja's own test suite (harvested templates) | 658 | 656 |
 | minja's syntax tests | 162 | 162 |
@@ -59,7 +59,7 @@ no network and no Python.
 | LLM chat templates x 10 conversation shapes | 810 | 808 |
 | A documentation theme's templates | 84 | 84 |
 | Cookiecutter project templates | 166 | 166 |
-| **total** | **8378** | **8290 (98.9%)** |
+| **total** | **8409** | **8321 (99.0%)** |
 
 Each imported corpus is a different project's independent reading of the
 language -- MiniJinja (Rust), minja (C++), llama.cpp's own engine, the
@@ -158,14 +158,14 @@ but it runs on an interpreter, and the interpreter decides what `{{ d[0:1] }}`
 raises, whether `{{ xs|sort(reverse=none) }}` is an error, how a division by
 zero is worded, and which code points are digits.
 
-Across CPython 3.11 to 3.15 that is **504 of the 6,058 committed cases**:
+Across CPython 3.11 to 3.15 that is **517 of the 6,089 committed cases**:
 
 | | |
 |---|---|
-| identical on every interpreter | 5,554 (91.7%) |
-| answer differently somewhere | 504 |
-| of those, answering two ways | 464 |
-| of those, answering three ways | 40 |
+| identical on every interpreter | 5,572 (91.5%) |
+| answer differently somewhere | 517 |
+| of those, answering two ways | 475 |
+| of those, answering three ways | 42 |
 
 `TestPublishedVersionFigures` recomputes this table from the committed goldens
 and fails on any disagreement, so it cannot go stale the way the figures it
@@ -232,7 +232,7 @@ mention, and it is what proves a regeneration changed nothing it should not.
 
 Only the differences are stored. `testdata/golden` is the pinned version's full
 set; `testdata/golden-3.11`, `-3.12`, `-3.14` and `-3.15` hold the cases that
-answer differently -- 105, 26, 208 and 416 files, 755 in all -- laid over it. `make golden-matrix`
+answer differently -- 105, 26, 210 and 429 files, 770 in all -- laid over it. `make golden-matrix`
 regenerates them by asking each interpreter through `uv run --python`, so the
 sets rotate on their own when the pin moves rather than being rebuilt by hand.
 `TestEveryPythonVersion` grades every case against every interpreter, and

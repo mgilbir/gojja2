@@ -1,0 +1,3 @@
+{}
+---
+{{ "-nan"|float }}|{{ "+NAN"|float }}|{{ ("%f"|safe)|format("-nan") }}|{{ ("%F"|safe) % "+nan" }}

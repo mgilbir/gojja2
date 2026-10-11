@@ -1,0 +1,6 @@
+{
+  "case": "errors/format_positional_and_keyword_on_strict_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

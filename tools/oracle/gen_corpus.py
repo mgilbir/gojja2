@@ -5169,6 +5169,60 @@ case("errors/markup_percent_int", '{{ ("%d"|safe) % "x" }}')
 case("errors/markup_percent_float", '{{ ("%f"|safe) % "x" }}')
 case("errors/markup_percent_none", '{{ ("%d"|safe) % none }}')
 
+# |format on a Markup is the same Markup.__mod__: jinja2's do_format is
+# `soft_str(value) % (kwargs or args)`, and soft_str keeps a Markup a Markup.
+# gojja2's filter used to escape the arguments itself and format a plain str,
+# a second model of the helper that was wrong both ways: a string argument
+# became Markup, so %d refused "12" that int() of the helper parses, and an int
+# stayed an int, so %x printed what the helper (no __index__) cannot give.
+case("escape/markup_format_numbers",
+     r"""{{ ("[%d][%i][%u][%f][%e][%g][%d][%d][%d][%5d][%-4d][%04d][%+d][%.3d]"|safe)|format("12", " 1_0 ", true, "1.5", "12", "1e3", -3.9, 10**30, "12"|safe, "7", "7", "-7", "7", "7") }}""")
+case("escape/markup_format_keyed",
+     r"""{{ ("[%(a)d][%(b)f][%(c)s][%(d)r][%(e)a][%(f).2s]"|safe)|format(a="12", b=" 1.5 ", c="<b>", d="<b>"|safe, e="é<", f="<b>") }}""")
+case("escape/markup_format_text",
+     r"""{{ ("[%s][%s][%s][%5s][%r]"|safe)|format(["<"], none, nope, "<", 1) }}""")
+case("escape/markup_format_nonfinite",
+     r"""{% for x in ["inf", "nan"] %}{{ ("%f|"|safe)|format(x|float) }}{% endfor %}""")
+for _name, _tmpl in [
+    ("x_of_an_int", '{{ ("%x"|safe)|format(255) }}'),
+    ("upper_x_of_a_bool", '{{ ("%X"|safe)|format(true) }}'),
+    ("o_of_an_int", '{{ ("%o"|safe)|format(8) }}'),
+    ("keyed_x", '{{ ("%(k)x"|safe)|format(k=255) }}'),
+    ("c_of_an_int", '{{ ("%c"|safe)|format(65) }}'),
+    ("c_of_a_char", '{{ ("%c"|safe)|format("a") }}'),
+    ("d_of_junk", '{{ ("%d"|safe)|format("x") }}'),
+    ("d_of_a_hex_string", '{{ ("%d"|safe)|format("0x10") }}'),
+    ("d_of_none", '{{ ("%d"|safe)|format(none) }}'),
+    ("d_of_a_list", '{{ ("%d"|safe)|format([1]) }}'),
+    ("keyed_d_of_a_dict", '{{ ("%(k)d"|safe)|format(k={}) }}'),
+    ("f_of_none", '{{ ("%f"|safe)|format(none) }}'),
+    ("g_of_junk", '{{ ("%g"|safe)|format("x") }}'),
+    ("e_of_a_huge_int", '{{ ("%e"|safe)|format(10**400) }}'),
+    ("d_of_undefined", '{{ ("%d"|safe)|format(nope) }}'),
+    ("star_width", '{{ ("%*d"|safe)|format(5, 3) }}'),
+    ("star_precision", '{{ ("%.*f"|safe)|format(2, 1.5) }}'),
+    ("d_of_inf", '{% for x in ["inf"] %}{{ ("%d"|safe)|format(x|float) }}{% endfor %}'),
+    ("d_of_nan", '{% for x in ["nan"] %}{{ ("%d"|safe)|format(x|float) }}{% endfor %}'),
+]:
+    case(f"errors/markup_format_{_name}", _tmpl)
+case("errors/markup_format_d_of_strict_undefined", '{{ ("%d"|safe)|format(nope) }}',
+     __settings__={"undefined": "strict"})
+case("errors/markup_format_s_of_strict_undefined", '{{ ("%s"|safe)|format(nope) }}',
+     __settings__={"undefined": "strict"})
+case("errors/markup_format_x_of_chainable_undefined", '{{ ("%x"|safe)|format(nope.a) }}',
+     __settings__={"undefined": "chainable"})
+# float() of an int too wide for a double overflows, on the operator too.
+case("errors/markup_percent_e_of_a_huge_int", '{{ ("%e"|safe) % 10**400 }}')
+# do_format refuses positional and keyword arguments together before it reads
+# the value, so even an undefined receiver is refused for the mix.
+case("errors/format_positional_and_keyword", '{{ "%s"|format(1, k=2) }}')
+case("errors/markup_format_positional_and_keyword", '{{ ("%s"|safe)|format(1, k=2) }}')
+case("errors/format_positional_and_keyword_on_strict_undefined", '{{ nope|format(1, k=2) }}',
+     __settings__={"undefined": "strict"})
+# float() takes a sign on a NaN as it does on an infinity; strconv does not.
+case("filters/float_signed_nan",
+     r"""{{ "-nan"|float }}|{{ "+NAN"|float }}|{{ ("%f"|safe)|format("-nan") }}|{{ ("%F"|safe) % "+nan" }}""")
+
 # --- other places the output was not CPython's --------------------------------
 # tojson wrote "Infinity" and then reset the whole builder to correct the sign,
 # which discarded every byte of the document produced so far.

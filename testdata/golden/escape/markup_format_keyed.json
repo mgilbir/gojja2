@@ -1,0 +1,11 @@
+{
+  "case": "escape/markup_format_keyed.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": true,
+  "output": "[12][1.500000][&lt;b&gt;][Markup(&#39;&lt;b&gt;&#39;)][&#39;\\xe9&lt;&#39;][&l]"
+}
