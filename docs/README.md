@@ -15,6 +15,7 @@ Start from the question, not the filename.
 | How correct is it, and how is that measured? | [conformance.md](conformance.md) |
 | How do I add a conformance case, or reproduce the numbers? | [contributing.md](contributing.md), then [conformance.md](conformance.md) |
 | I found something gojja2 gets wrong — now what? | [contributing.md](contributing.md) |
+| A test, gate or CI job failed, or passed without checking anything | [troubleshooting.md](troubleshooting.md) |
 | Why did my render fail with `ErrOutputTooLarge`, or stop early? | [limits.md](limits.md) |
 | How do I bound a render of a template I do not trust? | [limits.md](limits.md) |
 | How do I add a filter, a test, a global, or expose my own type? | [extending.md](extending.md) |
