@@ -69,8 +69,8 @@ func Str(v Value) string {
 
 // HTMLRefuser is an Object that carries __html__ but cannot answer it.
 //
-// There is exactly one: the Markup *class*. markupsafe defines __html__ as an
-// ordinary method, so the class object holds it unbound -- hasattr says yes,
+// The classes that define __html__ as an ordinary method -- Markup,
+// TemplateModule, ChainableUndefined -- hold it unbound: hasattr says yes,
 // which is what `is escaped` asks, and calling it with no self raises. Every
 // place that would escape the value therefore fails rather than escaping it.
 type HTMLRefuser interface {

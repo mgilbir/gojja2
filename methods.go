@@ -1351,15 +1351,16 @@ func formatWith(st *State, r value.Value, base fieldBase) (value.Value, error) {
 					return value.Undefined, err
 				}
 			}
-			text, err := convertAndFormat(st, v, conv, spec)
+			var text string
+			if safe {
+				text, err = markupFormatField(st, v, conv, spec)
+			} else {
+				text, err = convertAndFormat(st, v, conv, spec)
+			}
 			if err != nil {
 				return value.Undefined, err
 			}
-			if safe && !v.IsSafe() {
-				b.WriteString(escapeHTML(text))
-			} else {
-				b.WriteString(text)
-			}
+			b.WriteString(text)
 		case s[i] == '}':
 			return value.Undefined, errs.New(errs.ValueError,
 				"Single '}' encountered in format string")
@@ -1531,6 +1532,17 @@ func checkConversion(conv string) error {
 // order -- the conversion replaces the value with its text, and the spec lays
 // that text out.
 func convertAndFormat(st *State, v value.Value, conv, spec string) (string, error) {
+	v, err := convertField(st, v, conv)
+	if err != nil {
+		return "", err
+	}
+	return value.FormatValue(v, spec, st.PythonVersion(), st)
+}
+
+// convertField applies a replacement field's conversion -- `!s`, `!r`, `!a` or
+// none -- and returns what is formatted. A conversion's result is a plain str,
+// whatever it was made from: str() and repr() of a Markup are not Markup.
+func convertField(st *State, v value.Value, conv string) (value.Value, error) {
 	switch conv {
 	case "":
 	case "s":
@@ -1538,30 +1550,76 @@ func convertAndFormat(st *State, v value.Value, conv, spec string) (string, erro
 		// repr, so `{!s}` of a list escapes by the interpreter's
 		// isprintable exactly as `{!r}` does.
 		if err := value.StrictRefusal(v); err != nil {
-			return "", err
+			return value.Undefined, err
 		}
 		text, err := value.StrErr(v, st.PythonVersion())
 		if err != nil {
-			return "", err
+			return value.Undefined, err
 		}
-		v = value.String(text)
+		return value.String(text), nil
 	case "r":
 		text, err := value.ReprErr(v, st.PythonVersion())
 		if err != nil {
-			return "", err
+			return value.Undefined, err
 		}
-		v = value.String(text)
+		return value.String(text), nil
 	case "a":
 		text, err := value.AsciiErr(v, st.PythonVersion())
 		if err != nil {
-			return "", err
+			return value.Undefined, err
 		}
-		v = value.String(text)
+		return value.String(text), nil
 	default:
-		return "", errs.New(errs.ValueError,
+		return value.Undefined, errs.New(errs.ValueError,
 			"Unknown conversion specifier %s", conv)
 	}
-	return value.FormatValue(v, spec, st.PythonVersion(), st)
+	return v, nil
+}
+
+// markupFormatField is one field of a Markup's format, which markupsafe runs
+// through EscapeFormatter.format_field rather than str.format's own:
+//
+//   - the conversion comes first, and its result is a plain str, so
+//     `{!s}` of a Markup is escaped like any other text;
+//   - a value with __html_format__ is asked for itself -- a Markup refuses any
+//     spec, and the Markup *class* holds the method unbound, so the call
+//     lacks its argument;
+//   - a value with __html__ refuses a spec, naming its type, and otherwise
+//     gives its __html__;
+//   - anything else is formatted as str.format would and then escaped.
+func markupFormatField(st *State, v value.Value, conv, spec string) (string, error) {
+	v, err := convertField(st, v, conv)
+	if err != nil {
+		return "", err
+	}
+	if v.Kind() == value.KindString && v.IsSafe() {
+		if spec != "" {
+			return "", errs.New(errs.ValueError, "Unsupported format specification for Markup.")
+		}
+		return v.AsString(), nil
+	}
+	if c, ok := v.Interface().(*classObject); ok && c.qualified == "markupsafe.Markup" {
+		return "", errs.New(errs.TypeError,
+			"Markup.__html_format__() missing 1 required positional argument: 'format_spec'")
+	}
+	if _, has := value.HTML(v); has {
+		if spec != "" {
+			return "", errs.New(errs.ValueError,
+				"Format specifier %s given, but %s does not define __html_format__. "+
+					"A class that defines __html__ must define __html_format__ to work "+
+					"with format specifiers.", spec, pythonTypeString(v))
+		}
+		if err := value.HTMLRefusal(v); err != nil {
+			return "", err
+		}
+		html, _ := value.HTML(v)
+		return html, nil
+	}
+	text, err := value.FormatValue(v, spec, st.PythonVersion(), st)
+	if err != nil {
+		return "", err
+	}
+	return escapeHTML(text), nil
 }
 
 // methodFormatMap is str.format_map: the same substitution, with the fields

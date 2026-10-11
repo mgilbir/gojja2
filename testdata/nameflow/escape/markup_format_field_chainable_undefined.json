@@ -1,0 +1,6 @@
+{
+  "case": "escape/markup_format_field_chainable_undefined.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

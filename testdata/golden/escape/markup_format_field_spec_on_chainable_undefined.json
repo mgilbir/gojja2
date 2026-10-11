@@ -1,0 +1,14 @@
+{
+  "case": "escape/markup_format_field_spec_on_chainable_undefined.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "Format specifier 5 given, but <class 'jinja2.runtime.ChainableUndefined'> does not define __html_format__. A class that defines __html__ must define __html_format__ to work with format specifiers."
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "__templates__": {
+    "m.html": "{% macro f() %}x{% endmacro %}"
+  }
+}
+---
+{% import 'm.html' as m %}{{ ('{}'|safe).format(m.__class__) }}

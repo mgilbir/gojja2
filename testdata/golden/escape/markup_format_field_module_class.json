@@ -1,0 +1,14 @@
+{
+  "case": "escape/markup_format_field_module_class.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.13"
+  },
+  "ok": false,
+  "error": {
+    "type": "TypeError",
+    "message": "TemplateModule.__html__() missing 1 required positional argument: 'self'"
+  }
+}
