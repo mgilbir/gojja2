@@ -9,9 +9,9 @@ package value
 // answer depends on: identical on *which* CPython. jinja2 3.1.6 is one library,
 // but it runs on an interpreter, and the interpreter decides what `d[1:2]`
 // raises, whether `sort(reverse=None)` is an error, how a division by zero is
-// worded, and which code points are digits. Across 3.11 to 3.14, 38 of gojja2's
-// 2,197 corpus cases answer differently -- 1.7%, and every one of them answers
-// exactly two ways rather than four.
+// worded, and which code points are digits. Across 3.11 to 3.15 a few percent of
+// gojja2's corpus cases answer differently, nearly all of them two ways and a
+// few three; docs/conformance.md has the measured figures.
 //
 // So the version is a value, not a build-time assumption. It is passed as an
 // argument to every function whose answer can depend on it, rather than read
@@ -28,6 +28,7 @@ const (
 	Python312 PythonVersion = 312
 	Python313 PythonVersion = 313
 	Python314 PythonVersion = 314
+	Python315 PythonVersion = 315
 )
 
 // DefaultPythonVersion is the interpreter gojja2 is generated against, and what
@@ -58,6 +59,8 @@ func (v PythonVersion) String() string {
 		return "3.13"
 	case Python314:
 		return "3.14"
+	case Python315:
+		return "3.15"
 	}
 	return "unknown"
 }
@@ -67,7 +70,7 @@ func (v PythonVersion) String() string {
 // configuration nobody can honour is worse than one that is rejected.
 func (v PythonVersion) Known() bool {
 	switch v {
-	case Python311, Python312, Python313, Python314:
+	case Python311, Python312, Python313, Python314, Python315:
 		return true
 	}
 	return false
@@ -343,3 +346,168 @@ func (v PythonVersion) FloatModuloNamesZero() bool { return v.AtLeast(Python313)
 // agreement in every column of the version matrix.
 // Corpus: errors/lipsum_empty_range, errors/lipsum_equal_bounds.
 func (v PythonVersion) RandrangeNamesItsBounds() bool { return v.AtLeast(Python312) }
+
+// SliceIndexMessageOmitsNone reports whether a slice bound that is not an
+// integer is refused as "slice indices must be integers or have an __index__
+// method" rather than "... integers or None or have an __index__ method".
+//
+// 3.15 dropped the "or None" from the sentence _PyEval_SliceIndex raises --
+// None is still accepted as a bound, the message just stopped saying so. It is
+// the sentence a subscript, str.find's bounds, |truncate's cut, |urlize's
+// trim and textwrap's break all share. list.index's bounds never said "None"
+// and are unchanged. Corpus: errshape/slice_index_types,
+// methods/search_bounds_reject_float, errors/truncate_length_unwhole,
+// errors/urlize_limit_float, errshape/wordwrap_width_float_slice.
+func (v PythonVersion) SliceIndexMessageOmitsNone() bool { return v.AtLeast(Python315) }
+
+// ProxyOrderingIsRefused reports whether a mappingproxy answers `<`, `<=`, `>`
+// and `>=` with NotImplemented rather than handing them to the mapping it
+// wraps.
+//
+// Through 3.14 every comparison was delegated, so a proxy over a string
+// ordered as the string -- `C('ab') < 'b'` is True -- and the refusal for one
+// over a dict named the dict: "'<' not supported between instances of 'dict'
+// and 'int'". 3.15 delegates only == and !=, so ordering a proxy is refused by
+// the operator itself, naming the proxy, and the reflected operand is tried
+// first: `1.5 >= C({})` is "'>=' not supported between instances of 'float'
+// and 'mappingproxy'". Corpus: dictview/proxy_orders_over_a_string,
+// dictview/proxy_orders_sorted, dictview/proxy_orders_left_refused,
+// value/set_compare_refused_set_and_mapping_proxy.
+func (v PythonVersion) ProxyOrderingIsRefused() bool { return v.AtLeast(Python315) }
+
+// HexGroupIsSsizeT reports whether bytes.hex's group size is read as a
+// Py_ssize_t rather than a C int.
+//
+// 3.15 widened bytes_per_sep, so a group past a C int but inside a Py_ssize_t
+// is simply a group larger than the data -- no separator at all -- and one past
+// that overflows naming ssize_t. Corpus: bytes/hex_group_past_a_c_int,
+// bytes/hex_group_below_the_c_int_floor, bytes/hex_group_past_an_ssize_t.
+func (v PythonVersion) HexGroupIsSsizeT() bool { return v.AtLeast(Python315) }
+
+// ToBytesSaysLengthCannotBeNegative reports whether int.to_bytes refuses a
+// negative length as "length cannot be negative" rather than "length argument
+// must be non-negative". 3.15. Corpus: errors/to_bytes_negative_length.
+func (v PythonVersion) ToBytesSaysLengthCannotBeNegative() bool { return v.AtLeast(Python315) }
+
+// KwargsSplatMessageIsGeneric reports whether `f(**x)` with a non-mapping x
+// reads "Value after ** must be a mapping, not int" rather than naming the
+// callee: "jinja2.filters.do_join() argument after ** must be a mapping, not
+// int". 3.15. Corpus: errshape/dyn_kwargs_names_a_builtin,
+// errshape/dyn_kwargs_names_the_filter, folding/kwargs_splat_none.
+func (v PythonVersion) KwargsSplatMessageIsGeneric() bool { return v.AtLeast(Python315) }
+
+// DuplicateParameterIsAParameter reports whether compiling a function with two
+// parameters of one name says "duplicate parameter" rather than "duplicate
+// argument" -- one of the 3.15 terminology fixes (gh-133382), and a macro with
+// a repeated parameter reaches it because jinja2 compiles the macro to a
+// Python function. That case is a recorded divergence -- jinja2's message
+// names the identifier it generated -- so it cannot grade the word;
+// TestDuplicateMacroParameterFollowsThePythonVersion does.
+// Corpus: macro/duplicate_parameter.
+func (v PythonVersion) DuplicateParameterIsAParameter() bool { return v.AtLeast(Python315) }
+
+// LibraryRepeatOverflowNamesSsizeT reports whether a str repeated by a count
+// too wide for an index, *inside jinja2's or the standard library's own Python
+// code*, overflows as "Python int too large to convert to C ssize_t" rather
+// than "cannot fit 'int' into an index-sized integer".
+//
+// This is not a reworded message. 3.15's specialising interpreter has a
+// str * int form of BINARY_OP that converts the count with PyLong_AsSsize_t,
+// and the generic path it replaces still says "cannot fit". Which one answers
+// depends on whether that one bytecode instruction has run before: the first
+// execution is generic, every later one specialised. A site in jinja2's
+// filters or in json.encoder has, in any process that has rendered anything --
+// and in the oracle it has always run at least once, because jinja2's constant
+// folder calls the filter at compile time before the render calls it again --
+// so `|indent` and `|tojson` answer the specialised wording.
+//
+// A site in the *template* is compiled fresh, so `{{ 'a' * n }}` executed once
+// is generic, and the same expression in a loop is generic once and
+// specialised after. gojja2 answers the generic wording there; reproducing the
+// loop would mean keeping per-site state that outlives a render, which is
+// recorded as a divergence. Corpus: filters/tojson_indent_overflows,
+// filters/indent_width_overflows.
+func (v PythonVersion) LibraryRepeatOverflowNamesSsizeT() bool { return v.AtLeast(Python315) }
+
+// PercentErrorsNameTheArgument reports whether printf-style formatting says
+// which argument an error is about, and words the complaint after the verb.
+//
+// 3.15 rewrote the family. Each refusal of an argument opens with "format
+// argument: " for a lone one, "format argument 2: " for the second of a tuple,
+// or "format argument 'k': " for a mapping key -- and the sentence after it
+// changed too: "%d format: a real number is required, not str" became "%d
+// requires a real number, not str", "%c requires an int or a unicode
+// character" became "... an integer or ...", "%c arg not in range(256)"
+// became "%c argument not in range(256)", "* wants int" became "* requires
+// int, not str", a `*` too wide is "too big for width", and the str side's
+// "must be real number, not str" for %f is "%f requires a real number, not
+// str". The class each one names is %T's: qualified, and unquoted, so %b's
+// "not 'Undefined'" is "not jinja2.runtime.Undefined". A Markup format's
+// arguments are markupsafe's helper, so that is the class named there.
+// Corpus: errors/percent_c_type, errors/percent_d_string, errors/percent_x_float,
+// errors/markup_percent_c, errors/bytes_percent_s_wants_bytes,
+// format/percent_verb_bytes_float_of_str, format/percent_error_star_named_by_position,
+// format/percent_precision_too_big_star_precision_c_int,
+// format/percent_error_named_by_key.
+func (v PythonVersion) PercentErrorsNameTheArgument() bool { return v.AtLeast(Python315) }
+
+// PercentErrorsGivePositions reports whether a malformed printf-style format
+// says where it went wrong.
+//
+// Through 3.14: "incomplete format", "incomplete format key", "width too big",
+// "precision too big", and "unsupported format character 'q' (0x71) at index
+// 1" with the index of the character. 3.15 says where the '%' was instead --
+// "stray % at position 0", "stray % or incomplete format key at position 0",
+// "width too big at position 0" -- and words an unknown character by what it
+// is: a letter is "unsupported format %q at position 0", and anything else is
+// "stray % at position 0 or unexpected format character '!' at position 1",
+// spelled by code point when it is not printable ASCII. Corpus:
+// format/percent_error_incomplete, format/percent_error_incomplete_key,
+// format/percent_precision_too_big_d, errshape/format_char,
+// errshape/format_percent_width, format/percent_unsupported_non_ascii.
+func (v PythonVersion) PercentErrorsGivePositions() bool { return v.AtLeast(Python315) }
+
+// PercentErrorsCountArguments reports whether printf-style formatting says how
+// many arguments it had when it ran out or had some left over, and what it got
+// when it wanted a mapping: "not enough arguments for format string (got 1)",
+// "not all arguments converted during string formatting (required 1, got 2)",
+// "format requires a mapping, not int". 3.15. Corpus:
+// format/percent_error_not_enough_arguments, methods/percent_too_many_arguments,
+// format/percent_error_mapping_required.
+func (v PythonVersion) PercentErrorsCountArguments() bool { return v.AtLeast(Python315) }
+
+// PercentStarNeedsATuple reports whether a `*` width or precision may only be
+// taken from a tuple of arguments.
+//
+// Through 3.14 a lone argument could stand for a `*`: `'%*s' % ['a', 'b']`
+// took the list as the width and said "* wants int". 3.15 asks only a tuple, so
+// a lone argument is "not enough arguments for format string (got 1)". A
+// Markup format's lone argument is a one-element tuple to CPython, so it is
+// still drawn there. Corpus: format/percent_error_star_wants_int,
+// format/percent_error_star_precision_wants_int.
+func (v PythonVersion) PercentStarNeedsATuple() bool { return v.AtLeast(Python315) }
+
+// PercentKeyExcludesPositional reports whether a conversion without a mapping
+// key, or a `*`, after one with a key is refused as malformed.
+//
+// A `%(name)s` makes the looked-up value the whole argument source. Through
+// 3.14 that left a later `%s` with nothing to take -- "not enough arguments
+// for format string" -- and let a `*` in the keyed conversion take the value
+// itself as the width. 3.15 refuses both by what they are: "format requires a
+// parenthesised mapping key at position 6" and "* cannot be used with a
+// parenthesised mapping key at position 0". Corpus:
+// format/percent_positional_after_a_key, format/percent_star_after_a_key,
+// format/percent_star_precision_after_a_key.
+func (v PythonVersion) PercentKeyExcludesPositional() bool { return v.AtLeast(Python315) }
+
+// BytesFloatConvertsLikeStr reports whether a bytes format's float verbs let the
+// conversion's own error through, as the str side does.
+//
+// Through 3.14 bytes formatfloat replaced anything float() raised with "float
+// argument required, not T" -- so an undefined never reported itself, and an
+// int too wide for a float was a TypeError. 3.15 keeps only the TypeError's
+// replacement: an undefined raises its own UndefinedError and the wide int is
+// "int too large to convert to float". Corpus:
+// format/percent_bytes_float_of_an_undefined_default,
+// format/percent_verb_bytes_float_of_wide_int.
+func (v PythonVersion) BytesFloatConvertsLikeStr() bool { return v.AtLeast(Python315) }

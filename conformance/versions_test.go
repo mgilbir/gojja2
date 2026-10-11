@@ -27,6 +27,7 @@ var pythonVersions = []gojja2.PythonVersion{
 	gojja2.Python312,
 	gojja2.Python313,
 	gojja2.Python314,
+	gojja2.Python315,
 }
 
 // overrideDir is where a version's differences live, or "" for the pinned one,

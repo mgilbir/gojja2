@@ -1,0 +1,6 @@
+{
+  "case": "format/percent_b_named_qualified.jj2",
+  "variables": {
+    "nope": "or"
+  }
+}

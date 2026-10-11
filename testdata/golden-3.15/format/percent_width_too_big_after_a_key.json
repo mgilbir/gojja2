@@ -1,0 +1,14 @@
+{
+  "case": "format/percent_width_too_big_after_a_key.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "width too big at position 1"
+  }
+}

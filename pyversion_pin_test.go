@@ -74,7 +74,7 @@ func TestDefaultVersionMatchesThePin(t *testing.T) {
 // A constant added without a String case reports "unknown" in an error message,
 // which is how a caller ends up unable to tell which interpreter refused them.
 func TestEveryKnownVersionIsNamed(t *testing.T) {
-	for v := value.Python311; v <= value.Python314; v++ {
+	for v := value.Python311; v <= value.Python315; v++ {
 		if !v.Known() {
 			continue
 		}

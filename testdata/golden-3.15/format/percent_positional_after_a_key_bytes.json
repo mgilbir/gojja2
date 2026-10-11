@@ -1,0 +1,14 @@
+{
+  "case": "format/percent_positional_after_a_key_bytes.jj2",
+  "oracle": {
+    "impl": "cpython-jinja2",
+    "version": "3.1.6",
+    "markupsafe": "3.0.3",
+    "python": "3.15"
+  },
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "format requires a parenthesised mapping key at position 6"
+  }
+}

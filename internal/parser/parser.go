@@ -53,7 +53,7 @@ type Options struct {
 // Parse lexes and parses a template.
 func Parse(syn lexer.Syntax, opts Options, source, name string) (tmpl *ast.Template, err error) {
 	tokens, lexErr := lexer.Tokenize(syn, source, name)
-	p := &parser{tokens: tokens, name: name, source: source, opts: opts, lexErr: lexErr}
+	p := &parser{tokens: tokens, name: name, source: source, opts: opts, lexErr: lexErr, py: pythonVersionOf(syn)}
 	defer func() {
 		if r := recover(); r != nil {
 			bail, ok := r.(parseError)
@@ -78,13 +78,22 @@ func Parse(syn lexer.Syntax, opts Options, source, name string) (tmpl *ast.Templ
 	return &ast.Template{Body: body}, nil
 }
 
+// pythonVersionOf is the interpreter a syntax names, or the pin when it names
+// none -- the same default the lexer applies.
+func pythonVersionOf(syn lexer.Syntax) value.PythonVersion {
+	if syn.PythonVersion.Known() {
+		return syn.PythonVersion
+	}
+	return value.DefaultPythonVersion
+}
+
 // ParseExpression parses source as one expression, which is jinja2's
 // Environment.compile_expression: lexed from inside a print tag, parsed with
 // parse_expression -- a conditional expression, not a tuple -- and refused if
 // anything follows it.
 func ParseExpression(syn lexer.Syntax, opts Options, source, name string) (expr ast.Expr, err error) {
 	tokens, lexErr := lexer.TokenizeExpression(syn, source, name)
-	p := &parser{tokens: tokens, name: name, source: source, opts: opts, lexErr: lexErr}
+	p := &parser{tokens: tokens, name: name, source: source, opts: opts, lexErr: lexErr, py: pythonVersionOf(syn)}
 	defer func() {
 		if r := recover(); r != nil {
 			bail, ok := r.(parseError)
@@ -111,6 +120,9 @@ type parser struct {
 	name   string
 	source string
 	opts   Options
+	// py is the interpreter being reproduced: a few refusals the parser
+	// makes on CPython's behalf are worded as that interpreter words them.
+	py value.PythonVersion
 
 	// tagStack names the blocks currently open, innermost last. jinja2
 	// reports it when a template ends without closing one.
@@ -685,9 +697,13 @@ func (p *parser) parseSignature() (args []*ast.Name, defaults []ast.Expr) {
 			// message names the identifier jinja2 *generated* and a
 			// line of the generated module; gojja2 names what the
 			// template wrote. See docs/divergences.md.
+			noun := "argument"
+			if p.py.DuplicateParameterIsAParameter() {
+				noun = "parameter"
+			}
 			p.failKindAt(errs.SyntaxError, arg.Line(),
-				"duplicate argument %s in function definition",
-				pyQuote(arg.Name))
+				"duplicate %s %s in function definition",
+				noun, pyQuote(arg.Name))
 		}
 		seen[arg.Name] = true
 		if p.skipIf(kindRule(lexer.Assign)) {

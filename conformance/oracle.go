@@ -148,9 +148,11 @@ func PythonVersionFor(version string) (value.PythonVersion, error) {
 		return value.Python313, nil
 	case "3.14":
 		return value.Python314, nil
+	case "3.15":
+		return value.Python315, nil
 	}
 	return 0, fmt.Errorf("conformance: %q is not an interpreter gojja2 "+
-		"reproduces; it knows 3.11, 3.12, 3.13 and 3.14", version)
+		"reproduces; it knows 3.11, 3.12, 3.13, 3.14 and 3.15", version)
 }
 
 // ErrMismatchedOracle reports that the live interpreter is not the one the

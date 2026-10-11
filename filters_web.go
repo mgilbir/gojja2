@@ -294,8 +294,7 @@ func filterUrlize(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 		}
 		n, ok := limit.Int64()
 		if !ok {
-			return "", errs.New(errs.TypeError,
-				"slice indices must be integers or None or have an __index__ method")
+			return "", errSliceIndices(s.PythonVersion())
 		}
 		cut := int(n)
 		head, _ := value.StrSlice(x, nil, &cut, nil)
@@ -607,7 +606,7 @@ func (j jsonIndent) resolve(st *State) (jsonIndent, error) {
 		// so an indent past int64 became zero and the document came out
 		// broken up with no leading spaces -- a different document,
 		// silently.
-		unit, err := value.Mul(value.String(" "), j.raw, st)
+		unit, err := libraryRepeat(" ", j.raw, st)
 		if err != nil {
 			return j, err
 		}

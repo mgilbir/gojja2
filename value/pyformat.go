@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/mgilbir/gojja2/errs"
 )
@@ -21,6 +22,15 @@ import (
 // The right operand decides how arguments are consumed: a tuple is positional,
 // a mapping is consulted by name when the format uses `%(key)s`, and anything
 // else -- a bare dict included -- is a single argument.
+//
+// The bookkeeping is CPython's own, field for field -- arglen and argidx, with
+// their negative sentinels -- because what is observable depends on it: which
+// conversion runs out of arguments, what a `*` may draw from, what a
+// conversion after a `%(name)s` reads, what is left over at the end, and from
+// 3.15 which argument an error names. A simpler "list of positionals plus a
+// cursor" got the keyed case wrong on every version: `'%(a)s %s' % {'a': 1}`
+// rendered the dict for the second conversion, where CPython has already
+// replaced its argument source with the looked-up 1 and has nothing left.
 func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, error) {
 	spec := format.str
 	// PEP 461 gave bytes the same printf-style formatting, with three
@@ -38,32 +48,31 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 	// placeholders from the pair rather than one from the object. It is
 	// unwrapped before the mapping test below for the same reason CPython
 	// excludes tuples there -- a tuple never supplies names.
+	original := args
 	args = AsTupleIfPossible(args)
 
+	f := percentFormatter{py: py, asBytes: asBytes, escaping: escaping, spec: spec}
 	// CPython decides between "a mapping" and "one positional argument" by
 	// asking whether the right operand supports subscripting, excluding
 	// tuple and str. A list therefore counts as a mapping -- which is why
 	// `"" % []` is "" while `"" % 1` is a TypeError -- even though looking
 	// a name up in one can only fail. The operand is still available as the
 	// single positional argument either way, so `"%s" % {}` renders "{}".
-	mapping, hasMapping := args, isMappingArg(args, asBytes)
-
-	positional := []Value{args}
+	f.dict, f.mapping = isMappingArg(args, asBytes), args
+	f.args, f.arglen, f.argidx = args, -1, -2
+	f.argType = QualifiedTypeName(original)
 	if s, ok := args.Seq(); ok && args.kind == KindTuple {
-		positional = s.items
+		f.items, f.arglen, f.argidx = s.items, len(s.items), 0
+	} else if escaping && !f.dict {
+		// markupsafe's __mod__ turns anything that is neither a tuple nor
+		// subscriptable into a one-element tuple of its helper, so to
+		// CPython it is the first of one positional argument -- which is
+		// what a 3.15 error calls it, and what a `*` may draw from.
+		f.items, f.arglen, f.argidx = []Value{args}, 1, 0
+		f.argType = "tuple"
 	}
 
 	var out strings.Builder
-	next := 0
-	takeArg := func() (Value, error) {
-		if next >= len(positional) {
-			return Undefined, errs.New(errs.TypeError, "not enough arguments for format string")
-		}
-		v := positional[next]
-		next++
-		return v, nil
-	}
-
 	for i := 0; i < len(spec); {
 		c := spec[i]
 		if c != '%' {
@@ -71,70 +80,29 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 			i++
 			continue
 		}
+		start := i
 		i++
-		if i >= len(spec) {
-			return Undefined, errs.New(errs.ValueError, "incomplete format")
-		}
-		if spec[i] == '%' {
+		if i < len(spec) && spec[i] == '%' {
 			out.WriteByte('%')
 			i++
 			continue
 		}
 
-		var conv conversion
-		conv.py = py
+		conv := conversion{py: py, bytes: asBytes, escaping: escaping, start: f.position(start)}
 		var err error
-		if i, err = parseConversion(spec, i, &conv); err != nil {
+		if i, err = f.parseConversion(i, &conv); err != nil {
 			return Undefined, err
 		}
-		// CPython reports where an unknown conversion was found, and
-		// the index it gives is of the character after the verb.
-		conv.at = i
 
-		// `*` pulls width and then precision from the argument stream,
-		// both of them *before* the value. Taking the value first made
-		// `"%*s" % (5, "x")` read the 5 as the string and the "x" as
-		// the width, so every starred conversion failed.
-		if conv.starWidth {
-			w, err := takeStarInt(&positional, &next, false)
-			if err != nil {
-				return Undefined, err
-			}
-			// A negative width means left-adjust, as in C.
-			if w < 0 {
-				conv.flags, w = conv.flags+"-", -w
-			}
-			conv.width, conv.hasWidth = w, true
+		// The value this conversion formats: the looked-up one for a
+		// `%(name)s`, otherwise the next positional argument. It is taken
+		// before the verb is judged, as CPython takes it, so an unknown
+		// verb with nothing left to format reports the missing argument.
+		arg, err := f.nextArg(true)
+		if err != nil {
+			return Undefined, err
 		}
-		if conv.starPrec {
-			p, err := takeStarInt(&positional, &next, true)
-			if err != nil {
-				return Undefined, err
-			}
-			// Python clamps a negative precision to zero rather
-			// than treating it as absent, which is what C does.
-			conv.prec, conv.hasPrec = max(p, 0), true
-		}
-
-		conv.bytes = asBytes
-
-		// Resolve the value this conversion formats.
-		var arg Value
-		switch {
-		case conv.key != "":
-			if !hasMapping {
-				return Undefined, errs.New(errs.TypeError, "format requires a mapping")
-			}
-			v, err := lookupFormatKeyAs(mapping, conv.key, asBytes)
-			if err != nil {
-				return Undefined, err
-			}
-			arg = v
-		default:
-			if arg, err = takeArg(); err != nil {
-				return Undefined, err
-			}
-		}
+		conv.label = f.label(&conv)
 
 		conv.budget = budget
 		text, err := conv.apply(arg, escaping, budget)
@@ -144,10 +112,19 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 		out.WriteString(text)
 	}
 
-	if !hasMapping && next != len(positional) {
+	if !f.dict && f.argidx < f.arglen {
 		kind := "string"
 		if asBytes {
 			kind = "bytes"
+		}
+		if py.PercentErrorsCountArguments() {
+			required, got := f.argidx, f.arglen
+			if f.arglen < 0 {
+				required, got = 0, 1
+			}
+			return Undefined, errs.New(errs.TypeError,
+				"not all arguments converted during %s formatting (required %d, got %d)",
+				kind, required, got)
 		}
 		return Undefined, errs.New(errs.TypeError,
 			"not all arguments converted during %s formatting", kind)
@@ -159,6 +136,81 @@ func FormatPercent(format, args Value, budget Budget, py PythonVersion) (Value, 
 		return Safe(out.String()), nil
 	}
 	return String(out.String()), nil
+}
+
+// percentFormatter is CPython's formatting context: where the arguments come
+// from and how far through them it is.
+//
+// arglen and argidx carry CPython's sentinels. A tuple is arglen = its length
+// and argidx counting up from 0. Anything else is one argument: arglen -1 and
+// argidx -2, which becomes -1 once it has been taken. A `%(name)s` makes the
+// looked-up value the argument source: through 3.14 that is the one-argument
+// state again, so a positional conversion after it finds nothing left, and
+// from 3.15 it is arglen -3, which is how the formatter tells a positional
+// conversion that follows a keyed one and refuses it outright.
+type percentFormatter struct {
+	py       PythonVersion
+	asBytes  bool
+	escaping bool
+	spec     string
+
+	dict    bool   // the operand was subscriptable, so names may be looked up
+	mapping Value  // what names are looked up in
+	argType string // the operand's class, as "format requires a mapping" names it
+
+	args   Value
+	items  []Value
+	arglen int
+	argidx int
+}
+
+// nextArg is unicode_format_getnextarg. allowone is false for a `*`, which from
+// 3.15 may only draw from a tuple; before that it took a lone argument too.
+func (f *percentFormatter) nextArg(allowone bool) (Value, error) {
+	if f.argidx < f.arglen && (allowone || f.arglen >= 0 || !f.py.PercentStarNeedsATuple()) {
+		f.argidx++
+		if f.arglen >= 0 {
+			return f.items[f.argidx-1], nil
+		}
+		return f.args, nil
+	}
+	if f.py.PercentErrorsCountArguments() {
+		got := f.arglen
+		if got < 0 {
+			got = 1
+		}
+		return Undefined, errs.New(errs.TypeError,
+			"not enough arguments for format string (got %d)", got)
+	}
+	return Undefined, errs.New(errs.TypeError, "not enough arguments for format string")
+}
+
+// label is the "format argument ...: " that 3.15 puts in front of an error
+// about one argument, naming it by key, by its 1-based place in the tuple, or
+// by nothing when there was only the one. Earlier versions name none of them.
+func (f *percentFormatter) label(c *conversion) string {
+	if !f.py.PercentErrorsNameTheArgument() {
+		return ""
+	}
+	switch {
+	case c.hasKey:
+		if f.asBytes {
+			return "format argument " + Repr(Bytes([]byte(c.key))) + ": "
+		}
+		return "format argument " + ReprFor(String(c.key), f.py) + ": "
+	case f.argidx >= 0:
+		return fmt.Sprintf("format argument %d: ", f.argidx)
+	}
+	return "format argument: "
+}
+
+// position is where an offset into the spec falls as CPython counts it: in
+// characters for a str, in bytes for a bytes.
+func (f *percentFormatter) position(offset int) int {
+	if f.asBytes {
+		return offset
+	}
+	return utf8.RuneCountInString(f.spec[:offset])
 }
 
 // isMappingArg reports whether the right operand of % is subscriptable in
@@ -274,37 +326,61 @@ func lookupFormatKey(mapping Value, key Value) (Value, error) {
 
 // conversion is one parsed `%...` directive.
 type conversion struct {
-	key       string // mapping key from %(name)s
-	flags     string // any of "#0- +"
-	width     int
-	hasWidth  bool
-	starWidth bool
-	prec      int
-	hasPrec   bool
-	starPrec  bool
-	verb      byte
+	key      string // mapping key from %(name)s
+	hasKey   bool
+	flags    string // any of "#0- +"
+	width    int
+	hasWidth bool
+	prec     int
+	hasPrec  bool
+	verb     byte
+	// verbRune is the conversion character as CPython reads it: a code
+	// point for a str format and a byte for a bytes one. verb is the same
+	// character when it is ASCII and 0 otherwise, which no case matches.
+	verbRune rune
 	// bytes is set when the format string is a bytes, which changes what
 	// %b, %s, %r and %c accept. See FormatPercent.
 	bytes bool
+	// escaping is set for a Markup format, where every argument reaches
+	// the conversion wrapped in markupsafe's helper.
+	escaping bool
 	// budget pays for what a precision asks for before it is built: a
 	// float's digits and an integer's zero padding are both sized by a
 	// number the template chose.
 	budget Budget
-	// at is the offset just past the verb, which is the position
-	// CPython names when the verb is not one it knows.
-	at int
+	// start is where the conversion's '%' is and at where its verb is, both
+	// counted the way CPython counts them -- characters for a str, bytes for
+	// a bytes. An unknown verb names one or both.
+	start, at int
+	// label is the "format argument ...: " 3.15 opens an error about this
+	// conversion's argument with, and "" before it.
+	label string
 	// py is the interpreter being reproduced, set once where the
-	// conversion is parsed. %c words its refusal differently from 3.14
-	// on, and a conversion is the smallest thing that knows which verb
-	// it is.
+	// conversion is parsed. Most of this family is worded differently from
+	// 3.14 and again from 3.15, and a conversion is the smallest thing that
+	// knows which verb it is.
 	py PythonVersion
 }
 
-func parseConversion(spec string, i int, c *conversion) (int, error) {
-	// Mapping key.
+// parseConversion reads one directive, starting just after its '%', in the
+// order unicode_format_arg_parse does: the mapping key (and its lookup), the
+// flags, the width, the precision, a length modifier, the verb. The order is
+// observable -- a key that is missing is a KeyError before a width that is too
+// big is noticed, and a `*` draws its argument as it is parsed.
+func (f *percentFormatter) parseConversion(i int, c *conversion) (int, error) {
+	spec, py := f.spec, f.py
 	if i < len(spec) && spec[i] == '(' {
-		depth, start := 1, i+1
-		j := start
+		// Whether there is anything to look a name up in is asked before
+		// the key is even read, so `'%(a' % 1` is about the mapping and
+		// not about the parenthesis.
+		if !f.dict {
+			if py.PercentErrorsCountArguments() {
+				return 0, errs.New(errs.TypeError, "format requires a mapping, not %s", f.argType)
+			}
+			return 0, errs.New(errs.TypeError, "format requires a mapping")
+		}
+		depth, keyStart := 1, i+1
+		j := keyStart
 		for ; j < len(spec) && depth > 0; j++ {
 			switch spec[j] {
 			case '(':
@@ -314,10 +390,28 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 			}
 		}
 		if depth != 0 {
+			if py.PercentErrorsGivePositions() {
+				return 0, errs.New(errs.ValueError,
+					"stray %% or incomplete format key at position %d", c.start)
+			}
 			return 0, errs.New(errs.ValueError, "incomplete format key")
 		}
-		c.key = spec[start : j-1]
+		c.key, c.hasKey = spec[keyStart:j-1], true
 		i = j
+		v, err := lookupFormatKeyAs(f.mapping, c.key, f.asBytes)
+		if err != nil {
+			return 0, err
+		}
+		// The looked-up value is now the whole argument source.
+		f.args, f.items = v, nil
+		if py.PercentKeyExcludesPositional() {
+			f.arglen, f.argidx = -3, -4
+		} else {
+			f.arglen, f.argidx = -1, -2
+		}
+	} else if f.arglen < -1 {
+		return 0, errs.New(errs.ValueError,
+			"format requires a parenthesised mapping key at position %d", c.start)
 	}
 
 	for i < len(spec) && strings.IndexByte("#0- +", spec[i]) >= 0 {
@@ -328,7 +422,18 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 	}
 
 	if i < len(spec) && spec[i] == '*' {
-		c.starWidth = true
+		// `*` pulls the width from the argument stream *before* the
+		// value. Taking the value first made `"%*s" % (5, "x")` read the
+		// 5 as the string and the "x" as the width.
+		w, err := f.takeStarInt(c, false)
+		if err != nil {
+			return 0, err
+		}
+		// A negative width means left-adjust, as in C.
+		if w < 0 {
+			c.flags, w = c.flags+"-", -w
+		}
+		c.width, c.hasWidth = w, true
 		i++
 	} else {
 		start := i
@@ -338,6 +443,9 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 		if i > start {
 			w, ok := boundedDigits(spec[start:i], math.MaxInt64)
 			if !ok {
+				if py.PercentErrorsGivePositions() {
+					return 0, errs.New(errs.ValueError, "width too big at position %d", c.start)
+				}
 				return 0, errs.New(errs.ValueError, "width too big")
 			}
 			c.width, c.hasWidth = int(w), true
@@ -347,7 +455,13 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 	if i < len(spec) && spec[i] == '.' {
 		i++
 		if i < len(spec) && spec[i] == '*' {
-			c.starPrec = true
+			p, err := f.takeStarInt(c, true)
+			if err != nil {
+				return 0, err
+			}
+			// Python clamps a negative precision to zero rather
+			// than treating it as absent, which is what C does.
+			c.prec, c.hasPrec = max(p, 0), true
 			i++
 		} else {
 			start := i
@@ -356,6 +470,9 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 			}
 			p, ok := boundedDigits(spec[start:i], math.MaxInt32)
 			if !ok {
+				if py.PercentErrorsGivePositions() {
+					return 0, errs.New(errs.ValueError, "precision too big at position %d", c.start)
+				}
 				return 0, errs.New(errs.ValueError, "precision too big")
 			}
 			c.prec, c.hasPrec = int(p), true
@@ -369,10 +486,21 @@ func parseConversion(spec string, i int, c *conversion) (int, error) {
 	}
 
 	if i >= len(spec) {
+		if py.PercentErrorsGivePositions() {
+			return 0, errs.New(errs.ValueError, "stray %% at position %d", c.start)
+		}
 		return 0, errs.New(errs.ValueError, "incomplete format")
 	}
-	c.verb = spec[i]
-	return i + 1, nil
+	c.at = f.position(i)
+	size := 1
+	c.verbRune = rune(spec[i])
+	if !f.asBytes {
+		c.verbRune, size = utf8.DecodeRuneInString(spec[i:])
+	}
+	if c.verbRune < utf8.RuneSelf {
+		c.verb = byte(c.verbRune)
+	}
+	return i + size, nil
 }
 
 // boundedDigits reads a run of ASCII digits, refusing one above limit -- the
@@ -397,25 +525,54 @@ func boundedDigits(s string, limit int64) (int64, bool) {
 // with PyLong_AsSsize_t and a precision with PyLong_AsInt, so each overflows
 // at its own C type -- `'%.*f' % (2**31, 1.5)` is "Python int too large to
 // convert to C int" -- where a bare Int64 check called an integer that was
-// merely large "not an int".
-func takeStarInt(positional *[]Value, next *int, precision bool) (int, error) {
-	if *next >= len(*positional) {
-		return 0, errs.New(errs.TypeError, "not enough arguments for format string")
+// merely large "not an int". 3.15 reports both as the argument being too big
+// for what it was for.
+//
+// Under a Markup format the argument is markupsafe's helper, never an int, so
+// a `*` is refused there whatever was passed: `('%*d'|safe) % (5, 3)` is
+// "* wants int" in CPython.
+func (f *percentFormatter) takeStarInt(c *conversion, precision bool) (int, error) {
+	if f.py.PercentKeyExcludesPositional() && f.arglen < -1 {
+		return 0, errs.New(errs.ValueError,
+			"* cannot be used with a parenthesised mapping key at position %d", c.start)
 	}
-	v := (*positional)[*next]
-	*next++
-	if !v.IsInteger() {
+	v, err := f.nextArg(false)
+	if err != nil {
+		return 0, err
+	}
+	label := f.label(c)
+	if f.escaping || !v.IsInteger() {
+		if f.py.PercentErrorsNameTheArgument() {
+			name := QualifiedTypeName(v)
+			if f.escaping {
+				name = markupHelperName
+			}
+			return 0, errs.New(errs.TypeError, "%s* requires int, not %s", label, name)
+		}
 		return 0, errs.New(errs.TypeError, "* wants int")
 	}
 	n, fits := v.Int64()
 	if !fits {
+		if f.py.PercentErrorsNameTheArgument() {
+			return 0, errs.New(errs.OverflowError, "%stoo big for %s", label, map[bool]string{false: "width", true: "precision"}[precision])
+		}
+		if precision {
+			return 0, errs.New(errs.OverflowError, "Python int too large to convert to C int")
+		}
 		return 0, errs.New(errs.OverflowError, "Python int too large to convert to C ssize_t")
 	}
 	if precision && (n > math.MaxInt32 || n < math.MinInt32) {
+		if f.py.PercentErrorsNameTheArgument() {
+			return 0, errs.New(errs.OverflowError, "%stoo big for precision", label)
+		}
 		return 0, errs.New(errs.OverflowError, "Python int too large to convert to C int")
 	}
 	return int(n), nil
 }
+
+// markupHelperName is the class markupsafe wraps every argument of a Markup
+// format in, qualified the way CPython names a class that is not a builtin.
+const markupHelperName = "markupsafe._MarkupEscapeHelper"
 
 // Padding, sign placement and precision are applied here rather than handed to
 // Go's fmt, because the two disagree in ways that reach rendered output. Go
@@ -479,14 +636,17 @@ func (c *conversion) pad(f formatted, budget Budget) (string, error) {
 	}
 }
 
-// errPercentC words %c's refusal for the chosen interpreter. Before 3.14 every
-// wrong argument got the same sentence; 3.14 names what it got instead, and
-// spells a wrong-length string as "a string of length N" rather than by type.
 // bytesArg formats %b and %s for a bytes format string, which take a bytes-like
 // object and nothing else -- not a str, not a number, and not anything str()
 // would have accepted. The message names %b whichever of the two was written.
 func (c *conversion) bytesArg(v Value) (formatted, error) {
 	if v.kind != KindBytes {
+		if c.py.PercentErrorsNameTheArgument() {
+			// %T rather than a quoted tp_name: qualified, and bare.
+			return formatted{}, errs.New(errs.TypeError,
+				"%s%%b requires a bytes-like object, "+
+					"or an object that implements __bytes__, not %s", c.label, QualifiedTypeName(v))
+		}
 		return formatted{}, errs.New(errs.TypeError,
 			"%%b requires a bytes-like object, "+
 				"or an object that implements __bytes__, not '%s'", v.TypeName())
@@ -498,6 +658,10 @@ func (c *conversion) bytesArg(v Value) (formatted, error) {
 // errPercentCBytes is errPercentC for a bytes format, which has a message of its
 // own -- and 3.14 appended the type to both of them, not just the str one.
 func (c *conversion) errPercentCBytes(what string) error {
+	if c.py.PercentErrorsNameTheArgument() {
+		return errs.New(errs.TypeError,
+			"%s%%c requires an integer in range(256) or a single byte, not %s", c.label, what)
+	}
 	if c.py.PercentCNamesTheType() {
 		return errs.New(errs.TypeError,
 			"%%c requires an integer in range(256) or a single byte, not %s", what)
@@ -506,12 +670,97 @@ func (c *conversion) errPercentCBytes(what string) error {
 		"%%c requires an integer in range(256) or a single byte")
 }
 
-func (c *conversion) errPercentC(v Value, what string) error {
+// errPercentC words %c's refusal for the chosen interpreter. Before 3.14 every
+// wrong argument got the same sentence; 3.14 names what it got instead, and
+// spells a wrong-length string as "a string of length N" rather than by type;
+// 3.15 says "an integer" where 3.14 said "an int", and names the argument.
+func (c *conversion) errPercentC(what string) error {
+	if c.py.PercentErrorsNameTheArgument() {
+		return errs.New(errs.TypeError,
+			"%s%%c requires an integer or a unicode character, not %s", c.label, what)
+	}
 	if c.py.PercentCNamesTheType() {
 		return errs.New(errs.TypeError,
 			"%%c requires an int or a unicode character, not %s", what)
 	}
 	return errs.New(errs.TypeError, "%%c requires int or char")
+}
+
+// errPercentCRange is %c's refusal of an integer that is not a code point (or,
+// for a bytes format, not a byte).
+func (c *conversion) errPercentCRange(bound string) error {
+	if c.py.PercentErrorsNameTheArgument() {
+		return errs.New(errs.OverflowError, "%s%%c argument not in range(%s)", c.label, bound)
+	}
+	return errs.New(errs.OverflowError, "%%c arg not in range(%s)", bound)
+}
+
+// errNumberRequired is the refusal of an argument a numeric verb cannot use.
+// want is "an integer" for %o, %x and %X and "a real number" for the rest;
+// what is the class 3.15 names, qualified, and older the class before 3.15
+// words it, by tp_name.
+func (c *conversion) errNumberRequired(want, what, older string) error {
+	if c.py.PercentErrorsNameTheArgument() {
+		return errs.New(errs.TypeError, "%s%%%c requires %s, not %s", c.label, c.verb, want, what)
+	}
+	return errs.New(errs.TypeError, "%%%c format: %s is required, not %s", c.verb, want, older)
+}
+
+// errUnsupported is an unknown conversion character.
+//
+// Through 3.14 it is "unsupported format character 'q' (0x71) at index 1",
+// naming the character's own offset -- with '?' standing in for anything
+// outside printable ASCII in a str format, and, in a bytes format, the byte
+// passed to PyErr_Format's %c as a *signed* char, so that anything past 0x7f is
+// a negative code point and the message itself fails to format.
+//
+// 3.15 splits it by what the character is: a letter is "unsupported format
+// %q at position 0", naming where the '%' was; anything else is taken to be a
+// '%' that was never meant as one -- "stray % at position 0 or unexpected
+// format character '!' at position 1" -- spelled by code point when it is not
+// printable ASCII.
+func (c *conversion) errUnsupported() error {
+	r := c.verbRune
+	if !c.py.PercentErrorsGivePositions() {
+		if c.bytes {
+			if r >= 0x80 {
+				return errs.New(errs.OverflowError, "character argument not in range(0x110000)")
+			}
+			return errs.New(errs.ValueError,
+				"unsupported format character '%c' (0x%x) at index %d", r, r, c.at)
+		}
+		shown := r
+		if r < 31 || r > 126 {
+			shown = '?'
+		}
+		return errs.New(errs.ValueError,
+			"unsupported format character '%c' (0x%x) at index %d", shown, r, c.at)
+	}
+	isAlpha := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+	switch {
+	case isAlpha:
+		return errs.New(errs.ValueError,
+			"unsupported format %%%c at position %d", r, c.start)
+	case r == '\'':
+		return errs.New(errs.ValueError,
+			"stray %% at position %d or unexpected format character \"'\" at position %d",
+			c.start, c.at)
+	case r >= 32 && r < 127:
+		return errs.New(errs.ValueError,
+			"stray %% at position %d or unexpected format character '%c' at position %d",
+			c.start, r, c.at)
+	case c.bytes:
+		return errs.New(errs.ValueError,
+			"stray %% at position %d or unexpected format character with code 0x%02x at position %d",
+			c.start, r, c.at)
+	case UnicodeFor(c.py).PrintableWith(r):
+		return errs.New(errs.ValueError,
+			"stray %% at position %d or unexpected format character '%c' (U+%04X) at position %d",
+			c.start, r, r, c.at)
+	}
+	return errs.New(errs.ValueError,
+		"stray %% at position %d or unexpected format character U+%04X at position %d",
+		c.start, r, c.at)
 }
 
 func (c *conversion) apply(v Value, escaping bool, budget Budget) (string, error) {
@@ -543,13 +792,14 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 	//	%x %o %c   go through __index__, which Undefined does not
 	//	           define, so CPython raises its own TypeError instead
 	//
-	// A *bytes* format's float verbs are the exception: formatfloat in
-	// bytesobject.c replaces whatever the conversion raised with its own
-	// "float argument required, not Undefined", so the undefined's error
-	// never gets out there. Its integer verbs do not do that, which is why
-	// this is the float half and not the whole set.
+	// A *bytes* format's float verbs are the exception through 3.14:
+	// formatfloat in bytesobject.c replaced whatever the conversion raised
+	// with its own "float argument required, not Undefined", so the
+	// undefined's error never got out there. Its integer verbs did not do
+	// that, which is why this is the float half and not the whole set. 3.15
+	// lets the conversion's own error through, as the str side always had.
 	if v.IsUndefined() && strings.IndexByte("diueEfFgG", c.verb) >= 0 &&
-		(!c.bytes || strings.IndexByte("diu", c.verb) >= 0) {
+		(!c.bytes || strings.IndexByte("diu", c.verb) >= 0 || c.py.BytesFloatConvertsLikeStr()) {
 		return formatted{}, v.UndefinedError()
 	}
 
@@ -587,9 +837,7 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 		// Only a bytes format has %b; a str one has no case for it and
 		// reports an unsupported format character, as CPython does.
 		if !c.bytes {
-			return formatted{}, errs.New(errs.ValueError,
-				"unsupported format character '%c' (0x%x) at index %d",
-				c.verb, c.verb, c.at-1)
+			return formatted{}, c.errUnsupported()
 		}
 		return c.bytesArg(v)
 	case 's':
@@ -640,8 +888,7 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 			}
 			n, ok := v.Int64()
 			if !ok || n < 0 || n > 255 {
-				return formatted{}, errs.New(errs.OverflowError,
-					"%%c arg not in range(256)")
+				return formatted{}, c.errPercentCRange("256")
 			}
 			// One byte, not the code point's encoding: `b'%c' % 205`
 			// is b'\xcd' where the str form is 'Í'. Writing the rune
@@ -651,7 +898,7 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 		// Precision is accepted and ignored, as in Python.
 		if v.kind == KindString {
 			if n := StrLen(v.str); n != 1 {
-				return formatted{}, c.errPercentC(v,
+				return formatted{}, c.errPercentC(
 					fmt.Sprintf("a string of length %d", n))
 			}
 			return formatted{body: text(v.str)}, nil
@@ -667,11 +914,11 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 			// value is "not Undefined" and `%x` "not Undefined".
 			// A builtin is unqualified either way, so a dict view
 			// stays "dict_keys".
-			return formatted{}, c.errPercentC(v, QualifiedTypeName(v))
+			return formatted{}, c.errPercentC(QualifiedTypeName(v))
 		}
 		n, ok := v.Int64()
 		if !ok || n < 0 || n > 0x10FFFF {
-			return formatted{}, errs.New(errs.OverflowError, "%%c arg not in range(0x110000)")
+			return formatted{}, c.errPercentCRange("0x110000")
 		}
 		return formatted{body: text(string(rune(n)))}, nil
 
@@ -704,8 +951,7 @@ func (c *conversion) convert(v Value, escaping bool) (formatted, error) {
 	case 'e', 'E', 'f', 'F', 'g', 'G':
 		return c.floatBody(v)
 	}
-	return formatted{}, errs.New(errs.ValueError,
-		"unsupported format character '%c' (0x%x) at index %d", c.verb, c.verb, c.at-1)
+	return formatted{}, c.errUnsupported()
 }
 
 // truncate applies a string conversion's precision, which counts characters.
@@ -750,8 +996,7 @@ func (c *conversion) integerDigits(v Value, base int, allowFloat bool) (string, 
 		if allowFloat {
 			want = "a real number"
 		}
-		return "", false, errs.New(errs.TypeError,
-			"%%%c format: %s is required, not %s", c.verb, want, v.TypeName())
+		return "", false, c.errNumberRequired(want, QualifiedTypeName(v), v.TypeName())
 	}
 
 	negative := b.Sign() < 0
@@ -769,7 +1014,7 @@ func (c *conversion) integerDigits(v Value, base int, allowFloat bool) (string, 
 
 // floatBody renders a float conversion, in Python's spelling.
 func (c *conversion) floatBody(v Value) (formatted, error) {
-	if c.bytes {
+	if c.bytes && !c.py.BytesFloatConvertsLikeStr() {
 		// PyBytes_Format words this after the verb rather than after the
 		// type: "float argument required, not str" where
 		// PyUnicode_Format says "must be real number, not str". It says
@@ -777,7 +1022,8 @@ func (c *conversion) floatBody(v Value) (formatted, error) {
 		// argument required, not int" -- where the str side reports the
 		// overflow. One conversion either succeeds or does not; it does
 		// not distinguish why. The integer verbs agree on both sides;
-		// only the float ones split.
+		// only the float ones split -- until 3.15, which made the bytes
+		// side the str side's.
 		if _, err := FloatOrOverflow(v); !v.IsNumber() || err != nil {
 			return formatted{}, errs.New(errs.TypeError,
 				"float argument required, not %s", v.TypeName())
@@ -788,6 +1034,11 @@ func (c *conversion) floatBody(v Value) (formatted, error) {
 		// Both halves come from floatOperand: "must be real number" for
 		// something that is not one, and the OverflowError for an
 		// integer too wide for a float64, which `%f` printed as "inf".
+		// 3.15 replaces the TypeError with its own, naming the verb; the
+		// overflow is not a TypeError and comes through as it is.
+		if c.py.PercentErrorsNameTheArgument() && errs.KindOf(err) == errs.TypeError {
+			return formatted{}, c.errNumberRequired("a real number", QualifiedTypeName(v), "")
+		}
 		return formatted{}, err
 	}
 	negative := math.Signbit(f)
@@ -842,13 +1093,12 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 	switch c.verb {
 	case 'o', 'x', 'X':
 		// No __index__ on the helper, so the argument is never right.
-		return formatted{}, true, errs.New(errs.TypeError,
-			"%%%c format: an integer is required, not _MarkupEscapeHelper", c.verb)
+		return formatted{}, true, c.errNumberRequired("an integer", markupHelperName, "_MarkupEscapeHelper")
 	case 'c':
 		// The operand reaching markupConvert is wrapped in markupsafe's
 		// escape helper, and 3.14 names the wrapper rather than what is
 		// inside it.
-		return formatted{}, true, c.errPercentC(v, "markupsafe._MarkupEscapeHelper")
+		return formatted{}, true, c.errPercentC(markupHelperName)
 
 	case 'r', 'a':
 		// repr() of a Markup is text *about* the markup, so it is
@@ -863,6 +1113,9 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 	case 'd', 'i', 'u':
 		n, err := markupInt(v, c.verb, c.py)
 		if err != nil {
+			if errs.KindOf(err) == errs.TypeError {
+				err = c.errNumberRequired("a real number", markupHelperName, "_MarkupEscapeHelper")
+			}
 			return formatted{}, true, err
 		}
 		digits, negative, err := c.padDigits(n)
@@ -874,6 +1127,12 @@ func (c *conversion) markupConvert(v Value) (out formatted, handled bool, err er
 	case 'e', 'E', 'f', 'F', 'g', 'G':
 		f, err := markupFloat(v, c.py)
 		if err != nil {
+			// float() over the helper raises its own TypeError, which
+			// 3.15's formatfloat replaces with the verb's; a string that
+			// does not parse is a ValueError and passes through.
+			if c.py.PercentErrorsNameTheArgument() && errs.KindOf(err) == errs.TypeError {
+				err = c.errNumberRequired("a real number", markupHelperName, "")
+			}
 			return formatted{}, true, err
 		}
 		out, err := c.floatBody(Float(f))

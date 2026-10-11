@@ -125,6 +125,12 @@ func (ex *exec) evalArgs(a ast.Args, callee string) (*value.CallArgs, error) {
 			if v.IsUndefined() {
 				return nil, v.UndefinedError()
 			}
+			// 3.15 stopped naming the callee here, and capitalises
+			// the sentence instead.
+			if ex.st.PythonVersion().KwargsSplatMessageIsGeneric() {
+				return nil, errs.New(errs.TypeError,
+					"Value after ** must be a mapping, not %s", v.TypeName())
+			}
 			return nil, errs.New(errs.TypeError,
 				"%s argument after ** must be a mapping, not %s",
 				callee, v.TypeName())

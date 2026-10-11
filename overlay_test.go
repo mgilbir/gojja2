@@ -815,7 +815,7 @@ func TestOverlayConcurrent(t *testing.T) {
 // TestOverlayPythonVersionIsInSyntax is what lets compilesAlike compare the
 // Python version through syntax alone.
 func TestOverlayPythonVersionIsInSyntax(t *testing.T) {
-	for _, v := range []PythonVersion{value.Python311, value.Python312, value.Python313, value.Python314} {
+	for _, v := range []PythonVersion{value.Python311, value.Python312, value.Python313, value.Python314, value.Python315} {
 		env, err := New(WithPythonVersion(v))
 		if err != nil {
 			t.Fatal(err)

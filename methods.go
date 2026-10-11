@@ -1093,9 +1093,9 @@ func chargeReplace(st *State, src, old, new string, count int) error {
 // affixMethod implements startswith and endswith, which accept a tuple of
 // candidates as well as a single string.
 func affixMethod(name string, match func(string, string) bool) func(*State, value.Value, *value.CallArgs) (value.Value, error) {
-	return func(_ *State, r value.Value, args *value.CallArgs) (value.Value, error) {
+	return func(st *State, r value.Value, args *value.CallArgs) (value.Value, error) {
 		v, _ := arg(args, 0, "prefix")
-		within, _, inRange, err := strSliceBounds(r.AsString(), args, 1)
+		within, _, inRange, err := strSliceBounds(r.AsString(), args, 1, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}
@@ -1141,7 +1141,7 @@ func affixMethod(name string, match func(string, string) bool) func(*State, valu
 // are slice indices, counted in characters and clamped the way a slice clamps,
 // and anything that is not an integer or None is refused in the words CPython
 // uses for a slice.
-func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, bool, error) {
+func strSliceBounds(r string, args *value.CallArgs, first int, py value.PythonVersion) (string, int, bool, error) {
 	// Neither bound given is the common case -- `s.startswith("x")`,
 	// `s.count("x")` -- and it selects the whole subject, so there is
 	// nothing to work out.
@@ -1167,7 +1167,7 @@ func strSliceBounds(r string, args *value.CallArgs, first int) (string, int, boo
 		// cannot drift apart again: an integer too wide for the machine
 		// saturates and is clamped below, rather than being refused as
 		// though it were not an integer at all.
-		idx, err := sliceIndexOf(v)
+		idx, err := sliceIndexOf(v, py)
 		if err != nil {
 			return 0, err
 		}
@@ -1233,7 +1233,7 @@ func methodStrCount(st *State, r value.Value, args *value.CallArgs) (value.Value
 		// `'ab'.count(1, 1.5)` is about the 1 rather than the 1.5.
 		return value.Undefined, subErr
 	}
-	within, _, inRange, err := strSliceBounds(r.AsString(), args, 1)
+	within, _, inRange, err := strSliceBounds(r.AsString(), args, 1, st.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1254,7 +1254,7 @@ func findMethod(name string, search func(string, string) int) func(*State, value
 		if subErr != nil && st.PythonVersion().ClinicNamesTheCallee() {
 			return value.Undefined, subErr
 		}
-		within, offset, inRange, err := strSliceBounds(r.AsString(), args, 1)
+		within, offset, inRange, err := strSliceBounds(r.AsString(), args, 1, st.PythonVersion())
 		if err != nil {
 			return value.Undefined, err
 		}

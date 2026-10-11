@@ -844,6 +844,29 @@ func filterCenter(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 	return keepSafe(v, value.Str(padded)), nil
 }
 
+// libraryRepeat is `unit * n` where the multiplication is written in jinja2's
+// or the standard library's own Python code -- |indent's `" " * width`, and
+// json.encoder's `' ' * self.indent` behind |tojson -- rather than in the
+// template.
+//
+// It differs from the template's `*` in one message. From 3.15 a str * int
+// instruction that has run before is specialised, and the specialised form
+// converts the count with PyLong_AsSsize_t, so a count too wide overflows as
+// "Python int too large to convert to C ssize_t" rather than the generic
+// "cannot fit 'int' into an index-sized integer". A library instruction has
+// always run before; see value.PythonVersion.LibraryRepeatOverflowNamesSsizeT.
+// The guard the specialisation checks is an exact str and an exact int, which
+// a bool is not -- and a bool never overflows anyway.
+func libraryRepeat(unit string, n value.Value, s *State) (value.Value, error) {
+	if s.PythonVersion().LibraryRepeatOverflowNamesSsizeT() && n.Kind() == value.KindInt {
+		if _, fits := n.Int64(); !fits {
+			return value.Undefined, errs.New(errs.OverflowError,
+				"Python int too large to convert to C ssize_t")
+		}
+	}
+	return value.Mul(value.String(unit), n, s)
+}
+
 func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, error) {
 	// The width may be given as the indent string itself.
 	prefix := "    "
@@ -857,7 +880,7 @@ func filterIndent(s *State, v value.Value, args *value.CallArgs) (value.Value, e
 			// Going through the operator inherits that wording, the
 			// bool that counts as 1, the negative that repeats
 			// nothing, and the charge against the render budget.
-			p, err := value.Mul(value.String(" "), w, s)
+			p, err := libraryRepeat(" ", w, s)
 			if err != nil {
 				return value.Undefined, err
 			}
@@ -1044,7 +1067,7 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 	}
 
 	// Only now is the length an index, and only now does a float refuse.
-	cut, err := truncPoint(length, endLen)
+	cut, err := truncPoint(length, endLen, s.PythonVersion())
 	if err != nil {
 		return value.Undefined, err
 	}
@@ -1096,11 +1119,10 @@ func filterTruncate(s *State, v value.Value, args *value.CallArgs) (value.Value,
 // here is what refuses a float: the length is only ever an index at the slice,
 // so `truncate(3.0)` compares its way past both assertions and fails on the
 // cut, which is where Python fails too.
-func truncPoint(length value.Value, endLen int) (int, error) {
+func truncPoint(length value.Value, endLen int, py value.PythonVersion) (int, error) {
 	n, ok := length.Int64()
 	if !ok {
-		return 0, errs.New(errs.TypeError,
-			"slice indices must be integers or None or have an __index__ method")
+		return 0, errSliceIndices(py)
 	}
 	return int(n) - endLen, nil
 }
@@ -1274,8 +1296,7 @@ func wrapLine(s *State, text string, widthVal value.Value, breakLong, breakOnHyp
 				space := 1
 				if width >= 1 {
 					if !sliceable {
-						return nil, errs.New(errs.TypeError,
-							"slice indices must be integers or None or have an __index__ method")
+						return nil, errSliceIndices(s.PythonVersion())
 					}
 					space = max(int(width)-curLen, 0)
 				}

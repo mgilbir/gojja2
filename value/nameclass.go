@@ -898,9 +898,70 @@ var nameClassOther314 = &unicode.RangeTable{
 	},
 }
 
+// nameClassOther315 is where CPython 3.15 and the pin disagree about
+// the class, which is only ever `\w` moving: a code point listed here
+// answers the opposite of the pin's. 9039 code points.
+var nameClassOther315 = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{0x088f, 0x088f, 1},
+		{0x0c5c, 0x0c5c, 1},
+		{0x0cdc, 0x0cdc, 1},
+		{0x1c89, 0x1c8a, 1},
+		{0xa7cb, 0xa7cf, 1},
+		{0xa7d2, 0xa7d2, 1},
+		{0xa7d4, 0xa7d4, 1},
+		{0xa7da, 0xa7dc, 1},
+		{0xa7f1, 0xa7f1, 1},
+	},
+	R32: []unicode.Range32{
+		{0x0105c0, 0x0105f3, 1},
+		{0x010940, 0x010959, 1},
+		{0x010d40, 0x010d65, 1},
+		{0x010d6f, 0x010d85, 1},
+		{0x010ec2, 0x010ec7, 1},
+		{0x011380, 0x011389, 1},
+		{0x01138b, 0x01138b, 1},
+		{0x01138e, 0x01138e, 1},
+		{0x011390, 0x0113b5, 1},
+		{0x0113b7, 0x0113b7, 1},
+		{0x0113d1, 0x0113d1, 1},
+		{0x0113d3, 0x0113d3, 1},
+		{0x0116d0, 0x0116e3, 1},
+		{0x011bc0, 0x011be0, 1},
+		{0x011bf0, 0x011bf9, 1},
+		{0x011db0, 0x011ddb, 1},
+		{0x011de0, 0x011de9, 1},
+		{0x013460, 0x0143fa, 1},
+		{0x016100, 0x01611d, 1},
+		{0x016130, 0x016139, 1},
+		{0x016d40, 0x016d6c, 1},
+		{0x016d70, 0x016d79, 1},
+		{0x016ea0, 0x016eb8, 1},
+		{0x016ebb, 0x016ed3, 1},
+		{0x016ff2, 0x016ff6, 1},
+		{0x0187f8, 0x0187ff, 1},
+		{0x018cff, 0x018cff, 1},
+		{0x018d09, 0x018d1e, 1},
+		{0x018d80, 0x018df2, 1},
+		{0x01ccf0, 0x01ccf9, 1},
+		{0x01e5d0, 0x01e5ed, 1},
+		{0x01e5f0, 0x01e5fa, 1},
+		{0x01e6c0, 0x01e6de, 1},
+		{0x01e6e0, 0x01e6e2, 1},
+		{0x01e6e4, 0x01e6e5, 1},
+		{0x01e6e7, 0x01e6ed, 1},
+		{0x01e6f0, 0x01e6f4, 1},
+		{0x01e6fe, 0x01e6ff, 1},
+		{0x02b73a, 0x02b73f, 1},
+		{0x02cea2, 0x02cead, 1},
+		{0x0323b0, 0x033479, 1},
+	},
+}
+
 // nameClassOther is every non-pinned interpreter's difference, by version.
 var nameClassOther = map[PythonVersion]*unicode.RangeTable{
 	Python311: nameClassOther311,
 	Python312: nameClassOther312,
 	Python314: nameClassOther314,
+	Python315: nameClassOther315,
 }

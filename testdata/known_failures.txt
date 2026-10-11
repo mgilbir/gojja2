@@ -216,6 +216,18 @@ own/divergence/bound_method_literal_receiver_wide_int.jj2
 # above showing through a new surface rather than a separate one; faking it would
 # mean pretending the value is something other than what gojja2 holds.
 own/divergence/unpack_count_lazy_filter.jj2@3.14   # |reverse is a list here
+own/divergence/unpack_count_lazy_filter.jj2@3.15   # the same: 3.15 kept 3.14's count
+
+# --- a repetition overflow whose wording depends on CPython's warm-up -----------
+# 3.15's specialising interpreter has a str * int form whose overflow says "C
+# ssize_t" where the generic one says "cannot fit 'int' into an index-sized
+# integer", and an instruction is generic the first time it runs and specialised
+# after. In a template loop that is the second iteration -- and across renders
+# of a cached template, any execution after the first. Reproducing it would mean
+# per-instruction state that outlives a render, which render isolation rules
+# out. gojja2 answers the first execution's wording. See
+# value.PythonVersion.LibraryRepeatOverflowNamesSsizeT.
+own/divergence/repeat_overflow_in_a_loop.jj2@3.15   # specialised on the second pass
 
 # --- a callable fourth argument to Undefined ------------------------------------
 # jinja2 raises with `exc(message)`, calling it at the raise. gojja2 has no

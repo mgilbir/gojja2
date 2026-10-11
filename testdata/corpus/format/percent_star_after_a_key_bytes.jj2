@@ -1,0 +1,3 @@
+{}
+---
+{{ ('%(a)*s'.encode()) % {'a'.encode(): 'x'.encode()} }}

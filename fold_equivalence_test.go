@@ -152,7 +152,7 @@ func TestFoldedMatchesUnfolded(t *testing.T) {
 	// folds this session's soak found, and without this loop planting it back
 	// leaves the test green.
 	versions := []value.PythonVersion{
-		value.Python311, value.Python312, value.Python313, value.Python314,
+		value.Python311, value.Python312, value.Python313, value.Python314, value.Python315,
 	}
 	for _, autoescape := range []bool{false, true} {
 		for _, u := range undefineds {

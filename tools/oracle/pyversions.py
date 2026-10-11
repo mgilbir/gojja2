@@ -30,7 +30,7 @@ MAKEFILE = ROOT / "Makefile"
 
 # Oldest first. A version is added here, to value.PythonVersion, and to
 # conformance/versions_test.go's table; nothing else enumerates them.
-ALL = ["3.11", "3.12", "3.13", "3.14"]
+ALL = ["3.11", "3.12", "3.13", "3.14", "3.15"]
 
 
 def _make_var(name: str) -> str:
