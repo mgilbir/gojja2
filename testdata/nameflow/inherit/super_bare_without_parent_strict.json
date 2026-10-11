@@ -1,0 +1,6 @@
+{
+  "case": "inherit/super_bare_without_parent_strict.jj2",
+  "variables": {
+    "super": "o"
+  }
+}
