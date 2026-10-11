@@ -524,3 +524,21 @@ func (v PythonVersion) BytesFloatConvertsLikeStr() bool { return v.AtLeast(Pytho
 // intstr/markup_percent_d_digit_limit_before_junk,
 // intstr/int_class_digit_limit_before_junk.
 func (v PythonVersion) IntDigitLimitAfterValidation() bool { return v.AtLeast(Python312) }
+
+// FractionalGrouping reports whether the format mini-language takes a ',' or
+// an '_' after the precision, separating the digits after the point into
+// threes counted from the point: `'{:.,f}'.format(1234.5678912)` is
+// "1234.567,891" and `{:,.,f}` groups both halves.
+//
+// 3.14 added it (gh-87790). The separator may stand in for the digits, so
+// before 3.14 `{:.,f}` is "Format specifier missing precision" and `{:.3,f}`
+// leaves two characters where the type goes and is an invalid specifier.
+// From 3.14 the same grammar refuses `{:.,_f}` as "both", a separator before
+// the digits (`{:._3f}`) as an invalid specifier, and 'n' with either
+// separator; an integer or a string reads it and ignores it, so `{:.,d}` of
+// 1234 is "1234". Corpus: format/fraction_grouped,
+// format/fraction_grouped_padding, format/fraction_grouped_ignored,
+// errors/format_fraction_group_with_n_on_an_int,
+// errors/format_fraction_group_comma_then_underscore,
+// errors/format_fraction_group_before_digits.
+func (v PythonVersion) FractionalGrouping() bool { return v.AtLeast(Python314) }

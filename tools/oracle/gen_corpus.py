@@ -6100,6 +6100,99 @@ case("errors/format_int_c_alternate", "{{ '{:#c}'.format(5) }}")
 case("errors/format_object_ignores_spec", "{{ '{:,n}'.format(none) }}")
 case("errors/format_c_too_large", "{{ '{:c}'.format(2**70) }}")
 
+# 3.14 groups the fraction too (gh-87790): a ',' or an '_' after the precision
+# separates the digits after the point into threes counted *from* the point,
+# so a short group falls at the end. The separator may stand in for the
+# digits -- `{:.,f}` is the default precision, grouped -- which is why 3.11 to
+# 3.13 call that "Format specifier missing precision", while `{:.4,f}` leaves
+# two characters where the type goes and is an invalid specifier there. Each
+# case below opens with the spec whose older refusal it pins.
+#
+# Only a float lays the separator out. An integer or a string code reads it and
+# ignores it -- precision included, so `{:.,d}` is not "Precision not allowed"
+# -- and 'n' alone refuses it, after the integer part's own check.
+case("format/fraction_grouped",
+     "{{ '{:.,f}'.format(1234.5678912) }}|{{ '{:,.,f}'.format(1234567.5678912) }}|"
+     "{{ '{:._f}'.format(1234.5678912) }}|{{ '{:.,e}'.format(1234.5678912) }}|"
+     "{{ '{:.,E}'.format(1234.5678912) }}|{{ '{:.,}'.format(1234.5678912) }}|"
+     "{{ '{:.,}'.format(12345678.123456789) }}|{{ '{:.,}'.format(1.2345678e-7) }}|"
+     "{{ '{:.,}'.format(1e20) }}|{{ '{:.,%}'.format(0.12345678) }}|"
+     "{{ '{:.,g}'.format(1234.5678912) }}|{{ '{:.,f}'.format(10**30) }}|"
+     "{{ '{:.,f}'.format(true) }}|{{ '{:.,F}'.format(1.5) }}")
+case("format/fraction_grouped_after_digits",
+     "{{ '{:.4,f}'.format(1.5) }}|{{ '{:.7,f}'.format(1.5) }}|{{ '{:.1,f}'.format(1.5) }}|"
+     "{{ '{:.0,f}'.format(1234.5) }}|{{ '{:#.0,f}'.format(1234.5) }}|"
+     "{{ '{:.10,g}'.format(1234.5678912) }}|{{ '{:#.10,g}'.format(1.5) }}|"
+     "{{ '{:.10,G}'.format(1.23456789e-10) }}|{{ '{:.10,e}'.format(0.0) }}|"
+     "{{ '{:.40,f}'.format(0.1) }}|{{ '{:,.4,%}'.format(12345.678912) }}|"
+     "{{ '{:.2,%}'.format(3) }}|{{ '{:.0,}'.format(123.456) }}")
+# Typeless with digits, the separator is read before the type: before 3.14 the
+# comma *is* the type, so this is a code called ','.
+case("format/fraction_grouped_typeless_precision",
+     "{{ '{:.12,}'.format(12345678.123456789) }}|{{ '{:.20_}'.format(0.1) }}|"
+     "{{ '{:.3,}'.format(1e-5) }}")
+# Zeros written into the integer part count the fraction's separators into the
+# width, and join the integer part's grouping when there is one.
+case("format/fraction_grouped_padding",
+     "{{ '{:015.,f}'.format(1234.5678912) }}|{{ '{:020,.,f}'.format(1234.5678912) }}|"
+     "{{ '{:020_._f}'.format(-1234.5678912) }}|{{ '{:*^25,.,f}'.format(-1234.5678912) }}|"
+     "{{ '{:*=+25,.,f}'.format(1234.5678912) }}|[{{ '{:<20.,f}'.format(1.5) }}]|"
+     "{{ '{:030.,e}'.format(-1234.5678912) }}|{{ '{:030,.,e}'.format(-1234.5678912) }}|"
+     "{{ '{:#030,.10,g}'.format(1234.5) }}|{{ '{:0<020,.,}'.format(12345.678) }}|"
+     "{{ '{:_^30._e}'.format(-123456.789) }}")
+# A carry that lengthens the integer part, a sign that rounds away, and the
+# non-finite values, which have no fraction to separate.
+case("format/fraction_grouped_rounding",
+     "{% set b = 1e308 %}{{ '{:.,f}'.format(9.9999999) }}|{{ '{:.,f}'.format(999.9999999) }}|"
+     "{{ '{:z.,f}'.format(-0.0000001) }}|{{ '{:+.,f}'.format(-0.0) }}|"
+     "{{ '{:z.,%}'.format(-0.0) }}|{{ '{:.,f}'.format(b * 10) }}|"
+     "{{ '{:015.,f}'.format(-b * 10) }}|{{ '{:015,.,F}'.format(b * 10 - b * 10) }}|"
+     "{{ '{:+.,}'.format(-b * 10) }}|{{ '{:.,%}'.format(1e308) }}")
+case("format/fraction_grouped_ignored",
+     "{{ '{:.,d}'.format(1234) }}|{{ '{:.,}'.format(1234) }}|{{ '{:.,x}'.format(1234) }}|"
+     "{{ '{:.,b}'.format(5) }}|{{ '{:_._b}'.format(255) }}|{{ '{:,.,d}'.format(1234567) }}|"
+     "{{ '{:.,c}'.format(65) }}|{{ '{:.,s}'.format('abcdef') }}|{{ '{:.2,s}'.format('abcdef') }}|"
+     "{{ '{:.,}'.format('abcdef') }}|[{{ '{:06.,}'.format('ab') }}]|{{ '{:.,}'.format(true) }}|"
+     "{{ '{:.,d}'.format(true) }}")
+# The same spec reached through __format__, and through Markup's formatter.
+case("format/fraction_grouped_dunder",
+     "{{ (1234.5).__format__('.,f') }}|{{ (1234).__format__('.,f') }}|"
+     "{{ (1234).__format__('.,d') }}|{{ 'x'.__format__('.,') }}|"
+     "{{ (12345.678).__format__('020,.,') }}|{{ (1.5).__format__('._') }}|"
+     "{{ ('{0:.,f} {0:._f}'|safe).format(1234.5678912) }}|"
+     "{{ '{:{}}'.format(1234.5678912, '.,f') }}")
+for _n, _src in [
+    # 'n' refuses either separator, on every type, after the integer part's
+    # check: `{:_.,n}` is about the underscore.
+    ("with_n_on_an_int", "{{ '{:.,n}'.format(1234) }}"),
+    ("with_n_on_a_float", "{{ '{:._n}'.format(1.5) }}"),
+    ("with_n_on_a_str", "{{ '{:.,n}'.format('ab') }}"),
+    ("with_n_after_the_integer_part", "{{ '{:_.,n}'.format(1.5) }}"),
+    # Both separators, in either order and after digits.
+    ("comma_then_underscore", "{{ '{:.,_f}'.format(1.5) }}"),
+    ("underscore_then_comma", "{{ '{:._,f}'.format(1.5) }}"),
+    ("both_after_digits", "{{ '{:.3_,f}'.format(1.5) }}"),
+    # A separator goes after the digits, not before them.
+    ("before_digits", "{{ '{:_._3f}'.format(1234567.5678912) }}"),
+    ("comma_before_digits", "{{ '{:.,3f}'.format(1.5) }}"),
+    # The same separator twice: the second is the type, or is one too many.
+    ("comma_twice_then_code", "{{ '{:.,,f}'.format(1.5) }}"),
+    ("comma_twice", "{{ '{:.,,}'.format(1.5) }}"),
+    ("comma_twice_on_both_parts", "{{ '{:,.,,}'.format(1.5) }}"),
+    ("underscore_twice", "{{ '{:.__}'.format(1.5) }}"),
+    # What the separator does not change: an integer still refuses a
+    # precision, bool still refuses 's', None never reads the spec, and the
+    # digits are read and refused before anything after them.
+    ("int_precision", "{{ '{:.3,d}'.format(1234) }}"),
+    ("bool_s", "{{ '{:.,s}'.format(true) }}"),
+    ("none", "{{ '{:.,}'.format(none) }}"),
+    ("precision_overflow", "{{ '{:.99999999999999999999_,f}'.format(1.5) }}"),
+    ("precision_too_big", "{{ '{:.3000000000,f}'.format(1.5) }}"),
+    # printf-style formatting is a different language and never had it.
+    ("not_printf", "{{ '%.,f' % 1.5 }}"),
+]:
+    case(f"errors/format_fraction_group_{_n}", _src)
+
 # A slice index too big for the machine is still an integer, and CPython clamps
 # it. And jinja2's getitem catches TypeError and LookupError alike, so a key the
 # container cannot take renders as nothing rather than raising.

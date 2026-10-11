@@ -505,3 +505,35 @@ func isoSet(n int) value.Value {
 	}
 	return value.FromObject(s)
 }
+
+// TestGroupedFractionChargesItsSeparators measures the one charge in
+// value/strformat.go's formatFloat that the table above cannot reach, because
+// only 3.14 and later accept the spec that asks for it: a grouped fraction is a
+// third longer than its digits, and the separators are paid for with them,
+// before the digits are laid out.
+//
+// So the precision alone fits the bound and the grouped result does not: 3,500
+// digits under 4,096 bytes, 4,666 with a comma between every three. Without the
+// separators' share the render succeeds, and the same precision ungrouped must,
+// or the case would be measuring the digits' own charge instead.
+func TestGroupedFractionChargesItsSeparators(t *testing.T) {
+	env := mustEnv(gojja2.WithMaxOutputBytes(4096), gojja2.WithPythonVersion(gojja2.Python314))
+	for src, want := range map[string]error{
+		`{% set v = '{:.3500f}'.format(f) %}`:  nil,
+		`{% set v = '{:.3500,f}'.format(f) %}`: gojja2.ErrOutputTooLarge,
+		`{% set v = '{:.3500_f}'.format(f) %}`: gojja2.ErrOutputTooLarge,
+	} {
+		tmpl, err := env.FromString(src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", src, err)
+		}
+		var sb strings.Builder
+		err = tmpl.Render(context.Background(), &sb, map[string]any{"f": 1.5})
+		if want == nil && err != nil || want != nil && !errors.Is(err, want) {
+			t.Errorf("%s: got %v, want %v", src, err, want)
+		}
+		if sb.Len() != 0 {
+			t.Errorf("%s: wrote %d bytes; the result is bound to a name", src, sb.Len())
+		}
+	}
+}

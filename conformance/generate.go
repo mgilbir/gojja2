@@ -1972,6 +1972,13 @@ func (g *generator) formatSpecCall() string {
 		// A bare dot is "Format specifier missing precision", and a signed
 		// or spaced one is too -- so the dot is drawn apart from its digits.
 		spec.WriteString("." + g.c.pick([]string{"0", "2", "30", "", "-5", " 5"}))
+		// 3.14 lets a separator follow the precision, or stand in for
+		// it, and reads the pair and the repeat the way it reads the
+		// integer part's. Before 3.14 each of these is one of two
+		// refusals, so the interpreter axis is what tells them apart.
+		if g.c.chance(3) {
+			spec.WriteString(g.c.pick([]string{",", "_", ",_", "_,", ",,", "__"}))
+		}
 	}
 	if g.c.chance(2) {
 		spec.WriteString(g.c.pick([]string{

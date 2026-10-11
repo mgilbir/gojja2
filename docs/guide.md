@@ -502,8 +502,10 @@ jinja2 3.1.6 is one library, but it runs on an interpreter, and the interpreter
 decides some of what a template does. `{{ d[0:1] }}` raises `TypeError` on
 CPython 3.11 and `KeyError` on 3.12. `{{ xs|sort(reverse=none) }}` is an error
 on 3.11 and a forward sort on 3.12. A division by zero is worded six ways before
-3.14 and one way after. 3.15 rewords most of the errors a printf-style `%`
-format raises. And CPython carries its own Unicode, so which characters are
+3.14 and one way after. `{{ '{:.,f}'.format(1234.5678912) }}` is
+"1234.567,891" from 3.14, which lets `str.format` group the digits after the
+point, and "Format specifier missing precision" before it. 3.15 rewords most of
+the errors a printf-style `%` format raises. And CPython carries its own Unicode, so which characters are
 digits, how they case, and how `repr` escapes them all move too.
 
 Across 3.11 to 3.15 that moves a small share of gojja2's committed conformance
