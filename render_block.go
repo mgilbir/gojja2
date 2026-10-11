@@ -58,9 +58,13 @@ func (t *Template) RenderBlockString(ctx context.Context, name string, vars map[
 }
 
 // RenderBlockValues is [Template.RenderBlock] with variables that are already
-// template values. As with [Template.RenderValues], they are used as they are,
-// so a block that mutates one mutates the caller's.
+// template values. As with [Template.RenderValues], what a template could
+// change is copied first, unless [WithSharedState]([ShareRenderValues]) says
+// to use the caller's values as they are.
 func (t *Template) RenderBlockValues(ctx context.Context, w io.Writer, name string, vars map[string]value.Value) (err error) {
+	if !t.env.sharesValues() {
+		return t.RenderBlock(ctx, w, name, asAny(vars))
+	}
 	defer catchPanic(&err)
 	if err := t.requireBlock(name); err != nil {
 		return err

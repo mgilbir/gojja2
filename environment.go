@@ -98,6 +98,10 @@ type Environment struct {
 	// places the interpreters disagree. See compat.go.
 	pyVersion PythonVersion
 
+	// shared names the stateful behaviours of jinja2's this environment
+	// keeps; zero keeps none. See shared.go.
+	shared SharedState
+
 	// maxIntBits bounds the width of an integer an expression computes.
 	// Unlike the others it is a conformance question as much as a safety
 	// one -- CPython computes what this refuses -- which is why it is

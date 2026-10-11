@@ -225,8 +225,9 @@ func LoadCase(root, path string) (*Case, error) {
 // `{% set _ = lst.append(9) %}`, `{% set _ = d.update(x) %}` and
 // `{% set d.v %}...{% endset %}` all write through, and
 // [gojja2.Template.RenderValues] skips the conversion that would otherwise
-// protect the caller -- so a context shared between two renders carries
-// whatever the first one did to it into the second.
+// protect the caller, under the ShareRenderValues this package's
+// environments set -- so a context shared between two renders carries whatever
+// the first one did to it into the second.
 //
 // That has gone wrong three times in this package, in three different shapes:
 // a field decoded once in a constructor, and twice a shallow copy of such a
@@ -432,7 +433,12 @@ func (c *Case) EnvironmentFor(py gojja2.PythonVersion) (*gojja2.Environment, err
 	if s.Policies != nil {
 		opts = append(opts, gojja2.WithPolicies(s.Policies.apply(gojja2.DefaultPolicies())))
 	}
-	opts = append(opts, gojja2.WithPythonVersion(py))
+	// Every render here is handed a context built for it alone (see
+	// Case.Context), so nothing a template writes can reach another case.
+	// That makes it safe to ask RenderValues for its values as they are --
+	// and necessary: without it RenderValues copies them and takes Render's
+	// path, and the uncopied path would go ungraded.
+	opts = append(opts, gojja2.WithPythonVersion(py), gojja2.WithSharedState(gojja2.ShareRenderValues))
 	env, err := gojja2.New(opts...)
 	if err != nil {
 		return nil, err

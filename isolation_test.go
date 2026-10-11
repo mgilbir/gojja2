@@ -293,26 +293,31 @@ func TestIsolationKeepsAliasesAndCycles(t *testing.T) {
 // it keeps hands a module one copy of it for the module's whole life, as it
 // would be one object in jinja2, so the second call sees the first's change.
 func TestModuleKeepsItsOwnCopyOfAHostValue(t *testing.T) {
-	keep := value.NewList()
-	env := mustEnv(gojja2.WithExtensions("do"))
-	env.AddGlobal("f", gojja2.Func("f", func(*gojja2.State, *value.CallArgs) (value.Value, error) { return keep, nil }))
-	tmpl, err := env.FromString(`{% macro add(x) %}{% do f().append(x) %}{{ f() }}{% endmacro %}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	mod, err := tmpl.Module(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v, err := mod.Call(ctx, "add", 1); err != nil || v.AsString() != "[1]" {
-		t.Fatalf("first call = %v, %v", v, err)
-	}
-	if v, err := mod.Call(ctx, "add", 2); err != nil || v.AsString() != "[1, 2]" {
-		t.Errorf("second call = %v, %v; want [1, 2]", v, err)
-	}
-	if got := value.Repr(keep); got != "[]" {
-		t.Errorf("the host's list became %s", got)
+	// Under ShareModuleState the module's copy lives as long as the module,
+	// as its state does; by default each call starts from a fresh one. The
+	// host's list is untouched either way.
+	for shared, second := range map[gojja2.SharedState]string{gojja2.ShareModuleState: "[1, 2]", 0: "[2]"} {
+		keep := value.NewList()
+		env := mustEnv(gojja2.WithExtensions("do"), gojja2.WithSharedState(shared))
+		env.AddGlobal("f", gojja2.Func("f", func(*gojja2.State, *value.CallArgs) (value.Value, error) { return keep, nil }))
+		tmpl, err := env.FromString(`{% macro add(x) %}{% do f().append(x) %}{{ f() }}{% endmacro %}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := context.Background()
+		mod, err := tmpl.Module(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v, err := mod.Call(ctx, "add", 1); err != nil || v.AsString() != "[1]" {
+			t.Fatalf("shared=%d: first call = %v, %v", shared, v, err)
+		}
+		if v, err := mod.Call(ctx, "add", 2); err != nil || v.AsString() != second {
+			t.Errorf("shared=%d: second call = %v, %v; want %s", shared, v, err, second)
+		}
+		if got := value.Repr(keep); got != "[]" {
+			t.Errorf("shared=%d: the host's list became %s", shared, got)
+		}
 	}
 }
 
@@ -340,10 +345,11 @@ func TestIsolationOfSetsAndViews(t *testing.T) {
 	}
 }
 
-// evalValueWith is evalValue over values.
+// evalValueWith is evalValue over values, used as they are: it builds fixtures
+// such as a view of the caller's own dict, so it shares rather than copies.
 func evalValueWith(t *testing.T, expr string, vars map[string]value.Value) (value.Value, error) {
 	t.Helper()
-	x, err := mustEnv().CompileExpression(expr)
+	x, err := mustEnv(gojja2.WithSharedState(gojja2.ShareRenderValues)).CompileExpression(expr)
 	if err != nil {
 		t.Fatal(err)
 	}

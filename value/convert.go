@@ -28,6 +28,12 @@ type MethodInfo struct {
 	NumIn int
 	// NumOut is the result count.
 	NumOut int
+	// PointerReceiver reports that the method is declared on a pointer, and
+	// so can change the object the host handed in. A method on the value
+	// gets a copy of the struct as its receiver and cannot change its
+	// fields -- though it can still write through a map, a slice or a
+	// pointer the struct holds, which nothing here can see.
+	PointerReceiver bool
 }
 
 // MethodPolicy decides whether a Go method may be reached from a template.
@@ -971,15 +977,23 @@ func (o *structObject) method(name string) (Value, bool) {
 	if expose == nil {
 		expose = NullaryMethods
 	}
+	// Only a pointer has pointer-receiver methods in its method set; a
+	// method the pointed-to type has too is declared on the value.
+	ptr := false
+	if o.rv.Kind() == reflect.Pointer {
+		_, onValue := o.rv.Type().Elem().MethodByName(name)
+		ptr = !onValue
+	}
 	if !expose(MethodInfo{
-		Owner:  o.rv.Type(),
-		Name:   name,
-		NumIn:  t.NumIn(),
-		NumOut: t.NumOut(),
+		Owner:           o.rv.Type(),
+		Name:            name,
+		NumIn:           t.NumIn(),
+		NumOut:          t.NumOut(),
+		PointerReceiver: ptr,
 	}) {
 		return Undefined, false
 	}
-	return FromObject(&methodObject{fn: m, name: name, expose: o.expose, b: o.b}), true
+	return FromObject(&methodObject{fn: m, name: name, owner: o.rv.Type(), ptr: ptr, expose: o.expose, b: o.b}), true
 }
 
 func tagName(f reflect.StructField) string {
@@ -1034,8 +1048,12 @@ func (o *structObject) Repr() string {
 
 // methodObject is a Go method reached as an attribute.
 type methodObject struct {
-	fn     reflect.Value
-	name   string
+	fn   reflect.Value
+	name string
+	// owner is the type the method was found on, and ptr whether it is
+	// declared on the pointer; see PointerReceiver.
+	owner  reflect.Type
+	ptr    bool
 	expose MethodPolicy
 	// b is the budget of the conversion this wrapper came out of; see
 	// structObject.b. A method's result is converted when it is called,
@@ -1044,6 +1062,14 @@ type methodObject struct {
 }
 
 func (m *methodObject) GetAttr(string) (Value, bool) { return Undefined, false }
+
+// PointerReceiver reports whether calling the method can change the host's
+// object: it is declared on a pointer, and the pointer is the host's. The
+// engine asks this before a template calls one; see gojja2.WithSharedState.
+// owner and name identify the method for the refusal.
+func (m *methodObject) PointerReceiver() (ptr bool, owner reflect.Type, name string) {
+	return m.ptr, m.owner, m.name
+}
 
 // exactNumeric converts a template number to the numeric type a Go method
 // takes, when that loses nothing: a template's integer is an int64 and its

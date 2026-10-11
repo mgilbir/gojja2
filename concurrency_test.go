@@ -83,19 +83,18 @@ func TestRenderDoesNotMutateCallerData(t *testing.T) {
 // TestRenderValuesLetsATemplateMutateWhatItIsGiven is the other side of the
 // test above, and the reason that one says "Render" rather than "a render".
 //
-// RenderValues exists to skip the conversion from Go, and the conversion is
-// what protects the caller. So the values handed to it are the render's to
-// write to: the writes are visible afterwards and to every later render given
-// the same values. That is jinja2's behaviour, and here it is the documented
-// trade for skipping the conversion rather than an accident -- so it is pinned,
-// because the alternative is that it changes without anyone noticing.
+// Under WithSharedState(ShareRenderValues), RenderValues skips the copy, so the
+// values handed to it are the render's to write to: the writes are visible
+// afterwards and to every later render given the same values. That is jinja2's
+// behaviour, asked for by name, so it is pinned -- the default, which copies,
+// is shared_test.go's.
 //
 // `{% set d.v %}...{% endset %}` is in the list because it is the one that does
 // not look like a mutation: it is an item assignment, not a namespace write,
 // and jinja2 emits no namespace check for the block form. See
 // docs/divergences.md.
 func TestRenderValuesLetsATemplateMutateWhatItIsGiven(t *testing.T) {
-	env := mustEnv(gojja2.WithExtensions("do"))
+	env := mustEnv(gojja2.WithExtensions("do"), gojja2.WithSharedState(gojja2.ShareRenderValues))
 	for _, tc := range []struct {
 		name, src string
 		first     string // what `{{ lst }}` says on the first render
@@ -186,9 +185,10 @@ func TestContextVariableIsOneValuePerRender(t *testing.T) {
 
 // TestHostObjectIsShared is the other half: a pointer the caller exposed on
 // purpose really is the caller's object, and a template calling its methods
-// changes it. Copying that away would break every host object with state.
+// changes it, once the environment allows pointer methods. Copying that away
+// would break every host object with state.
 func TestHostObjectIsShared(t *testing.T) {
-	env := mustEnv()
+	env := mustEnv(gojja2.WithSharedState(gojja2.AllowPointerMethods))
 	tmpl, err := env.FromString(`{{ c.Bump() }}{{ c.Bump() }}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)

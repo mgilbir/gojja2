@@ -189,24 +189,33 @@ func TestModuleCallsMatchJinja(t *testing.T) {
 			call: "h", args: value.CallArgs{Pos: []value.Value{value.String("<")}}, want: `Markup('&lt;')`},
 	}
 	for _, tc := range cases {
-		t.Run(tc.id, func(t *testing.T) {
-			env := hostModuleEnv(t, tc.tpls, tc.opts...)
-			env.AddGlobal("g", value.String("G"))
-			main := tc.main
-			if main == "" {
-				main = "main"
-			}
-			mod := hostModule(t, env, main, tc.vars)
-			args := tc.args
-			if got := pyAnswer(mod.CallArgs(context.Background(), tc.call, &args)); got != tc.want {
-				t.Errorf("got  %s\nwant %s", got, tc.want)
-			}
-			if tc.twice != "" {
-				if got := pyAnswer(mod.CallArgs(context.Background(), tc.call, &args)); got != tc.twice {
-					t.Errorf("second call: got  %s\nwant %s", got, tc.twice)
+		// jinja2's module keeps what one call changed for the next, which is
+		// what twice records; ShareModuleState asks for that. By default
+		// every call starts afresh, so the second answer is the first.
+		for _, shared := range []SharedState{ShareModuleState | ShareRenderValues, 0} {
+			t.Run(fmt.Sprintf("%s/shared=%d", tc.id, shared), func(t *testing.T) {
+				env := hostModuleEnv(t, tc.tpls, append(tc.opts, WithSharedState(shared))...)
+				env.AddGlobal("g", value.String("G"))
+				main := tc.main
+				if main == "" {
+					main = "main"
 				}
-			}
-		})
+				mod := hostModule(t, env, main, tc.vars)
+				args := tc.args
+				if got := pyAnswer(mod.CallArgs(context.Background(), tc.call, &args)); got != tc.want {
+					t.Errorf("got  %s\nwant %s", got, tc.want)
+				}
+				if tc.twice != "" {
+					want := tc.twice
+					if shared == 0 {
+						want = tc.want
+					}
+					if got := pyAnswer(mod.CallArgs(context.Background(), tc.call, &args)); got != want {
+						t.Errorf("second call: got  %s\nwant %s", got, want)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -300,25 +309,41 @@ func TestModuleCreationFails(t *testing.T) {
 
 // TestModuleModulesAreFresh: each Module is its own make_module, so state one
 // accumulates is not another's -- t.module.p(), t.module.p(),
-// t.make_module().p() is ('1', '2', '1').
+// t.make_module().p() is ('1', '2', '1') under ShareModuleState, as in jinja2.
+// By default no call keeps anything, so it is ('1', '1', '1').
 func TestModuleModulesAreFresh(t *testing.T) {
-	env := hostModuleEnv(t, map[string]string{"main": `{% set l = [] %}{% macro p() %}{{ l.append(1) or l|length }}{% endmacro %}`})
-	a, b := hostModule(t, env, "main", nil), hostModule(t, env, "main", nil)
-	var got []string
-	for _, m := range []*Module{a, a, b} {
-		got = append(got, pyAnswer(m.Call(context.Background(), "p")))
-	}
-	if want := []string{`'1'`, `'2'`, `'1'`}; !slices.Equal(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
+	for shared, want := range map[SharedState][]string{
+		ShareModuleState: {`'1'`, `'2'`, `'1'`},
+		0:                {`'1'`, `'1'`, `'1'`},
+	} {
+		env := hostModuleEnv(t, map[string]string{"main": `{% set l = [] %}{% macro p() %}{{ l.append(1) or l|length }}{% endmacro %}`},
+			WithSharedState(shared))
+		a, b := hostModule(t, env, "main", nil), hostModule(t, env, "main", nil)
+		var got []string
+		for _, m := range []*Module{a, a, b} {
+			got = append(got, pyAnswer(m.Call(context.Background(), "p")))
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("shared=%d: got %v, want %v", shared, got, want)
+		}
 	}
 }
 
 // TestModuleCallConvertsArguments: Call's positional arguments are converted as
 // render variables are, so a macro cannot write to the caller's data -- where
-// jinja2, given the list itself, appends to it. CallArgs passes values through.
+// jinja2, given the list itself, appends to it. CallArgs copies its values
+// too, unless ShareRenderValues passes them through as jinja2 does.
 func TestModuleCallConvertsArguments(t *testing.T) {
-	env := hostModuleEnv(t, map[string]string{"main": `{% macro ap(l) %}{{ l.append(1) }}{{ l|length }}{% endmacro %}`})
-	mod := hostModule(t, env, "main", nil)
+	for shared, want := range map[SharedState]string{ShareRenderValues: `[0, 1]`, 0: `[0]`} {
+		env := hostModuleEnv(t, map[string]string{"main": `{% macro ap(l) %}{{ l.append(1) }}{{ l|length }}{% endmacro %}`},
+			WithSharedState(shared))
+		mod := hostModule(t, env, "main", nil)
+		checkModuleCallConvertsArguments(t, mod, want)
+	}
+}
+
+func checkModuleCallConvertsArguments(t *testing.T, mod *Module, wantCallArgs string) {
+	t.Helper()
 	goList := []any{0}
 	if got := pyAnswer(mod.Call(context.Background(), "ap", goList)); got != `'None2'` {
 		t.Fatalf("got %s", got)
@@ -330,8 +355,8 @@ func TestModuleCallConvertsArguments(t *testing.T) {
 	if got := pyAnswer(mod.CallArgs(context.Background(), "ap", &value.CallArgs{Pos: []value.Value{l}})); got != `'None2'` {
 		t.Fatalf("got %s", got)
 	}
-	if got := value.Repr(l); got != `[0, 1]` {
-		t.Fatalf("CallArgs list after the call: %s, want [0, 1] (jinja2's answer)", got)
+	if got := value.Repr(l); got != wantCallArgs {
+		t.Fatalf("CallArgs list after the call: %s, want %s", got, wantCallArgs)
 	}
 }
 
@@ -441,7 +466,10 @@ func TestModuleCallLeavesNothingBehind(t *testing.T) {
 // TestModuleCallIsSerialised: concurrent calls on one module are safe and each
 // sees the shared state move by exactly one. Run under -race.
 func TestModuleCallIsSerialised(t *testing.T) {
-	env := hostModuleEnv(t, map[string]string{"main": `{% set ns = namespace(n=0) %}{% macro inc() %}{% set ns.n = ns.n + 1 %}{{ ns.n }}{% endmacro %}`})
+	// Shared, so that each call moves the state on and an overlap shows as
+	// two calls giving one answer.
+	env := hostModuleEnv(t, map[string]string{"main": `{% set ns = namespace(n=0) %}{% macro inc() %}{% set ns.n = ns.n + 1 %}{{ ns.n }}{% endmacro %}`},
+		WithSharedState(ShareModuleState))
 	mod := hostModule(t, env, "main", nil)
 	var wg sync.WaitGroup
 	seen := make([]string, 50)

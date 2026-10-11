@@ -22,7 +22,9 @@ type convHolder struct {
 	Maps  map[string]any
 }
 
-func (h *convHolder) Big() []any { return h.Items }
+// Big is declared on the value, so a template may call it whatever the
+// environment's SharedState: what is measured is its result's conversion.
+func (h convHolder) Big() []any { return h.Items }
 
 // convArgs builds one argument of each shape that reaches the converter.
 func convArgs(n int) map[string]any {
