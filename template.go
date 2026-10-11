@@ -62,14 +62,17 @@ func (t *Template) Name() string { return t.name }
 // therefore tracks the largest include, not the size of the write buffer.
 //
 // ctx bounds the render. Cancel it, or give it a deadline, and the render stops
-// at the next loop iteration, output write, or filter yield point, and returns
-// an error wrapping ctx.Err().
+// and returns an error wrapping ctx.Err() -- but not at once: the context is
+// read once every 4,096 units of work (loop passes, items charged, bytes
+// written, [State.Poll] calls), so a render stops within that many units of
+// the cancellation, and one shorter than that finishes and succeeds against a
+// context that was cancelled before it began. Check ctx.Err() first if a
+// cancelled context must not render at all.
 //
-// Those are the points at which the context is read, so how promptly a render
-// stops depends on reaching one. The built-in filters that do sustained work
-// call [State.Poll] for exactly this reason; one registered with [Environment.AddFilter]
-// that loops without writing output should do the same, or it is a region
-// nothing can interrupt.
+// The built-in filters that do sustained work count it for exactly this
+// reason; one registered with [Environment.AddFilter] that loops without
+// charging or writing should call [State.Poll] once per unit of that work, or
+// it is a region nothing can interrupt. See docs/limits.md.
 func (t *Template) Render(ctx context.Context, w io.Writer, vars map[string]any) error {
 	return t.renderGo(ctx, w, vars)
 }
@@ -200,8 +203,8 @@ func catchPanic(err *error) {
 	*err = e
 }
 
-// ErrInternal marks a render that failed because gojja2 panicked. Reaching it
-// always means a bug here rather than in the template.
+// ErrInternal marks a compile or a render that failed because gojja2
+// panicked. Reaching it always means a bug here rather than in the template.
 var ErrInternal = errors.New("gojja2: internal error")
 
 // renderInto is the render every entry point funnels through.
@@ -358,8 +361,8 @@ func (s *State) Context() context.Context {
 // error once the budget is spent or the context is done. A filter that walks a
 // sequence of caller-controlled length should call it.
 func (s *State) Step(n int) error {
-	// A nil State reaches here from constant folding, which runs without a
-	// render and so has no budget to charge.
+	// Constant folding hands a filter a State with a budget of its own, so
+	// this is only a guard for a State built without one.
 	if s == nil || s.budget == nil {
 		return nil
 	}
@@ -374,8 +377,14 @@ func (s *State) Step(n int) error {
 // inside the budget, so a call that does neither is a region nothing can
 // interrupt: a single filter once overran a one-second deadline by seventeen
 // seconds, and the error it eventually returned was the output bound rather
-// than the deadline. Calling this every few thousand units of work is cheap --
-// it is an increment and a comparison until the counter wraps round.
+// than the deadline.
+//
+// A call counts as one unit of work, and the context is read once every
+// 4,096 units, so call it once per unit of the sustained work -- per item, per
+// pass -- rather than once per chunk of it; a call per thousand units reads
+// the context once per four million. It is an increment and a comparison
+// between reads. For work counted in batches, [State.PollWork] takes the
+// batch's size.
 func (s *State) Poll() error {
 	if s == nil || s.budget == nil {
 		return nil
@@ -491,19 +500,24 @@ func (t *Template) newState(vars map[string]value.Value, depth int, b *budget) *
 	return st
 }
 
-// RecursionMessage is what CPython reports when the interpreter runs out of
-// stack, and therefore what a template that recurses without a base case must
-// report here.
+// RecursionMessage is what CPython 3.11 reports when the interpreter runs out
+// of stack, and therefore what a template that recurses without a base case
+// reports here under [WithPythonVersion]([Python311]).
 //
-// The wording names where inside CPython the limit was hit, which says nothing
-// about a Go program -- but the actionable half is true in both, and anyone
-// diffing the two implementations should not have to filter this out. The
-// configured limit, which our own wording used to carry, is on the error's
+// From 3.12 on -- including the default interpreter -- CPython has one
+// wording, "maximum recursion depth exceeded", and every route reports that
+// instead; [PythonVersion.RecursionMessageFor] makes the choice.
+//
+// The 3.11 wording names where inside CPython the limit was hit, which says
+// nothing about a Go program -- but the actionable half is true in both, and
+// anyone diffing the two implementations should not have to filter this out.
+// The configured limit, which our own wording used to carry, is on the error's
 // Limit field instead.
 const RecursionMessage = "maximum recursion depth exceeded while calling a Python object"
 
 // RecursionMessageComparison is the variant CPython produces when the stack
-// ran out inside a comparison, which is what an inheritance cycle hits.
+// ran out inside a comparison: a value compared too deeply, on every version,
+// and an inheritance cycle under 3.11.
 //
 // It is defined in the value package, which raises it for a comparison that
 // descends too far, and re-exported here so there is one spelling of it.

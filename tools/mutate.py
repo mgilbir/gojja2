@@ -22,7 +22,12 @@ no counterpart in CPython at all, so nothing outside this repository can say
 whether it holds.
 
 It is not part of `make check`: it edits the working tree and takes minutes. Run
-it with `make mutate` when the analysis or the budget changes.
+it with `make mutate` when the analysis or the budget changes; `ARGS=--budget`
+or `ARGS=--analysis` runs one half. It exits 1 if any mutation survives. It
+refuses to start -- also non-zero -- when a check fails before anything is
+mutated, or when the analysis half would run without the imported corpora.
+MUTATE_CAP replaces the systemd-run cap each budget check runs under, for a
+machine without a user systemd.
 """
 
 from __future__ import annotations

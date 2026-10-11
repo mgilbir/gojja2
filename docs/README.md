@@ -6,7 +6,11 @@ Start from the question, not the filename.
 |---|---|
 | What is this, and how do I render a template? | [../README.md](../README.md) |
 | How do I configure loaders, autoescaping, syntax, undefined values? | [guide.md](guide.md) |
-| Will my jinja2 templates render the same here? | [divergences.md](divergences.md) — one divergence can change what a working template renders, and it is named in the first paragraph |
+| Will a render change my data? Can I reuse one context, or one module, across requests? | [guide.md](guide.md#stateless-renders), and [guide.md](guide.md#concurrency) for sharing across goroutines |
+| Which variables does a template need, and which templates does it pull in? | [guide.md](guide.md#asking-questions-about-a-template) |
+| How do I serve many tenants, or vary settings per request, from one environment? | [guide.md](guide.md#overlays) |
+| Which CPython should I reproduce? | [guide.md](guide.md#which-cpython) |
+| Will my jinja2 templates render the same here? | [divergences.md](divergences.md) — the divergences that can change what a working template renders are named in its first paragraph |
 | Does it support *X*? Async? `{% trans %}`? The sandbox? | [scope.md](scope.md) |
 | How correct is it, and how is that measured? | [conformance.md](conformance.md) |
 | How do I add a conformance case, or reproduce the numbers? | [contributing.md](contributing.md), then [conformance.md](conformance.md) |
@@ -19,10 +23,11 @@ Start from the question, not the filename.
 | What did an adversarial read of the code find? | [audits/](audits/README.md) — snapshots, not current state |
 
 The Go API itself is documented in the source, as godoc. `go doc
-github.com/mgilbir/gojja2` lists it; `go doc Environment`, `go doc State` and
-`go doc value.Object` are the three worth reading in full. The runnable examples
-in `example_test.go` are part of that documentation and are executed by
-`go test`, so they cannot drift.
+github.com/mgilbir/gojja2` lists it; `go doc -all Environment`,
+`go doc -all State` and `go doc value.Object` are the three worth reading in
+full -- without `-all`, `go doc` lists a type's methods but not what they do.
+The runnable examples in `example_test.go` are part of that documentation and
+are executed by `go test`, so they cannot drift.
 
 ## Where a fact lives
 
@@ -35,12 +40,13 @@ tell which one lost.
 | What is in and out of scope | [scope.md](scope.md) |
 | Where gojja2 deliberately differs from CPython jinja2 | [divergences.md](divergences.md) |
 | What bounds a render, and which option adjusts it | [limits.md](limits.md) |
+| What a render copies, what it refuses, and what stays the host's to keep stateless | [guide.md](guide.md#stateless-renders) |
 | The conformance corpora, the oracle, and the numbers | [conformance.md](conformance.md) |
 | Which upstream projects are consulted, and under what licence | [../NOTICE](../NOTICE) |
 | How the pieces fit, and what nesting must not drop | [architecture.md](architecture.md) |
 | The contract a filter, test or global must honour | [extending.md](extending.md) |
 | The signature and contract of anything exported | godoc |
-| Which revision a generated corpus was built from | that corpus's own `SOURCES.md` |
+| Which revision a generated corpus was built from | that corpus's own `SOURCES.md`, where it has one: the minijinja and jinja-harvest importers do not write one yet |
 
 ## Glossary
 

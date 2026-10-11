@@ -20,7 +20,7 @@ import (
 // the corpus does not have, fails here.
 //
 // It exists because the opposite happened. `1.0 % 0` is worded three ways
-// across the four interpreters, gojja2 knew about two of them, and the corpus
+// across the interpreters, gojja2 knew about two of them, and the corpus
 // reached `1 % 0` but never `1 % 0.0` -- so the version that was wrong had
 // nothing to answer for. The rule that replaced it names a case that exists,
 // and now so must every other.

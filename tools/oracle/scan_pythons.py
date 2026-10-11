@@ -4,9 +4,9 @@
 """Report CPython releases gojja2 does not yet account for, and what they change.
 
 gojja2 names the interpreters it reproduces, and the list is finite: 3.11 to
-3.14 today. A new stable CPython is therefore an outstanding task, and it is one
+3.15 today. A new stable CPython is therefore an outstanding task, and it is one
 nobody is told about -- the tests keep passing, because they only ever ask the
-four versions already written down.
+versions already written down.
 
 This is what tells them. It asks uv which CPythons exist, compares that against
 tools/oracle/pyversions.py, and for anything new does the work of finding out

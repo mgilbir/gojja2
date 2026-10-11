@@ -674,8 +674,12 @@ type statefulCaller interface {
 // The *State is the render the call belongs to. A global that walks a
 // caller-controlled sequence, or allocates a result whose size a template
 // chooses, must charge it with State.Step before doing so -- charging
-// afterwards is useless, because by then the memory is already committed. It is
-// nil during constant folding, which State.Step handles.
+// afterwards is useless, because by then the memory is already committed. A
+// call to a global is never folded at compile time, so s is always the render's.
+//
+// What fn does besides return a value -- count, cache, write somewhere -- is
+// the host's own business: it runs as written, and whether it carries state
+// from one render to the next is up to it. See [SharedState].
 //
 // What fn returns is the render's own: a list, a dict or anything else a
 // template could change is copied before the template sees it, so a function

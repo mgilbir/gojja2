@@ -5,9 +5,10 @@
 # turns them into conformance corpora under ./testdata/generated/, also
 # gitignored.
 #
-# Ten upstreams: Jinja's own pytest suite, MiniJinja's fixtures, minja,
-# llama.cpp's Jinja tests, two collections of real LLM chat templates, a
-# documentation theme, and four cookiecutter project templates. Only their
+# Ten upstream checkouts: Jinja's own pytest suite, MiniJinja's fixtures, minja,
+# llama.cpp (its Jinja tests and the model chat templates vendored beside them),
+# a collection of real LLM chat templates, a documentation theme, and four
+# cookiecutter project templates. Only their
 # *inputs* are used. Every expected output is regenerated from the pinned
 # CPython jinja2, because that is the specification; where an upstream
 # disagrees with it, it is wrong here. NOTICE names each one with its licence.
@@ -22,7 +23,8 @@ SHELL := /bin/bash
 # PYTHON_VERSION is part of the specification and not a convenience. CPython
 # carries its own Unicode, so the interpreter decides which code points are
 # digits, how repr escapes them, and what every case-mapping table here says --
-# 3.11 is Unicode 14.0.0, 3.13 is 15.1.0 and 3.14 is 16.0.0. This used to be
+# 3.11 is Unicode 14.0.0, 3.13 is 15.1.0, 3.14 is 16.0.0 and 3.15 is 17.0.0.
+# This used to be
 # whatever `uv venv` found on the machine, which meant the specification was
 # chosen by accident and a contributor on a different interpreter would
 # regenerate different goldens.
@@ -81,7 +83,7 @@ PY          := $(VENV)/bin/python
 
 .PHONY: help
 help: ## Show this help
-	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # --- toolchain ---------------------------------------------------------------
 
@@ -178,11 +180,15 @@ $(foreach c,$(COOKIECUTTERS),$(eval $(call cookiecutter_rule,$(call cc_name,$(c)
 
 COOKIECUTTER_STAMPS := $(foreach c,$(COOKIECUTTERS),$(THIRD_PARTY)/$(call cc_name,$(c))/.stamp)
 
-.PHONY: suites
-suites: $(COOKIECUTTER_STAMPS) $(THIRD_PARTY)/jinja/.stamp $(THIRD_PARTY)/minijinja/.stamp \
+# Listed in a variable so the `##` help text can sit on the target's own line,
+# which is the only line `make help` reads: on a continuation line it was never
+# listed.
+SUITE_STAMPS := $(COOKIECUTTER_STAMPS) $(THIRD_PARTY)/jinja/.stamp $(THIRD_PARTY)/minijinja/.stamp \
         $(THIRD_PARTY)/minja/.stamp $(THIRD_PARTY)/chat_templates/.stamp \
-        $(THIRD_PARTY)/llamacpp/.stamp $(THIRD_PARTY)/mkdocs_material/.stamp \
-        ## Download reference test suites (gitignored)
+        $(THIRD_PARTY)/llamacpp/.stamp $(THIRD_PARTY)/mkdocs_material/.stamp
+
+.PHONY: suites
+suites: $(SUITE_STAMPS) ## Download reference test suites (gitignored)
 
 .PHONY: clean-suites
 clean-suites: ## Remove downloaded suites
@@ -314,7 +320,7 @@ test: ## Run the Go test suite
 	go test ./...
 
 .PHONY: mutate
-mutate: venv ## Break the analysis on purpose and report what nothing notices
+mutate: venv ## Break the analysis and the budget on purpose; report what nothing notices
 	python3 tools/mutate.py $(ARGS)
 
 .PHONY: ungraded
@@ -369,14 +375,17 @@ vet: ## Run go vet
 	go vet ./...
 
 .PHONY: lint
-lint: ## Run golangci-lint, pinned to the version CI uses
+lint: ## Run the golangci-lint on PATH (CI pins its version in ci.yml)
 	golangci-lint run
 
-# Everything CI runs, in CI's order. `memlimit` is not decoration: it is a step
-# the workflow has and this target did not, so a contributor could run `make
-# check`, see it pass, push, and fail CI on a step they had no way to reach.
+# The Linux CI job's steps, in CI's order, plus lint. Not everything CI runs:
+# that job also fuzzes four targets for 60 s each (`make fuzz-props TIME=60s`),
+# and the Windows and macOS jobs run on triggers of their own -- see "Sending
+# it" in docs/contributing.md. `memlimit` is not decoration: it is a step the
+# workflow has and this target did not, so a contributor could run `make check`,
+# see it pass, push, and fail CI on a step they had no way to reach.
 .PHONY: check
-check: fmt-check vet test memlimit race lint ## Everything CI runs
+check: fmt-check vet test memlimit race lint ## CI's Linux and lint steps, without its fuzzing
 
 # A second pass under a tight GOMEMLIMIT, which changes when the collector runs
 # and so exercises the allocation paths differently.

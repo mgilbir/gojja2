@@ -42,7 +42,7 @@ func ExampleAnalyze() {
 	}
 	// admin is required because it guards `{{ name|title }}`: a filter can
 	// raise, and the condition decides whether it runs.
-	//
+
 	// Output:
 	// admin  printed=false steers=true  required=true
 	// name   printed=true  steers=false required=true

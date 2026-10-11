@@ -12,6 +12,10 @@ import (
 // a set -- that knows how to copy itself. Isolate asks it to, handing it the
 // function to copy what it holds with, so the copy shares one memo with the rest
 // of the walk.
+//
+// A host Object a template can change must implement it to get a copy per
+// render. [MayBeMutable] reports false for one that does not, and Isolate
+// hands it over as it is, so every render given it shares it.
 type Isolator interface {
 	Object
 	IsolateWith(isolate func(Value) (Value, error)) (Value, error)

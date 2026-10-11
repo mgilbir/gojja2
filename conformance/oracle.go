@@ -256,8 +256,8 @@ func startOracle(version, hashSeed string) (*Oracle, error) {
 
 	// uv builds the environment for a non-pinned interpreter per call, with
 	// the pinned libraries, exactly as tools/oracle/pyversions.py does for
-	// the golden matrix -- so a sweep reaches four interpreters without four
-	// checked-in virtualenvs that could drift from the pin.
+	// the golden matrix -- so a sweep reaches every interpreter without a
+	// checked-in virtualenv per version that could drift from the pin.
 	cmd := exec.Command(python, script)
 	if version != "" {
 		want, err := ExpectedOracle(root)

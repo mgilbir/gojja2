@@ -54,8 +54,14 @@ func (s *State) refusedFirst(err error) error {
 // ChargeBytes reserves n bytes of allocation against the render's output
 // budget, before the allocation is made.
 //
-// A nil State, or one without a budget, still gets the hard ceiling: constant
-// folding runs that way, and it allocates just as much.
+// Past the hard ceiling of 2**31-1 bytes it returns an OverflowError, whatever
+// the budget; past the budget, a TemplateRuntimeError wrapping
+// [ErrOutputTooLarge]. The charge also counts n units towards the next read of
+// the render's context, and so can return the error a cancelled context gives.
+//
+// At compile time, when a constant filter call is folded, the State's budget
+// is the fold's own -- 64 KiB of output per fold attempt -- and a refusal makes
+// the fold give up and leave the call to the render.
 func (s *State) ChargeBytes(n int64) error {
 	if n <= 0 {
 		return nil
@@ -73,9 +79,9 @@ func (s *State) ChargeBytes(n int64) error {
 // IntBitLimit is value.IntBitLimiter: the ceiling on the width of an integer
 // this render may compute.
 //
-// A State with no budget -- constant folding runs that way before any render
-// exists -- answers the package default, which is what the value package would
-// have used anyway.
+// Constant folding answers the environment's ceiling too, so a fold refuses
+// exactly what the render would. A State with no budget answers the package
+// default, which is what the value package would have used anyway.
 func (s *State) IntBitLimit() int64 {
 	if s == nil || s.budget == nil {
 		return value.MaxIntBits
@@ -85,6 +91,11 @@ func (s *State) IntBitLimit() int64 {
 
 // ChargeItems reserves n elements against the render's iteration budget,
 // before the slice holding them is allocated.
+//
+// Past the hard ceiling of 2**31-1 elements it returns an OverflowError,
+// whatever the budget; past the budget, a TemplateRuntimeError wrapping
+// [ErrTooManyIterations]. At compile time the budget is the fold's own,
+// 100,000 units per fold attempt; see [State.ChargeBytes].
 func (s *State) ChargeItems(n int64) error {
 	if n <= 0 {
 		return nil

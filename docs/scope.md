@@ -41,12 +41,17 @@ Everything a template can express, including the parts that look Pythonic:
   exported field and method it has. What bounds that here is a policy rather
   than a type system --- `WithMethodPolicy`, which by default exposes only
   methods taking no arguments, so a template cannot choose what a host method is
-  called with. Widening it is a decision the host makes explicitly.
+  called with. Widening it is a decision the host makes explicitly. A method
+  declared on a pointer receiver, which can change the host's object, is
+  refused when a template calls it unless the host passes
+  `WithSharedState(AllowPointerMethods)` (see
+  [Stateless renders](guide.md#stateless-renders)).
 
   So: template authors are trusted to read any exported field of anything handed
-  to them, and to call its no-argument methods. If that is more than they should
-  have, hand the template a narrower value -- that is the boundary, and it is
-  drawn by what the caller puts in the context, not by an allow-list here.
+  to them, and to call its no-argument methods declared on the value. If that
+  is more than they should have, hand the template a narrower value -- that is
+  the boundary, and it is drawn by what the caller puts in the context, not by
+  an allow-list here.
 - **`Environment(optimized=False)`.** jinja2's optimizer can be turned off;
   gojja2's constant folding is always on. Measured rather than assumed: 3,000
   generated templates render identically with the flag either way, and a probe

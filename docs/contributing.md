@@ -6,6 +6,14 @@ conformance case.
 
 ## Setting up
 
+You need Go at the version `go.mod` names — CI's `setup-go` reads the same line
+— and, for anything that asks CPython, [uv](https://docs.astral.sh/uv/), which
+`make venv` uses to fetch the pinned interpreter and the matrix targets use to
+reach the others. `make lint` runs whichever `golangci-lint` is on your `PATH`;
+CI pins its version in the `lint` job of `.github/workflows/ci.yml`, so install
+that one to see what CI sees. The memory caps used throughout this page are
+`systemd-run --user`, which needs a user systemd instance.
+
 ```
 make venv       # CPython + the pinned jinja2, into .venv
 make test       # grades the committed corpus; needs neither network nor Python
@@ -22,9 +30,13 @@ goldens. Everything else is optional until you want the full pass rate.
 make check
 ```
 
-That is `fmt-check vet test memlimit race lint`, in CI's order, and it is
-everything CI runs. If it passes and CI does not, that is a bug in the Makefile
-and worth reporting on its own.
+That is `fmt-check vet test memlimit race lint`, the Linux job's steps in CI's
+order. It is not everything CI runs: the same job then fuzzes `FuzzParse`,
+`FuzzRender`, `FuzzAutoescape` and `FuzzRenderData` for 60 s each — `make
+fuzz-props TIME=60s` is the same four commands — and Windows and macOS jobs run
+vet, test and race on triggers of their own (see [Sending it](#sending-it)). If
+`make check` passes and the matching CI step does not, that is a bug in the
+Makefile and worth reporting on its own.
 
 **Run it under a cgroup cap.** This suite deliberately renders hostile templates
 — `{{ range(10000000000)|list }}`, `{{ "x" * 1000000000 }}` — and a bound that
@@ -76,6 +88,34 @@ and the reasons that have survived are: CPython's answer is unreachable from a
 template, unreproducible between two runs of CPython itself, or a safety
 control.
 
+### Listing a case in `known_failures.txt`
+
+`testdata/known_failures.txt` has one row per case; blank lines and lines
+starting with `#` are comments. A row is an id, an optional version, and a
+reason:
+
+```
+own/divergence/some_case.jj2              # why gojja2 differs
+own/divergence/other_case.jj2@3.14        # agrees with the pin, differs on 3.14
+minijinja/opfilters_txt.jj2               ungradable: why nothing can match it
+```
+
+- **The id** is the corpus name, a slash, and the case's path under that
+  corpus: `own/` for the committed corpus in `testdata/corpus`, otherwise the
+  name `TestConformance` gives the imported corpus — `minijinja`,
+  `jinja-harvest`, `minja`, `llamacpp`, `cookiecutter`, `wild` or
+  `chat-templates`.
+- **The reason** follows a `#`, or follows the id after a space. One that
+  starts `ungradable:` takes the case out of the rate altogether, so keep it
+  for a case CPython itself cannot reproduce.
+- **`@<version>`** limits the row to that interpreter in
+  `TestEveryPythonVersion`. A row without one applies to every interpreter, and
+  it is the only kind `TestConformance` reads.
+
+`TestConformance` fails on a listed case that passes, on a row naming a case its
+corpus does not have (checked only when that corpus is present), and on a case
+listed twice.
+
 ## Adding a conformance case
 
 **Cases go in `tools/oracle/gen_corpus.py`, never as a loose `.jj2` file.**
@@ -91,7 +131,16 @@ case("errshape/dyn_kwargs_names_the_filter", '{{ lst|join(**5) }}', lst=[1, 2])
 ```
 
 The first argument is the path under `testdata/corpus`, the second the template,
-and any keywords become the render context. Then:
+and any keywords become the render context — except three, which configure the
+case instead and are stripped from the context before it renders:
+
+| keyword | what it is |
+|---|---|
+| `__settings__` | environment options, e.g. `{"extensions": ["do"]}`; a key not in `SETTING_KEYS` (`tools/oracle/jinjaoracle.py`) is refused |
+| `__templates__` | `{name: source}` of further templates the case can include, import or extend |
+| `__profile__` | a named environment profile from `tools/oracle/profiles.py`, such as `"transformers"` |
+
+Then:
 
 ```
 systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0 make oracle
@@ -101,10 +150,11 @@ which regenerates the corpus *and* re-records every golden from CPython. Check
 the diff: a golden that changed for a case you did not touch means something
 else moved, and that is the interesting part.
 
-`make oracle` also regenerates nine files from CPython itself — `arity.go`,
+`make oracle` also regenerates ten files from CPython itself — `arity.go`,
 `method_arity.go`, `method_arity_other.go`, `entities.go`, `strclass.go`,
-`casemap.go`, `utf8digest.go`, `value/decimaltable.go` and
-`value/unicode_other.go`. Do not hand-edit those; change the generator.
+`casemap.go`, `utf8digest.go`, `value/decimaltable.go`,
+`value/unicode_other.go` and `value/nameclass.go`. Do not hand-edit those;
+change the generator.
 
 **Which CPython generates them is pinned**, by `PYTHON_VERSION` in the Makefile
 — 3.13 — and `make venv` asserts it, as does `TestDefaultVersionMatchesThePin`
@@ -123,8 +173,11 @@ is 15.1.0 and 3.14 is 16.0.0. On the 3.14 pin that
 assumption silently produced the wrong answer for 54 case mappings, 4,924
 `isalpha` code points and 5,812 `isprintable` ones before the checks below
 existed; on 3.13 the same gap is 622 and 627, which is smaller and just as
-wrong. Every generator that compares against Go now reads Go's tables through
-`tools/gocase` rather than assuming them.
+wrong. The case mappings and the predicates are now CPython's answers whole
+rather than differences from Go's (see
+[conformance.md](conformance.md#the-tables-are-gojja2s-own)), so they no longer
+depend on which Go built the binary; `tools/gocase`, which dumps Go's tables
+for that comparison, is no longer run by any generator.
 
 Three tripwires guard the result, and each recomputes over every code point so a
 drift shows up as a test failure rather than as one wrong character:
@@ -233,9 +286,9 @@ replacing it with `v.settle(name)` failed a soak, so the distinction was real.
 That note was wrong: the two are the same statement once the branch is reached,
 because the fallthrough settles as well, and a mutation that cannot change the
 answer cannot fail anything. What the survivor actually meant is that **the
-branch is never taken**. `go tool cover` puts nothing on it across all 4,715
-corpus cases, and a `panic` in its place survives the whole suite and 80,000
-generated templates on two seeds.
+branch is never taken**. `go tool cover` put nothing on it across all 4,715
+corpus cases there were then, and a `panic` in its place survived the whole
+suite and 80,000 generated templates on two seeds.
 
 It is unreachable by construction, not by accident. The condition wants a name
 bound by *all three* arms -- body, elifs, else -- and an `{% elif %}` is a nested
@@ -388,13 +441,14 @@ ever produced?**
 
 It runs the corpus under coverage on every interpreter, intersects the blocks
 that never executed with the lines that build an error, and counts what is left.
-Today that is **49 of 439**.
+Run `make ungraded` for today's count; the figures in the passes below are what
+each pass measured at the time, and are history.
 
 A message nothing produces is not evidence of anything -- it has never been
 compared to CPython. It is worse than untested: it reads as *agreement in every
 column of the version matrix*, because the matrix compares the cases the corpus
 holds and nothing else. A message that is wrong on one interpreter and right on
-another looks exactly like one that is right on all four.
+another looks exactly like one that is right on all of them.
 
 The first run found six bugs in the first seventy-eight shapes probed:
 `bytes.hex` accepted a separator of any length and rejected a bytes one,
@@ -509,9 +563,8 @@ common must not change whether it does. That second half is the important one:
 the differential proves the two implementations agree, and they are both written
 here, so agreement is close to a statement about transcription. Rendering is not.
 
- The
-generator walks the grammar rather than a list somebody thought of, which is how
-it reaches an autoescape inside a macro inside a loop that assigns the name it
+The generator walks the grammar rather than a list somebody thought of, which is
+how it reaches an autoescape inside a macro inside a loop that assigns the name it
 read. The oracle server answers `{"analyze": true}` as well as a render, so a
 soak can ask both implementations as fast as it can generate: 50,000 templates
 takes minutes rather than the hours a fresh interpreter per template would.
@@ -575,30 +628,47 @@ tree quietly missing a node compares equal for the wrong reason.
 ## What watches the oracle
 
 CI never runs Python: the whole point of committing the goldens is that the
-suite grades them with no network and no interpreter. That leaves two things
-nothing watches, so a separate scheduled workflow does — `.github/workflows/oracle.yml`,
-which never runs on a push.
+suite grades them with no network and no interpreter. That leaves the
+generators, the differential checks and CPython's own releases unwatched, so a
+separate workflow, `.github/workflows/oracle.yml`, runs them. It never runs on
+a push: it runs every Monday at 04:23 UTC, on the first of each month at 05:41
+UTC, and on demand from the Actions tab. It has three jobs.
 
-**Weekly, it regenerates everything and compares.** `make oracle` plus the
-recorded corpora, then `git add -A && git diff --cached` — so a new or deleted
-file counts as drift too. A difference means one of three things and the diff
-says which: a generator broke, CPython changed its mind, or somebody edited a
-generated file by hand. This exists because `make casemap` was broken for three
-commits by a change to the tool it reads, and nothing could tell: the committed
-table still agreed with the interpreter, so every test passed.
+**`regenerate`, on every run: regenerate everything and compare.** `make
+oracle`, then the four recorded corpora it does not cover (`make ops-corpus
+repr-corpus lex-corpus parse-corpus`), then `git add -A && git diff --cached` —
+so a new or deleted file counts as drift too. A difference means one of three
+things and the diff says which: a generator broke, CPython changed its mind, or
+somebody edited a generated file by hand. This exists because `make casemap`
+was broken for three commits by a change to the tool it reads, and nothing could
+tell: the committed table still agreed with the interpreter, so every test
+passed. `make value-depth` (`testdata/value_depth.json`) is in neither `make
+oracle` nor this job, so nothing regenerates it on a schedule; run it by hand
+when an interpreter changes.
 
-**Monthly, it also asks whether CPython has moved.**
-`tools/oracle/scan_pythons.py` compares the releases uv can provide against
-`pyversions.ALL`, and for anything new does the reading a maintainer would
-otherwise do by hand — renders the whole corpus under it, asks it about every
-code point, counts the method wordings that differ — so a new release arrives as
-a diff rather than as a note to look into some time. It reports a release that
+**`differential`, on every run: generated templates, both ways.** `make soak
+N=50000` and `make soak-syntax N=20000`, both seeded with the run's id, which
+the job summary records so a failure replays with `make soak N=50000
+SEED=<id>`; then `make fuzz TIME=5m`, from the runner's cold cache. On the
+monthly run and a manual one it also runs `make mutate ARGS=--budget`, the
+budget half of [mutation testing](#and-the-budget-for-the-same-reason). The
+runner has no user systemd for the per-mutation cap, so `MUTATE_CAP` names one
+instead; the analysis half needs the imported corpora, which no workflow
+builds.
+
+**`releases`: has CPython moved?** `tools/oracle/scan_pythons.py` compares the
+releases uv can provide against `pyversions.ALL`, and reports a release that
 *disappears* too, since every matrix target reaches its interpreters through
-`uv run --python`.
+`uv run --python`. The Monday run only lists what is new or gone. The monthly
+run, and a manual one unless its `releases` input is unticked, add `--grade`,
+which does the reading a maintainer would otherwise do by hand — renders the
+whole corpus under each new interpreter, asks it about every code point, counts
+the method wordings that differ — so a new release arrives as a diff rather
+than as a note to look into some time.
 
-Both write their report to the job summary and fail if there is something to do,
-which is the notification. Run either on demand from the Actions tab, or
-`.venv/bin/python tools/oracle/scan_pythons.py --grade` locally.
+A job that finds something to do fails, which is the notification; the
+regenerate and releases jobs write their report to the job summary. Locally,
+`.venv/bin/python tools/oracle/scan_pythons.py --grade` is the releases scan.
 
 The differential harness talks to a live interpreter rather than to the
 goldens, and `GOJJA2_ORACLE_PYTHON` points it at one: useful for a checkout
@@ -619,15 +689,24 @@ anyone editing a list. `TestEveryPythonVersion` grades the whole corpus
 against each one.
 
 If your case changes the corpus count, `TestConformance` will tell you the exact
-table row it wants. Paste it into `docs/conformance.md`; the README's headline
-sentence is checked too, and the test prints that as well.
+table row it wants — on a machine with every corpus imported (`make suites &&
+make import`). With any imported corpus absent it logs "published figures not
+checked" and checks none of them, and no CI workflow imports the corpora, so a
+green CI run says nothing about these figures. Paste the row into
+`docs/conformance.md`; the README's headline sentence, the diagram's rate node
+and the count of cases that differ are checked too, and the test prints what it
+expected for each.
 
 ## Changing an existing golden
 
 Don't, directly. `testdata/golden/*.json` is what CPython produced; if it needs
 to change, either the case changed or the pinned jinja2 did. `make oracle-check`
-verifies the committed goldens still match without rewriting them, which is the
-one to reach for when you want to know whether something moved underneath you.
+re-renders the committed corpus and verifies `testdata/golden` still matches,
+without rewriting it, which is the one to reach for when you want to know
+whether something moved underneath you. It checks the pinned version's goldens
+only: `testdata/golden-<version>` and every other generated file are checked
+by regenerating them with `make oracle` and diffing the tree, which is what the
+`regenerate` job does.
 
 Bumping `JINJA_VERSION` means regenerating every corpus wholesale, never
 piecemeal — the goldens are one version's answers, and a mixture is not a
@@ -649,7 +728,8 @@ implementations to agree on output, exception class, message and line.
 replayed exactly; it defaults to 0, which means every run without it explores
 the same templates. Change it when you want new ground rather than a repeat.
 
-`make fuzz-props TIME=5m` needs nothing but Go, and is what CI runs. It cannot
+`make fuzz-props TIME=5m` needs nothing but Go, and CI runs its four targets
+for 60 s each on every commit. It cannot
 say what a template *means* -- only CPython can say that -- so it checks what
 the engine owes every input regardless of meaning: it does not panic, it does
 not run past its deadline, it does not write past its bound, it does not return
@@ -666,9 +746,32 @@ Two things to know before you trust a result:
 - A CPython side containing `object at 0x...` is a repr with an address in it,
   and is ungradable for the same reason `lipsum()` is.
 
+### Knobs and exit codes
+
+The make targets set these for you; a bare `go test` reads them too, but where
+one is unset each test falls back to its *own* default, which is not the make
+target's. `go test ./conformance -run TestDifferential` checks 3,000 templates
+at seed 20260916, where `make soak` checks 50,000 at seed 0.
+
+| variable | what it sets |
+|---|---|
+| `GOJJA2_FUZZ_N`, `GOJJA2_FUZZ_SEED` | the count and seed of every seeded generated-template test in `conformance/`: the differential, the syntax soak and the metamorphic properties (`GOJJA2_FUZZ_SEED` also seeds the lazy-conversion test) |
+| `GOJJA2_LAZY_N` | the count for `TestLazyConversionMatchesEager`, which compares lazy and eager conversion of a Go context and needs no oracle (default 2,000) |
+| `GOJJA2_FUZZ_PYTHON` | which CPython the differential asks, e.g. `3.11`, configuring gojja2 to match; unset is the pin |
+| `GOJJA2_ORACLE_PYTHON` | the interpreter the oracle runs under, in place of `.venv/bin/python` (see [What watches the oracle](#what-watches-the-oracle)) |
+| `MUTATE_CAP` | the command prefix `make mutate` runs each measuring step under, in place of its own `systemd-run` cap |
+
+| tool | exits non-zero when |
+|---|---|
+| `make ungraded` | only when the corpus fails or the tool cannot run: it reports a count and is not a gate |
+| `make mutate` | a mutation survives (1), or it refuses to start: a check fails unmutated, or the analysis half finds no imported corpora |
+| `make oracle-check` | a golden is stale or missing (1) |
+| `tools/oracle/scan_pythons.py` | there is something to do (1): a release gojja2 does not know, or one uv can no longer provide |
+
 ## Documentation
 
-Docs are graded like code. `go test ./...` runs four guards over them:
+Docs are graded like code, by five checks. `go test ./...` runs four guards
+over them:
 
 | guard | requires |
 |---|---|
@@ -677,30 +780,67 @@ Docs are graded like code. `go test ./...` runs four guards over them:
 | `TestNoGodocLinkSyntaxInMarkdown` | no `[Identifier]`, which is godoc syntax and renders as literal brackets |
 | `TestExtendingDocExamplesAreReal` | every definition shown in `extending.md` exists verbatim in `example_test.go` |
 
-`TestConformance` additionally checks every published figure against what it just
-measured. [docs/README.md](README.md) names a canonical home for each fact worth
+The fifth is `checkPublishedNumbers`, inside `TestConformance`: it checks every
+published conformance figure against what it just measured, but only on a
+machine with every corpus imported, so CI never runs it (see
+[above](#what-watches-the-oracle)). [docs/README.md](README.md) names a canonical home for each fact worth
 stating once; if you find yourself writing something down for the second time,
 link instead.
 
 ## Sending it
 
-CI runs on every pull request and on every commit that reaches `main`.
+CI (`.github/workflows/ci.yml`) starts on a pull request when it is opened,
+pushed to or reopened, on every push to `main`, nightly at 05:17 UTC, weekly on
+Sunday at 06:41 UTC, and on demand. Which jobs run depends on the trigger:
+
+| job | steps | pull request | push to `main` | nightly | weekly | on demand |
+|---|---|---|---|---|---|---|
+| `check` (Linux) | fmt · vet · test · GOMEMLIMIT · race · fuzz, 4 targets × 60 s | yes | yes | yes | — | yes |
+| `lint` | golangci-lint, at the version the job pins | yes | yes | yes | — | yes |
+| `windows` | vet · test · race | without race | yes | — | yes | yes |
+| `macos` | vet · test · race | — | — | — | yes | yes |
+
+Every job waits on `authorize`, which trusts a run that is not a `pull_request`
+event, a pull request whose branch is in this repository, and a fork's pull
+request whose labels *in that run's event payload* include `safe-to-test`.
+Anything else skips every job, and the job summary says the run is waiting for
+approval. CI executes the code in the pull request, which is why a fork's runs
+nothing until a maintainer has labelled it.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Trusted: branch in this repository
-    [*] --> Waiting: pull request from a fork
-    Waiting --> Trusted: a maintainer reads the diff<br/>and adds `safe-to-test`
-    Trusted --> Waiting: a new commit is pushed<br/><i>(revoke-approval.yml strips the label)</i>
-    Trusted --> [*]: fmt · vet · test · GOMEMLIMIT · race · lint
-    Waiting --> [*]: nothing runs
+    state "no label" as Unlabelled
+    state "safe-to-test" as Labelled
+    [*] --> Unlabelled: a fork opens a pull request
+    Unlabelled --> Labelled: a maintainer adds the label<br/><i>(this starts no run)</i>
+    Labelled --> Unlabelled: a push to the branch<br/><i>(revoke-approval.yml deletes the label,<br/>concurrently with that push's own CI run)</i>
+    note right of Unlabelled
+        a CI run whose payload has no label
+        skips every job
+    end note
+    note right of Labelled
+        a CI run whose payload has the label
+        is trusted and runs its jobs
+    end note
 ```
 
-A fork's pull request runs nothing until somebody has looked at it, because CI
-executes the code in the pull request. The label is attached to the pull request
-rather than to a commit, which is the well-known hole in label-based gating — get
-the label on a harmless diff, then push whatever you like — so a push strips it
-again and the approval always refers to code someone actually read.
+What the two workflows do, read from their YAML, and worth knowing before
+relying on the label:
+
+- **Adding the label starts nothing.** `pull_request` declares no `types:`, so
+  only the default opened, synchronize and reopened events start CI, and
+  `labeled` is not among them. The label is read by the next run one of those
+  starts.
+- **A push both runs CI and revokes the label.** The label is attached to the
+  pull request rather than to a commit, so on its own it would keep applying to
+  whatever is pushed after it. `revoke-approval.yml` runs on
+  `pull_request_target` `synchronize` — the event a push raises — and deletes
+  it. The same push starts CI's own `synchronize` run; the two run
+  concurrently, `authorize` reads the label from its event payload rather than
+  asking for the pull request's current labels, and nothing in either workflow
+  orders the deletion before that read.
+- **Only a push revokes.** `revoke-approval.yml` reacts to `synchronize` alone;
+  a label that is not removed by hand stays through a reopen.
 
 Commit messages here say *why*, at length, and name what was checked. Look at
 `git log` before writing one.

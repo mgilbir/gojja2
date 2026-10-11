@@ -33,7 +33,9 @@ A site here is one of three things, and telling them apart is the work:
     it.
 
 It is not part of `make check`: it needs a coverage run of the whole corpus.
-Run it with `make ungraded` after adding error messages.
+Run it with `make ungraded` after adding error messages. It is a measurement,
+not a gate: it exits 0 whatever the count, and non-zero only when the coverage
+run itself fails -- a corpus that does not pass is not measured.
 """
 
 from __future__ import annotations

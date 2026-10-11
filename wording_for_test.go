@@ -20,7 +20,7 @@ import (
 // Asking the same rule the production code asks is not circular here: the rule
 // is only *which* of two fixed sentences applies, and both sentences are still
 // written out below. What proves them right is testdata/golden, which is CPython
-// itself answering, and TestEveryPythonVersion, which grades all four.
+// itself answering, and TestEveryPythonVersion, which grades every version.
 
 // The two uses a key can be put to, named here so a test does not have to
 // import value just to say which one it means.

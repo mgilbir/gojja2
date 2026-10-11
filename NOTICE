@@ -62,6 +62,8 @@ Real-world templates, consulted as corpora
     Four project generators, consulted for templates that generate a file
     rather than a page: `{% raw %}` blocks and whitespace control.
 
-The revision each corpus was built from, and its licence, is recorded again
-next to the generated cases in testdata/generated/*/SOURCES.md. The pins
-themselves live in the Makefile.
+The pins -- the revision each corpus is built from -- live in the Makefile.
+The chat-templates, cookiecutter, llamacpp, minja and wild corpora record their
+revision and licence again next to the generated cases, in
+testdata/generated/<corpus>/SOURCES.md; the minijinja and jinja-harvest
+corpora carry no such file.

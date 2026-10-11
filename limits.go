@@ -13,7 +13,12 @@ import (
 
 // Errors a render returns when it runs out of budget. They are wrapped, so a
 // caller uses errors.Is: a context deadline surfaces as context.DeadlineExceeded
-// and a cancellation as context.Canceled, exactly as elsewhere in Go.
+// and a cancellation as context.Canceled, exactly as elsewhere in Go. The error
+// itself is an *errs.Error of class errs.TemplateRuntimeError, with one of
+// these, or ctx.Err(), as its Cause.
+//
+// The first refusal sticks: every charge after it returns the same error, and
+// so does the render, even if the code that was refused dropped it.
 var (
 	// ErrTooManyIterations reports that a render exceeded the loop
 	// iteration budget. See [WithMaxIterations].
